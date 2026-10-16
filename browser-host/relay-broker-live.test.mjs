@@ -127,6 +127,7 @@ async function harness(
       observer: false,
       metrics: false,
       observerDays: 30,
+      metricsDays: 365,
       revision: settings.revision,
     });
   }
@@ -2005,6 +2006,7 @@ test("host capture persists both kinds without plugin demand, toggles independen
       observer: false,
       metrics: true,
       observerDays: 30,
+      metricsDays: 365,
       revision: settings.revision,
     });
     await until(() =>

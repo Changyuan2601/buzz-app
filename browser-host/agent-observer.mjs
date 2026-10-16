@@ -28,8 +28,10 @@ export function decodeAgentArchive(input, secret, viewer, history = false) {
     event.content.length < 132 ||
     event.content.length > 87472 ||
     event.created_at > Math.floor(Date.now() / 1000) + 300 ||
-    Date.now() - event.created_at * 1000 >
-      (history ? 90 * 24 * 60 * 60 * 1000 : 300_000)
+    // Saved metrics may outlive 90 days; their store retention bounds them.
+    ((!history || event.kind === OBSERVER_KIND) &&
+      Date.now() - event.created_at * 1000 >
+        (history ? 90 * 24 * 60 * 60 * 1000 : 300_000))
   )
     throw new Error("Invalid observer envelope");
   const key = nip44.v2.utils.getConversationKey(secret, event.pubkey);

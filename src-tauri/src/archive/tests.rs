@@ -69,7 +69,7 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
     store.seed("another-viewer", "https://a.test").unwrap();
     for _ in 0..2 {
         store
-            .ingest(&viewer, "https://a.test", &event, 0, now)
+            .ingest(&viewer, "https://a.test", &event, None, 0, now)
             .unwrap();
     }
     assert_eq!(
@@ -92,11 +92,11 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
         .is_empty());
     let metrics = at(44200, 1);
     store
-        .ingest(&viewer, "https://a.test", &metrics, 0, now)
+        .ingest(&viewer, "https://a.test", &metrics, None, 0, now)
         .unwrap();
     for i in 1..205 {
         store
-            .ingest(&viewer, "https://a.test", &at(24200, i), 0, now)
+            .ingest(&viewer, "https://a.test", &at(24200, i), None, 0, now)
             .unwrap();
     }
     let page = store
@@ -130,6 +130,7 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
                 observer: false,
                 metrics: true,
                 days: 1,
+                metrics_days: 365,
                 revision: 0,
             },
             now,
@@ -137,11 +138,11 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
         .unwrap();
     assert_eq!(settings["revision"], 1);
     assert!(store
-        .ingest(&viewer, "https://a.test", &event, 0, now)
+        .ingest(&viewer, "https://a.test", &event, None, 0, now)
         .is_err());
     let disabled = at(24200, 999);
     store
-        .ingest(&viewer, "https://a.test", &disabled, 1, now)
+        .ingest(&viewer, "https://a.test", &disabled, None, 1, now)
         .unwrap();
     let count = rusqlite::Connection::open(&path).unwrap();
     assert_eq!(
@@ -173,6 +174,7 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
                 observer: true,
                 metrics: true,
                 days: 30,
+                metrics_days: 365,
                 revision: 0
             },
             now
@@ -226,7 +228,7 @@ fn newer_schema_is_never_modified_and_corruption_is_not_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("newer.sqlite3");
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute_batch("PRAGMA user_version=3; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');").unwrap();
+    connection.execute_batch("PRAGMA user_version=4; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');").unwrap();
     drop(connection);
     let before = std::fs::read(&path).unwrap();
     assert!(store::Store::open(path.clone()).is_err());
@@ -366,11 +368,22 @@ fn quota_evicts_oldest_of_noisy_agent_before_other_agents_and_clear_reclaims_dis
     let mut quiet = event.clone();
     quiet.pubkey = "b".repeat(64);
     quiet.id = "b".repeat(64);
-    store.ingest(&viewer, community, &quiet, 0, now).unwrap();
-    store.ingest(&viewer, community, &event, 0, now).unwrap();
+    store
+        .ingest(&viewer, community, &quiet, None, 0, now)
+        .unwrap();
+    store
+        .ingest(&viewer, community, &event, None, 0, now)
+        .unwrap();
     for i in 1..5 {
         store
-            .ingest(&viewer, community, &envelope(&viewer, 24200, i), 0, now)
+            .ingest(
+                &viewer,
+                community,
+                &envelope(&viewer, 24200, i),
+                None,
+                0,
+                now,
+            )
             .unwrap();
     }
     let rows = store.read(&viewer, community, 24200, None, None).unwrap().0;
@@ -392,7 +405,9 @@ fn quota_evicts_oldest_of_noisy_agent_before_other_agents_and_clear_reclaims_dis
     for i in 10..410 {
         let mut large = envelope(&viewer, 24200, i);
         large.content = "x".repeat(8000);
-        store.ingest(&viewer, community, &large, 0, now).unwrap();
+        store
+            .ingest(&viewer, community, &large, None, 0, now)
+            .unwrap();
     }
     db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     let before = std::fs::metadata(&path).unwrap().len();
@@ -433,7 +448,9 @@ fn community_quota_evicts_oldest_across_agents_with_individual_usage_below_cap()
         let mut row = first.clone();
         row.pubkey = format!("{index:064x}");
         row.id = row.pubkey.clone();
-        store.ingest(&viewer, community, &row, 0, now).unwrap();
+        store
+            .ingest(&viewer, community, &row, None, 0, now)
+            .unwrap();
     }
     let rows = store.read(&viewer, community, 24200, None, None).unwrap().0;
     assert_eq!(rows.len(), 4);
@@ -497,7 +514,7 @@ fn v1_migration_preserves_ciphertext_settings_and_revisions() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     assert_eq!(
         db.prepare("PRAGMA table_info(archive_subscriptions)")
@@ -508,4 +525,274 @@ fn v1_migration_preserves_ciphertext_settings_and_revisions() {
             .unwrap(),
         vec!["viewer", "community", "name", "enabled", "days", "budget"]
     );
+}
+
+fn content_of(path: &std::path::Path, id: &str) -> (Option<String>, i64) {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row(
+            "SELECT content,undecryptable FROM archive_events WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn host_ingest_keeps_plaintext_only_for_metrics() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("archive.sqlite3");
+    let identity = IdentityHost::fixture();
+    let host = ArchiveHost::default();
+    let viewer = viewer();
+    for (kind, serial) in [(24200, 1), (44200, 2)] {
+        let event = envelope(&viewer, kind, serial);
+        execute(
+            &identity,
+            host.clone(),
+            path.clone(),
+            "https://a.test".into(),
+            viewer.clone(),
+            Request::Ingest {
+                event: event.clone(),
+                revision: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let (content, _) = content_of(&path, &event.id);
+        let plaintext = crate::relay::agent::decode_archive(&[1; 32], &viewer, &event, false)
+            .unwrap()["plaintext"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(content, (kind == 44200).then_some(plaintext));
+    }
+    let bytes: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT bytes-length(envelope)-length(CAST(content AS BLOB)) FROM archive_events WHERE kind=44200",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(bytes, 0, "plaintext counts against the metrics byte cap");
+}
+
+#[tokio::test]
+async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v2.sqlite3");
+    let viewer = viewer();
+    let other = "c".repeat(64);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(include_str!("../../../src/features/archive/schema.sql"))
+        .unwrap();
+    db.execute_batch("PRAGMA user_version=2").unwrap();
+    let mine: Vec<AgentEvent> = (0..70).map(|i| envelope(&viewer, 44200, i)).collect();
+    let broken = envelope(&viewer, 44200, 99);
+    let foreign = envelope(&viewer, 44200, 100);
+    let insert = |owner: &str, event: &AgentEvent, raw: String| {
+        db.execute("INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?1,'https://a.test','metrics',?2,?3,44200,?4,?4,?5,?6)",rusqlite::params![owner,event.id,event.pubkey,event.created_at as i64,raw.len() as i64,raw]).unwrap();
+    };
+    for owner in [viewer.as_str(), other.as_str()] {
+        db.execute(
+            "INSERT INTO archive_partitions VALUES (?1,'https://a.test',0)",
+            [owner],
+        )
+        .unwrap();
+        db.execute("INSERT INTO archive_subscriptions VALUES (?1,'https://a.test','metrics',1,90,67108864)", [owner]).unwrap();
+        db.execute("INSERT INTO archive_subscriptions VALUES (?1,'https://a.test','observer',1,30,536870912)", [owner]).unwrap();
+    }
+    for event in &mine {
+        insert(&viewer, event, serde_json::to_string(event).unwrap());
+    }
+    insert(&viewer, &broken, "broken".into());
+    insert(&other, &foreign, serde_json::to_string(&foreign).unwrap());
+    let before: i64 = db
+        .query_row(
+            "SELECT bytes FROM archive_usage WHERE viewer=?1 AND agent=''",
+            [&viewer],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let identity = IdentityHost::fixture();
+    let host = ArchiveHost::default();
+    let settings = || {
+        execute(
+            &identity,
+            host.clone(),
+            path.clone(),
+            "https://a.test".into(),
+            viewer.clone(),
+            Request::Settings,
+        )
+    };
+    let first = settings().await.unwrap();
+    assert_eq!(first["metricsDays"], 365);
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    // One bounded batch per host call; the second call resumes where it stopped.
+    let pending = |db: &rusqlite::Connection| -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM archive_events WHERE content IS NULL AND undecryptable=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(pending(&db), 71 - 64 + 1);
+    settings().await.unwrap();
+    settings().await.unwrap();
+    assert_eq!(pending(&db), 1, "the other account's row waits for its key");
+    assert_eq!(content_of(&path, &foreign.id).0, None);
+    assert_eq!(content_of(&path, &broken.id), (None, 1));
+    for event in &mine {
+        assert!(content_of(&path, &event.id)
+            .0
+            .unwrap()
+            .contains("archive-secret-marker"));
+    }
+    let after: i64 = db
+        .query_row(
+            "SELECT bytes FROM archive_usage WHERE viewer=?1 AND agent=''",
+            [&viewer],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let added: i64 = db
+        .query_row(
+            "SELECT SUM(length(CAST(content AS BLOB))) FROM archive_events WHERE viewer=?1",
+            [&viewer],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(after, before + added);
+    assert_eq!(
+        db.query_row(
+            "SELECT budget FROM archive_subscriptions WHERE viewer=?1 AND name='metrics'",
+            [&viewer],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1 << 30
+    );
+    // Backfilled rows still read through the ciphertext path.
+    let page = execute(
+        &identity,
+        host.clone(),
+        path.clone(),
+        "https://a.test".into(),
+        viewer.clone(),
+        Request::Read {
+            kind: 44200,
+            agent: None,
+            before: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(page["records"].as_array().unwrap().len(), 70);
+    assert_eq!(page["skipped"], 1);
+}
+
+#[tokio::test]
+async fn metrics_retention_is_configurable_and_forever_keeps_old_rows_readable() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retention.sqlite3");
+    let identity = IdentityHost::fixture();
+    let host = ArchiveHost::default();
+    let viewer = viewer();
+    let request = |input| {
+        execute(
+            &identity,
+            host.clone(),
+            path.clone(),
+            "https://a.test".into(),
+            viewer.clone(),
+            input,
+        )
+    };
+    let configure = |metrics_days, revision| Request::Configure {
+        observer: true,
+        metrics: true,
+        observer_days: 30,
+        metrics_days,
+        revision,
+    };
+    assert_eq!(
+        request(Request::Settings).await.unwrap()["metricsDays"],
+        365
+    );
+    assert!(request(configure(30, 0)).await.is_err());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let old = envelope_at(&viewer, 44200, 1, now - 200 * 86400);
+    let raw = serde_json::to_string(&old).unwrap();
+    rusqlite::Connection::open(&path).unwrap().execute("INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?1,'https://a.test','metrics',?2,?3,44200,?4,?4,?5,?6)",rusqlite::params![viewer,old.id,old.pubkey,old.created_at as i64,raw.len() as i64,raw]).unwrap();
+    assert_eq!(request(configure(0, 0)).await.unwrap()["metricsDays"], 0);
+    let read = || {
+        request(Request::Read {
+            kind: 44200,
+            agent: None,
+            before: None,
+        })
+    };
+    assert_eq!(
+        read().await.unwrap()["records"].as_array().unwrap().len(),
+        1
+    );
+    assert!(
+        content_of(&path, &old.id).0.is_some(),
+        "rows past 90 days still backfill"
+    );
+    request(configure(90, 1)).await.unwrap();
+    assert!(read().await.unwrap()["records"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM archive_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "shortened retention prunes expired metrics");
+}
+
+#[test]
+fn metrics_cap_counts_plaintext_and_evicts_oldest() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("metrics-cap.sqlite3");
+    let mut store = store::Store::open(path.clone()).unwrap();
+    let viewer = viewer();
+    let community = "https://a.test";
+    store.seed(&viewer, community).unwrap();
+    let first = envelope(&viewer, 44200, 0);
+    let now = first.created_at as i64;
+    let content = "{\"turn\":{\"inputTokens\":1}}";
+    let size = (serde_json::to_string(&first).unwrap().len() + content.len()) as i64;
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // The envelope alone fits five rows; with plaintext only four fit.
+    db.execute(
+        "UPDATE archive_subscriptions SET budget=?1 WHERE name='metrics'",
+        [size * 4 + content.len() as i64],
+    )
+    .unwrap();
+    for index in 0..5 {
+        let mut row = first.clone();
+        row.pubkey = format!("{index:064x}");
+        row.id = row.pubkey.clone();
+        store
+            .ingest(&viewer, community, &row, Some(content), 0, now)
+            .unwrap();
+    }
+    let rows = store.read(&viewer, community, 44200, None, None).unwrap().0;
+    assert_eq!(rows.len(), 4);
+    assert!(!rows
+        .iter()
+        .any(|row| row.2.contains(&format!("{:064x}", 0))));
 }

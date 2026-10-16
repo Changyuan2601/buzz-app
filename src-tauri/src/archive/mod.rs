@@ -1,4 +1,5 @@
-//! Bounded host-owned archive. Only encrypted signed envelopes reach SQLite.
+//! Bounded host-owned archive. Signed envelopes reach SQLite encrypted; only
+//! NIP-AM metrics (44200) also keep their decrypted content, for usage tools.
 mod store;
 use crate::{
     identity::IdentityHost,
@@ -21,6 +22,8 @@ pub(crate) enum Request {
         metrics: bool,
         #[serde(rename = "observerDays")]
         observer_days: u32,
+        #[serde(rename = "metricsDays")]
+        metrics_days: u32,
         revision: i64,
     },
     Read {
@@ -80,7 +83,8 @@ async fn execute(
     if !matches!(request, Request::Ingest { .. }) && identity.viewer().await? != viewer {
         return Err("Archive viewer changed".into());
     }
-    let request = if let Request::Ingest { event, revision } = request {
+    // Admitted ingest keeps the content decrypted during validation.
+    let (request, content) = if let Request::Ingest { event, revision } = request {
         let expected = viewer.clone();
         identity
             .with_key(move |secret, current| {
@@ -89,12 +93,13 @@ async fn execute(
                 }
                 // The trusted main renderer supplies fresh envelopes. This verifies
                 // cryptography/recipient, not relay delivery or agent ownership.
-                decode_archive(secret, current, &event, false)?;
-                Ok(Request::Ingest { event, revision })
+                let frame = decode_archive(secret, current, &event, false)?;
+                let content = frame["plaintext"].as_str().map(str::to_owned);
+                Ok((Request::Ingest { event, revision }, content))
             })
             .await?
     } else {
-        request
+        (request, None)
     };
     enum Reply {
         Complete(Value),
@@ -106,6 +111,7 @@ async fn execute(
     }
     let read_only = matches!(request, Request::Settings);
     let partition = viewer.clone();
+    let backfill_host = archive.clone();
     // Neither waiting for the archive mutex nor any SQLite work holds the key
     // owner's lock. An admitted write stays in its original account partition.
     let reply = tauri::async_runtime::spawn_blocking(move || {
@@ -127,6 +133,7 @@ async fn execute(
                 observer,
                 metrics,
                 observer_days,
+                metrics_days,
                 revision,
             } => Reply::Complete(store.configure(
                 current,
@@ -135,6 +142,7 @@ async fn execute(
                     observer,
                     metrics,
                     days: observer_days,
+                    metrics_days,
                     revision,
                 },
                 now,
@@ -144,7 +152,14 @@ async fn execute(
                 Reply::Complete(json!({"cleared":true}))
             }
             Request::Ingest { event, revision } => {
-                store.ingest(current, &community, &event, revision, now)?;
+                store.ingest(
+                    current,
+                    &community,
+                    &event,
+                    content.as_deref(),
+                    revision,
+                    now,
+                )?;
                 Reply::Complete(json!({"saved":true}))
             }
             Request::Read {
@@ -164,6 +179,8 @@ async fn execute(
     })
     .await
     .map_err(|_| "Archive task failed")??;
+    // Best effort: a failed batch leaves rows pending for the next host call.
+    let _ = backfill(identity, backfill_host, viewer.clone()).await;
     match reply {
         Reply::Complete(value) => {
             if read_only && identity.viewer().await? != viewer { return Err("Archive viewer changed".into()); }
@@ -190,6 +207,48 @@ async fn execute(
             Ok(json!({"records":records,"skipped":skipped,"agents":agents,"before":cursor,"revision":revision}))
         }).await
     }
+}
+
+/// Decrypts one batch of this account's metrics saved before v3 stored plaintext.
+/// Other accounts' rows wait until their own key is unlocked.
+async fn backfill(identity: &IdentityHost, archive: ArchiveHost, viewer: String) -> Result<()> {
+    let host = archive.clone();
+    let target = viewer.clone();
+    let rows = tauri::async_runtime::spawn_blocking(move || {
+        let guard = host.0.lock().map_err(|_| "Archive unavailable")?;
+        guard
+            .as_ref()
+            .ok_or("Archive unavailable")?
+            .pending(&target)
+    })
+    .await
+    .map_err(|_| "Archive task failed")??;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let filled = identity
+        .with_key(move |secret, current| {
+            if current != viewer {
+                return Err("Archive viewer changed".into());
+            }
+            Ok(rows
+                .into_iter()
+                .map(|(seq, raw)| {
+                    let content = serde_json::from_str(&raw)
+                        .ok()
+                        .and_then(|event| decode_archive(secret, current, &event, true).ok())
+                        .and_then(|frame| frame["plaintext"].as_str().map(str::to_owned));
+                    (seq, content)
+                })
+                .collect::<Vec<_>>())
+        })
+        .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = archive.0.lock().map_err(|_| "Archive unavailable")?;
+        guard.as_mut().ok_or("Archive unavailable")?.fill(filled)
+    })
+    .await
+    .map_err(|_| "Archive task failed")?
 }
 
 #[cfg(test)]

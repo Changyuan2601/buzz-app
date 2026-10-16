@@ -216,7 +216,9 @@ pub(crate) fn decode_archive(
         || !exact(event, "agent", &event.pubkey)
         || (event.kind == 24200 && !exact(event, "frame", "telemetry"))
         || event.created_at > now + 300
-        || now.saturating_sub(event.created_at) > if history { 90 * 24 * 60 * 60 } else { 300 }
+        // Saved metrics may outlive 90 days; their store retention bounds them.
+        || (!history || event.kind == 24200)
+            && now.saturating_sub(event.created_at) > if history { 90 * 24 * 60 * 60 } else { 300 }
         || event.content.len() < 132
         || event.content.len() > 87472
     {

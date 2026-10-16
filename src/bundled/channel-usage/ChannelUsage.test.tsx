@@ -35,6 +35,7 @@ const host = (records: ArchivePage["records"]): ArchiveHost => ({
     observer: true,
     metrics: true,
     observerDays: 30,
+    metricsDays: 365,
     revision: 1,
     location: "device" as const,
     path: "isolated",

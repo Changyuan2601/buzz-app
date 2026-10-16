@@ -23,6 +23,7 @@ function host(location: "device" | "broker" = "device") {
     observer: true,
     metrics: true,
     observerDays: 30,
+    metricsDays: 365,
     revision: 0,
     location,
     path: `/${location}/events.sqlite3`,
@@ -200,5 +201,38 @@ it("successful clear reports refresh failure without claiming deletion failed", 
     "Records cleared, but archive settings could not be refreshed",
   );
   expect(h.value.clear).toHaveBeenCalledWith(24200);
+  f.dispose();
+});
+it("metrics retention lengthens immediately and confirms before shortening", async () => {
+  const user = userEvent.setup(),
+    h = host(),
+    f = fixture(h.value);
+  render(<ArchiveSettings relay={f.relay} community="Alpha" active />);
+  const control = await screen.findByRole("combobox", {
+    name: "Turn metrics retention",
+  });
+  expect(control).toHaveTextContent("1 year");
+  await user.click(control);
+  await user.click(await screen.findByRole("option", { name: "Forever" }));
+  await waitFor(() =>
+    expect(h.value.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ metricsDays: 0, observerDays: 30 }),
+      expect.anything(),
+    ),
+  );
+  await waitFor(() => expect(control).toHaveTextContent("Forever"));
+  await user.click(control);
+  await user.click(await screen.findByRole("option", { name: "90 days" }));
+  expect(
+    screen.getByText(/deletes turn metrics older than 90 days/),
+  ).toBeVisible();
+  expect(h.value.configure).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Shorten retention" }));
+  await waitFor(() =>
+    expect(h.value.configure).toHaveBeenLastCalledWith(
+      expect.objectContaining({ metricsDays: 90 }),
+      expect.anything(),
+    ),
+  );
   f.dispose();
 });

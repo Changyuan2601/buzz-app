@@ -579,8 +579,11 @@ with a recognized denied channel is hidden as a whole.
 ### Host-owned saved activity
 
 SQLite stores original signed, owner-encrypted envelopes, partitioned by normalized
-community endpoint and viewer public key. It stores no plaintext, decoded channel
-metadata, turn state or private keys; signed metadata (agent/recipient keys and
+community endpoint and viewer public key. Turn metrics (44200) also keep their
+decrypted NIP-AM content so local usage tools can read them (see
+[the metrics table contract](#saved-turn-metrics-contract)). Activity (24200) is
+never stored in plaintext. No decoded channel metadata, turn state or private keys
+are stored; signed metadata (agent/recipient keys and
 event timestamps) remains visible on disk. The native database lives under the
 app-data directory in `archive/events.sqlite3` (`archive-debug` for debug builds).
 The development broker uses `~/.buzz-foundation/dev-archive/events.sqlite3` on the
@@ -595,9 +598,36 @@ that capability:
 - **Activity (24200):** 30-day maximum age by default, configurable from 1–90 days
   (Settings offers 1, 7, 30 and 90); 512 MiB of serialized envelopes per
   viewer/community, with a 128 MiB per-agent limit.
-- **Turn metrics (44200):** independent capture, 90-day maximum age, 64 MiB per
-  viewer/community and 16 MiB per agent. Metrics remain encrypted, unlike classic's
-  plaintext metrics archive. No usage dashboard or arbitrary-subscription UI is added.
+- **Turn metrics (44200):** independent capture, 1-year maximum age by default,
+  configurable as 90 days, 1 year or forever; 1 GiB per viewer/community and a
+  256 MiB per-agent limit, counting the envelope plus its plaintext. That fits about
+  350 turns a day for a year from one agent (~2.1 KB per row). The v3 migration
+  moves the earlier fixed 90-day/64 MiB metrics limits to these defaults.
+  No arbitrary-subscription UI is added.
+
+#### Saved turn metrics contract
+
+External read-only tools (for example `ccusage`) may read saved metrics from the
+archive file above. The contract is schema version 3 (`PRAGMA user_version`):
+
+- Table `archive_events`, rows where `kind = 44200`.
+- `content` (TEXT) holds the NIP-AM event content exactly as decrypted, byte for
+  byte, before any parsing ([NIP-AM](https://github.com/block/buzz/blob/main/docs/nips/NIP-AM.md)
+  defines its fields). `NULL` means not yet decrypted: rows saved before v3 are
+  decrypted in batches of 64 while their account is signed in, so other accounts'
+  rows stay `NULL` until those accounts sign in. `undecryptable = 1` marks a row
+  that failed decoding and will not be retried.
+- `envelope` holds the original signed event JSON, so `content` can be verified
+  against it. `id` is the event ID, `agent` the agent public key, `created` the
+  event `created_at` (seconds), `received` the local save time (seconds), `viewer`
+  the owner public key, and `community` the normalized relay origin.
+- Rows are unique on `(viewer, community, id)`. Retention and byte caps delete
+  rows; readers must not assume history is complete.
+
+A change to these names or meanings increments `user_version`; readers should
+reject versions they do not know. Ingest trusts envelopes supplied by the trusted
+main renderer, so trusted plugin code could plant validly signed rows addressed to
+the owner. Those rows now feed local usage reports as well as display.
 
 Quota totals choose the overflow; indexed oldest-first scans stop after enough
 bytes are found, rather than rescanning retained history. Oldest records are evicted when byte limits are reached, so retention is a maximum
@@ -610,7 +640,8 @@ explicit clear attempts full free-page reclamation after the delete commits.
 Newer schema versions are rejected without downgrade.
 
 Reopening/reloading reads 100-row keyset pages through the key-owning host.
-Historical decode revalidates signatures, exact tags, recipient and retention age,
+Historical decode revalidates signatures, exact tags, recipient and, for
+activity, the 90-day maximum age (metrics age is bounded by their retention),
 without weakening the live five-minute freshness gate. Bad rows are counted and
 skipped without trapping pagination. Live records win event-ID deduplication.
 Restored rows are display-only: they never create working turns or typing evidence.
@@ -618,7 +649,8 @@ Channel-scoped rows need positively known local channel access, including every
 recognized batch child. Access changes immediately re-filter retained rows without
 rewinding pagination. Unknown/capped/suspended membership hides history rather than
 erasing it; positive access can reveal it again. Agent removal and sign-out do not
-erase ciphertext; another account cannot open that partition.
+erase saved rows; another account cannot open that partition in the app, though
+plaintext metrics are readable by anything that can read the archive file.
 
 **Settings → Agents → Saved agent activity** has independent capture switches,
 activity retention and confirmed **Clear activity history** / **Clear turn metrics**

@@ -4,6 +4,8 @@ export type ArchiveSettings = Readonly<{
   observer: boolean;
   metrics: boolean;
   observerDays: number;
+  /** 90, 365, or 0 for no age limit. */
+  metricsDays: number;
   revision: number;
   location: "device" | "broker";
   path: string;
@@ -23,6 +25,7 @@ export type ArchiveRequest =
       observer: boolean;
       metrics: boolean;
       observerDays: number;
+      metricsDays: number;
       revision: number;
     }
   | { action: "read"; kind: 24200 | 44200; agent?: string; before?: number }

@@ -9,9 +9,14 @@ pub(super) struct CaptureSettings {
     pub observer: bool,
     pub metrics: bool,
     pub days: u32,
+    /// 0 keeps metrics until a byte cap or clear removes them.
+    pub metrics_days: u32,
     pub revision: i64,
 }
 type StoredRow = (i64, i64, String);
+/// Metrics kept for a year of a busy agent; see docs/agents.md for the sizing.
+const METRICS_BUDGET: i64 = 1024 * 1024 * 1024;
+const BACKFILL_BATCH: i64 = 64;
 fn database<T>(result: rusqlite::Result<T>) -> Result<T> {
     result.map_err(|_| "Local archive storage failed; retry without deleting the archive".into())
 }
@@ -39,10 +44,11 @@ impl Store {
         // migration, but must never downgrade or otherwise mutate a newer file.
         database(connection.execute_batch("BEGIN IMMEDIATE"))?;
         let version: u32 = database(connection.query_row("PRAGMA user_version", [], |r| r.get(0)))?;
-        if version > 2 {
+        if version > 3 {
             database(connection.execute_batch("ROLLBACK"))?;
             return Err("Archive was created by a newer app".into());
         }
+        // schema.sql is the v2 baseline; every older file then gains v3.
         if version == 0 {
             database(
                 connection.execute_batch(include_str!("../../../src/features/archive/schema.sql")),
@@ -53,8 +59,14 @@ impl Store {
                     .execute_batch(include_str!("../../../src/features/archive/migrate-v2.sql")),
             )?;
         }
+        if version < 3 {
+            database(
+                connection
+                    .execute_batch(include_str!("../../../src/features/archive/migrate-v3.sql")),
+            )?;
+        }
         database(connection.execute_batch(
-            "PRAGMA user_version=2; COMMIT; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;",
+            "PRAGMA user_version=3; COMMIT; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;",
         ))?;
         Ok(Self(connection, 0, path))
     }
@@ -66,7 +78,7 @@ impl Store {
         ))?;
         for (name, days, budget) in [
             ("observer", 30, 512 * 1024 * 1024),
-            ("metrics", 90, 64 * 1024 * 1024),
+            ("metrics", 365, METRICS_BUDGET),
         ] {
             database(self.0.execute("INSERT OR IGNORE INTO archive_subscriptions(viewer,community,name,days,budget) VALUES (?1,?2,?3,?4,?5)",params![viewer,community,name,days,budget]))?;
         }
@@ -82,9 +94,9 @@ impl Store {
     pub(super) fn settings(&self, viewer: &str, community: &str) -> Result<Value> {
         // One statement is one SQLite snapshot: values and CAS revision cannot tear.
         database(self.0.query_row(
-            "SELECT o.enabled,o.days,m.enabled,p.revision,(SELECT COALESCE(SUM(bytes),0) FROM archive_usage WHERE viewer=p.viewer AND community=p.community AND agent='') FROM archive_partitions p JOIN archive_subscriptions o USING(viewer,community) JOIN archive_subscriptions m USING(viewer,community) WHERE p.viewer=?1 AND p.community=?2 AND o.name='observer' AND m.name='metrics'",
+            "SELECT o.enabled,o.days,m.enabled,m.days,p.revision,(SELECT COALESCE(SUM(bytes),0) FROM archive_usage WHERE viewer=p.viewer AND community=p.community AND agent='') FROM archive_partitions p JOIN archive_subscriptions o USING(viewer,community) JOIN archive_subscriptions m USING(viewer,community) WHERE p.viewer=?1 AND p.community=?2 AND o.name='observer' AND m.name='metrics'",
             params![viewer, community],
-            |r| Ok(json!({"observer":r.get::<_,bool>(0)?,"observerDays":r.get::<_,u32>(1)?,"metrics":r.get::<_,bool>(2)?,"revision":r.get::<_,i64>(3)?,"location":"device","path":self.2.to_string_lossy(),"bytes":r.get::<_,i64>(4)?})),
+            |r| Ok(json!({"observer":r.get::<_,bool>(0)?,"observerDays":r.get::<_,u32>(1)?,"metrics":r.get::<_,bool>(2)?,"metricsDays":r.get::<_,u32>(3)?,"revision":r.get::<_,i64>(4)?,"location":"device","path":self.2.to_string_lossy(),"bytes":r.get::<_,i64>(5)?})),
         ))
     }
     pub(super) fn configure(
@@ -98,10 +110,14 @@ impl Store {
             observer,
             metrics,
             days,
+            metrics_days,
             revision,
         } = settings;
         if !(1..=90).contains(&days) {
             return Err("Observer retention must be 1 to 90 days".into());
+        }
+        if !matches!(metrics_days, 0 | 90 | 365) {
+            return Err("Metrics retention must be 90 days, 1 year or forever".into());
         }
         let tx = database(
             self.0
@@ -112,7 +128,7 @@ impl Store {
             return Err("Archive settings changed; reload and retry".into());
         }
         database(tx.execute("UPDATE archive_subscriptions SET enabled=?3, days=?4 WHERE viewer=?1 AND community=?2 AND name='observer'", params![viewer,community,observer,days]))?;
-        database(tx.execute("UPDATE archive_subscriptions SET enabled=?3 WHERE viewer=?1 AND community=?2 AND name='metrics'",params![viewer,community,metrics]))?;
+        database(tx.execute("UPDATE archive_subscriptions SET enabled=?3, days=?4 WHERE viewer=?1 AND community=?2 AND name='metrics'",params![viewer,community,metrics,metrics_days]))?;
         database(tx.commit())?;
         self.1 = 0;
         self.prune(now)?;
@@ -134,7 +150,7 @@ impl Store {
             return Ok(());
         }
         // Across inactive partitions too. Indexed expiry, enforced on every host operation.
-        database(self.0.execute("DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE e.created <= ?1-s.days*86400)",[now]))?;
+        database(self.0.execute("DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE s.days>0 AND e.created <= ?1-s.days*86400)",[now]))?;
         let _ = self.vacuum(64);
         self.1 = now;
         Ok(())
@@ -144,10 +160,14 @@ impl Store {
         viewer: &str,
         community: &str,
         event: &AgentEvent,
+        content: Option<&str>,
         revision: i64,
         now: i64,
     ) -> Result<()> {
         let raw = serde_json::to_string(event).map_err(|_| "Invalid archive envelope")?;
+        // Only NIP-AM metrics are kept in plaintext; observer frames stay ciphertext.
+        let content = content.filter(|_| event.kind == 44200);
+        let bytes = (raw.len() + content.map_or(0, str::len)) as i64;
         let name = if event.kind == 24200 {
             "observer"
         } else {
@@ -167,7 +187,7 @@ impl Store {
         }
         let (enabled, budget): (bool,i64) = database(tx.query_row("SELECT enabled,budget FROM archive_subscriptions WHERE viewer=?1 AND community=?2 AND name=?3",params![viewer,community,name],|r|Ok((r.get(0)?,r.get(1)?))))?;
         if enabled {
-            database(tx.execute("INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![viewer,community,name,event.id,event.pubkey,event.kind,event.created_at as i64,now,raw.len() as i64,raw]))?;
+            database(tx.execute("INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope,content) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![viewer,community,name,event.id,event.pubkey,event.kind,event.created_at as i64,now,bytes,raw,content]))?;
             // Byte quotas, not frame counts. A single agent cannot consume the whole pool.
             for (agent, cap) in [(Some(event.pubkey.as_str()), budget / 4), (None, budget)] {
                 let used: i64 = database(tx.query_row("SELECT bytes FROM archive_usage WHERE viewer=?1 AND community=?2 AND subscription=?3 AND agent=?4",params![viewer,community,name,agent.unwrap_or("")],|r|r.get(0)))?;
@@ -240,7 +260,7 @@ impl Store {
         {
             return Err("Invalid archive page".into());
         }
-        let mut stmt = database(self.0.prepare("SELECT seq,received,envelope FROM archive_events WHERE viewer=?1 AND community=?2 AND kind=?3 AND (?4 IS NULL OR agent=?4) AND (?5 IS NULL OR seq<?5) AND created > strftime('%s','now')-(SELECT days*86400 FROM archive_subscriptions WHERE viewer=?1 AND community=?2 AND name=subscription) ORDER BY seq DESC LIMIT 100"))?;
+        let mut stmt = database(self.0.prepare("SELECT seq,received,envelope FROM archive_events WHERE viewer=?1 AND community=?2 AND kind=?3 AND (?4 IS NULL OR agent=?4) AND (?5 IS NULL OR seq<?5) AND NOT EXISTS(SELECT 1 FROM archive_subscriptions WHERE viewer=?1 AND community=?2 AND name=subscription AND days>0 AND created <= strftime('%s','now')-days*86400) ORDER BY seq DESC LIMIT 100"))?;
         let rows = database(stmt.query_map(
             params![viewer, community, kind, agent, before],
             |r| {
@@ -257,6 +277,23 @@ impl Store {
             result.push((seq, received, raw));
         }
         Ok((result, self.revision(viewer, community)?))
+    }
+    /// Metrics rows saved before plaintext storage, across this account's communities.
+    pub(super) fn pending(&self, viewer: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = database(self.0.prepare("SELECT seq,envelope FROM archive_events WHERE viewer=?1 AND kind=44200 AND content IS NULL AND undecryptable=0 ORDER BY seq LIMIT ?2"))?;
+        let rows = database(stmt.query_map(params![viewer, BACKFILL_BATCH], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        }))?;
+        database(rows.collect())
+    }
+    /// Idempotent: only still-pending rows change. Rows that cannot be decoded
+    /// are marked so they are never retried; their ciphertext stays readable.
+    pub(super) fn fill(&mut self, rows: Vec<(i64, Option<String>)>) -> Result<()> {
+        let tx = database(self.0.transaction())?;
+        for (seq, content) in rows {
+            database(tx.execute("UPDATE archive_events SET content=?2, undecryptable=(?2 IS NULL), bytes=bytes+COALESCE(length(CAST(?2 AS BLOB)),0) WHERE seq=?1 AND content IS NULL AND undecryptable=0", params![seq, content]))?;
+        }
+        database(tx.commit())
     }
 }
 

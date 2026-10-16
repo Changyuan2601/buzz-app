@@ -1,8 +1,10 @@
-// The dev broker owns this database, not the browser. Never store decrypted content.
+// The dev broker owns this database, not the browser. Only NIP-AM metrics
+// (44200) keep decrypted content; observer frames stay ciphertext.
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { getPublicKey } from "nostr-tools";
 import { decodeAgentArchive } from "./agent-observer.mjs";
 
 export const archivePath = () =>
@@ -19,7 +21,7 @@ export function openArchive(path = archivePath()) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const version = db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 2) throw new Error("Archive was created by a newer app");
+    if (version > 3) throw new Error("Archive was created by a newer app");
     if (version === 0) {
       db.exec(
         readFileSync(
@@ -35,7 +37,15 @@ export function openArchive(path = archivePath()) {
         ),
       );
     }
-    db.exec("PRAGMA user_version=2; COMMIT");
+    // schema.sql is the v2 baseline; every older file then gains v3.
+    if (version < 3)
+      db.exec(
+        readFileSync(
+          new URL("../src/features/archive/migrate-v3.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+    db.exec("PRAGMA user_version=3; COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     db.close();
@@ -63,7 +73,7 @@ export function openArchive(path = archivePath()) {
     );
     for (const [name, days, budget] of [
       ["observer", 30, 512 * 1024 * 1024],
-      ["metrics", 90, 64 * 1024 * 1024],
+      ["metrics", 365, 1024 * 1024 * 1024],
     ])
       run(
         "INSERT OR IGNORE INTO archive_subscriptions(viewer,community,name,days,budget) VALUES (?,?,?,?,?)",
@@ -84,7 +94,7 @@ export function openArchive(path = archivePath()) {
   const prune = (force = false) => {
     if (!force && Date.now() < lastPrune + 60_000) return;
     run(
-      "DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE e.created <= ?-s.days*86400)",
+      "DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE s.days>0 AND e.created <= ?-s.days*86400)",
       Math.floor(Date.now() / 1000),
     );
     try {
@@ -97,7 +107,7 @@ export function openArchive(path = archivePath()) {
   const settings = (viewer, community) => {
     // One statement keeps the values and CAS revision on the same snapshot.
     const row = get(
-      "SELECT o.enabled AS observer,o.days,m.enabled AS metrics,p.revision,(SELECT COALESCE(SUM(bytes),0) FROM archive_usage WHERE viewer=p.viewer AND community=p.community AND agent='') AS bytes FROM archive_partitions p JOIN archive_subscriptions o USING(viewer,community) JOIN archive_subscriptions m USING(viewer,community) WHERE p.viewer=? AND p.community=? AND o.name='observer' AND m.name='metrics'",
+      "SELECT o.enabled AS observer,o.days,m.enabled AS metrics,m.days AS metricsDays,p.revision,(SELECT COALESCE(SUM(bytes),0) FROM archive_usage WHERE viewer=p.viewer AND community=p.community AND agent='') AS bytes FROM archive_partitions p JOIN archive_subscriptions o USING(viewer,community) JOIN archive_subscriptions m USING(viewer,community) WHERE p.viewer=? AND p.community=? AND o.name='observer' AND m.name='metrics'",
       viewer,
       community,
     );
@@ -105,11 +115,46 @@ export function openArchive(path = archivePath()) {
       observer: !!row.observer,
       metrics: !!row.metrics,
       observerDays: row.days,
+      metricsDays: row.metricsDays,
       revision: row.revision,
       location: "broker",
       path,
       bytes: row.bytes,
     };
+  };
+  // Decrypts one batch of this account's metrics saved before v3 stored
+  // plaintext. Undecodable rows are marked and never retried.
+  const backfill = (viewer, secret) => {
+    // A key for another account must not mark this account's rows undecodable.
+    if (getPublicKey(secret) !== viewer) return;
+    const rows = db
+      .prepare(
+        "SELECT seq,envelope FROM archive_events WHERE viewer=? AND kind=44200 AND content IS NULL AND undecryptable=0 ORDER BY seq LIMIT 64",
+      )
+      .all(viewer);
+    if (!rows.length) return;
+    transaction(() => {
+      for (const row of rows) {
+        let content = null;
+        try {
+          content = decodeAgentArchive(
+            JSON.parse(row.envelope),
+            secret,
+            viewer,
+            true,
+          ).plaintext;
+        } catch {
+          /* marked undecryptable below */
+        }
+        run(
+          "UPDATE archive_events SET content=?, undecryptable=(? IS NULL), bytes=bytes+? WHERE seq=? AND content IS NULL AND undecryptable=0",
+          content,
+          content,
+          content === null ? 0 : Buffer.byteLength(content),
+          row.seq,
+        );
+      }
+    });
   };
   const kindCheck = (kind) => {
     if (![24200, 44200].includes(kind))
@@ -119,6 +164,11 @@ export function openArchive(path = archivePath()) {
     request(viewer, community, input, secret) {
       seed(viewer, community);
       prune();
+      try {
+        backfill(viewer, secret);
+      } catch {
+        /* Best effort: rows stay pending for the next request. */
+      }
       switch (input.action) {
         case "settings":
           return settings(viewer, community);
@@ -129,6 +179,7 @@ export function openArchive(path = archivePath()) {
             !Number.isInteger(input.observerDays) ||
             input.observerDays < 1 ||
             input.observerDays > 90 ||
+            ![0, 90, 365].includes(input.metricsDays) ||
             !Number.isSafeInteger(input.revision)
           )
             throw new Error("Invalid archive settings");
@@ -149,8 +200,9 @@ export function openArchive(path = archivePath()) {
               community,
             );
             run(
-              "UPDATE archive_subscriptions SET enabled=? WHERE viewer=? AND community=? AND name='metrics'",
+              "UPDATE archive_subscriptions SET enabled=?,days=? WHERE viewer=? AND community=? AND name='metrics'",
               Number(input.metrics),
+              input.metricsDays,
               viewer,
               community,
             );
@@ -194,7 +246,7 @@ export function openArchive(path = archivePath()) {
             throw new Error("Invalid archive page");
           const rows = db
             .prepare(
-              "SELECT seq,received,envelope FROM archive_events WHERE viewer=? AND community=? AND kind=? AND (? IS NULL OR agent=?) AND (? IS NULL OR seq<?) AND created > ?-(SELECT days*86400 FROM archive_subscriptions WHERE viewer=? AND community=? AND name=subscription) ORDER BY seq DESC LIMIT 100",
+              "SELECT seq,received,envelope FROM archive_events WHERE viewer=? AND community=? AND kind=? AND (? IS NULL OR agent=?) AND (? IS NULL OR seq<?) AND NOT EXISTS(SELECT 1 FROM archive_subscriptions WHERE viewer=? AND community=? AND name=subscription AND days>0 AND created <= ?-days*86400) ORDER BY seq DESC LIMIT 100",
             )
             .all(
               viewer,
@@ -204,9 +256,9 @@ export function openArchive(path = archivePath()) {
               input.agent ?? null,
               input.before ?? null,
               input.before ?? null,
-              Math.floor(Date.now() / 1000),
               viewer,
               community,
+              Math.floor(Date.now() / 1000),
             );
           let skipped = 0;
           const records = rows.flatMap((row) => {
@@ -245,7 +297,7 @@ export function openArchive(path = archivePath()) {
       }
     },
     ingest(viewer, community, event, expectedRevision, secret) {
-      decodeAgentArchive(event, secret, viewer);
+      const frame = decodeAgentArchive(event, secret, viewer);
       seed(viewer, community);
       transaction(() => {
         if (revision(viewer, community) !== expectedRevision)
@@ -259,8 +311,9 @@ export function openArchive(path = archivePath()) {
         );
         if (!rule.enabled) return;
         const raw = JSON.stringify(event);
+        const content = event.kind === 44200 ? frame.plaintext : null;
         run(
-          "INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?,?,?,?,?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope,content) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
           viewer,
           community,
           subscription,
@@ -269,8 +322,10 @@ export function openArchive(path = archivePath()) {
           event.kind,
           event.created_at,
           Math.floor(Date.now() / 1000),
-          Buffer.byteLength(raw),
+          Buffer.byteLength(raw) +
+            (content === null ? 0 : Buffer.byteLength(content)),
           raw,
+          content,
         );
         for (const [agent, cap] of [
           [event.pubkey, rule.budget / 4],

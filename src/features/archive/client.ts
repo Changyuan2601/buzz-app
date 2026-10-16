@@ -22,6 +22,7 @@ export function archiveClient(
       !Number.isInteger(settings.observerDays) ||
       settings.observerDays < 1 ||
       settings.observerDays > 90 ||
+      ![0, 90, 365].includes(settings.metricsDays) ||
       !Number.isSafeInteger(settings.revision) ||
       settings.revision < 0 ||
       settings.location !== location ||
@@ -50,6 +51,7 @@ export function archiveClient(
           observer: settings.observer,
           metrics: settings.metrics,
           observerDays: settings.observerDays,
+          metricsDays: settings.metricsDays,
           revision: settings.revision,
         },
         signal,

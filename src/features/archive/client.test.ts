@@ -32,6 +32,7 @@ it("clear refreshes the durable revision before the next native capture", async 
       observer: true,
       metrics: true,
       observerDays: 30,
+      metricsDays: 365,
       revision,
       location: "device",
       path: "/fixture.sqlite3",

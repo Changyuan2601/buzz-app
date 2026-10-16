@@ -86,7 +86,8 @@ export function ArchiveControls({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<24200 | 44200>();
-  const [retention, setRetention] = useState<number>();
+  const [retention, setRetention] =
+    useState<Partial<Pick<Preferences, "observerDays" | "metricsDays">>>();
   const [retry, setRetry] = useState(0);
   const lifetime = useRef<AbortController | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit retry retires the old read and reloads the same host.
@@ -145,9 +146,9 @@ export function ArchiveControls({
             Archive file: <code className="break-all">{settings.path}</code>
             <br />
             This account and community:{" "}
-            {(settings.bytes / 1024 / 1024).toFixed(1)} MiB of encrypted
-            records. SQLite indexes and temporary journal files use additional
-            disk space.
+            {(settings.bytes / 1024 / 1024).toFixed(1)} MiB of saved records.
+            SQLite indexes and temporary journal files use additional disk
+            space.
           </p>
           <SwitchPreferenceRow
             label="Save agent activity"
@@ -158,7 +159,7 @@ export function ArchiveControls({
           />
           <SwitchPreferenceRow
             label="Save agent turn metrics"
-            description="Keep encrypted token and cost records for 90 days, up to 64 MiB per community (16 MiB per agent). A usage dashboard is not included."
+            description="Keep owner-only token and cost records, unencrypted on this device so local usage tools can read them. Activity stays encrypted."
             checked={settings.metrics}
             disabled={busy}
             onCheckedChange={(metrics) => void save({ metrics })}
@@ -178,13 +179,36 @@ export function ArchiveControls({
             ]}
             onValueChange={(value) => {
               const days = Number(value);
-              if (days < settings.observerDays) setRetention(days);
+              if (days < settings.observerDays)
+                setRetention({ observerDays: days });
               else void save({ observerDays: days });
             }}
           />
+          <Select
+            label="Turn metrics retention"
+            value={String(settings.metricsDays)}
+            disabled={busy}
+            groups={[
+              {
+                label: "Maximum age",
+                options: [90, 365, 0].map((days) => ({
+                  value: String(days),
+                  label: metricsAge(days),
+                })),
+              },
+            ]}
+            onValueChange={(value) => {
+              const days = Number(value);
+              const current = settings.metricsDays || Infinity;
+              if ((days || Infinity) < current)
+                setRetention({ metricsDays: days });
+              else void save({ metricsDays: days });
+            }}
+          />
           <p className="text-body-sm text-secondary">
-            Activity is limited to 512 MiB per community and 128 MiB per agent.
-            Oldest records may be removed sooner at the size limit. Shortening
+            Activity is limited to 512 MiB per community and 128 MiB per agent;
+            turn metrics to 1 GiB per community and 256 MiB per agent. Oldest
+            records may be removed sooner at the size limit. Shortening
             retention deletes expired records; turning capture off does not
             delete them. Budgets apply separately to each account and community,
             not to the entire device.
@@ -225,8 +249,16 @@ export function ArchiveControls({
       )}
       {retention !== undefined && (
         <AlertDialog
-          title="Shorten activity retention?"
-          description={`Permanently deletes activity older than ${retention} ${retention === 1 ? "day" : "days"} for this account in ${community}. This cannot be undone.`}
+          title={
+            retention.metricsDays === undefined
+              ? "Shorten activity retention?"
+              : "Shorten turn metrics retention?"
+          }
+          description={`Permanently deletes ${
+            retention.metricsDays === undefined
+              ? `activity older than ${retention.observerDays} ${retention.observerDays === 1 ? "day" : "days"}`
+              : `turn metrics older than ${metricsAge(retention.metricsDays)}`
+          } for this account in ${community}. This cannot be undone.`}
           pending={busy}
           onClose={() => setRetention(undefined)}
           actions={
@@ -238,7 +270,7 @@ export function ArchiveControls({
                 variant="destructive"
                 disabled={busy}
                 onClick={async () => {
-                  await save({ observerDays: retention });
+                  await save(retention);
                   setRetention(undefined);
                 }}
               >
@@ -305,4 +337,7 @@ export function ArchiveControls({
       )}
     </ArchiveCard>
   );
+}
+function metricsAge(days: number) {
+  return days === 0 ? "Forever" : days === 365 ? "1 year" : `${days} days`;
 }

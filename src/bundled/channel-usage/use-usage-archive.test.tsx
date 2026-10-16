@@ -21,6 +21,7 @@ const settings: ArchiveSettings = {
   observer: true,
   metrics: true,
   observerDays: 30,
+  metricsDays: 365,
   revision: 1,
   location: "device",
   path: "isolated",
