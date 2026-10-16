@@ -30,7 +30,9 @@ export type FeedOptions = Readonly<{
   /** The owner's NIP-OA `auth` tag. */
   auth?: readonly string[];
   /** Live events, one batch per event, with the event's channel. Only while
-   * the feed is live: ones heard meanwhile come once it is live again. */
+   * the feed is live: ones heard meanwhile come once it is live again. Those,
+   * and what a request sends before its EOSE, come as a replay, which the
+   * runner takes as it has room. */
   onEvents(batch: LiveBatch): void;
   /** Whether the feed is live now: the relay keeps its subscriptions open. */
   onStatus(live: boolean): void;
@@ -108,7 +110,9 @@ export class AgentFeed {
     // Heard again, as after a reconnect, it waits once.
     const id = batch.events[0]?.id;
     if (this.paused.some((paused) => paused.events[0]?.id === id)) return;
-    this.paused.push(batch);
+    // Given on in a burst, which live delivery would drop past the agent's
+    // room.
+    this.paused.push({ ...batch, replay: true });
     if (this.paused.length > HELD_LIMIT) {
       this.paused.shift();
       this.options.log?.("Dropped an event heard while not listening");
@@ -131,6 +135,8 @@ export class AgentFeed {
     const keys = new Map<string, string>();
     /** The ids the relay has not closed. */
     const open = new Set<string>();
+    /** The ids whose stored events the relay is still sending (no EOSE). */
+    const stored = new Set<string>();
     /** The channels each metadata request settles once the relay has sent
      * what it has (EOSE). */
     const settles = new Map<string, readonly string[]>();
@@ -193,6 +199,7 @@ export class AgentFeed {
       current.set(key, id);
       keys.set(id, key);
       open.add(id);
+      stored.add(id);
       const asked = filter(key);
       if (key.startsWith("metadata:")) settles.set(id, asked["#d"] as string[]);
       send(["REQ", id, asked]);
@@ -270,6 +277,7 @@ export class AgentFeed {
       }
       if (type === "EOSE") {
         const id = String(data[1]);
+        stored.delete(id);
         const key = keys.get(id);
         if (key) {
           retries.delete(key);
@@ -358,6 +366,8 @@ export class AgentFeed {
       const live: LiveBatch = {
         events: [event],
         ...(channelId ? { channelId } : {}),
+        // What it missed, as after a drop: given as it has room.
+        ...(stored.has(String(data[1])) ? { replay: true as const } : {}),
       };
       const held = channelId && this.loading.get(channelId);
       if (!held) {

@@ -195,7 +195,9 @@ export function host(options: HostOptions): () => Promise<void> {
     secret,
     pubkey,
     ...(identity.auth ? { auth: JSON.parse(identity.auth) as string[] } : {}),
-    // The feed gives no replays (`batch.replay`), so `since` filters none.
+    // A replay (what the feed heard while not listening, or what a request
+    // sent before its EOSE) waits for the agent's room; of it, only what
+    // happened since this host started is heard.
     onEvents: (batch) => runners.dispatch(batch, () => true, started),
     onStatus: (now) => {
       if (now === live) return;

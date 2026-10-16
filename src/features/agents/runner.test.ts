@@ -1,6 +1,13 @@
 // AgentRunners through a host other than AgentsService, as the standalone
 // agent host (src/agent-host) gives it: the RunnerHost contract alone.
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from "nostr-tools/pure";
 import { expect, it, vi } from "vitest";
+import { AgentFeed } from "../../agent-host/feed";
+import { FakeSocket } from "../../agent-host/test-socket";
 import type { RelayEvent } from "../relay/events";
 import { createLocalAgentActivity } from "./local-activity";
 import { AgentRunners, type RunnerHost } from "./runner";
@@ -156,4 +163,66 @@ it("releases the agent once its community is no longer live", async () => {
   await vi.waitFor(() =>
     expect(f.custody.release).toHaveBeenCalledWith(pubkey),
   );
+});
+
+it("runs every mention the standalone feed heard while not listening, past the agent's queue", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  try {
+    const f = fixture();
+    const secret = generateSecretKey();
+    const feed = new AgentFeed({
+      relay: "wss://relay.example.test",
+      secret,
+      pubkey: getPublicKey(secret),
+      onEvents: (batch) => f.runners.dispatch(batch, () => true, 0),
+      onStatus: () => {},
+    });
+    feed.start();
+    const socket = FakeSocket.last as FakeSocket;
+    socket.opened();
+    // No login asked for: it subscribes as it is, and has heard the past.
+    await vi.advanceTimersByTimeAsync(2_000);
+    socket.receive(["EOSE", "mentions"]);
+    socket.receive(["EOSE", "rosters"]);
+    // One stream is lost; the mentions stream hears a burst meanwhile.
+    socket.receive(["CLOSED", "rosters", "error: busy"]);
+    // Signed, as the feed checks.
+    const sender = generateSecretKey();
+    const burst = Array.from(
+      { length: 40 },
+      (_, index) =>
+        finalizeEvent(
+          {
+            kind: 9,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["h", "channel"],
+              ["p", pubkey],
+            ],
+            content: `hello ${index}`,
+          },
+          sender,
+        ) as unknown as RelayEvent,
+    );
+    for (const event of burst) socket.receive(["EVENT", "mentions", event]);
+    expect(f.ran).toHaveLength(0);
+    // Listening again: the burst waits for room rather than overflow.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      f.runners.tick();
+      expect(f.ran).toHaveLength(burst.length);
+    });
+    expect(
+      new Set(
+        f.ran.map(
+          (delivery) => (delivery.trigger as { event: RelayEvent }).event.id,
+        ),
+      ),
+    ).toEqual(new Set(burst.map((event) => event.id)));
+    feed.stop();
+  } finally {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
 });
