@@ -1,1 +1,7 @@
-{ "id": "buzz.canvas", "name": "Canvas", "apiVersion": 1 }
+{
+  "id": "buzz.canvas",
+  "name": "Canvas",
+  "apiVersion": 1,
+  "description": "Edit a channel's shared Markdown document.",
+  "discovery": { "category": "productivity" }
+}
