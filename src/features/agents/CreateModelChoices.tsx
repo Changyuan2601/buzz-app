@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
 
@@ -16,7 +15,6 @@ export function CreateModelChoices({
   disabled,
   error,
   retry,
-  action,
 }: {
   modelAppearance?: "subtle";
   models: readonly ModelChoice[];
@@ -30,9 +28,6 @@ export function CreateModelChoices({
   disabled: boolean;
   error?: string;
   retry?: () => void;
-  /** A control of the type's own after the field, such as one that opens its
-   * setup. */
-  action?: ReactNode;
 }) {
   return (
     <>
@@ -50,7 +45,6 @@ export function CreateModelChoices({
             Try again
           </Button>
         )}
-        {action}
       </div>
       {error && (
         <span role="alert" className="text-body-sm text-danger">

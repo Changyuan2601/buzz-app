@@ -172,11 +172,12 @@ async function choose(label: string, option: string) {
   await user.click(await screen.findByRole("option", { name: option }));
 }
 
+const modelButton = () =>
+  screen.getByRole("button", { name: /^(Pi default|Choose a|GPT X)/ });
+
 /** Opens the provider dialog from the Model field. */
 async function openChoices() {
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Provider…" }));
+  await userEvent.setup().click(modelButton());
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
@@ -184,10 +185,12 @@ it("starts New agent's Model field on Pi's default, with the provider kept to it
   created();
   expect(screen.queryByRole("combobox", { name: "Model provider" })).toBeNull();
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Pi default (Anthropic · claude-x)",
+    expect(modelButton()).toHaveTextContent(
+      "Pi default (Anthropic · Claude X)",
     ),
   );
+  // Pi's mark, then the provider's.
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
   expect(screen.getByLabelText("Instructions")).toBeVisible();
 });
 
@@ -202,7 +205,15 @@ it("saves a provider's key with Pi's login, needs a model for it, and tests it",
   );
   expect(within(dialog).getByText("Anthropic is set up in Pi.")).toBeVisible();
 
-  await choose("Model provider", "OpenAI");
+  // Providers Buzz has a mark for show it.
+  await user.click(
+    within(dialog).getByRole("combobox", { name: "Model provider" }),
+  );
+  const anthropic = await screen.findByRole("option", { name: /^Anthropic/ });
+  expect(anthropic.querySelector("svg")).not.toBeNull();
+  const copilot = screen.getByRole("option", { name: "GitHub Copilot" });
+  expect(copilot.querySelector("svg")).toBeNull();
+  await user.click(screen.getByRole("option", { name: "OpenAI" }));
   const key = await within(dialog).findByLabelText("API key");
   expect(key).toHaveAttribute("type", "password");
   await user.type(key, "sk-test");
@@ -241,11 +252,8 @@ it("saves a provider's key with Pi's login, needs a model for it, and tests it",
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "GPT X",
-    ),
-  );
+  await waitFor(() => expect(modelButton()).toHaveTextContent("GPT X"));
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
 });
 
 it("sends a provider that signs in without a key to the pi command", async () => {
@@ -289,7 +297,8 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "databricks isn't built into Pi, so Buzz can't use it",
   );
-  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  // Only Pi's mark: Buzz has none for this provider.
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(1);
   const dialog = await openChoices();
   const provider = within(dialog).getByRole("combobox", {
     name: "Model provider",

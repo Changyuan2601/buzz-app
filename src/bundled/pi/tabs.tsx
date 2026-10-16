@@ -10,7 +10,6 @@ import {
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
-import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
@@ -22,6 +21,12 @@ import type {
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
+import {
+  ClaudeLogoIcon,
+  type DefinedIcon,
+  OpenAILogoIcon,
+  PiLogoIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -61,6 +66,17 @@ const SCOPES = [
 ];
 
 type Choice = Readonly<{ provider: string; model: string }>;
+
+/** Marks for the providers Buzz has one for, by Pi's provider ID. */
+const PROVIDER_ICONS: ReadonlyMap<string, DefinedIcon> = new Map([
+  ["anthropic", ClaudeLogoIcon],
+  ["openai", OpenAILogoIcon],
+]);
+/** The provider's mark, or undefined for one without a mark. */
+const providerIcon = (id: string | undefined) => {
+  const Icon = id ? PROVIDER_ICONS.get(id) : undefined;
+  return Icon && <Icon size={18} aria-hidden="true" />;
+};
 const CONVERSATION_LIMIT = 30;
 const label = ({ channelId, name, root }: Place) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
@@ -132,6 +148,19 @@ const levelsOf = (
   models?.find(
     (model) => model.id === (choice.model || defaultModel(choice, defaults)),
   )?.thinking;
+/** The saved thinking level once `next` is chosen: kept while its model has
+ * it, else Pi's. `models` are `current`'s provider's; another provider's
+ * aren't read yet. */
+const effortAfter = (
+  current: Config,
+  next: Choice,
+  defaults: Providers["defaults"] | undefined,
+  models: readonly PiModel[] | undefined,
+) => {
+  const levels =
+    next.provider === current.provider ? levelsOf(next, defaults, models) : [];
+  return !levels || levels.includes(current.effort) ? current.effort : "";
+};
 
 export function createTabs({
   setup,
@@ -176,6 +205,7 @@ export function createTabs({
           label="Model provider"
           variant={rows ? "preference" : "field"}
           value={value.provider}
+          leading={providerIcon(id)}
           {...(rows && !value.provider && fallback
             ? { valueLabel: named(fallback) }
             : {})}
@@ -209,6 +239,7 @@ export function createTabs({
                 ...(providers?.providers ?? []).map((item) => ({
                   value: item.id,
                   label: item.name,
+                  leading: providerIcon(item.id),
                   ...(item.configured ? { description: "Set up" } : {}),
                 })),
               ],
@@ -466,78 +497,94 @@ export function createTabs({
     );
   }
 
-  /** The agent's model in New agent and on its library card: its provider's
-   * models, and the provider dialog to set up, test and use another. */
+  /** The agent's model in New agent and on its library card, marked with Pi
+   * and its provider. It opens the provider dialog to set up, test and use
+   * another provider or model. */
   function CreateModel({
     config,
     onChange,
-    ...props
+    disabled,
+    modelAppearance,
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
     const [listing, reload] = useRead(() => setup.providers(), "providers");
     const [choosing, setChoosing] = useState(false);
     const providers = listing.value;
     const id = current.provider || providers?.defaults.provider || "";
-    const [models, retryModels] = useRead(
+    const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
       id,
     );
     const unknown = unknownProvider(current, providers);
     const fallback = defaultModel(current, providers?.defaults);
-    const named = providers?.providers.find((item) => item.id === id)?.name;
+    const named = (model: string) =>
+      models.value?.find((item) => item.id === model)?.label ?? model;
+    const provider =
+      providers?.providers.find((item) => item.id === id)?.name ?? id;
+    const label = current.model
+      ? named(current.model)
+      : fallback
+        ? `Pi default (${provider} · ${named(fallback)})`
+        : !providers
+          ? "Pi default"
+          : id
+            ? "Choose a model"
+            : "Choose a provider";
+    const mark = providerIcon(id);
+    const error =
+      listing.status === "error"
+        ? listing.error
+        : unknown && `${unknown} isn't built into Pi, so Buzz can't use it`;
     return (
       <>
-        <CreateModelChoices
-          {...props}
-          models={models.value ?? []}
-          value={current.model}
-          includeDefault={Boolean(fallback)}
-          defaultLabel={
-            fallback
-              ? `Pi default (${[named ?? id, fallback].join(" · ")})`
-              : id
-                ? "Choose a model"
-                : "Choose a provider"
-          }
-          loading={
-            (listing.status === "loading" && !providers) ||
-            models.status === "loading"
-          }
-          // A provider list that failed leaves no provider to choose from.
-          disabled={
-            props.disabled ||
-            Boolean(unknown) ||
-            (listing.status === "ready" && !id)
-          }
-          {...(listing.status === "error"
-            ? { error: listing.error, retry: reload }
-            : unknown
-              ? {
-                  error: `${unknown} isn't built into Pi, so Buzz can't use it`,
-                }
-              : models.status === "error"
-                ? {
-                    error: `Could not list models: ${models.error}`,
-                    retry: retryModels,
-                  }
-                : {})}
-          onChange={(model) => onChange({ ...current, model })}
-          action={
-            <Button
-              size="sm"
-              disabled={props.disabled}
-              onClick={() => setChoosing(true)}
-            >
-              Provider…
-            </Button>
-          }
-        />
+        {/* The compact select recipe ellipsizes long model names in cards. */}
+        <div className="buzz-select" data-variant="compact">
+          <Button
+            size="sm"
+            variant={modelAppearance === "subtle" ? "subtle" : "outline"}
+            disabled={disabled}
+            onClick={() => setChoosing(true)}
+          >
+            <span className="buzz-select-value-content">
+              <span className="buzz-select-leading" aria-hidden="true">
+                <PiLogoIcon size={18} />
+              </span>
+              {mark && (
+                <span className="buzz-select-leading" aria-hidden="true">
+                  {mark}
+                </span>
+              )}
+              <span className="buzz-select-value" title={label}>
+                {label}
+              </span>
+            </span>
+          </Button>
+        </div>
+        {error && (
+          <span role="alert" className="text-body-sm text-danger">
+            {error}
+          </span>
+        )}
+        {listing.status === "error" && (
+          <Button size="sm" disabled={disabled} onClick={reload}>
+            Try again
+          </Button>
+        )}
         {choosing && (
           <ChooseDialog
             value={current}
             onClose={() => setChoosing(false)}
             onChange={(choice) => {
-              onChange({ ...current, ...choice });
+              onChange({
+                ...current,
+                ...choice,
+                effort: effortAfter(
+                  current,
+                  choice,
+                  providers?.defaults,
+                  models.value,
+                ),
+              });
               setChoosing(false);
             }}
           />
@@ -813,20 +860,13 @@ export function createTabs({
               <ProviderFields
                 rows
                 value={draft}
-                onChange={(choice) => {
-                  // A level the new model doesn't have goes back to Pi's;
-                  // another provider's models aren't read yet.
-                  const next =
-                    choice.provider === draft.provider
-                      ? levelsOf(choice, defaults, models.value)
-                      : [];
+                onChange={(choice) =>
                   setDraft({
                     ...draft,
                     ...choice,
-                    effort:
-                      !next || next.includes(draft.effort) ? draft.effort : "",
-                  });
-                }}
+                    effort: effortAfter(draft, choice, defaults, models.value),
+                  })
+                }
                 listing={listing}
                 reload={reload}
               />

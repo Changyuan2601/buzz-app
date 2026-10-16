@@ -27,12 +27,13 @@ installs work.
    the `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json`, as
    the `pi` command sets them. The first time Buzz asks Pi anything, it
    installs Pi's packages (a few seconds).
-2. Click **Provider…** beside the model and choose a provider. A provider Pi
-   has no key for shows an **API key** field; **Save to Pi** stores it in
+2. Click the model (marked with Pi, and with the provider when Buzz has its
+   mark) and choose a provider. A provider Pi has no key for shows an
+   **API key** field; **Save to Pi** stores it in
    `~/.pi/agent/auth.json`, shared with the `pi` command. A provider that signs
    in some other way (OAuth, cloud credentials) says to run `pi`, then `/login`.
    Choose a model, click **Test connection**, then **Use**. Name the agent and
-   click **Create agent**.
+   click **Create agent**. Its library card shows the same control.
 3. Open the agent. Its **Identity** tab has the **Model provider**, **Model**,
    **Thinking** level (Pi's default, or one the model has) and
    **Instructions**. Its **Settings** tab has the provider's key with **Test
