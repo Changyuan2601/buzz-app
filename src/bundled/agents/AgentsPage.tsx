@@ -168,10 +168,12 @@ export function AgentsPage({
   const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
-  // Only a team still saved, or one being made, keeps its editor open.
+  // Only a team still saved, one being made, or an unfinished change keeps
+  // its editor open.
   const editing =
     editingTeam === "new" ||
-    snapshot.teams.some((team) => team.id === editingTeam)
+    snapshot.teams.some((team) => team.id === editingTeam) ||
+    snapshot.teamChanges?.some((change) => change.id === editingTeam)
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -1291,22 +1293,31 @@ function Teams({
   archived: readonly Team[];
   /** Team changes not finished on the relay. */
   changes: readonly TeamChangeView[];
-  /** A team's id while it is edited, or "new" for one being made. */
+  /** A team's id while it is edited, "new" for one being made, or an
+   * unfinished change's id whose team has no card. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
   newTeam: ReactNode;
 }) {
   const team = teams.find((item) => item.id === editing);
-  if (editing === "new" || team)
+  const submission = changes.find((change) => change.id === editing);
+  if (editing === "new" || team || submission)
     return (
       <TeamEditor
         key={editing}
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
-        changes={changes.filter((change) => change.teamId === team?.id)}
+        {...(submission ? { submission } : {})}
+        changes={changes}
         onDone={() => onEdit(undefined)}
       />
+    );
+  const open = (change: TeamChangeView) =>
+    onEdit(
+      teams.some((item) => item.id === change.teamId)
+        ? change.teamId
+        : change.id,
     );
   const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
@@ -1324,8 +1335,9 @@ function Teams({
                 <TeamCard
                   name={item.name}
                   note={
-                    item.note ??
-                    (item.unfinished ? "Unfinished change" : undefined)
+                    [item.note, item.unfinished && "Unfinished change"]
+                      .filter(Boolean)
+                      .join(" · ") || undefined
                   }
                   aria-label={item.name}
                   members={item.members.flatMap((pubkey) => {
@@ -1346,7 +1358,12 @@ function Teams({
           <InlineHeader title="Unfinished changes" />
           <ul className={styles.portList}>
             {changes.map((change) => (
-              <TeamChangeRow key={change.id} agents={agents} change={change} />
+              <TeamChangeRow
+                key={change.id}
+                agents={agents}
+                change={change}
+                onOpen={() => open(change)}
+              />
             ))}
           </ul>
         </section>
@@ -1414,9 +1431,12 @@ const CHANGE_KIND: Record<TeamChangeView["kind"], string> = {
 function TeamChangeRow({
   agents,
   change,
+  onOpen,
 }: {
   agents: Agents;
   change: TeamChangeView;
+  /** Opens the change's team, or its saved submission, in the editor. */
+  onOpen?: () => void;
 }) {
   const [pending, setPending] = useState<TeamChangeAction>();
   const [error, setError] = useState("");
@@ -1456,6 +1476,16 @@ function TeamChangeRow({
           </span>
         )}
       </span>
+      {onOpen && !lifecycle && (
+        <Button
+          size="compact"
+          variant="outline"
+          disabled={!!pending}
+          onClick={onOpen}
+        >
+          Open
+        </Button>
+      )}
       {actions.map(
         ([action, label, shown]) =>
           shown && (
@@ -1479,25 +1509,33 @@ function TeamEditor({
   agents,
   saved,
   team,
+  submission,
   changes,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
-  /** This team's unfinished changes, with their status and actions. */
+  /** An unfinished change whose team has no card: the form opens on what
+   * it saved, and edits here stay unsaved until Save. */
+  submission?: TeamChangeView;
+  /** Unfinished changes; the form shows its own team's. */
   changes: readonly TeamChangeView[];
   onDone(): void;
 }) {
-  const [name, setName] = useState(team?.name ?? "");
-  const [instructions, setInstructions] = useState(team?.instructions ?? "");
+  const shown = team ?? submission;
+  const [name, setName] = useState(shown?.name ?? "");
+  const [instructions, setInstructions] = useState(shown?.instructions ?? "");
   const [members, setMembers] = useState<readonly string[]>(
-    team?.members ?? [],
+    shown?.members ?? [],
   );
   // The head this form opened; a later remote edit makes Save a conflict.
   const [base] = useState(team?.base);
   // This form's id: Save again revises the same change (a new team's id).
-  const [creation] = useState(() => crypto.randomUUID());
+  const [creation] = useState(() => submission?.teamId ?? crypto.randomUUID());
+  const own = changes.filter(
+    (change) => change.teamId === (team?.id ?? creation),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const act = async (work: () => Promise<unknown>) => {
@@ -1585,10 +1623,10 @@ function TeamEditor({
           <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
         )}
       </Section>
-      {changes.length > 0 && (
+      {own.length > 0 && (
         <Section title="Unfinished changes">
           <ul className={styles.portList}>
-            {changes.map((change) => (
+            {own.map((change) => (
               <TeamChangeRow key={change.id} agents={agents} change={change} />
             ))}
           </ul>

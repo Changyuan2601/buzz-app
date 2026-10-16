@@ -1,5 +1,6 @@
-// Team changes through the relay: one saved record per change, run by one
-// queue per team. A record holds at most one signed revision whose outcome is
+// Team changes through the relay: one saved record per change. Steps are not
+// queued: each re-reads its record after every await and persists command
+// uncertainty before dispatch, so the team fence orders them. A record holds at most one signed revision whose outcome is
 // unknown, and member and lifecycle commands persisted before they are sent.
 // Nothing whose outcome is unknown is sent again automatically; only a fresh
 // read resolves it. Dormant until config sync ships.
@@ -218,7 +219,8 @@ export type RunnerDeps = Readonly<{
   ops: TeamOps;
   owner: string;
   community: string;
-  /** A record finished; it is already removed. */
+  /** A record is about to be removed: finished, dismissed or replaced.
+   * Whatever it alone still holds is committed here; throwing keeps it. */
   done(op: TeamOp): void;
   /** Records changed, so the owner's view re-reads them. */
   changed(): void;
@@ -231,7 +233,6 @@ const LIFECYCLE: Partial<Record<OpKind, "archive" | "unarchive">> = {
 
 export function teamRunner(deps: RunnerDeps) {
   const { ops, channels, signal } = deps;
-  const tails = new Map<string, Promise<unknown>>();
 
   const mine = () => ops.all(deps.owner, deps.community);
   const onTeam = (teamId: string) =>
@@ -239,17 +240,6 @@ export function teamRunner(deps: RunnerDeps) {
   /** An unknown outcome on the team, in a record other than `except`. */
   const fenced = (teamId: string, except: string) =>
     onTeam(teamId).some((op) => op.id !== except && unresolved(op));
-
-  function queue<T>(teamId: string, work: () => Promise<T>): Promise<T> {
-    const tail = tails.get(teamId) ?? Promise.resolve();
-    const run = tail.then(work);
-    const settled = run.catch(() => {});
-    tails.set(teamId, settled);
-    void settled.then(() => {
-      if (tails.get(teamId) === settled) tails.delete(teamId);
-    });
-    return run;
-  }
 
   /** Persists `changes` and reports them. */
   function put(changes: Readonly<Record<string, TeamOp | undefined>>) {
@@ -264,9 +254,12 @@ export function teamRunner(deps: RunnerDeps) {
         changes[op.id] = { ...op, mode: "reconcile-only", stop };
     if (Object.keys(changes).length) put(changes);
   }
+  /** Seeing an archive stops save and member intent only. A lifecycle record
+   * is never auto-stopped: Recover exists to act on an archived team, and
+   * its step decides from the metadata it reads, not from `mode`. */
   const intentKinds = (op: TeamOp) => !LIFECYCLE[op.kind];
 
-  /** Stores a new change, queued behind the team's earlier ones. A Delete
+  /** Stores a new change. A Delete
    * stops every older record on the team in the same write. */
   function submit(
     input: Pick<TeamOp, "kind" | "teamId" | "intent"> &
@@ -296,33 +289,37 @@ export function teamRunner(deps: RunnerDeps) {
     return op;
   }
 
-  /** One step of record `id`, queued on its team. Resolves with the record
+  /** One step of record `id`. Resolves with the record
    * as it stands after, or undefined once it is done. */
   function run(id: string) {
-    const op = ops.get(id);
-    if (!op) return Promise.resolve(undefined);
-    return queue(op.teamId, () => step(id));
+    return step(id);
   }
 
   async function step(id: string): Promise<TeamOp | undefined> {
     let op = ops.get(id);
     if (!op || op.owner !== deps.owner || op.community !== deps.community)
       return op;
+    /** The durable record after an await: a Delete, Discard or Dismiss
+     * meanwhile wins over what this step read before. */
+    const fresh = () => {
+      op = ops.get(id) as TeamOp | undefined;
+      return op;
+    };
     const save = (next: TeamOp) => {
       put({ [id]: next });
       op = next;
       return next;
     };
     /** The durable record, if it may still send: re-read before every
-     * dispatch, so a Delete queued meanwhile stops the next command. */
+     * dispatch, so a Delete submitted meanwhile stops the next command. */
     const live = () => {
       const now = ops.get(id);
       return now?.mode === "may-send" ? now : undefined;
     };
     const finish = () => {
       const last = ops.get(id) as TeamOp;
-      put({ [id]: undefined });
       deps.done(last);
+      put({ [id]: undefined });
       return undefined;
     };
 
@@ -334,14 +331,14 @@ export function teamRunner(deps: RunnerDeps) {
     } catch {
       return op;
     }
+    if (!fresh()) return undefined;
     if (op.channel && found?.id !== op.channel) {
       // Discovery selects another channel now (or none): never send here.
       if (op.mode === "may-send")
         save({ ...op, mode: "reconcile-only", stop: "scope" });
       return op;
     }
-    if (found?.archived && intentKinds(op))
-      stopAll(op.teamId, "archived", intentKinds);
+    if (found?.archived) stopAll(op.teamId, "archived", intentKinds);
     op = ops.get(id) as TeamOp;
 
     if (LIFECYCLE[op.kind]) return lifecycle(op, found?.id, save, live, finish);
@@ -356,9 +353,9 @@ export function teamRunner(deps: RunnerDeps) {
           signal,
         );
       } catch (error) {
-        return save({ ...op, error: message(error) });
+        return fresh() && save({ ...op, error: message(error) });
       }
-      if (found.archived) return op;
+      if (!fresh() || found.archived) return op;
     }
     const channel = found.id;
     if (op.channel !== channel) save({ ...op, channel });
@@ -366,6 +363,7 @@ export function teamRunner(deps: RunnerDeps) {
       await deps.sync
         .bind([{ family: "team-config", subject: op.teamId, channel }])
         .catch(() => {});
+    if (!fresh()) return undefined;
 
     // Member results resolve from the roster even when the team's record
     // can't be read.
@@ -400,17 +398,25 @@ export function teamRunner(deps: RunnerDeps) {
     try {
       head = await readHead(deps.read, channel, expected.d, signal);
     } catch {
-      return op;
+      return fresh() && settleProof(op, channel, save);
     }
+    if (!fresh()) return undefined;
     const checked = head && checkedHead(head, expected);
     if (checked) deps.store.applyRead(subject, capture, checked);
-    if (checked?.problem) return op;
-    // An empty read proves nothing about an existing team.
-    if (!head && op.kind === "edit") return op;
+    if (checked?.problem) return settleProof(op, channel, save);
+    // An empty read proves nothing about an existing team: only a first
+    // create may proceed without a current head.
+    if (!head && (op.kind === "edit" || op.base || op.confirmedHead))
+      return settleProof(op, channel, save);
 
     // Our own save is current: confirmed, held bytes dropped, one write.
     if (head && op.candidate?.event.id === head.id) {
       const { candidate: _, error: __, ...rest } = op;
+      save({ ...rest, confirmedHead: head.id });
+    }
+    // A revision proven stored earlier is current now: the same.
+    if (head && op.accepted === head.id) {
+      const { accepted: _, error: __, ...rest } = op;
       save({ ...rest, confirmedHead: head.id });
     }
     // Import and move adopt a team that already exists, pinning its head.
@@ -483,21 +489,31 @@ export function teamRunner(deps: RunnerDeps) {
     channel: string,
     save: (next: TeamOp) => TeamOp,
   ) {
-    let next: TeamOp = {
-      ...op,
+    const now = (await settleProof(op, channel, save)) ?? op;
+    return save({
+      ...now,
       mode: "reconcile-only",
-      stop: op.stop ?? "conflict",
-    };
-    if (op.candidate) {
-      const proven =
-        op.candidate.accepted ||
-        (await stored(op.candidate.event.id, channel).catch(() => false));
-      if (proven) {
-        const { candidate: _, ...rest } = next;
-        next = { ...rest, accepted: op.candidate.event.id };
-      }
-    }
-    return save(next);
+      stop: now.stop ?? "conflict",
+    });
+  }
+
+  /** Ends a held revision's uncertainty from proof it was stored, the
+   * relay's acceptance or a by-id read, apart from whether the head can be
+   * read. Grants no currency: `accepted`, never `confirmedHead`. */
+  async function settleProof(
+    op: TeamOp,
+    channel: string,
+    save: (next: TeamOp) => TeamOp,
+  ) {
+    const held = op.candidate;
+    if (!held) return op;
+    const proven =
+      held.accepted ||
+      (await stored(held.event.id, channel).catch(() => false));
+    const now = ops.get(op.id);
+    if (!proven || now?.candidate?.event.id !== held.event.id) return now;
+    const { candidate: _, ...rest } = now;
+    return save({ ...rest, accepted: held.event.id });
   }
 
   /** A relay-only lookup of one revision by id. */
@@ -574,28 +590,34 @@ export function teamRunner(deps: RunnerDeps) {
   ): Promise<TeamOp | undefined> {
     if (!roster || !start.channel) return start;
     const channel = start.channel;
+    // What this step's roster still lacks for the latest intent. Confirmed
+    // history proves nothing about today; unknown outcomes stay as fences.
     const want = new Set(start.intent.members);
-    const keep = start.commands.filter(
-      (c) =>
-        c.state === "maybe-sent" ||
-        c.state === "confirmed" ||
-        (c.action === "add") === want.has(c.pubkey ?? ""),
-    );
-    const listed = new Set(keep.map((c) => `${c.action} ${c.pubkey}`));
-    const plan: Command[] = [];
+    const wanted: Command[] = [];
     for (const pubkey of want)
-      if (!roster.has(pubkey) && !listed.has(`add ${pubkey}`))
-        plan.push({ action: "add", pubkey, state: "planned" });
+      if (!roster.has(pubkey))
+        wanted.push({ action: "add", pubkey, state: "planned" });
     if (start.kind === "edit")
       for (const pubkey of roster)
         if (
           pubkey !== deps.owner &&
           !want.has(pubkey) &&
-          !listed.has(`remove ${pubkey}`) &&
           (await channels.owns(pubkey, signal).catch(() => false))
         )
-          plan.push({ action: "remove", pubkey, state: "planned" });
-    let op = save({ ...start, commands: [...keep, ...plan] });
+          wanted.push({ action: "remove", pubkey, state: "planned" });
+    const now = live();
+    if (!now) return ops.get(start.id);
+    const prior = (c: Command) =>
+      now.commands.find((p) => p.action === c.action && p.pubkey === c.pubkey);
+    const commands = [
+      ...now.commands.filter((c) => c.state === "maybe-sent"),
+      ...wanted.flatMap((c) => {
+        const was = prior(c);
+        if (was?.state === "maybe-sent") return [];
+        return [was?.state === "refused" ? was : c];
+      }),
+    ];
+    let op = save({ ...now, commands });
     if (op.commands.some((c) => c.state === "maybe-sent")) return op;
     for (const [index, command] of op.commands.entries()) {
       if (command.state === "confirmed" || !command.pubkey) continue;
@@ -655,14 +677,18 @@ export function teamRunner(deps: RunnerDeps) {
       if (archived) stopAll(op.teamId, "archived", intentKinds);
       return archived === archive;
     };
+    let reached: boolean;
     try {
-      if (await settled()) return finish();
+      reached = await settled();
     } catch {
       return op;
     }
+    // An earlier command whose outcome is unknown may still land: neither
+    // complete nor dispatch until it resolves.
+    if (fenced(op.teamId, op.id)) return ops.get(op.id);
+    if (reached) return finish();
     const [command] = op.commands;
     if (!command || command.state === "maybe-sent") return op;
-    if (fenced(op.teamId, op.id)) return op;
     const now = live();
     if (!now) return op;
     const state = (s: CommandState, error?: string) =>
@@ -682,7 +708,7 @@ export function teamRunner(deps: RunnerDeps) {
       return state("maybe-sent", message(error));
     }
     try {
-      if (await settled()) return finish();
+      if ((await settled()) && !fenced(op.teamId, op.id)) return finish();
     } catch {
       /* Unread: the fence stays. */
     }
@@ -722,6 +748,7 @@ export function teamRunner(deps: RunnerDeps) {
       if (!op) return;
       if (op.mode === "may-send" || unresolved(op))
         throw new Error("This change still has unconfirmed steps");
+      deps.done(op);
       put({ [id]: undefined });
     },
     /** A stopped change submitted again from the current head; it waits
@@ -745,6 +772,7 @@ export function teamRunner(deps: RunnerDeps) {
         seq: ops.nextSeq(),
         ...(old.channel ? { channel: old.channel } : {}),
       };
+      deps.done(old);
       put({ [old.id]: undefined, [op.id]: op });
       return { op, done: run(op.id) };
     },

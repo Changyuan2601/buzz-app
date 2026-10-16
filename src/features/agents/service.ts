@@ -636,8 +636,10 @@ export type TeamChangeView = Readonly<{
   id: string;
   teamId: string;
   kind: TeamOp["kind"];
-  /** The team's name as submitted. */
+  /** The team as submitted. */
   name: string;
+  instructions: string;
+  members: readonly string[];
   problem: string;
   /** Whether automatic work stopped: it waits for Resubmit or Dismiss. */
   stopped: boolean;
@@ -2429,6 +2431,8 @@ export class AgentsService extends Service implements Agents {
               teamId: op.teamId,
               kind: op.kind,
               name: op.intent.name,
+              instructions: op.intent.instructions,
+              members: op.intent.members,
               problem: teamOpProblem(op),
               stopped: op.mode === "reconcile-only",
               unresolved: unresolved(op),

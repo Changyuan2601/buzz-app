@@ -62,6 +62,7 @@ import {
   teamCommunity,
 } from "./team-config";
 import {
+  established,
   type RunnerDeps,
   type TeamIntent,
   type TeamOp,
@@ -336,8 +337,15 @@ export function agentConfigs(
     owner,
     community,
     done(op) {
+      // A move whose relay team holds the prompt retires its local row
+      // first: if that can't be saved, the record and its handover stay.
+      const target = teams?.find((team) => team.id === op.teamId);
+      if (
+        op.local &&
+        (established(op) || target?.archived || target?.unreadable)
+      )
+        input.retire(op.local);
       if (op.confirmedHead) finishedAt.set(op.id, op.confirmedHead);
-      if (op.local) input.retire(op.local);
     },
     changed: () => input.changed(),
   });

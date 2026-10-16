@@ -1262,6 +1262,8 @@ it("shows an unfinished team change on its card, in the Teams tab and in its edi
         teamId: "team-1",
         kind: "edit",
         name: "Core",
+        instructions: "",
+        members: [],
         problem: "This team changed on another device.",
         stopped: true,
         unresolved: false,
@@ -1293,6 +1295,8 @@ it("waits to offer Dismiss until nothing in a stopped change is unconfirmed", as
         teamId: "team-1",
         kind: "delete",
         name: "",
+        instructions: "",
+        members: [],
         problem: "Some steps may have been saved; Check again confirms them.",
         stopped: true,
         unresolved: true,
@@ -2043,4 +2047,96 @@ it("announces the default agent and presents its menu status without a fake togg
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).getByText("Default agent")).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});
+
+it("keeps a pending Create's status and Check again in the new-team editor that is still open", async () => {
+  const user = userEvent.setup();
+  const changes: NonNullable<AgentsSnapshot["teamChanges"]>[number][] = [];
+  const { agents, show } = setup([], { teamChanges: changes });
+  agents.saveTeam.mockImplementationOnce(async (change: TeamChange) => {
+    changes.push({
+      id: "pending-create",
+      teamId: change.creation as string,
+      kind: "create",
+      name: "Pending",
+      instructions: "",
+      members: [],
+      problem: "Some steps may have been saved",
+      stopped: false,
+      unresolved: true,
+    });
+    show([]);
+    throw new Error("Some steps may have been saved");
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Pending");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Some steps may have been saved",
+  );
+  expect(
+    screen.getByRole("listitem", { name: "Create: Pending" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Check again" }),
+  ).toBeInTheDocument();
+});
+
+it("reopens a change whose team has no card on what it saved, keeping edits apart until Save", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-gone",
+        kind: "create",
+        name: "Lost",
+        instructions: "SAVED RULE",
+        members: [],
+        problem: "This team changed on another device.",
+        stopped: true,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const row = screen.getByRole("listitem", { name: "Create: Lost" });
+  await user.click(within(row).getByRole("button", { name: "Open" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(
+    within(form).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("SAVED RULE");
+  await user.type(
+    within(form).getByRole("textbox", { name: "Name" }),
+    " draft",
+  );
+  const change = within(form).getByRole("listitem", { name: "Create: Lost" });
+  expect(change).toBeInTheDocument();
+  await user.click(within(change).getByRole("button", { name: "Resubmit" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "resubmit");
+  expect(agents.saveTeam).not.toHaveBeenCalled();
+});
+
+it("shows a team's unfinished marker beside its note", async () => {
+  const user = userEvent.setup();
+  setup([], {
+    teams: [
+      {
+        id: "t",
+        name: "Core",
+        instructions: "",
+        members: [],
+        note: "Spans communities",
+        unfinished: true,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.getByText("Spans communities · Unfinished change"),
+  ).toBeInTheDocument();
 });

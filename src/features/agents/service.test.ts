@@ -53,7 +53,7 @@ import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
 import { memoryStorage } from "./test-fakes";
 import { MigrationJournal } from "./config-writes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { readTeams, writeTeams } from "./store";
+import { readTeams, TEAMS_KEY, writeTeams } from "./store";
 import { importedTeamId, teamSubject } from "./config-channels";
 const COMMUNITY_UUID = "5b0c2f9e-3d1a-4c7b-9e8f-1a2b3c4d5e6f";
 import {
@@ -7032,8 +7032,102 @@ describe("Delete as a recoverable archive", () => {
       expect(op?.confirmedHead).toBeDefined();
       expect(readTeams(storage)).toEqual([local]);
     };
-    return { f, relay, establish };
+    return { f, relay, storage, config, establish };
   }
+  /** Stops the move's change, settles it and runs `action` on it. */
+  const stopThen = async (
+    f: Awaited<ReturnType<typeof setup>>,
+    action: "dismiss" | "resubmit",
+  ) => {
+    const change = f.service.snapshot().teamChanges?.[0];
+    if (!change) throw new Error("no unfinished move");
+    await f.service.teamChange(change.id, "discard");
+    await f.service.teamChange(change.id, "check");
+    expect(f.service.snapshot().teamChanges?.[0]?.unresolved).toBe(false);
+    await f.service.teamChange(change.id, action).catch(() => {});
+  };
+  const promptOf = async (f: Awaited<ReturnType<typeof setup>>, id: string) => {
+    mentionAlder(f, id);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    return f.run.mock.calls[0]?.[0].team ?? "";
+  };
+
+  it("with config sync on, keeps one relay copy after an established move's change is resubmitted", async () => {
+    const { f, storage, establish } = await heldMove();
+    try {
+      await establish();
+      await stopThen(f, "resubmit");
+      // The resubmitted text is now the relay team's, the one copy.
+      expect(readTeams(storage)).toEqual([]);
+      const prompt = await promptOf(f, "resubmitted-move");
+      expect(count(prompt, "LOCAL MOVING RULE")).toBe(1);
+      expect(prompt).not.toContain("TEAM RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, keeps a move's change and its handover when its local row can't be retired", async () => {
+    const { f, storage, establish } = await heldMove();
+    try {
+      await establish();
+      const setItem = storage.setItem.bind(storage);
+      storage.setItem = (key: string, value: string) => {
+        if (key === TEAMS_KEY) throw new Error("full");
+        setItem(key, value);
+      };
+      await stopThen(f, "dismiss");
+      expect(f.service.snapshot().teamChanges).toHaveLength(1);
+      const prompt = await promptOf(f, "unretired-move");
+      expect(count(prompt, "TEAM RULE")).toBe(1);
+      expect(prompt).not.toContain("LOCAL MOVING RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it.each(["archived", "unreadable"] as const)(
+    "with config sync on, never brings back a move's local copy when its %s relay team's change is dismissed",
+    async (state) => {
+      const { f, relay, storage, config } = await heldMove();
+      try {
+        if (state === "archived")
+          for (const channel of relay.channels.values())
+            channel.archived = true;
+        else relay.heads.clear();
+        await config.refreshTeams();
+        await stopThen(f, "dismiss");
+        expect(f.service.snapshot().teamChanges ?? []).toEqual([]);
+        expect(readTeams(storage)).toEqual([]);
+        if (state === "unreadable") return; // An unreadable team blocks runs.
+        const prompt = await promptOf(f, `${state}-move`);
+        expect(prompt).not.toContain("LOCAL MOVING RULE");
+        expect(prompt).not.toContain("TEAM RULE");
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it("with config sync on, dismissing a stopped established move never restores the local prompt copy", async () => {
+    const { f, establish, config } = await heldMove();
+    try {
+      await establish();
+      const change = f.service.snapshot().teamChanges?.[0];
+      if (!change || !config) throw new Error("no unfinished move");
+      await f.service.teamChange(change.id, "discard");
+      await f.service.teamChange(change.id, "check");
+      expect(f.service.snapshot().teamChanges?.[0]?.unresolved).toBe(false);
+      await f.service.teamChange(change.id, "dismiss");
+      mentionAlder(f, "dismissed-move");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const prompt = f.run.mock.calls[0]?.[0].team;
+      expect(count(prompt, "TEAM RULE")).toBe(1);
+      expect(prompt).not.toContain("LOCAL MOVING RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
 
   it("with config sync on, gives a run exactly one copy of a team during a held move", async () => {
     const { f, establish } = await heldMove();

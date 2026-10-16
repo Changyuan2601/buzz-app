@@ -369,7 +369,7 @@ describe("team operations: witnesses", () => {
     expect(JSON.parse(w.relay.head?.content ?? "").name).toBe("Two");
   });
 
-  it("10: a Delete queued behind a paused member change runs after it, in order", async () => {
+  it("10: a Delete submitted during a paused member change archives only after it, held by the fence", async () => {
     const w = world();
     const teamId = await existing(w, []);
     const paused = gate();
@@ -390,6 +390,27 @@ describe("team operations: witnesses", () => {
     await change.done;
     expect(await deletion.done).toBeUndefined();
     expect(w.log).toEqual([`add ${a}`, "archive"]);
+  });
+
+  it("runs one step of a change at a time, so a second run never resends bytes still being sent", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const sending = gate();
+    const entered = gate();
+    w.hooks.publish = async (event) => {
+      entered.open();
+      await sending.promise;
+      w.accept(event);
+    };
+    const change = edit(w, teamId, { name: "Renamed" });
+    await entered.promise;
+    const again = w.runner.run(change.op.id);
+    sending.open();
+    await change.done;
+    await again;
+    expect(w.log.filter((line) => line.startsWith("publish"))).toEqual([
+      "publish update",
+    ]);
   });
 
   it("11: Delete then Recover with H unchanged: the old record's pending add never runs", async () => {
@@ -439,7 +460,9 @@ describe("team operations: witnesses", () => {
       channel: CH,
       intent: lifecycle,
     });
-    await recover.done;
+    // Recover neither completes nor dispatches while the archive may land.
+    expect(await recover.done).toMatchObject({ id: recover.op.id });
+    expect(record(w, recover.op.id).commands[0]?.state).toBe("planned");
     await edit(w, teamId).done;
     expect(w.log).toEqual(["archive"]);
   });
@@ -505,7 +528,14 @@ describe("team operations: witnesses", () => {
     w.hooks.publish = async () => {
       throw new PublishRejected("slow down", "rate-limited: slow down");
     };
-    await edit(w, teamId, { name: "Renamed" }).done;
+    const { op } = edit(w, teamId, { name: "Renamed" });
+    await w.runner.run(op.id);
+    // A refused first attempt frees its bytes; the change keeps sending.
+    expect(record(w, op.id)).toMatchObject({
+      mode: "may-send",
+      error: expect.stringContaining("slow down"),
+    });
+    expect(record(w, op.id).candidate).toBeUndefined();
     expect(w.storage.getItem(MIGRATION_STORAGE_KEY)).toBeNull();
     for (const file of ["team-ops.ts", "team-config.ts"]) {
       const source = readFileSync(new URL(file, import.meta.url), "utf8");
@@ -680,9 +710,19 @@ describe("team operations: corrections", () => {
     expect(w.writer.sign).not.toHaveBeenCalled();
   });
 
-  it("measures a record in full serialized bytes, JSON escaping and signed envelope included", () => {
+  it("measures a record in full serialized bytes, JSON escaping and signed envelope included", async () => {
     const ops = new TeamOps(memoryStorage());
-    const op = base(owner.pubkey, community);
+    const event = await signed(owner, {
+      kind: 45010,
+      created_at: 1,
+      content: "x".repeat(4096),
+      tags: [["team", "t"]],
+    });
+    const op: TeamOp = {
+      ...base(owner.pubkey, community),
+      candidate: { event, sends: 1 },
+      commands: [{ action: "add", pubkey: a, state: "maybe-sent" }],
+    };
     const envelope = JSON.stringify({
       ...op,
       intent: { ...op.intent, instructions: "" },
@@ -735,3 +775,99 @@ function base(who: string, where: string): TeamOp {
     seq: ++seq,
   };
 }
+
+describe("team operations: transitions", () => {
+  it("a Delete submitted during an edit's head read stops it before any member command", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const entered = gate(),
+      release = gate();
+    w.hooks.read = async () => {
+      entered.open();
+      await release.promise;
+    };
+    const old = edit(w, teamId, { members: [a] });
+    await entered.promise;
+    w.runner.submit({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: { name: "", instructions: "", members: [] },
+    });
+    expect(record(w, old.op.id).mode).toBe("reconcile-only");
+    release.open();
+    await old.done;
+    expect(w.log).not.toContain(`add ${a}`);
+    expect(record(w, old.op.id)).toMatchObject({
+      mode: "reconcile-only",
+      stop: "deleted",
+    });
+  });
+  it("one change can add, remove and add a member back, following its latest submission", async () => {
+    const w = world({ agents: [a] });
+    const teamId = await existing(w, []);
+    const old = edit(w, teamId, { members: [a, b] });
+    await old.done;
+    expect(w.relay.roster.has(a)).toBe(true);
+    w.runner.revise(old.op.id, { ...team, members: [b] });
+    await w.runner.run(old.op.id);
+    expect(w.relay.roster.has(a)).toBe(false);
+    w.runner.revise(old.op.id, { ...team, members: [a, b] });
+    w.agents.add(b);
+    await w.runner.run(old.op.id);
+    expect(w.relay.roster.has(a)).toBe(true);
+  });
+  it("one change can remove, add and remove a member, following its latest submission", async () => {
+    const w = world({ agents: [a] });
+    const teamId = await existing(w, [a]);
+    const old = edit(w, teamId, { members: [b] });
+    await old.done;
+    expect(w.relay.roster.has(a)).toBe(false);
+    w.runner.revise(old.op.id, { ...team, members: [a, b] });
+    await w.runner.run(old.op.id);
+    expect(w.relay.roster.has(a)).toBe(true);
+    w.runner.revise(old.op.id, { ...team, members: [b] });
+    w.agents.add(b);
+    await w.runner.run(old.op.id);
+    expect(w.relay.roster.has(a)).toBe(false);
+    expect(w.relay.roster.has(b)).toBe(true);
+  });
+
+  it("an adopted Import sends no member command through an empty head read", async () => {
+    const w = world({ agents: [a] });
+    const teamId = await existing(w, []);
+    const old = w.runner.start({
+      kind: "import",
+      teamId,
+      source: { kind: "old-buzz-team", id: "source" },
+      intent: { ...team, members: [a, b] },
+    });
+    await old.done;
+    w.agents.add(b);
+    w.read.mockResolvedValueOnce([]);
+    const before = w.log.length;
+    await w.runner.run(old.op.id);
+    expect(w.log.slice(before)).toEqual([]);
+  });
+  it("a stopped uncertain save settles from a by-id read while its head is unreadable, without becoming current", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    w.hooks.publish = async (event) => {
+      w.accept(event);
+      throw new Error("lost reply");
+    };
+    const old = edit(w, teamId, { instructions: "H" });
+    await old.done;
+    w.runner.discard(old.op.id);
+    // A by-id read can still return H, but the head lookup is redacted.
+    w.read.mockImplementation(async (filters) =>
+      filters[0]?.ids
+        ? w.relay.stored.filter((e) => filters[0]?.ids?.includes(e.id))
+        : Promise.reject(new Error("head unreadable")),
+    );
+    await w.runner.run(old.op.id);
+    expect(record(w, old.op.id).candidate).toBeUndefined();
+    expect(record(w, old.op.id).accepted).toBeDefined();
+    expect(record(w, old.op.id).confirmedHead).toBeUndefined();
+  });
+});
