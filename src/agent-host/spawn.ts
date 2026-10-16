@@ -83,30 +83,35 @@ export function processHost(declared: readonly Declared[]) {
         if (child.pid) process.kill(-child.pid, name);
       } catch {}
     };
-    const exited = new Promise<number | null>((resolve) =>
-      child.once("close", (code) => resolve(code)),
+    const left = new Promise<number | null>((resolve) =>
+      child.once("exit", (code) => resolve(code)),
     );
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    // Settles once the process has exited, however it ended, and its group
+    // with it: as host_process.rs does, what it started and left running is
+    // killed then. Only its pipes may still be closing, for a while.
+    const exited = left.then(async (code) => {
+      signal("SIGKILL");
+      await Promise.race([closed, sleep(STOP_GRACE_MS)]);
+      return code;
+    });
     let stopping: Promise<void> | undefined;
     // SIGTERM to its process group, then SIGKILL to what is still there.
     const kill = () => {
       stopping ??= (async () => {
         signal("SIGTERM");
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const killed = new Promise<void>((resolve) => {
-          timer = setTimeout(() => {
-            signal("SIGKILL");
-            resolve();
-          }, STOP_GRACE_MS);
-        });
-        await Promise.race([exited, killed]);
+        const timer = setTimeout(() => signal("SIGKILL"), STOP_GRACE_MS);
+        await exited;
         clearTimeout(timer);
-        // A killed group is gone; only its pipes may still be closing.
-        await Promise.race([exited, sleep(STOP_GRACE_MS)]);
       })();
       return stopping;
     };
     live.add(kill);
     void exited.then(() => live.delete(kill));
+    // One that never started has nothing to stop.
+    started.catch(() => live.delete(kill));
     await started;
     const write = (data: string) =>
       new Promise<void>((resolve, reject) =>

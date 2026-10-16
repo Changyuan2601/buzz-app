@@ -5,7 +5,7 @@ import {
   getPublicKey,
 } from "nostr-tools/pure";
 import { afterEach, expect, it, vi } from "vitest";
-import { AgentFeed } from "./feed";
+import { AgentFeed, CHANNEL_BATCH } from "./feed";
 
 /** A relay connection the test answers by hand. */
 class FakeSocket {
@@ -38,6 +38,20 @@ class FakeSocket {
     return this.sent.filter((message) => message[0] === "REQ");
   }
 }
+
+/** The id of the latest request for subscription `key`. */
+const latest = (socket: FakeSocket, key: string) => {
+  const id = socket
+    .reqs()
+    .map((message) => String(message[1]))
+    .filter((id) => id === key || id.startsWith(`${key}:`))
+    .at(-1);
+  if (!id) throw new Error(`No ${key} request`);
+  return id;
+};
+/** The subscription keys of the requests sent, in order. */
+const asked = (socket: FakeSocket) =>
+  socket.reqs().map((message) => String(message[1]).replace(/:\d+$/, ""));
 
 /** The id of the login the feed sent. */
 const loginId = (socket: FakeSocket) => {
@@ -121,13 +135,13 @@ it("is not listening while the relay has closed its channel subscription", async
     generateSecretKey(),
   );
   socket.receive(["EVENT", "rosters", roster]);
-  expect(socket.reqs().map((message) => message[1])).toEqual([
+  expect(asked(socket)).toEqual([
     "mentions",
     "rosters",
-    "channels",
-    "metadata",
+    "channels:0",
+    "metadata:0",
   ]);
-  socket.receive(["CLOSED", "channels", "error: too many"]);
+  socket.receive(["CLOSED", latest(socket, "channels:0"), "error: too many"]);
   expect(statuses.at(-1)).toBe(false);
   feed.stop();
 });
@@ -180,9 +194,17 @@ it("knows a channel is a DM of the agent and one other from its roster and type"
   socket.receive(["EVENT", "rosters", roster("stream", 100, [pubkey, other])]);
   // Its type is unknown until the channel's metadata arrives.
   expect(feed.dm("dm")).toBe(false);
-  socket.receive(["EVENT", "metadata", metadata("dm", "dm")]);
-  socket.receive(["EVENT", "metadata", metadata("group", "dm")]);
-  socket.receive(["EVENT", "metadata", metadata("stream", "stream")]);
+  socket.receive(["EVENT", latest(socket, "metadata:0"), metadata("dm", "dm")]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "metadata:0"),
+    metadata("group", "dm"),
+  ]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "metadata:0"),
+    metadata("stream", "stream"),
+  ]);
   expect(feed.dm("dm")).toBe(true);
   expect(feed.dm("stream")).toBe(false);
   // A newer roster with a third member makes it a group DM; an older one is ignored.
@@ -193,5 +215,144 @@ it("knows a channel is a DM of the agent and one other from its roster and type"
   ]);
   socket.receive(["EVENT", "rosters", roster("group", 150, [pubkey, other])]);
   expect(feed.dm("group")).toBe(false);
+  feed.stop();
+});
+
+/** A feed logged in on a fake relay, and how to sign as the relay. */
+function loggedIn() {
+  vi.useFakeTimers();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  const secret = generateSecretKey();
+  const pubkey = getPublicKey(secret);
+  const statuses: boolean[] = [];
+  const heard: string[] = [];
+  const feed = new AgentFeed({
+    relay: "wss://relay.example.test",
+    secret,
+    pubkey,
+    onEvents: (batch) => {
+      for (const event of batch.events)
+        heard.push(`${event.content}:${feed.dm(batch.channelId ?? "")}`);
+    },
+    onStatus: (live) => statuses.push(live),
+  });
+  feed.start();
+  const socket = FakeSocket.last as FakeSocket;
+  socket.opened();
+  socket.receive(["AUTH", "challenge"]);
+  socket.receive(["OK", loginId(socket), true, ""]);
+  const relay = generateSecretKey();
+  const sign = (kind: number, tags: string[][], content = "", at = 100) =>
+    finalizeEvent({ kind, created_at: at, tags, content }, relay);
+  const roster = (channel: string, members: string[]) =>
+    sign(39002, [["d", channel], ...members.map((member) => ["p", member])]);
+  return { feed, socket, pubkey, statuses, heard, sign, roster };
+}
+
+it("holds a new channel's messages until its metadata says whether it is a DM", () => {
+  const { feed, socket, pubkey, heard, sign, roster } = loggedIn();
+  const owner = getPublicKey(generateSecretKey());
+  socket.receive(["EVENT", "rosters", roster("dm", [pubkey, owner])]);
+  // The owner's untagged message arrives before the channel's metadata.
+  const message = sign(9, [["h", "dm"]], "hello", 150);
+  socket.receive(["EVENT", latest(socket, "channels:0"), message]);
+  // Heard again after a reconnect's overlap: held once.
+  socket.receive(["EVENT", latest(socket, "channels:0"), message]);
+  expect(heard).toEqual([]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "metadata:0"),
+    sign(39000, [
+      ["d", "dm"],
+      ["t", "dm"],
+    ]),
+  ]);
+  expect(heard).toEqual([]);
+  socket.receive(["EOSE", latest(socket, "metadata:0")]);
+  // Given on once the DM is known as one.
+  expect(heard).toEqual(["hello:true"]);
+  // Later messages in it go straight on.
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:0"),
+    sign(9, [["h", "dm"]], "again", 160),
+  ]);
+  expect(heard).toEqual(["hello:true", "again:true"]);
+  feed.stop();
+});
+
+it("gives a channel's held messages on, not as a DM, when the relay refuses its metadata", () => {
+  const { feed, socket, pubkey, heard, sign, roster } = loggedIn();
+  socket.receive(["EVENT", "rosters", roster("room", [pubkey])]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:0"),
+    sign(9, [["h", "room"]], "hi", 150),
+  ]);
+  socket.receive([
+    "CLOSED",
+    latest(socket, "metadata:0"),
+    "restricted: not allowed",
+  ]);
+  expect(heard).toEqual(["hi:false"]);
+  feed.stop();
+});
+
+it("asks again for a subscription the relay closed after the login, and is listening once it is open", async () => {
+  const { feed, socket, statuses } = loggedIn();
+  expect(statuses.at(-1)).toBe(true);
+  socket.receive(["CLOSED", "mentions", "error: database error"]);
+  socket.receive(["CLOSED", "rosters", "error: database error"]);
+  expect(statuses.at(-1)).toBe(false);
+  await vi.advanceTimersByTimeAsync(999);
+  expect(asked(socket)).toEqual(["mentions", "rosters"]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(asked(socket)).toEqual(["mentions", "rosters", "mentions", "rosters"]);
+  expect(statuses.at(-1)).toBe(true);
+  // Closed again before it sent anything: the wait grows.
+  socket.receive(["CLOSED", "mentions", "error: database error"]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(asked(socket)).toHaveLength(4);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(asked(socket)).toHaveLength(5);
+  expect(statuses.at(-1)).toBe(true);
+  feed.stop();
+});
+
+it("does not ask again for a subscription the relay refuses", async () => {
+  const { feed, socket, statuses } = loggedIn();
+  socket.receive(["CLOSED", "mentions", "restricted: not a member"]);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(asked(socket)).toEqual(["mentions", "rosters"]);
+  expect(statuses.at(-1)).toBe(false);
+  feed.stop();
+});
+
+it("hears channels in batches the relay accepts, asking again only for the batch that changed", () => {
+  const { feed, socket, pubkey, statuses, roster } = loggedIn();
+  for (let index = 0; index < CHANNEL_BATCH; index++)
+    socket.receive(["EVENT", "rosters", roster(`c${index}`, [pubkey])]);
+  const filters = (key: string) =>
+    socket
+      .reqs()
+      .filter((message) => String(message[1]).startsWith(`${key}:`))
+      .map((message) => message[2] as Record<string, string[]>);
+  expect(filters("channels:0").at(-1)?.["#h"]).toHaveLength(CHANNEL_BATCH);
+  const before = socket.reqs().length;
+  socket.receive(["EVENT", "rosters", roster("last", [pubkey])]);
+  // One more channel starts a second batch; the first is not asked again.
+  expect(asked(socket).slice(before)).toEqual(["channels:1", "metadata:1"]);
+  expect(filters("channels:1").at(-1)?.["#h"]).toEqual(["last"]);
+  expect(filters("metadata:1").at(-1)?.["#d"]).toEqual(["last"]);
+  for (const message of socket.reqs()) {
+    const filter = message[2] as Record<string, string[] | undefined>;
+    expect((filter["#h"] ?? filter["#d"] ?? []).length).toBeLessThanOrEqual(
+      CHANNEL_BATCH,
+    );
+  }
+  expect(statuses.at(-1)).toBe(true);
+  // A batch the relay closes leaves the feed not listening until it is back.
+  socket.receive(["CLOSED", latest(socket, "channels:1"), "error: busy"]);
+  expect(statuses.at(-1)).toBe(false);
   feed.stop();
 });
