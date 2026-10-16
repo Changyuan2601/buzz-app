@@ -233,10 +233,10 @@ export function host(options: HostOptions): () => Promise<void> {
     identity.owner,
   );
   const started = Math.floor(Date.now() / 1000);
-  // Catch-up progress, kept only while this host runs. The app saves every
-  // agent's progress under one key, rewritten whole from its own copy, so
-  // this host neither writes it nor catches up: as before catch-up, it hears
-  // what happens while it is connected.
+  // Catch-up progress, kept only while this host runs. This host does not
+  // catch up yet, so it neither reads nor writes the agent's saved progress
+  // (its own key in agent storage): as before catch-up, it hears what happens
+  // while it is connected.
   let checkpoints: Readonly<Record<string, Checkpoint>> = {};
   const runners = new AgentRunners({
     ready: (agent) => (live && agent === pubkey ? agentView() : undefined),
