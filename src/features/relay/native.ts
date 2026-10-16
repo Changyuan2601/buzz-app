@@ -669,6 +669,7 @@ export async function connectNativeTransport(
     async readAgentMemories(
       agent: string,
       signal: AbortSignal,
+      slug?: string,
     ): Promise<MemoryListing> {
       if (!memoryAgent(agent, transport.viewer))
         throw new Error("Invalid memory target");
@@ -679,6 +680,7 @@ export async function connectNativeTransport(
         result = await invoke<unknown>("relay_agent_memories_read", {
           community: origin,
           agent,
+          slug: slug ?? null,
         });
       } catch (reason) {
         if (reason === "MemoryDenied") {

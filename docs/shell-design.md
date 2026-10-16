@@ -327,7 +327,8 @@ replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the 
 with 10px corners matching adjacent icon actions, profile avatars or detail icons,
 and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
-close control; Delete on a tab and Escape in its content close that tab. Closing
+close control; middle-click or Delete on a tab and Escape in its content close
+that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
 On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the visible selected
 tab, including a selected detail tab, even while typing in the main conversation.

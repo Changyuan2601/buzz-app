@@ -54,7 +54,9 @@ catch-up (including a message taller than the viewport):
   unread until read in their thread. Replies outside the viewer's conversations
   do not count at all, so there is no reply activity to quiet. Mentions,
   broadcasts and marked messages are not quieted. Participation discovered
-  later makes a reply relevant again, with its own unread state intact.
+  later makes a reply relevant again, with its own unread state intact. A
+  timeline that shows replies (Solo chats) can end at one; that reply anchors
+  the live bottom without being acknowledged.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.

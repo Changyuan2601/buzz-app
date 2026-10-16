@@ -13,6 +13,10 @@ export type Model = {
   defaultReasoningEffort: string;
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 };
+/** Buzz owns model preferences; an unset choice follows Codex's recommendation. */
+export function resolveModel(selected: string, models: readonly Model[]) {
+  return selected || models.find((model) => model.isDefault)?.model;
+}
 export const defaults: Config = {
   model: "",
   effort: "",

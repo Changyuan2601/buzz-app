@@ -230,11 +230,12 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   });
   expect(hierarchy?.senderWeight).toBeGreaterThanOrEqual(500);
   expect(hierarchy?.sourceSize).toBeLessThan(hierarchy?.senderSize);
-  expect(hierarchy?.sourceFill).not.toBe(hierarchy?.rowFill);
+  expect(hierarchy?.sourceFill).toBe("rgba(0, 0, 0, 0)");
   expect(
     await source.evaluate((element) => {
-      const preview =
-        element.parentElement.parentElement.querySelector("[class*='preview']");
+      const preview = element
+        .closest(".navigation-item-label")
+        .querySelector("[class*='preview']");
       return (
         preview &&
         element.getBoundingClientRect().top <

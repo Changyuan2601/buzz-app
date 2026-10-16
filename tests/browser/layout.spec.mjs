@@ -75,6 +75,17 @@ const box = async (locator) => {
   return bounds;
 };
 const near = (a, b) => expect(Math.abs(a - b)).toBeLessThan(2);
+// Read the shared spacing decision independently of measured panel geometry.
+const panelGap = (page) =>
+  page
+    .locator(".shell-content")
+    .evaluate(
+      (element) =>
+        Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--space-panel-gap"),
+        ) *
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
 const panel = (page) =>
   page.getByRole("complementary", { name: "GitHub", exact: true });
 
@@ -279,13 +290,17 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   expect(
     await mainPanel.evaluate((element) => getComputedStyle(element).boxShadow),
   ).not.toBe("none");
-  near((await box(mainPanel)).x - sidebar.x - sidebar.width, 4);
+  const gap = await panelGap(page);
+  near((await box(mainPanel)).x - sidebar.x - sidebar.width, gap);
   const sidebarHandle = page.getByRole("separator", {
     name: "Resize sidebar",
   });
   const gripTarget = await box(sidebarHandle);
   near(gripTarget.width, 16);
-  near(gripTarget.x + gripTarget.width / 2, sidebar.x + sidebar.width + 2);
+  near(
+    gripTarget.x + gripTarget.width / 2,
+    sidebar.x + sidebar.width + gap / 2,
+  );
   await sidebarHandle.hover();
   await expect
     .poll(() =>
@@ -311,23 +326,27 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   );
   near(rail.width, 48);
   near(sidebar.x, rail.x + rail.width);
-  near(before.x - sidebar.x - sidebar.width, 5);
+  // The conversation starts inside the main panel's reserved 1px border.
+  near(before.x - sidebar.x - sidebar.width, gap + 1);
   near(before.y, 49);
   near(before.height, 766);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(background).toContain("radial-gradient");
-  // The full-bleed backdrop is now the shared gradient rather than a bitmap.
-  const gradient = await page.locator(".shell-background").evaluate((el) => {
+  // The opaque shell color and the decorative dot texture are separate.
+  const shellColor = await page.locator(".shell-background").evaluate((el) => {
     const probe = document.createElement("span");
-    probe.style.backgroundImage = "var(--bg-app)";
+    probe.style.backgroundColor = "var(--bg-app)";
     el.append(probe);
-    const value = getComputedStyle(probe).backgroundImage;
+    const value = getComputedStyle(probe).backgroundColor;
     probe.remove();
     return value;
   });
-  expect(background).toBe(gradient);
+  await expect(page.locator(".shell-background")).toHaveCSS(
+    "background-color",
+    shellColor,
+  );
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -507,7 +526,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
     page.getByRole("article", { name: "Conversation", exact: true }),
   );
   const dock = await box(page.locator("[data-panel-workspace]"));
-  near(conversation.x - sidebar.x - sidebar.width, 5);
+  near(conversation.x - sidebar.x - sidebar.width, (await panelGap(page)) + 1);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
   // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.

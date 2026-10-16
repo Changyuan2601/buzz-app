@@ -1,14 +1,12 @@
 import { useRef, useState } from "react";
-import type {
-  Attachment,
-  ChannelSummary,
-} from "../../features/relay/contracts";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   ConversationChannel,
   ConversationComposer,
   ConversationThread,
+  useMediaReview,
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
@@ -58,29 +56,14 @@ export function ConversationTab({
   onResolvedRoot,
   onDifferentThread,
 }: ConversationTabProps) {
-  // A saved reply intent belongs to the previous visit, not this restoration.
-  const restoredTab = useRef(focusOnMount ? undefined : tab);
+  // A saved reply intent belongs to the previous visit, not this restoration;
+  // a renamed or merged copy of the tab carries the same request.
+  const reply = tab.kind === "thread" ? tab.replyRequest : undefined;
+  const restoredReply = useRef(focusOnMount ? undefined : reply);
+  if (reply !== restoredReply.current) restoredReply.current = undefined;
   const sessionConversation = channel.channelType === "session";
   const [sent, setSent] = useState<string>();
-  const [media, setMedia] = useState<{
-    messageId: string;
-    attachment: Attachment;
-    initialTime: number;
-    hasComments: boolean;
-  }>();
-  const mediaTrigger = useRef<HTMLElement | null>(null);
-  const openMedia = (
-    messageId: string,
-    attachment: Attachment,
-    initialTime: number,
-    hasComments = false,
-  ) => {
-    mediaTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setMedia({ messageId, attachment, initialTime, hasComments });
-  };
+  const media = useMediaReview();
   return (
     <ConversationChannel
       session={session}
@@ -91,15 +74,9 @@ export function ConversationTab({
       interactions={{
         onOpenLink: openLink,
         canOpenLink,
-        onOpenMediaReview: openMedia,
+        onOpenMediaReview: media.open,
       }}
-      mediaReview={
-        media && {
-          ...media,
-          restoreFocus: mediaTrigger,
-          close: () => setMedia(undefined),
-        }
-      }
+      mediaReview={media.review}
     >
       <section
         data-attachment-drop-zone=""
@@ -120,9 +97,7 @@ export function ConversationTab({
             onRetryNavigation={onRetryNavigation}
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}
-            replyRequest={
-              tab === restoredTab.current ? undefined : tab.replyRequest
-            }
+            replyRequest={reply === restoredReply.current ? undefined : reply}
             close={close}
           />
         ) : (

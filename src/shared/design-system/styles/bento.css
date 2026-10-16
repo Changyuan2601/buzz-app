@@ -217,9 +217,9 @@
 
   /* The drop target, in the product's language rather than the vendor's. */
   .bento-dock-theme .dv-drop-target-anchor {
-    border: 1px solid var(--purple-8);
+    border: 1px solid var(--border-accent);
     border-radius: var(--radius-panel);
-    background: var(--purple-3);
+    background: var(--affordance-accent);
     transition: none;
   }
 

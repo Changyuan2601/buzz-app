@@ -207,6 +207,7 @@
     [aria-expanded="true"]:not([data-highlight-expanded="false"])
   ):not(
     [data-disabled],
+    [data-icon-variant="chrome"],
     [data-icon-variant="avatar"],
     [data-icon-variant="media"],
     [data-icon-variant="bare"]
@@ -369,7 +370,21 @@
     color: var(--text-accent);
   }
   .buzz-button[data-icon-variant="chrome"] {
-    @apply glass-primary-interactive;
+    background: transparent;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="chrome"]:hover:not(
+        [data-disabled],
+        [aria-current="page"]
+      ) {
+      background: var(--affordance-backdrop-hover);
+    }
+  }
+  .buzz-button[data-icon-variant="chrome"]:is(
+    :active,
+    [aria-expanded="true"]:not([data-highlight-expanded="false"])
+  ):not([data-disabled], [aria-current="page"]) {
+    background: var(--affordance-backdrop-pressed);
   }
   .buzz-button[data-icon-variant="media"] {
     @apply media-glass;
@@ -581,9 +596,9 @@
     background: var(--status-offline);
   }
 
-  /* A panel is the default opaque reading surface over the atmospheric
+  /* A panel is the default opaque reading surface over the dotted
      backdrop. A transparent border reserves its geometry; shadow-panel supplies
-     the shared translucent contour and elevation above the gradient. */
+     the shared translucent contour and elevation above the shell. */
   /* One set of declarations, two selectors.
 
      A dockview group *is* a Panel — it is the movable, independently legible
@@ -620,7 +635,7 @@
   /* ============================================================
      Tabs — two surfaces, one control.
 
-     `data-variant="chrome"` is the glass pill for the app gradient.
+     `data-variant="chrome"` is a flat pill selection on the app shell.
      `data-variant="panel"` is an underline for a plain surface.
 
      The split exists because the chrome version failed on a white panel in a
@@ -647,10 +662,21 @@
     height: var(--space-4);
   }
   .buzz-tabs-item[data-closable] {
+    position: relative;
     display: inline-flex;
     gap: var(--space-1);
     align-items: center;
     flex-shrink: 0;
+  }
+  /* A tab's name is edited in place, over the tab and its close button. */
+  .buzz-tabs-rename {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+  }
+  .buzz-tabs-rename > .buzz-input {
+    width: 100%;
   }
   @media (hover: hover) {
     .buzz-tabs-item:not(:hover, :focus-within)
@@ -706,15 +732,14 @@
       transform var(--duration-settle) var(--easing-settle);
   }
 
-  /* --- chrome: a glass pill on the gradient ------------------ */
+  /* --- chrome: grouped flat selection on the shell ---------- */
 
-  /* This was the one chrome surface carrying an outer `shadow-xs` on top of the
-     rim where the other three carried none. Nothing justified the difference —
-     same height, same backdrop, same depth — so it takes the same material and
-     the odd shadow is gone. */
+  .buzz-tabs[data-variant="chrome"],
+  .chrome-navigation {
+    background: var(--affordance-subtle);
+  }
+
   .buzz-tabs[data-variant="chrome"] {
-    @apply glass-primary;
-
     display: inline-flex;
     height: 2.5rem;
     align-items: center;
@@ -735,24 +760,9 @@
     color: var(--text-subtle);
   }
 
-  /* A hover *inside* a glass surface, which is not itself a material: no blur,
-     because the parent already blurs what is behind both of them, and a second
-     backdrop-filter here would blur an already-blurred layer.
-
-     So this is a fill only, taking the hover step of the material it sits on.
-     Note it composites: glass-3 over the parent's glass-2 lands near 0.82
-     rather than at 0.62. That is the intended direction — an item under the
-     cursor should read as more solid, per DESIGN.md § Surface and depth — but it
-     is why a hover inside glass cannot simply reuse a whole material. */
-  /* `:not([data-selected])` because hover and selected can both be true at once —
-     a cursor can sit on the selected tab — and DESIGN.md § State says a selected
-     item in a toggle group is not interactive, so it must not react. These two
-     selectors score identical specificity, so without the exclusion only source
-     order would keep it right, and reordering them would silently give the
-     selected tab a hover fill. This is the case `:not()` is *for*: stating that a
-     state is irrelevant, not defending a rule from another rule. */
+  /* Selection and hover occupy the same box; a selected tab does not hover. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
-    background: var(--bg-glass-primary-hover);
+    background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
 
@@ -760,13 +770,6 @@
     color: var(--text-standard);
   }
 
-  /* The selection fills the tab box, so hover and selection are the same shape
-     in the same place. Inset top and bottom instead and a selected tab is drawn
-     8px shorter than the hover fill on the tab beside it: the two states stop
-     agreeing on where a tab is, and the pill reads as a smaller object floating
-     in padding rather than the tab itself turning solid. The container's own
-     `--space-1` is the only inset this control needs — that is how the glass
-     strip in the header read before it became a Tabs component. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
     top: 0;
     bottom: 0;
@@ -778,8 +781,8 @@
   /* --- panel: an underline on a plain surface ---------------- */
 
   /* No container fill and no border: on a panel the tabs are text, and the only
-     drawn element is the bar. That is what keeps this legible where the glass
-     pill was not — there is no second surface to collide with the first. */
+     drawn element is the bar. That is what keeps this legible where the chrome
+     selection is not — there is no second surface to collide with the first. */
   .buzz-tabs[data-variant="panel"] {
     display: flex;
     min-width: 0;
@@ -1021,6 +1024,17 @@
     }
   }
 
+  .navigation-item[data-highlighted]:not(
+    [data-selected],
+    [data-disabled],
+    :disabled
+  ) {
+    --text-subtle: var(--interaction-row-text);
+    --text-metadata: var(--interaction-row-metadata);
+    background: var(--interaction-row-hover);
+    color: var(--text-standard);
+  }
+
   .navigation-item[data-selected] {
     --text-subtle: var(--interaction-selected-text);
     --text-metadata: var(--interaction-selected-metadata);
@@ -1028,9 +1042,8 @@
     color: var(--text-standard);
   }
 
-  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
   .chrome-navigation {
-    @apply glass-primary;
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -1049,7 +1062,7 @@
   }
   .chrome-navigation
     .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
-    background: var(--bg-glass-primary-hover);
+    background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
@@ -1782,7 +1795,7 @@
     min-width: 0;
   }
   .buzz-preference-row-label {
-    @apply text-label-sm;
+    @apply text-body-sm;
     color: var(--text-standard);
   }
   label.buzz-preference-row-label {

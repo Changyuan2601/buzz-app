@@ -606,3 +606,44 @@ it.each(["relay", "https://relay.test"])(
     expect(fetcher).toHaveBeenCalledTimes(before);
   },
 );
+it("searches profile names through the host's signed /profiles/search request", async () => {
+  const profile = signed(key, {
+    kind: 0,
+    content: JSON.stringify({ display_name: "Wes" }),
+    tags: [],
+  });
+  const forged = { ...profile, content: JSON.stringify({ name: "Mallory" }) };
+  let reply: Response = Response.json([profile]);
+  const request = vi.fn(async (_url: string, _body: string) => reply);
+  const transport = await connectSignedTransport(
+    hostSigner(key, request),
+    "https://relay.test",
+    "relay",
+  );
+  assert.exists(transport.searchProfiles);
+  const controller = new AbortController();
+  expect(
+    await transport.searchProfiles(
+      "wes",
+      40,
+      2,
+      controller.signal,
+      "foreground",
+    ),
+  ).toEqual([profile]);
+  expect(request).toHaveBeenCalledExactlyOnceWith(
+    "https://relay.test/profiles/search",
+    JSON.stringify({ query: "wes", limit: 40, page: 2 }),
+    controller.signal,
+  );
+  // An older relay's missing route keeps its status for the NIP-50 fallback.
+  reply = Response.json({ error: "not found" }, { status: 404 });
+  await expect(
+    transport.searchProfiles("wes", 40, 2, controller.signal, "foreground"),
+  ).rejects.toMatchObject({ name: "ReadError", status: 404 });
+  // Signatures are checked like any other read.
+  reply = Response.json([forged]);
+  await expect(
+    transport.searchProfiles("wes", 40, 2, controller.signal, "foreground"),
+  ).rejects.toThrow();
+});

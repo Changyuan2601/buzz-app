@@ -300,3 +300,35 @@ function rearmed(
     used: schedule === "restart" ? 0 : state.used,
   };
 }
+
+/** Imported agents whose archive state could not be checked, so their
+ * settings keep offering Retry across restarts until a check confirms it. */
+export const ARCHIVE_UNCHECKED_KEY = "buzz.agents.archive-unchecked.v1";
+
+export function readArchiveUnchecked(storage: Storage): Set<string> {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(storage.getItem(ARCHIVE_UNCHECKED_KEY) ?? "null");
+  } catch {
+    return new Set();
+  }
+  const agents =
+    (stored as { version?: unknown } | null)?.version === 1
+      ? (stored as { agents: unknown }).agents
+      : undefined;
+  return new Set(
+    Array.isArray(agents)
+      ? agents.filter((key): key is string => PUBKEY.test(String(key)))
+      : [],
+  );
+}
+
+export function writeArchiveUnchecked(
+  storage: Storage,
+  agents: ReadonlySet<string>,
+) {
+  storage.setItem(
+    ARCHIVE_UNCHECKED_KEY,
+    JSON.stringify({ version: 1, agents: [...agents] }),
+  );
+}

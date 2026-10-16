@@ -128,8 +128,8 @@ export function ColorPage() {
       </Section>
 
       <Section
-        title="Layer 0 — backdrop treatments"
-        description="Each backdrop treatment defines a scene’s colors, geometry, and light falloff for one mode. A semantic backdrop choice pairs a light scene with a dark scene. Components use that choice through a role rather than referencing a treatment directly."
+        title="Legacy glass-study backgrounds"
+        description="Historical gradient samples remain for the glass study, not as product themes. The app uses a solid shell with a dot texture derived from its background color."
       >
         <div className="flex flex-col gap-6">
           {(["light", "dark"] as const).map((mode) => (
@@ -151,8 +151,8 @@ export function ColorPage() {
       </Section>
 
       <Section
-        title="Layer 1 — semantic backdrop choices"
-        description="Each gradient-1 through gradient-4 token pairs light and dark treatments. Product surfaces use bg-app, which resolves to the active backdrop. "
+        title="Legacy glass-study pairs"
+        description="These sample pairs are not appearance choices. Product surfaces use the solid bg-app role."
       >
         <div className="flex flex-col">
           {BACKDROP_CHOICES.map((choice) => {

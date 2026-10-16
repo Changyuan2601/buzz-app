@@ -324,7 +324,7 @@ for (const theme of ["light", "dark"]) {
       await expect(launch).toBeVisible();
       await expect(launch).toHaveCSS(
         "background-color",
-        theme === "dark" ? "rgb(0, 0, 0)" : "rgb(245, 245, 246)",
+        theme === "dark" ? "rgb(16, 16, 16)" : "rgb(241, 241, 242)",
       );
       await expect(launch.getByRole("img", { name: "Buzz" })).toHaveCSS(
         "filter",

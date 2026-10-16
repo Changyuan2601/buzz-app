@@ -62,21 +62,20 @@ it("edits a session's workspace and Canvas with its exact loaded revision", asyn
       close={close}
     />,
   );
-  const folders = await screen.findByRole("textbox", {
-    name: "Project folders",
+  // Without a native picker, folders are added by path.
+  expect(
+    await screen.findByRole("button", { name: "Remove repo" }),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: /^Folders/ }), {
+    target: { value: "/other" },
   });
-  expect(folders).toHaveValue("/repo");
-  fireEvent.change(folders, { target: { value: "/other\n/repo" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(
     screen.getByRole("switch", { name: "Work in a new worktree" }),
   );
-  expect(screen.queryByRole("textbox", { name: "Project folders" })).toBeNull();
-  expect(
-    screen.getByRole("textbox", { name: "Source repository 1" }),
-  ).toHaveValue("/other");
-  expect(
-    screen.getByRole("textbox", { name: "Source repository 2" }),
-  ).toHaveValue("/repo");
+  // One folder list serves both modes.
+  expect(screen.getByRole("button", { name: "Remove repo" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove other" })).toBeVisible();
   fireEvent.change(screen.getByRole("textbox", { name: "Base branch" }), {
     target: { value: "develop" },
   });
@@ -113,28 +112,32 @@ it("retains a conflicted draft and never silently reloads over it", async () => 
     />
   );
   const mounted = render(view());
-  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
-    target: { value: "My draft" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "My draft" },
+    },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Canvas changed elsewhere",
   );
   expect(close).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "My draft",
   );
   mounted.unmount();
   render(view());
-  expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
-    "My draft",
-  );
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue("My draft");
 });
 
 it("saves section defaults as an existing relay template without writing section placement", async () => {
   const save = vi.fn(async () => {});
   const close = vi.fn();
   const session = {
+    scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
       snapshot: () => ({ status: "ready", entries: [] }),
@@ -149,11 +152,11 @@ it("saves section defaults as an existing relay template without writing section
       close={close}
     />,
   );
-  fireEvent.change(
-    await screen.findByRole("textbox", { name: "Project folders" }),
-    { target: { value: "~/Development/project" } },
-  );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(await screen.findByRole("textbox", { name: /^Folders/ }), {
+    target: { value: "~/Development/project" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Work carefully" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
@@ -201,7 +204,10 @@ it("recreates deleted section defaults using the tombstone revision", async () =
         })),
     },
   });
-  const session = { channelKit: kit.capability } as unknown as RelaySession;
+  const session = {
+    scope: "https://relay.example.test:viewer",
+    channelKit: kit.capability,
+  } as unknown as RelaySession;
   const close = vi.fn();
   const view = () => (
     <WorkspaceSettings
@@ -212,9 +218,12 @@ it("recreates deleted section defaults using the tombstone revision", async () =
     />
   );
   const first = render(view());
-  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
-    target: { value: "Old instructions" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "Old instructions" },
+    },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   first.unmount();
@@ -224,10 +233,10 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   await kit.capability.save(saved.record.value, saved.eventId, true);
   expect(kit.capability.snapshot().entries[0]?.record.deleted).toBe(true);
   render(view());
-  expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
-    "",
-  );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue("");
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "New instructions" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
@@ -340,7 +349,7 @@ function combined(personal = false) {
 }
 async function editBoth() {
   const field = await screen.findByRole("textbox", {
-    name: "Canvas",
+    name: /^Instructions/,
   });
   await waitFor(() =>
     expect(
@@ -362,7 +371,7 @@ it("confirms Canvas first, retains both drafts on lifetime refusal, and retries 
     "Workspace and Canvas saved. Lifetime refused",
   );
   expect(h.close).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Draft Canvas",
   );
   expect(screen.getByRole("radio", { name: /^Ongoing/ })).toBeChecked();
@@ -389,7 +398,7 @@ it("Canvas refusal stops lifetime, and reload preserves the independent lifetime
     "Canvas changed elsewhere",
   );
   expect(h.sign).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Draft Canvas",
   );
   expect(screen.getByRole("radio", { name: /^Ongoing/ })).toBeChecked();
@@ -402,7 +411,7 @@ it("Canvas refusal stops lifetime, and reload preserves the independent lifetime
     }),
   );
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
       "Original Canvas",
     ),
   );
@@ -427,10 +436,10 @@ it("remount checks uncertain lifetime without replaying confirmed Canvas; remain
     name: "Check save status",
   });
   await waitFor(() => expect(check).toBeEnabled());
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Draft Canvas",
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Next Canvas" },
   });
   h.saved(undefined);
@@ -493,7 +502,7 @@ it("rechecks standalone-session eligibility after recovery before saving another
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "may have been saved",
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Next Canvas" },
   });
   h.saved(undefined);
@@ -512,7 +521,7 @@ it("rechecks standalone-session eligibility after recovery before saving another
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "no longer an editable standalone session",
   );
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Next Canvas",
   );
   expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeChecked();
@@ -561,7 +570,7 @@ it.each(["before", "rebase", "clear"] as const)(
 it("validates the complete Canvas byte budget before either write", async () => {
   const h = combined();
   await editBoth();
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "🙂".repeat(7000) },
   });
   fireEvent.click(saveChanges());
@@ -619,9 +628,12 @@ it("a failed details read leaves Canvas usable without sending a default lifetim
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Details unavailable",
   );
-  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
-    target: { value: "Canvas only" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "Canvas only" },
+    },
+  );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.canvas.save).toHaveBeenCalledOnce();
@@ -818,7 +830,7 @@ it("uncertain name survives remount and reconciles without publishing or saving 
   expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
     "Frozen name",
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Next Canvas" },
   });
   const sent = h.sign.mock.calls[0]?.[0];
@@ -902,7 +914,7 @@ it("failed initial read then Reload keeps the uncertain name through check and C
   expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
     "Retained name",
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Next Canvas" },
   });
   const sent = h.sign.mock.calls[0]?.[0];

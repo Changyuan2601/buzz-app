@@ -837,8 +837,15 @@ function teamPortNote({
   elsewhere,
   foreign,
   teamError,
+  notes = [],
 }: TeamPort) {
-  if (!failed.length && !elsewhere.length && !foreign.length && !teamError)
+  if (
+    !failed.length &&
+    !elsewhere.length &&
+    !foreign.length &&
+    !teamError &&
+    !notes.length
+  )
     return "";
   const came = imported.map((agent) => agent.name).join(", ");
   return [
@@ -852,6 +859,7 @@ function teamPortNote({
       `Kept out: ${elsewhere.join(", ")}, in another community.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
+    ...notes,
   ]
     .filter(Boolean)
     .join(" ");
@@ -898,7 +906,7 @@ function ImportAgents({
     onPendingChange(true);
     setError("");
     try {
-      await agents.port({
+      const { notes } = await agents.port({
         source: agent.source,
         pubkey: agent.pubkey,
         type: chosen.key,
@@ -910,7 +918,9 @@ function ImportAgents({
             agents: last.agents.filter((item) => item.pubkey !== agent.pubkey),
           },
       );
-      onImported();
+      // Leaving would hide what did not come over.
+      if (notes.length) setError(notes.join(" "));
+      else onImported();
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -958,7 +968,8 @@ function ImportAgents({
         {chosen?.adopt
           ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
           : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
-        Stop it where it runs now first, or both will answer.
+        An archived agent is unarchived here. Stop it where it runs now first,
+        or both will answer.
       </p>
       {types.length > 1 && (
         <div className="flex">

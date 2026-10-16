@@ -314,38 +314,271 @@ pub(crate) fn slug(s: &str) -> bool {
             })
     })
 }
+/// Most events one memory query asks for. A memory body is at most 64 KiB, so
+/// a page of ordinary memory events stays under the response cap; a page that
+/// exceeds it (an event carrying unusually many tags) fails the read.
+const MEMORY_PAGE: usize = 16;
+const MEMORY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// Most memory events and decoded bytes one read keeps. A listing that
+/// reaches either cap stops there and is returned partial.
+const MEMORY_EVENTS: usize = 4096;
+const MEMORY_DECODED_BYTES: usize = 8 * 1024 * 1024;
+
+/// What one paged memory read may spend before it returns what it has,
+/// marked partial.
+struct MemoryBudget {
+    /// Relay `/query` calls. The relay admits 300 per owner per minute, shared
+    /// with every other read the app makes, so one listing takes at most 64
+    /// (about a fifth). At 16 events a page this makes 1,024 entries the real
+    /// listing limit, below `MEMORY_EVENTS`.
+    requests: usize,
+    events: usize,
+    /// Undecoded response bytes kept across pages. Ciphertext is base64 plus
+    /// the event envelope, so 16 MiB covers the 8 MiB decoded cap.
+    raw_bytes: usize,
+    /// One deadline for the whole command, from entry through decoding,
+    /// under the frontend's 10 seconds so a partial listing arrives before
+    /// the caller gives up.
+    deadline: tokio::time::Instant,
+}
+
+impl MemoryBudget {
+    fn new() -> Self {
+        Self {
+            requests: 64,
+            events: MEMORY_EVENTS,
+            raw_bytes: 16 * 1024 * 1024,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(9),
+        }
+    }
+}
+
+/// What a memory read returns when its deadline passes before it decoded
+/// anything.
+fn unread_memories() -> Value {
+    json!({"entries": [], "partial": true})
+}
+
+/// One memory query's answer: its records and response size, or the relay
+/// refusing it for rate (429).
+enum MemoryPage {
+    Records(Vec<Option<Value>>, usize),
+    Limited,
+}
+
+/// The `d` tag of memory `name`: an HMAC of the slug under the owner's
+/// conversation key, so the relay never sees slugs.
+fn memory_address(conversation: &ConversationKey, name: &str) -> Result<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(conversation.as_bytes())
+        .map_err(|_| "Invalid memory address")?;
+    mac.update(b"agent-memory/v1/d-tag\0");
+    mac.update(name.as_bytes());
+    Ok(hex_digest(&mac.finalize().into_bytes()))
+}
+
+/// The agent's memory as its owner reads it: every entry, or only entry `slug`
+/// when given, which is read by its address instead of from the listing.
 #[tauri::command]
 pub(crate) async fn relay_agent_memories_read(
     host: tauri::State<'_, IdentityHost>,
     community: String,
     agent: String,
+    slug: Option<String>,
 ) -> Result<Value> {
     let url = origin(&community)?
         .join("/query")
         .map_err(|_| "Invalid community")?;
-    if !key(&agent) {
+    if !key(&agent) || slug.as_deref().is_some_and(|name| !self::slug(name)) {
         return Err("Invalid memory target".into());
     }
-    let viewer = host.with_key(|_, viewer| Ok(viewer.to_owned())).await?;
+    let budget = MemoryBudget::new();
+    let deadline = budget.deadline;
+    let Ok(viewer) =
+        tokio::time::timeout_at(deadline, host.with_key(|_, viewer| Ok(viewer.to_owned()))).await
+    else {
+        return Ok(unread_memories());
+    };
+    let viewer = viewer?;
     if viewer == agent {
         return Err("Invalid memory target".into());
     }
-    let body =
-        json!([{"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":256}]).to_string();
-    let response = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        send(host.inner(), url, "POST", Some(body), true, 2 * 1024 * 1024),
+    let mut filter =
+        json!({"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":MEMORY_PAGE});
+    if let Some(name) = slug.clone() {
+        let target = agent.clone();
+        let address = host.with_key(move |secret, _| {
+            let secret = NostrSecretKey::from_slice(secret).map_err(|_| "Invalid identity")?;
+            let target = NostrPublicKey::from_hex(&target).map_err(|_| "Invalid memory target")?;
+            memory_address(
+                &ConversationKey::derive(&secret, &target).map_err(|_| "Invalid memory target")?,
+                &name,
+            )
+        });
+        let Ok(address) = tokio::time::timeout_at(deadline, address).await else {
+            return Ok(unread_memories());
+        };
+        filter["#d"] = json!([address?]);
+    }
+    let decode = |records: Vec<Option<Value>>, decoder: MemoryDecoding, stop| {
+        let (viewer, agent) = (viewer.clone(), agent.clone());
+        host.with_key(move |secret, now| {
+            decode_memory_events(&decoder, secret, now, &viewer, &agent, &records, || {
+                std::time::Instant::now() >= stop
+            })
+        })
+    };
+    let mut listing = read_memories(
+        budget,
+        |cursor| {
+            let mut page = filter.clone();
+            if let Some((until, before_id)) = cursor {
+                page["until"] = json!(until);
+                page["before_id"] = json!(before_id);
+            }
+            let url = url.clone();
+            let host = host.inner();
+            async move {
+                let response = send(
+                    host,
+                    url,
+                    "POST",
+                    Some(json!([page]).to_string()),
+                    true,
+                    MEMORY_RESPONSE_BYTES,
+                )
+                .await?;
+                if response.status == 429 {
+                    return Ok(MemoryPage::Limited);
+                }
+                if response.status == 401 || response.status == 403 {
+                    return Err("MemoryDenied".into());
+                }
+                if response.status != 200 || response.body.len() > MEMORY_RESPONSE_BYTES {
+                    return Err("Memory read failed".into());
+                }
+                Ok(MemoryPage::Records(
+                    memory_wire_records(&response.body)?,
+                    response.body.len(),
+                ))
+            }
+        },
+        decode,
     )
-    .await
-    .map_err(|_| "Memory read failed")??;
-    if response.status == 401 || response.status == 403 {
-        return Err("MemoryDenied".into());
+    .await?;
+    if let Some(name) = slug {
+        if let Some(entries) = listing["entries"].as_array_mut() {
+            entries.retain(|entry| entry["slug"] == name.as_str());
+        }
     }
-    if response.status != 200 || response.body.len() > 2 * 1024 * 1024 {
-        return Err("Memory read failed".into());
+    Ok(listing)
+}
+
+type MemoryDecoding = std::sync::Arc<std::sync::Mutex<MemoryDecoder>>;
+
+/// How long decoding a page fetched in time may run past the read's deadline;
+/// the read still answers within the frontend's 10 seconds.
+const MEMORY_DECODE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Pages through the listing with `page` and hands each page's new records
+/// to `decode` as it arrives, with the instant decoding must stop by. A
+/// decode still running then is no longer waited on, but everything already
+/// decoded stays in the listing, marked partial.
+async fn read_memories<P, F, D, G>(budget: MemoryBudget, page: P, decode: D) -> Result<Value>
+where
+    P: FnMut(Option<(u64, String)>) -> F,
+    F: std::future::Future<Output = Result<MemoryPage>>,
+    D: Fn(Vec<Option<Value>>, MemoryDecoding, std::time::Instant) -> G,
+    G: std::future::Future<Output = Result<()>>,
+{
+    let decoder = MemoryDecoding::default();
+    let stop = budget.deadline + MEMORY_DECODE_GRACE;
+    let (_, partial) = read_memory_pages(budget, page, |records| {
+        let decoding = decode(records, decoder.clone(), stop.into_std());
+        let decoder = decoder.clone();
+        async move {
+            match tokio::time::timeout_at(stop, decoding).await {
+                Ok(done) => done,
+                Err(_) => {
+                    decoder.lock().unwrap_or_else(|e| e.into_inner()).partial = true;
+                    Ok(())
+                }
+            }
+        }
+    })
+    .await?;
+    let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+    decoder.partial |= partial;
+    Ok(decoder.listing())
+}
+
+/// Reads newest first, a page at a time, until a short page. The relay orders
+/// by `created_at DESC, id ASC` and resumes after the `(until, before_id)`
+/// cursor taken from the last event of the previous page, so entries sharing
+/// one second still page through. The listing is partial, keeping the pages
+/// already read, when it exhausts `budget`, the relay answers 429, or a full
+/// page brings nothing new (a relay ignoring `before_id`), which stops the
+/// read instead of looping.
+async fn read_memory_pages<F, P, K, G>(
+    budget: MemoryBudget,
+    mut page: P,
+    mut keep: K,
+) -> Result<(Vec<Option<Value>>, bool)>
+where
+    P: FnMut(Option<(u64, String)>) -> F,
+    F: std::future::Future<Output = Result<MemoryPage>>,
+    K: FnMut(Vec<Option<Value>>) -> G,
+    G: std::future::Future<Output = Result<()>>,
+{
+    let mut events = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut cursor = None;
+    let mut raw_bytes = 0usize;
+    for _ in 0..budget.requests {
+        let Ok(answer) = tokio::time::timeout_at(budget.deadline, page(cursor.clone())).await
+        else {
+            return Ok((events, true));
+        };
+        let MemoryPage::Records(records, bytes) = answer? else {
+            return Ok((events, true));
+        };
+        raw_bytes += bytes;
+        if raw_bytes > budget.raw_bytes {
+            return Ok((events, true));
+        }
+        let full = records.len() >= MEMORY_PAGE;
+        let mut fresh = Vec::new();
+        for record in records {
+            let value = record.as_ref();
+            let id = value.and_then(|v| v.get("id")).and_then(Value::as_str);
+            if id.is_some_and(|id| !seen.insert(id.to_owned())) {
+                continue;
+            }
+            if let (Some(id), Some(time)) = (
+                id,
+                value
+                    .and_then(|v| v.get("created_at"))
+                    .and_then(Value::as_u64),
+            ) {
+                cursor = Some((time, id.to_owned()));
+            }
+            fresh.push(record);
+        }
+        let added = !fresh.is_empty();
+        let over = fresh.len() > budget.events - events.len();
+        fresh.truncate(budget.events - events.len());
+        keep(fresh.clone()).await?;
+        events.extend(fresh);
+        if over {
+            return Ok((events, true));
+        }
+        if !full {
+            return Ok((events, false));
+        }
+        if !added || events.len() == budget.events {
+            return Ok((events, true));
+        }
     }
-    let events = memory_wire_records(&response.body)?;
-    decode_memories(host.inner(), community, viewer, agent, events).await
+    Ok((events, true))
 }
 
 // Validate the complete array grammar before projecting members. RawValue
@@ -354,7 +587,7 @@ pub(crate) async fn relay_agent_memories_read(
 fn memory_wire_records(body: &str) -> Result<Vec<Option<Value>>> {
     let records: Vec<Box<serde_json::value::RawValue>> =
         serde_json::from_str(body).map_err(|_| "Memory read failed")?;
-    if records.len() > 256 {
+    if records.len() > MEMORY_PAGE {
         return Err("Memory read failed".into());
     }
     Ok(records
@@ -362,27 +595,67 @@ fn memory_wire_records(body: &str) -> Result<Vec<Option<Value>>> {
         .map(|raw| serde_json::from_str(raw.get()).ok())
         .collect())
 }
-async fn decode_memories(
-    host: &IdentityHost,
-    community: String,
-    captured_viewer: String,
-    agent: String,
-    events: Vec<Option<Value>>,
-) -> Result<Value> {
-    origin(&community)?;
-    host.with_key(move |secret, viewer| {
-        decode_memories_with_key(secret, viewer, &captured_viewer, &agent, &events)
-    })
-    .await
+/// The entries a memory read has decoded so far. Pages decode into it as
+/// they arrive, so whatever stops the read keeps what was already decoded.
+#[derive(Default)]
+struct MemoryDecoder {
+    heads: BTreeMap<String, (u64, String, Value)>,
+    decoded_bytes: usize,
+    partial: bool,
+    /// The decoded-byte cap was reached; later events are not taken.
+    full: bool,
 }
+
+impl MemoryDecoder {
+    fn listing(&self) -> Value {
+        let entries: Vec<_> = self
+            .heads
+            .values()
+            .map(|(_, _, entry)| entry)
+            .filter(|entry| !entry["body"].is_null())
+            .collect();
+        json!({"entries": entries, "partial": self.partial})
+    }
+}
+
+/// Decodes `events` alone into a listing.
+#[cfg(test)]
 fn decode_memories_with_key(
     secret: &[u8; 32],
     viewer: &str,
     captured_viewer: &str,
     agent: &str,
     events: &[Option<Value>],
+    expired: impl Fn() -> bool,
 ) -> Result<Value> {
-    if !key(agent) || agent == viewer || viewer != captured_viewer || events.len() > 256 {
+    let decoder = std::sync::Mutex::new(MemoryDecoder::default());
+    decode_memory_events(
+        &decoder,
+        secret,
+        viewer,
+        captured_viewer,
+        agent,
+        events,
+        expired,
+    )?;
+    let listing = decoder.lock().unwrap_or_else(|e| e.into_inner()).listing();
+    Ok(listing)
+}
+
+/// Verifies and decrypts `events` newest first into `decoder`, which it locks
+/// only to take each entry. It stops, marking the listing partial, once
+/// `expired` says the read's time is up or the kept entries reach
+/// `MEMORY_DECODED_BYTES`.
+fn decode_memory_events(
+    decoder: &std::sync::Mutex<MemoryDecoder>,
+    secret: &[u8; 32],
+    viewer: &str,
+    captured_viewer: &str,
+    agent: &str,
+    events: &[Option<Value>],
+    expired: impl Fn() -> bool,
+) -> Result<()> {
+    if !key(agent) || agent == viewer || viewer != captured_viewer || events.len() > MEMORY_EVENTS {
         return Err("Invalid memory target".into());
     }
 
@@ -390,10 +663,15 @@ fn decode_memories_with_key(
     let public_key = NostrPublicKey::from_hex(agent).map_err(|_| "Invalid memory target")?;
     let conversation =
         ConversationKey::derive(&secret_key, &public_key).map_err(|_| "Invalid memory target")?;
-    let mut heads: BTreeMap<String, (u64, String, Value)> = BTreeMap::new();
-    let mut decoded_bytes = 0usize;
-    let mut partial = events.len() == 256;
+    let lock = || decoder.lock().unwrap_or_else(|e| e.into_inner());
     for raw in events {
+        if lock().full {
+            break;
+        }
+        if expired() {
+            lock().partial = true;
+            break;
+        }
         let candidate = (|| -> Result<(String, u64, String, Value)> {
             let event = AgentEvent::deserialize(raw.as_ref().ok_or("Invalid memory envelope")?)
                 .map_err(|_| "Invalid memory envelope")?;
@@ -446,11 +724,7 @@ fn decode_memories_with_key(
             if !slug(name) {
                 return Err("Invalid memory slug".into());
             }
-            let mut mac = Hmac::<Sha256>::new_from_slice(conversation.as_bytes())
-                .map_err(|_| "Invalid memory address")?;
-            mac.update(b"agent-memory/v1/d-tag\0");
-            mac.update(name.as_bytes());
-            if hex_digest(&mac.finalize().into_bytes()) != d[0][1] {
+            if memory_address(&conversation, name)? != d[0][1] {
                 return Err("Invalid memory address".into());
             }
             let body = if name == "core" {
@@ -466,6 +740,13 @@ fn decode_memories_with_key(
                 json!({"slug": name, "body": body, "eventId": event.id, "createdAt": event.created_at}),
             ))
         })();
+        let mut decoder = lock();
+        let MemoryDecoder {
+            heads,
+            decoded_bytes,
+            partial,
+            full,
+        } = &mut *decoder;
         match candidate {
             Ok((name, timestamp, id, entry)) => {
                 let previous = heads.get(&name);
@@ -478,22 +759,20 @@ fn decode_memories_with_key(
                     let removed = previous.map_or(0, |(_, _, old)| {
                         serde_json::to_vec(old).map_or(0, |bytes| bytes.len())
                     });
-                    decoded_bytes = decoded_bytes.saturating_add(added).saturating_sub(removed);
-                    if decoded_bytes > 1024 * 1024 {
-                        return Err("Decoded memory budget exceeded".into());
+                    let total = decoded_bytes.saturating_add(added).saturating_sub(removed);
+                    if total > MEMORY_DECODED_BYTES {
+                        *partial = true;
+                        *full = true;
+                        break;
                     }
+                    *decoded_bytes = total;
                     heads.insert(name, (timestamp, id, entry));
                 }
             }
-            Err(_) => partial = true,
+            Err(_) => *partial = true,
         }
     }
-    let entries: Vec<_> = heads
-        .into_values()
-        .map(|(_, _, entry)| entry)
-        .filter(|entry| !entry["body"].is_null())
-        .collect();
-    Ok(json!({"entries": entries, "partial": partial}))
+    Ok(())
 }
 
 fn library_field(row: &Value, name: &str, max: usize) -> Result<String> {
@@ -726,7 +1005,8 @@ mod tests {
         })
         .collect::<Vec<_>>();
         let listing =
-            decode_memories_with_key(&owner_bytes, &owner, &owner, &agent, &events).unwrap();
+            decode_memories_with_key(&owner_bytes, &owner, &owner, &agent, &events, || false)
+                .unwrap();
         assert_eq!(listing["partial"], false);
         assert_eq!(listing["entries"][0]["body"], "private fixture core");
         assert_eq!(listing["entries"][1]["body"], "private fixture entry");
@@ -770,6 +1050,7 @@ mod tests {
             &viewer,
             &agent,
             &[Some(json!(memory))],
+            || false,
         )
         .unwrap();
         assert_eq!(result["entries"][0]["body"], "remember this");
@@ -796,6 +1077,7 @@ mod tests {
                 &viewer,
                 &agent,
                 &[Some(json!(memory)), Some(json!(invalid))],
+                || false,
             )
             .unwrap();
             assert_eq!(decoded["entries"].as_array().unwrap().len(), 1);
@@ -808,7 +1090,8 @@ mod tests {
         let wire = memory_wire_records(&listing_wire).unwrap();
         assert!(wire[1].is_none());
         let with_invalid =
-            decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &wire).unwrap();
+            decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &wire, || false)
+                .unwrap();
         assert_eq!(with_invalid["entries"][0]["body"], "remember this");
         assert_eq!(with_invalid["partial"], true);
         let reverse_wire = format!("[{{\"unknown\":1e400}},{}]", json!(memory));
@@ -818,6 +1101,7 @@ mod tests {
             &viewer,
             &agent,
             &memory_wire_records(&reverse_wire).unwrap(),
+            || false,
         )
         .unwrap();
         assert_eq!(reverse["entries"][0]["body"], "remember this");
@@ -846,9 +1130,15 @@ mod tests {
         );
         let deep_records = memory_wire_records(&deep).unwrap();
         assert!(deep_records[1].is_none());
-        let deep_listing =
-            decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &deep_records)
-                .unwrap();
+        let deep_listing = decode_memories_with_key(
+            &viewer_secret,
+            &viewer,
+            &viewer,
+            &agent,
+            &deep_records,
+            || false,
+        )
+        .unwrap();
         assert_eq!(deep_listing["entries"][0]["body"], "remember this");
         assert_eq!(deep_listing["partial"], true);
         let hinted = signed_event(
@@ -866,7 +1156,8 @@ mod tests {
                 &viewer,
                 &viewer,
                 &agent,
-                &[Some(json!(hinted))]
+                &[Some(json!(hinted))],
+                || false
             )
             .unwrap()["entries"][0]["body"],
             "hinted"
@@ -886,6 +1177,7 @@ mod tests {
             &viewer,
             &agent,
             &[Some(json!(tombstone))],
+            || false,
         )
         .unwrap();
         assert_eq!(deleted["entries"].as_array().unwrap().len(), 0);
@@ -904,6 +1196,7 @@ mod tests {
             &viewer,
             &agent,
             &[Some(json!(bad_address))],
+            || false,
         )
         .unwrap();
         assert_eq!(partial["partial"], true);
@@ -921,11 +1214,15 @@ mod tests {
             &viewer,
             &agent,
             &[Some(json!(tampered))],
+            || false,
         )
         .unwrap();
         assert_eq!(rejected["entries"].as_array().unwrap().len(), 0);
         assert_eq!(rejected["partial"], true);
-        assert!(decode_memories_with_key(&viewer_secret, &agent, &viewer, &agent, &[]).is_err());
+        assert!(
+            decode_memories_with_key(&viewer_secret, &agent, &viewer, &agent, &[], || false)
+                .is_err()
+        );
 
         let observer = signed_event(
             &agent_secret,
@@ -1004,20 +1301,423 @@ mod tests {
             })
             .collect();
         for _ in 0..2 {
-            decode_memories_with_key(&secret, &viewer, &viewer, &agent, &events).unwrap();
+            decode_memories_with_key(&secret, &viewer, &viewer, &agent, &events, || false).unwrap();
         }
         let started = std::time::Instant::now();
         for _ in 0..20 {
             let result =
-                decode_memories_with_key(&secret, &viewer, &viewer, &agent, &events).unwrap();
+                decode_memories_with_key(&secret, &viewer, &viewer, &agent, &events, || false)
+                    .unwrap();
             assert_eq!(result["entries"].as_array().unwrap().len(), 256);
-            assert_eq!(result["partial"], true);
+            assert_eq!(result["partial"], false);
             std::hint::black_box(result);
         }
         eprintln!(
             "memory batch: 256 x 1 KiB, 20 iterations: {:?}",
             started.elapsed()
         );
+    }
+
+    /// Pages `events` the way the relay answers `until`, `before_id` and
+    /// `limit` (`created_at DESC, id ASC`), recording each cursor asked for.
+    /// With `honor_before_id` false it acts like a relay that drops the
+    /// cursor id and applies an inclusive `until` only.
+    async fn paged_with(
+        events: &[Value],
+        asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
+        honor_before_id: bool,
+        budget: MemoryBudget,
+    ) -> (Vec<Option<Value>>, bool) {
+        let mut events = events.to_vec();
+        events.sort_by(|a, b| {
+            b["created_at"]
+                .as_u64()
+                .cmp(&a["created_at"].as_u64())
+                .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+        });
+        let events = &events;
+        read_memory_pages(
+            budget,
+            |cursor| {
+                asked.lock().unwrap().push(cursor.clone());
+                let page: Vec<_> = events
+                    .iter()
+                    .filter(|event| {
+                        let time = event["created_at"].as_u64().unwrap();
+                        let id = event["id"].as_str().unwrap();
+                        cursor.as_ref().is_none_or(|(until, before_id)| {
+                            time < *until
+                                || (time == *until && (!honor_before_id || id > before_id.as_str()))
+                        })
+                    })
+                    .take(MEMORY_PAGE)
+                    .cloned()
+                    .map(Some)
+                    .collect();
+                async move { Ok(MemoryPage::Records(page, 100)) }
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A budget that only the event cap limits.
+    fn roomy() -> MemoryBudget {
+        MemoryBudget {
+            requests: usize::MAX,
+            raw_bytes: usize::MAX,
+            ..MemoryBudget::new()
+        }
+    }
+
+    async fn paged(
+        events: &[Value],
+        asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
+    ) -> (Vec<Option<Value>>, bool) {
+        paged_with(events, asked, true, roomy()).await
+    }
+
+    /// `count` signed memory events with `body`-byte values, the last one
+    /// `core`, newest first at two to a second, and the keys to read them.
+    fn memory_events(count: u64, body: usize) -> ([u8; 32], String, String, Vec<Value>) {
+        let (viewer_secret, viewer) = fixture();
+        let agent_secret = [2; 32];
+        let agent = signed_event(&agent_secret, 1, vec![], String::new()).pubkey;
+        let conversation = ConversationKey::derive(
+            &NostrSecretKey::from_slice(&agent_secret).unwrap(),
+            &NostrPublicKey::from_hex(&viewer).unwrap(),
+        )
+        .unwrap();
+        let events = (0..count)
+            .map(|index| {
+                let name = if index == count - 1 {
+                    "core".to_owned()
+                } else {
+                    format!("mem/note-{index}")
+                };
+                let field = if name == "core" { "profile" } else { "value" };
+                let content = json!({"slug": name, field: "x".repeat(body)}).to_string();
+                let mut event = signed_event(
+                    &agent_secret,
+                    30174,
+                    vec![
+                        vec!["d".into(), memory_address(&conversation, &name).unwrap()],
+                        vec!["p".into(), viewer.clone()],
+                    ],
+                    STANDARD.encode(
+                        nip44::v2::encrypt_to_bytes_with_nonce(
+                            &conversation,
+                            content.as_bytes(),
+                            [7; 32],
+                        )
+                        .unwrap(),
+                    ),
+                );
+                event.created_at = 1_700_000_000 + (count - index) / 2;
+                resign(&mut event, &agent_secret);
+                json!(event)
+            })
+            .collect();
+        (viewer_secret, viewer, agent, events)
+    }
+
+    #[test]
+    fn memory_decode_stops_partial_at_its_byte_cap_or_deadline() {
+        let records = |events: &[Value]| events.iter().cloned().map(Some).collect::<Vec<_>>();
+        // 140 entries of 60 KiB decode to more than 8 MiB: the newest that
+        // fit are kept, marked partial.
+        let (secret, viewer, agent, events) = memory_events(140, 60 * 1024);
+        let listing =
+            decode_memories_with_key(&secret, &viewer, &viewer, &agent, &records(&events), || {
+                false
+            })
+            .unwrap();
+        let entries = listing["entries"].as_array().unwrap();
+        assert_eq!(listing["partial"], true);
+        assert!(entries.len() > 100 && entries.len() < 140);
+        assert!(entries.iter().any(|entry| entry["slug"] == "mem/note-0"));
+        assert!(!entries.iter().any(|entry| entry["slug"] == "core"));
+        // Paging used up the time and the deadline passes during decoding:
+        // the entries decoded before it are kept, marked partial.
+        let (secret, viewer, agent, events) = memory_events(40, 64);
+        let checks = std::cell::Cell::new(0);
+        let listing =
+            decode_memories_with_key(&secret, &viewer, &viewer, &agent, &records(&events), || {
+                checks.set(checks.get() + 1);
+                checks.get() > 10
+            })
+            .unwrap();
+        assert_eq!(listing["partial"], true);
+        assert_eq!(listing["entries"].as_array().unwrap().len(), 10);
+    }
+
+    /// Reads `events` a page at a time through `read_memories`, each page
+    /// taking `fetch`, and decodes each on a blocking thread as the native
+    /// command does, sleeping `stall` after the first `decoded` events of the
+    /// first page.
+    async fn read_through(
+        events: Vec<Value>,
+        deadline: std::time::Duration,
+        fetch: std::time::Duration,
+        stall: Option<(usize, std::time::Duration)>,
+    ) -> (Value, std::time::Duration) {
+        let (secret, viewer, agent, _) = memory_events(1, 0);
+        let started = tokio::time::Instant::now();
+        let budget = MemoryBudget {
+            deadline: started + deadline,
+            ..MemoryBudget::new()
+        };
+        let mut pages = events
+            .chunks(MEMORY_PAGE)
+            .map(<[Value]>::to_vec)
+            .collect::<Vec<_>>();
+        pages.reverse();
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let listing = read_memories(
+            budget,
+            |_| {
+                let page = pages.pop().unwrap_or_default();
+                async move {
+                    tokio::time::sleep(fetch).await;
+                    Ok(MemoryPage::Records(page.into_iter().map(Some).collect(), 1))
+                }
+            },
+            |records, decoder, stop| {
+                let (viewer, agent) = (viewer.clone(), agent.clone());
+                let stall =
+                    stall.filter(|_| first.swap(false, std::sync::atomic::Ordering::SeqCst));
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let expired = || std::time::Instant::now() >= stop;
+                        let split = stall.map_or(records.len(), |(n, _)| n);
+                        decode_memory_events(
+                            &decoder,
+                            &secret,
+                            &viewer,
+                            &viewer,
+                            &agent,
+                            &records[..split],
+                            expired,
+                        )?;
+                        if let Some((_, pause)) = stall {
+                            std::thread::sleep(pause);
+                        }
+                        decode_memory_events(
+                            &decoder,
+                            &secret,
+                            &viewer,
+                            &viewer,
+                            &agent,
+                            &records[split..],
+                            expired,
+                        )
+                    })
+                    .await
+                    .unwrap()
+                }
+            },
+        )
+        .await
+        .unwrap();
+        (listing, started.elapsed())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn memory_read_keeps_what_it_decoded_when_its_deadline_passes() {
+        let ms = std::time::Duration::from_millis;
+        // Slow pages: two arrive and decode before the deadline, the third
+        // does not. Their entries come back, partial, within the grace.
+        let (_, _, _, events) = memory_events(48, 64);
+        let (listing, took) = read_through(events, ms(300), ms(120), None).await;
+        assert_eq!(listing["partial"], true);
+        assert_eq!(listing["entries"].as_array().unwrap().len(), 32);
+        assert!(took < ms(300) + MEMORY_DECODE_GRACE + ms(100), "{took:?}");
+        // A decode still running when the grace ends is not waited on, and
+        // the entries it already decoded are kept.
+        let (_, _, _, events) = memory_events(16, 64);
+        let (listing, took) = read_through(
+            events,
+            ms(100),
+            ms(0),
+            Some((6, std::time::Duration::from_secs(3))),
+        )
+        .await;
+        assert_eq!(listing["partial"], true);
+        assert_eq!(listing["entries"].as_array().unwrap().len(), 6);
+        assert!(took < ms(100) + MEMORY_DECODE_GRACE + ms(100), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn memory_listing_pages_past_the_event_and_response_caps() {
+        // 300 entries of 8 KiB: more than the old 256-event limit and more
+        // than one 2 MiB response, with two entries to each second so pages
+        // split seconds.
+        let (viewer_secret, viewer, agent, events) = memory_events(300, 8 * 1024);
+        let wire: usize = events.iter().map(|event| event.to_string().len()).sum();
+        assert!(wire > MEMORY_RESPONSE_BYTES);
+        let asked = std::sync::Mutex::new(Vec::new());
+        let (records, partial) = paged(&events, &asked).await;
+        assert!(!partial);
+        assert_eq!(records.len(), 300);
+        assert!(asked.lock().unwrap().len() > 300 / MEMORY_PAGE);
+        let listing =
+            decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &records, || false)
+                .unwrap();
+        assert_eq!(listing["partial"], false);
+        assert_eq!(listing["entries"].as_array().unwrap().len(), 300);
+        // A read by address asks only for that entry's `d` tag, which the
+        // relay matches against the stored event.
+        let core = &events[299]["tags"][0][1];
+        let addressed: Vec<_> = events
+            .iter()
+            .filter(|event| &event["tags"][0][1] == core)
+            .cloned()
+            .map(Some)
+            .collect();
+        let single =
+            decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &addressed, || {
+                false
+            })
+            .unwrap();
+        assert_eq!(single["entries"][0]["slug"], "core");
+        assert_eq!(single["entries"][0]["body"], "x".repeat(8 * 1024));
+    }
+
+    fn stub(index: u64, time: u64) -> Value {
+        json!({"id": format!("{index:064x}"), "created_at": time})
+    }
+
+    #[tokio::test]
+    async fn memory_listing_pages_through_entries_sharing_one_second() {
+        let none = || std::sync::Mutex::new(Vec::new());
+        // Exactly one page in one second, nothing older: the cursor page is
+        // empty, so the listing is complete.
+        let exact: Vec<_> = (0..MEMORY_PAGE as u64).map(|i| stub(i, 5)).collect();
+        let asked = none();
+        let (records, partial) = paged(&exact, &asked).await;
+        assert!(!partial);
+        assert_eq!(records.len(), MEMORY_PAGE);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![None, Some((5, format!("{:064x}", MEMORY_PAGE - 1)))]
+        );
+        // More than a page in one second.
+        let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2 + 3)
+            .map(|i| stub(i, 5))
+            .collect();
+        let (records, partial) = paged(&tied, &none()).await;
+        assert!(!partial);
+        assert_eq!(records.len(), tied.len());
+        // A tied run followed by older entries.
+        let mixed: Vec<_> = (0..MEMORY_PAGE as u64 + 5)
+            .map(|i| stub(i, 9))
+            .chain((100..140).map(|i| stub(i, 1_000 - i)))
+            .collect();
+        let (records, partial) = paged(&mixed, &none()).await;
+        assert!(!partial);
+        assert_eq!(records.len(), mixed.len());
+        let ids: std::collections::HashSet<_> = records
+            .iter()
+            .map(|r| r.as_ref().unwrap()["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(ids.len(), mixed.len());
+    }
+
+    #[tokio::test]
+    async fn memory_listing_marks_a_stalled_or_capped_read_partial() {
+        // A relay that ignores `before_id` repeats the tied page: the read
+        // stops partial instead of looping.
+        let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2).map(|i| stub(i, 5)).collect();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let (records, partial) = paged_with(&tied, &asked, false, roomy()).await;
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_PAGE);
+        assert_eq!(asked.lock().unwrap().len(), 2);
+        let many: Vec<_> = (0..MEMORY_EVENTS as u64 + 40)
+            .map(|index| stub(index, 1_000_000 - index))
+            .collect();
+        let (records, partial) = paged(&many, &std::sync::Mutex::new(Vec::new())).await;
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_EVENTS);
+        // One past the cap, two to a second: the last page is short, and the
+        // cap still applies.
+        let over: Vec<_> = (0..MEMORY_EVENTS as u64 + 1)
+            .map(|index| stub(index, 1_000_000 - index / 2))
+            .collect();
+        let (records, partial) = paged(&over, &std::sync::Mutex::new(Vec::new())).await;
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_EVENTS);
+    }
+
+    #[tokio::test]
+    async fn memory_listing_stops_partial_at_its_request_and_byte_budgets() {
+        let many: Vec<_> = (0..200u64).map(|i| stub(i, 1_000 - i)).collect();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let budget = MemoryBudget {
+            requests: 3,
+            ..roomy()
+        };
+        let (records, partial) = paged_with(&many, &asked, true, budget).await;
+        assert!(partial);
+        assert_eq!(records.len(), 3 * MEMORY_PAGE);
+        assert_eq!(asked.lock().unwrap().len(), 3);
+        // Each stub page reports 100 bytes: the third page passes 250.
+        let budget = MemoryBudget {
+            raw_bytes: 250,
+            ..roomy()
+        };
+        let (records, partial) = paged_with(&many, &asked, true, budget).await;
+        assert!(partial);
+        assert_eq!(records.len(), 2 * MEMORY_PAGE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn memory_listing_keeps_its_pages_on_rate_limit_or_deadline() {
+        let full = || {
+            (0..MEMORY_PAGE as u64)
+                .map(|i| Some(stub(i, 1_000 - i)))
+                .collect::<Vec<_>>()
+        };
+        let mut calls = 0;
+        let (records, partial) = read_memory_pages(
+            roomy(),
+            |_| {
+                calls += 1;
+                let answer = if calls == 1 {
+                    MemoryPage::Records(full(), 1)
+                } else {
+                    MemoryPage::Limited
+                };
+                async move { Ok(answer) }
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_PAGE);
+        // Pages of 4 seconds each: the third crosses the 9-second deadline
+        // for the whole read.
+        let mut calls = 0u64;
+        let (records, partial) = read_memory_pages(
+            MemoryBudget::new(),
+            |_| {
+                calls += 1;
+                let page: Vec<_> = (0..MEMORY_PAGE as u64)
+                    .map(|i| Some(stub(calls * 100 + i, 1_000 - calls * 100 - i)))
+                    .collect();
+                async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    Ok(MemoryPage::Records(page, 1))
+                }
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        assert!(partial);
+        assert_eq!(records.len(), 2 * MEMORY_PAGE);
     }
 
     fn resign(event: &mut AgentEvent, secret: &[u8; 32]) {

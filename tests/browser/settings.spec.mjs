@@ -55,7 +55,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
   await expect(communityRail).toBeVisible();
 });
 
-test("short narrow Settings keeps full plugin rows usable at 200% interface size", async ({
+test("short narrow Settings keeps plugin copy and controls reachable at 200% interface size", async ({
   page,
   app,
 }, testInfo) => {
@@ -83,11 +83,18 @@ test("short narrow Settings keeps full plugin rows usable at 200% interface size
     name: "Enable GitHub",
     exact: true,
   });
+  const title = row.getByText("GitHub", { exact: true });
+  const description = row.getByText(
+    "View GitHub repositories, pull requests, issues, and commits.",
+    { exact: true },
+  );
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
-  await row.scrollIntoViewIfNeeded();
-  await expect(row).toBeInViewport({ ratio: 1 });
+  await description.scrollIntoViewIfNeeded();
+  await expect(description).toBeInViewport({ ratio: 1 });
+  await toggle.scrollIntoViewIfNeeded();
+  await expect(title).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
   await page.screenshot({
     path: testInfo.outputPath("settings-short-200-percent.png"),
@@ -504,6 +511,10 @@ confirmedPresence(
       ).toBeFocused();
       await tab();
       await expect(
+        sections.getByRole("button", { name: "Jev classifier", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
         sections.getByRole("button", { name: "Pair mobile", exact: true }),
       ).toBeFocused();
       await tab();
@@ -583,6 +594,10 @@ confirmedPresence(
       await tab();
       await expect(
         sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Jev classifier", exact: true }),
       ).toBeFocused();
       await tab();
       await expect(

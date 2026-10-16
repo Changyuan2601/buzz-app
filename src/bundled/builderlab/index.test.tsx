@@ -66,6 +66,7 @@ function provideAgents(
     portable: vi.fn(),
     port: vi.fn(),
     rename: vi.fn(),
+    beginDelete: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),
     remove: vi.fn(),
@@ -73,6 +74,7 @@ function provideAgents(
     publish: vi.fn(),
     publishProfile: vi.fn(),
     query: vi.fn(),
+    searchProfiles: vi.fn(),
     upload: vi.fn(),
     media: vi.fn(),
     remember: vi.fn(),
@@ -112,7 +114,12 @@ it.each([undefined, "", "http://builderlab.example"])(
         /not configured|does not support/,
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
-      expect(native.invoke).not.toHaveBeenCalled();
+      // Agents reads its own classifier key; Builderlab makes no native call.
+      expect(
+        native.invoke.mock.calls.filter(
+          ([command]) => command !== "jev_classifier_status",
+        ),
+      ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);

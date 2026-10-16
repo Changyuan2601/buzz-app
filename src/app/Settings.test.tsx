@@ -114,6 +114,203 @@ const host = {
   },
 } as unknown as Parameters<typeof Settings>[0];
 
+it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
+  const ready = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            manifest: {
+              id: "buzz.voice-notes",
+              name: "Voice Notes",
+              apiVersion: 1,
+              description: "Record voice notes and play them in conversations.",
+              discovery: {
+                category: "communication",
+                ...(essentials ? { tags: ["  essentials  "] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "buzz.channels",
+              name: "Channels",
+              apiVersion: 1,
+              description: "Navigate channels and hold conversations in Buzz.",
+              discovery: {
+                category: "communication",
+                ...(essentials ? { tags: ["Essentials"] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "buzz.codex",
+              name: "Codex",
+              apiVersion: 1,
+              description: "Run local Codex coding agents in Buzz.",
+              discovery: {
+                category: "agents",
+                ...(essentials ? { tags: ["Essentials"] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "example.invoices",
+              name: "Invoices",
+              apiVersion: 1,
+              description: "Reconcile invoices without leaving Buzz.",
+              discovery: { category: "finance" },
+            },
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: true,
+            error: null,
+          },
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const { cards } = registry([]);
+  ready.configuration.catalog.plugins.unshift({
+    source: "bundled",
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+    manifest: {
+      id: "example.messages",
+      name: "Messages",
+      apiVersion: 1,
+      description: "Read messages.",
+      discovery: { category: "communication" },
+    },
+  });
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={
+        {
+          subscribe: () => () => {},
+          snapshot: () => ready,
+          change: vi.fn(async () => true),
+          reload: vi.fn(async () => true),
+          dismissError: vi.fn(),
+        } as unknown as Parameters<typeof Settings>[0]["plugins"]
+      }
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  const content = screen.getByRole("region", { name: "Plugins" });
+  expect(
+    within(content)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent),
+  ).toEqual(["Communication3 plugins", "Agents1 plugin", "Other1 plugin"]);
+  const communication = within(content)
+    .getByRole("heading", {
+      name: /^Communication/,
+    })
+    .closest("section");
+  expect(communication).not.toBeNull();
+  expect(
+    within(communication as HTMLElement)
+      .getAllByRole("article")
+      .map(
+        (row) =>
+          within(row).getByText(/^(Channels|Voice Notes|Messages)$/)
+            .textContent,
+      ),
+  ).toEqual(
+    essentials
+      ? ["Channels", "Voice Notes", "Messages"]
+      : ["Channels", "Messages", "Voice Notes"],
+  );
+  expect(within(content).getAllByRole("article")).toHaveLength(5);
+  expect(
+    within(content).queryAllByRole("img", { name: "Essential" }),
+  ).toHaveLength(essentials ? 3 : 0);
+  expect(within(content).queryByText("Essential")).toBeNull();
+  if (essentials) {
+    const voiceRow = within(content)
+      .getByText("Voice Notes")
+      .closest("article");
+    expect(voiceRow).not.toBeNull();
+    const row = within(voiceRow as HTMLElement);
+    expect(row.getByRole("img", { name: "Essential" }).nextElementSibling).toBe(
+      row.getByRole("switch", { name: "Enable Voice Notes" }),
+    );
+  }
+  expect(
+    within(content).queryByRole("switch", { name: "Enable Channels" }),
+  ).toBeNull();
+  expect(
+    within(communication as HTMLElement).getByRole("switch", {
+      name: "Enable Voice Notes",
+    }),
+  ).toBeEnabled();
+  expect(content).toHaveTextContent(
+    "Navigate channels and hold conversations in Buzz.",
+  );
+  expect(content).toHaveTextContent("Run local Codex coding agents in Buzz.");
+
+  const other = within(content)
+    .getByRole("heading", { name: /^Other/ })
+    .closest("section");
+  expect(other).not.toBeNull();
+  expect(within(other as HTMLElement).getByText("Invoices")).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByText(
+      "Reconcile invoices without leaving Buzz.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByRole("switch", {
+      name: "Enable Invoices",
+    }),
+  ).toBeVisible();
+  expect(
+    within(content).queryByRole("heading", { name: "Finance" }),
+  ).toBeNull();
+  expect(
+    within(content).queryByRole("button", {
+      name: "Essentials only",
+    }),
+  ).toBeNull();
+});
+
 it("uses contributed icons in community and account navigation", () => {
   const { cards } = registry([
     { ...card("groups", "Personal groups"), icon: FolderSimpleIcon },

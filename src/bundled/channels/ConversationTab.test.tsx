@@ -229,6 +229,11 @@ it.each([false, true])(
     else expect(thread).not.toHaveAttribute("data-reply-request");
     mounted.rerender(<ConversationTab {...props} focusOnMount />);
     if (!focusOnMount) expect(thread).not.toHaveAttribute("data-reply-request");
+    // Renaming or merging copies the tab without making a new request.
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, name: "Launch plan" }} />,
+    );
+    if (!focusOnMount) expect(thread).not.toHaveAttribute("data-reply-request");
     mounted.rerender(
       <ConversationTab {...props} tab={{ ...tab, replyRequest: undefined }} />,
     );

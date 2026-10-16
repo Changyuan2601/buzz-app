@@ -90,7 +90,7 @@
   }
   html[data-keyboard-navigation] .multi-swap-divider:focus-visible::after {
     background: var(--neutral-12);
-    outline: 2px solid var(--purple-8);
+    outline: 2px solid var(--border-accent);
     outline-offset: 2px;
   }
   .multi-swap-stage[data-dragging] .multi-swap-divider {
@@ -104,7 +104,7 @@
     pointer-events: none;
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-pill);
-    background: var(--purple-3);
+    background: var(--affordance-accent);
     opacity: 0.85;
     white-space: nowrap;
   }
@@ -113,7 +113,7 @@
     z-index: 3;
     pointer-events: none;
     width: calc(var(--space-1) / 2);
-    background: var(--purple-7);
+    background: var(--affordance-accent-hover);
     border-radius: var(--radius-pill);
   }
   .multi-swap-cue {

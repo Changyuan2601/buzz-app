@@ -13,6 +13,7 @@ import {
 import { SessionShare, SessionAccessIndicator } from "./SessionShare";
 import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { NewProject } from "../../features/sessions/NewProject";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -53,6 +54,7 @@ import {
   DotsThreeIcon,
   FolderSimpleIcon,
   PlusIcon,
+  Cube3dSphereIcon,
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
@@ -151,7 +153,7 @@ export function SessionSections({
     visit: AbortSignal | undefined;
   }>();
   const [deleting, setDeleting] = useState<string>();
-  const [deleteError, setDeleteError] = useState("");
+  const [sectionError, setSectionError] = useState("");
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -162,6 +164,7 @@ export function SessionSections({
     setRowFocus(undefined);
   }, [rowFocus]);
   const [creatingFor, setCreatingFor] = useState<SessionListItem>();
+  const [creatingProject, setCreatingProject] = useState(false);
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
     name: string;
@@ -222,6 +225,19 @@ export function SessionSections({
                 }
                 onClick={() => onNew(undefined)}
               />
+              {personal && (
+                <NavigationItem
+                  variant="row"
+                  label="New project"
+                  disabled={!preferences.sectionCreationWritable}
+                  icon={
+                    <span className="shell-page-icon">
+                      <Cube3dSphereIcon size={16} strokeWidth={2} />
+                    </span>
+                  }
+                  onClick={() => setCreatingProject(true)}
+                />
+              )}
             </div>
           )}
         </div>
@@ -239,9 +255,9 @@ export function SessionSections({
           </Button>
         </div>
       )}
-      {deleteError && (
+      {sectionError && (
         <p role="alert" className={styles.listMessage}>
-          {deleteError}
+          {sectionError}
         </p>
       )}
       <ChannelSidebarDnd
@@ -304,11 +320,11 @@ export function SessionSections({
                       }
                       onClick={() => {
                         setDeleting(section.id);
-                        setDeleteError("");
+                        setSectionError("");
                         void preferences
                           .removeSection(section.id)
                           .catch((error: unknown) => {
-                            setDeleteError(
+                            setSectionError(
                               error instanceof Error
                                 ? error.message
                                 : "Section could not be deleted. Try again.",
@@ -599,6 +615,14 @@ export function SessionSections({
           scope={scope}
           target={{ kind: "section", ...settingsFor, personal }}
           close={() => setSettingsFor(undefined)}
+        />
+      )}
+      {creatingProject && (
+        <NewProject
+          session={session}
+          create={(section) => preferences.createSection(section)}
+          close={() => setCreatingProject(false)}
+          onCreated={(id) => toggle(id, true)}
         />
       )}
       {creatingFor && (

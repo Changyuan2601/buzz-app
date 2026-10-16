@@ -1,1 +1,7 @@
-{ "id": "buzz.voice-notes", "name": "Voice Notes", "apiVersion": 1 }
+{
+  "id": "buzz.voice-notes",
+  "name": "Voice Notes",
+  "apiVersion": 1,
+  "description": "Record voice notes and play them in conversations.",
+  "discovery": { "category": "communication" }
+}

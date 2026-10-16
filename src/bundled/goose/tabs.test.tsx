@@ -156,17 +156,19 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   );
   expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
 
-  await choose("Model", "Claude Opus 5.5");
+  await choose("Model", "claude-opus-5-5");
   await user.click(
     within(dialog).getByRole("button", { name: "Test connection" }),
   );
   expect(await within(dialog).findByRole("status")).toHaveTextContent(
     "Connected",
   );
-  expect(fake.geese.at(-1)?.env).toMatchObject({
-    GOOSE_PROVIDER: "anthropic",
-    GOOSE_MODEL: "claude-opus-5-5",
+  expect(fake.geese.at(-1)?.opened[0]?._meta).toMatchObject({
+    provider: "anthropic",
   });
+  expect(fake.geese.at(-1)?.configured).toEqual([
+    "session-1 model=claude-opus-5-5",
+  ]);
   // Nothing reaches the agent until the choice is used.
   expect(changes).toEqual([]);
   await user.click(within(dialog).getByRole("button", { name: "Use" }));

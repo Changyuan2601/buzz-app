@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memory } from "./client";
+import type { BuzzClient, Memories } from "./client";
 import type { AgentHandle } from "../features/agents/service";
 import type { HostProcess, HostProcessOptions } from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
@@ -17,7 +17,7 @@ export function appClient(
     spawn: Spawn;
     /** Where relative paths start: the agent's working directory. */
     cwd: string;
-    memories(): Promise<readonly Memory[]>;
+    memories(slug?: string): Promise<Memories>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
     /** Reject operations after the owning turn or community has ended. */
@@ -29,12 +29,22 @@ export function appClient(
     options.signal?.throwIfAborted();
     options.check?.();
   };
+  const tabs = () => {
+    check();
+    const found = agent.tabs();
+    if (!found) throw new Error("Your community is not connected.");
+    return found;
+  };
   return {
     pubkey: agent.pubkey,
     attention: agent.attention,
     query: (filters) => {
       check();
       return agent.query(filters);
+    },
+    searchProfiles: (query, limit) => {
+      check();
+      return agent.searchProfiles(query, limit);
     },
     publish: (event) => {
       check();
@@ -52,9 +62,9 @@ export function appClient(
       check();
       return readFile(options.spawn, options.cwd, path, options.signal);
     },
-    memories: () => {
+    memories: (slug) => {
       check();
-      return options.memories();
+      return options.memories(slug);
     },
     remember: async (slug, body, after) => {
       check();
@@ -65,6 +75,12 @@ export function appClient(
     templates: async () => {
       check();
       return agent.templates();
+    },
+    tabs: {
+      list: (channel) => tabs().list(channel),
+      open: (channel, root) => tabs().open(channel, root),
+      close: (channel, root) => tabs().close(channel, root),
+      rename: (channel, root, name) => tabs().rename(channel, root, name),
     },
   };
 }

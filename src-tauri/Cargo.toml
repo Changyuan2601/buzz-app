@@ -67,6 +67,9 @@ hex = "0.4"
 tokio = { version = "1", features = ["test-util"] }
 secp256k1 = { version = "0.31", features = ["std"] }
 tauri = { version = "=2.12.3", features = ["test"] }
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 portable-pty = "0.9"

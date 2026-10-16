@@ -12,10 +12,12 @@ import {
   useIsPresent,
   useReducedMotion,
 } from "motion/react";
-import { useMediaCorners } from "./use-media-corners";
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { ComposerAttachmentViewer } from "./ComposerAttachmentViewer";
-import { useDraftAttachmentSource } from "./use-draft-attachment-source";
+import {
+  draftAttachmentMedia,
+  useDraftAttachmentSource,
+} from "./use-draft-attachment-source";
 import {
   ArrowsClockwiseIcon,
   FileTextIcon,
@@ -44,6 +46,10 @@ export function ComposerAttachments({
   onExitComplete?: (() => void) | undefined;
 }) {
   const active = useConversationPresentation();
+  const mixed = items.some((item) => {
+    const { image, video } = draftAttachmentMedia(item);
+    return !image && !video;
+  });
   const [selected, setSelected] = useState<string>();
   const restoreFocus = useRef<HTMLElement | null>(null);
   const instant = useReducedMotion();
@@ -68,7 +74,10 @@ export function ComposerAttachments({
               ease: [0.23, 1, 0.32, 1],
             }}
           >
-            <ul className={styles.list}>
+            <ul
+              className={`${styles.list} buzz-thin-scrollbar`}
+              data-compact-media={mixed || undefined}
+            >
               <AnimatePresence initial={false} propagate>
                 {items.map((item) => (
                   <AttachmentItem
@@ -124,7 +133,6 @@ function AttachmentItem({
 }) {
   const present = useIsPresent();
   const instant = useReducedMotion();
-  const corners = useMediaCorners();
   const { source, image, video } = useDraftAttachmentSource(item, media);
   const [failedSource, setFailedSource] = useState<string>();
   const element = useMediaElementSource(video ? source : undefined);
@@ -202,7 +210,6 @@ function AttachmentItem({
     >
       {source && !failed && (image || video) ? (
         <button
-          ref={corners}
           data-media-preview=""
           data-draft-preview={item.id}
           className={styles.preview}
@@ -213,13 +220,6 @@ function AttachmentItem({
             preview(event.currentTarget);
           }}
         >
-          <svg
-            className={styles.mediaOutline}
-            data-image-outline=""
-            aria-hidden="true"
-          >
-            <path />
-          </svg>
           {image ? (
             <img
               key={source}
@@ -249,15 +249,18 @@ function AttachmentItem({
           )}
         </button>
       ) : (
-        <button
-          type="button"
-          data-draft-preview={item.id}
-          className={styles.preview}
-          aria-label={`Preview ${item.file.name}`}
-          onClick={(event) => preview(event.currentTarget)}
-        >
-          <FileTextIcon size={24} />
-        </button>
+        <span className={styles.fileIcon}>
+          <IconButton
+            type="button"
+            variant="solid"
+            size="compact"
+            style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
+            data-draft-preview={item.id}
+            aria-label={`Preview ${item.file.name}`}
+            onClick={(event) => preview(event.currentTarget)}
+            icon={<FileTextIcon size={20} />}
+          />
+        </span>
       )}
       <div className={styles.details}>
         <span className={styles.name} tabIndex={source && !failed ? -1 : 0}>
@@ -281,9 +284,10 @@ function AttachmentItem({
         <IconButton
           size="xs"
           shape="round"
-          variant="primary"
+          variant="media"
           type="button"
           disabled={disabled}
+          data-remove-action={!busy && item.status !== "error" ? "" : undefined}
           aria-label={`${item.status === "error" ? "Retry" : "Remove"} ${item.file.name}`}
           title={
             item.status === "error"
@@ -377,8 +381,9 @@ function AttachmentItem({
           <IconButton
             size="xs"
             shape="round"
-            variant="primary"
+            variant="media"
             disabled={disabled}
+            data-remove-action=""
             aria-label={`Remove ${item.file.name}`}
             onClick={() => remove(item.id)}
             icon={<XIcon size={16} />}

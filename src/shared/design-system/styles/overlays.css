@@ -7,7 +7,7 @@
   }
   .buzz-dialog {
     @apply interaction-floating;
-    --dialog-padding: var(--space-6);
+    --dialog-padding: var(--space-5);
     position: fixed;
     top: 50%;
     left: 50%;
@@ -173,6 +173,15 @@
   }
   .buzz-dialog-content[data-footer-gap="compact"] {
     padding-block-end: var(--space-2);
+  }
+  /* Footerless lists own their end padding inside the scrollport. */
+  :is(.buzz-dialog, .buzz-dialog-step):has(
+    > .buzz-dialog-content[data-footer-gap="none"]:last-child
+  ) {
+    padding-bottom: 0;
+  }
+  .buzz-dialog-content[data-footer-gap="none"]:last-child {
+    padding-bottom: 0;
   }
   .buzz-dialog-header[data-chrome-spacing="padded"] {
     padding-bottom: var(--space-3);

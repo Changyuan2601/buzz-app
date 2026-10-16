@@ -246,7 +246,7 @@ export function AppShell({
   return (
     <div
       data-shell-tone={tone}
-      className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden bg-shell text-ink"
+      className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden text-ink"
     >
       {/* biome-ignore lint/a11y/useValidAnchor: A skip link navigates to a real fragment; enhance focus without replacing the app route hash. */}
       <a

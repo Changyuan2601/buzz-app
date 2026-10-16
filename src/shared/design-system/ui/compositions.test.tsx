@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { Dialog } from "./Dialog";
@@ -436,6 +442,55 @@ test("navigation tabs retain keyboard selection and separate close buttons", asy
   await user.click(profile);
   await user.keyboard("{Delete}");
   expect(close).toHaveBeenCalledTimes(2);
+});
+
+test("middle-click closes only closable tabs and cancels its default action", () => {
+  const close = vi.fn();
+  const select = vi.fn();
+  render(
+    <Tabs
+      value="thread"
+      onValueChange={select}
+      label="Panel tabs"
+      variant="navigation"
+      items={[
+        { value: "thread", label: "Thread" },
+        { value: "profile", label: "Ada", onClose: close },
+      ]}
+    />,
+  );
+  const mouse = (type: string, target: HTMLElement, button: number) => {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button,
+    });
+    fireEvent(target, event);
+    return event;
+  };
+  expect(
+    mouse("mousedown", screen.getByRole("tab", { name: "Thread" }), 1)
+      .defaultPrevented,
+  ).toBe(false);
+  expect(
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 2)
+      .defaultPrevented,
+  ).toBe(false);
+  expect(
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 0)
+      .defaultPrevented,
+  ).toBe(false);
+  expect(
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 1)
+      .defaultPrevented,
+  ).toBe(true);
+  expect(close).not.toHaveBeenCalled();
+  mouse("auxclick", screen.getByRole("tab", { name: "Thread" }), 1);
+  mouse("auxclick", screen.getByRole("tab", { name: "Ada" }), 2);
+  expect(close).not.toHaveBeenCalled();
+  mouse("auxclick", screen.getByRole("tab", { name: "Ada" }), 1);
+  expect(close).toHaveBeenCalledOnce();
+  expect(select).not.toHaveBeenCalled();
 });
 
 test("centered nested pointer-dismissal owns a backdrop and leaves the parent open", async () => {

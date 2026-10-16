@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
+import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { callTool, TOOLS } from "./tools";
@@ -71,9 +71,10 @@ function fake(events: readonly BuzzEvent[] = []) {
     read: vi.fn(async (path: string) =>
       path.endsWith(".png") ? PNG : new TextEncoder().encode(`# ${path}`),
     ),
-    memories: vi.fn(async () => [
-      { slug: "mem/notes", body: "old", createdAt: 50 },
-    ]),
+    memories: vi.fn(async () => ({
+      entries: [{ slug: "mem/notes", body: "old", createdAt: 50 }],
+      partial: false,
+    })),
     remember: vi.fn(async () => undefined),
     media: vi.fn(async (url: string) =>
       btoa(String.fromCharCode(...(url.endsWith(".png") ? PNG : [1, 2, 3]))),
@@ -285,6 +286,49 @@ it("writes memory under mem/, newer than the entry it replaces", async () => {
   await expect(
     callTool(client, {}, "mem_get", { slug: "notes" }),
   ).resolves.toBe("old");
+  // Both read the one entry by its slug, not the whole listing.
+  expect(vi.mocked(client.memories).mock.calls).toEqual([
+    ["mem/notes"],
+    ["mem/notes"],
+  ]);
+});
+
+it("never reports memory cut short by a limit as missing", async () => {
+  const { client } = fake();
+  const partial = (entries: Memory[]) =>
+    vi.mocked(client.memories).mockResolvedValue({ entries, partial: true });
+  partial([]);
+  await expect(callTool(client, {}, "mem_get", {})).rejects.toThrow(
+    "Memory could not be read; try again.",
+  );
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  // A write needs the entry it replaces: a partial read that missed it, or a
+  // failed read, writes nothing.
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  // A failed lookup reaches the caller as it is, so denial or a lost
+  // connection is not reported as a retryable read.
+  const denied = new Error("Buzz is not connected");
+  vi.mocked(client.memories).mockRejectedValueOnce(denied);
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toBe(denied);
+  expect(client.remember).not.toHaveBeenCalled();
+  partial([{ slug: "mem/a", body: "a", createdAt: 0 }]);
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toMatch(
+    /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
+  );
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toBe("No memory.");
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).resolves.toBe("No memory mem/notes.");
+  // Only a complete read that confirms the entry is missing writes it fresh.
+  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 0);
 });
 
 it("answers MCP requests, reporting a failed call as a tool error", async () => {
@@ -1224,4 +1268,180 @@ it("keeps what it changed when a read after the change fails", async () => {
       topic: "x",
     }),
   ).rejects.toThrow("kind 39000 unavailable");
+});
+
+it("lists, opens and closes tabs for the working channel's threads", async () => {
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const elsewhere = event({ id: bob, tags: [["h", "other"]] });
+  // The reader takes the last marked root and ignores case.
+  const remarked = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice, "", "root"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const uppercase = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice.toUpperCase(), "", "reply"],
+    ],
+  });
+  const { client } = fake([
+    event({ id: root }),
+    reply,
+    elsewhere,
+    remarked,
+    uppercase,
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {}),
+  ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
+  const tabs = {
+    list: vi.fn(() => [
+      { root, pane: "side", shown: true },
+      { root: alice, pane: "main", name: "Launch plan", shown: false },
+    ]),
+    open: vi.fn(() => true),
+    close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
+    rename: vi.fn(() => true),
+  };
+  client.tabs = tabs;
+  await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
+    "Tabs need a channel to work in.",
+  );
+  expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
+    `${root} side (shown)\n${alice} main "Launch plan"`,
+  );
+  expect(tabs.list).toHaveBeenCalledWith("chan");
+  // A reply opens its thread's root.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: nested,
+    }),
+  ).toBe(`opened ${root}`);
+  expect(tabs.open).toHaveBeenCalledWith("chan", root);
+  // Another channel's thread never gets a tab here.
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: bob,
+    }),
+  ).rejects.toThrow(`${bob} is not in this channel.`);
+  expect(tabs.open).toHaveBeenCalledTimes(1);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).rejects.toThrow("Your owner is looking at that tab, so it stays open.");
+  expect(tabs.close).toHaveBeenLastCalledWith("chan", root);
+  tabs.close.mockReturnValue("missing");
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).toBe("not open");
+  // A reply renames its thread's tab; no name restores the automatic title.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: nested,
+      name: " Launch plan ",
+    }),
+  ).toBe("renamed");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "Launch plan");
+  for (const [message, expected] of [
+    [remarked, root],
+    [uppercase, alice],
+  ] as const) {
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: message.id,
+      name: "Plan",
+    });
+    expect(tabs.rename).toHaveBeenLastCalledWith("chan", expected, "Plan");
+  }
+  tabs.rename.mockReturnValue(false);
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+    }),
+  ).toBe("not open");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+      name: 1,
+    }),
+  ).rejects.toThrow("name must be text.");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "move",
+      thread: root,
+    }),
+  ).rejects.toThrow("action must be open, close or rename.");
+});
+
+it("finds users through the community's name search, in its order", async () => {
+  const { client } = fake(community);
+  // Name search ranks Bob's exact match above a later Alice match.
+  client.searchProfiles = vi.fn(async () => [
+    profile(bob, "Wes"),
+    profile(alice, "Wesley"),
+  ]);
+  const found = await callTool(client, {}, "users", { q: "Wes" });
+  expect(found).toBe(`${bob} Wes\n${alice} Wesley`);
+  expect(client.searchProfiles).toHaveBeenCalledWith("wes", 100);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("finds users with NIP-50 search where the community has no name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => undefined);
+  // The fake ignores `search`; the name filter keeps only matching names.
+  expect(await callTool(client, {}, "users", { q: "alice" })).toBe(
+    `${alice} Alice Smith`,
+  );
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: "alice", limit: 100 },
+  ]);
+});
+
+it("finds a name longer than the name search's limit with NIP-50 search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  // 100 code points (200 UTF-16 units) is the longest name search accepts.
+  const longest = "😀".repeat(100);
+  await callTool(client, {}, "users", { q: longest });
+  expect(client.searchProfiles).toHaveBeenCalledWith(longest, 100);
+  expect(client.query).not.toHaveBeenCalled();
+  const over = `${longest}w`;
+  expect(await callTool(client, {}, "users", { q: over })).toBe("No users.");
+  expect(client.searchProfiles).toHaveBeenCalledTimes(1);
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: over, limit: 100 },
+  ]);
+});
+
+it("reads users by id without the name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  expect(await callTool(client, {}, "users", { ids: [bob] })).toBe(
+    `${bob} Bob`,
+  );
+  expect(client.searchProfiles).not.toHaveBeenCalled();
 });

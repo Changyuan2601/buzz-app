@@ -400,16 +400,24 @@ function Composer({
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
+  const resolvedPicks = useRef<MentionPicks>({});
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
-    autoFocus && !disabled && typeof document !== "undefined"
+    autoFocus && typeof document !== "undefined"
       ? document.activeElement
       : undefined,
   );
   useEffect(() => {
     // A navigation/dialog owner may restore focus during this commit. Let that
-    // explicit handoff win over the conversation's default initial focus.
+    // explicit handoff win over the conversation's default initial focus. A
+    // loading conversation defers it until its composer is first enabled.
+    if (disabled) {
+      // Disabling after the handoff ends it; re-enabling must not refocus.
+      if (focusOnMount.current === input.current)
+        focusOnMount.current = undefined;
+      return;
+    }
     if (!focusOnMount.current) return;
     const focus = () => {
       const previous = focusOnMount.current;
@@ -423,9 +431,10 @@ function Composer({
       if (!editor || editor.closest("[inert]")) return;
       // A conversation can finish loading behind an already-focused dialog,
       // menu, or open popup trigger. Its default focus must not interrupt that
-      // explicit owner: moving focus away also dismisses non-modal menus.
+      // explicit owner: moving focus away also dismisses non-modal menus. A
+      // hover preview is transient and owns no focus.
       const owner = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
@@ -450,7 +459,7 @@ function Composer({
       return () => observer.disconnect();
     }
     focus();
-  }, []);
+  }, [disabled]);
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -1108,6 +1117,7 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
+    const capturedRunPicks = { ...picks, ...resolvedPicks.current };
     try {
       if (submission?.receiptOnly) {
         submission.submit(captured);
@@ -1214,7 +1224,7 @@ function Composer({
       );
       // Only agents still notified by this message are asked for a model or effort.
       const sentPicks: MentionPicks = Object.fromEntries(
-        Object.entries(capturedPicks).filter(([key]) =>
+        Object.entries(capturedRunPicks).filter(([key]) =>
           recipients.includes(key),
         ),
       );
@@ -1750,6 +1760,9 @@ function Composer({
                   value={picks}
                   disabled={editingDisabled}
                   onChange={setPicks}
+                  onResolved={(next) => {
+                    resolvedPicks.current = next;
+                  }}
                 />
               )}
             <IconButton

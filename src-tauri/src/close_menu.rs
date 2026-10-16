@@ -24,13 +24,17 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     // Tauri's default has Close Window in both File and Window. Preserve all
     // other native items (especially editing/services), replacing both routes.
     // Predefined items expose their label, but not their native action type.
-    let close_label = PredefinedMenuItem::close_window(app, None)?.text()?;
+    // A detached item reports its label with its mnemonic (`C&lose Window`),
+    // one in a menu its native title (`Close Window`).
+    let close_label = PredefinedMenuItem::close_window(app, None)?
+        .text()?
+        .replace('&', "");
     let mut replaced = 0;
     for item in menu.items()? {
         if let Some(submenu) = item.as_submenu() {
             for (index, item) in submenu.items()?.iter().enumerate() {
                 if let Some(predefined) = item.as_predefined_menuitem() {
-                    if predefined.text()? == close_label {
+                    if predefined.text()?.replace('&', "") == close_label {
                         submenu.remove(item)?;
                         submenu.insert(&close, index)?;
                         replaced += 1;

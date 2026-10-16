@@ -44,8 +44,12 @@ function browser(stored: string | null = null, systemDark = false) {
     },
     requestAnimationFrame: (callback: () => void) => callback(),
     getComputedStyle: () => ({
-      getPropertyValue: () =>
-        root.dataset.colorMode === "dark" ? " #11181d " : " #e7f0ef ",
+      getPropertyValue: (name: string) =>
+        name === "--bg-app"
+          ? root.dataset.colorMode === "dark"
+            ? " #11181d "
+            : " #e7f0ef "
+          : "",
     }),
     addEventListener: (_: string, fn: (event: StorageEvent) => void) =>
       listeners.add(fn),

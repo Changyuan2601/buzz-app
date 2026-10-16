@@ -1,3 +1,5 @@
+import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   createContext,
   useCallback,
@@ -57,6 +59,8 @@ export function useChannelMenuActions() {
   );
 }
 
+type LifecycleCallbacks = { close(): void; completed(): void };
+
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
   session: RelaySession;
@@ -69,7 +73,8 @@ type State = {
         action: ChannelLifecycleAction;
         trigger?: HTMLElement;
         focusFallback?: HTMLElement | undefined;
-        origin?: AbortSignal;
+        origin?: AbortSignal | undefined;
+        callbacks?: LifecycleCallbacks | undefined;
       }
     | undefined;
 };
@@ -87,6 +92,9 @@ type ActivityAgent = {
 };
 type Handoff = State & {
   menuActions: ReturnType<typeof createMenuActions>;
+  lifecycleCallbacks: RefObject<
+    { close(): void; completed(): void } | undefined
+  >;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   updateDraftParents(update: (previous: string[]) => string[]): void;
@@ -97,7 +105,9 @@ type Handoff = State & {
     action: ChannelLifecycleAction,
     trigger?: HTMLElement,
     origin?: AbortSignal,
+    callbacks?: LifecycleCallbacks,
   ): void;
+  beginLifecycle(): void;
   closeLifecycle(): void;
 };
 const ChannelNavigationContext = createContext<Handoff | undefined>(undefined);
@@ -116,6 +126,14 @@ export function ChannelNavigationProvider({
   const scope = connection.scope ?? "disconnected";
   // biome-ignore lint/correctness/useExhaustiveDependencies: retire all sidebar callbacks when the relay session or scope changes.
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
+  const lifecycleCallbacks = useRef<
+    { close(): void; completed(): void } | undefined
+  >(undefined);
+  const [failure, setFailure] = useState<{
+    session: RelaySession;
+    title: string;
+    message: string;
+  }>();
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
   const [state, setState] = useState<State>(() =>
@@ -158,6 +176,7 @@ export function ChannelNavigationProvider({
     () => ({
       ...state,
       menuActions,
+      lifecycleCallbacks,
       activityThread,
       activityAgent,
       updateDraftParents(change) {
@@ -182,7 +201,7 @@ export function ChannelNavigationProvider({
           },
         }));
       },
-      openLifecycle(channel, action, trigger, origin) {
+      openLifecycle(channel, action, trigger, origin, callbacks) {
         update((previous) =>
           origin?.aborted || previous.lifecycleDialog
             ? previous
@@ -191,6 +210,7 @@ export function ChannelNavigationProvider({
                 lifecycleDialog: {
                   channel,
                   action,
+                  callbacks,
                   ...(trigger ? { trigger } : {}),
                   // Settings actions can remount after an archive-state change;
                   // the tab header lives outside the settings aside.
@@ -207,6 +227,20 @@ export function ChannelNavigationProvider({
                   ...(origin ? { origin } : {}),
                 },
               },
+        );
+      },
+      beginLifecycle() {
+        // A confirmed operation belongs to the session, not its originating visit.
+        update((previous) =>
+          previous.lifecycleDialog
+            ? {
+                ...previous,
+                lifecycleDialog: {
+                  ...previous.lifecycleDialog,
+                  origin: undefined,
+                },
+              }
+            : previous,
         );
       },
       closeLifecycle() {
@@ -226,6 +260,41 @@ export function ChannelNavigationProvider({
   return (
     <ChannelNavigationContext value={value}>
       {children}
+      {state.session === connection.session &&
+        state.lifecycleDialog &&
+        !state.lifecycleDialog.origin?.aborted && (
+          <ChannelLifecycleDialog
+            key={`${scope}:${connection.generation}`}
+            channelId={state.lifecycleDialog.channel.id}
+            channelName={state.lifecycleDialog.channel.name}
+            action={state.lifecycleDialog.action}
+            lifecycle={connection.session.channelLifecycle}
+            onSubmit={value.beginLifecycle}
+            close={() => {
+              (
+                state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
+              )?.close();
+              value.closeLifecycle();
+            }}
+            completed={() => {
+              (
+                state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
+              )?.completed();
+              value.closeLifecycle();
+            }}
+            failed={(title, message) => {
+              setFailure({ session: connection.session, title, message });
+              value.closeLifecycle();
+            }}
+          />
+        )}
+      {failure?.session === connection.session && (
+        <ToastNotice
+          title={failure.title}
+          description={failure.message}
+          onDismiss={() => setFailure(undefined)}
+        />
+      )}
     </ChannelNavigationContext>
   );
 }

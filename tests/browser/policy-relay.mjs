@@ -9,6 +9,7 @@ export function policyRelay({
   viewer,
   relayAuthor,
   answer,
+  searchProfiles,
   report,
   pending,
   discovery,
@@ -185,9 +186,11 @@ export function policyRelay({
           expect(new URL(url).pathname).toBe("/");
           return Response.json(discovery?.(communityOf(url)) ?? {});
         }
-        expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
-          new URL(url).pathname,
-        );
+        expect([
+          "/query",
+          "/profiles/search",
+          ...(acceptPublication ? ["/events"] : []),
+        ]).toContain(new URL(url).pathname);
         const auth = JSON.parse(
           Buffer.from(init.headers.Authorization.slice(6), "base64").toString(),
         );
@@ -200,6 +203,8 @@ export function policyRelay({
           createHash("sha256").update(init.body).digest("hex"),
         ]);
         const filters = JSON.parse(init.body);
+        if (new URL(url).pathname === "/profiles/search")
+          return Response.json(searchProfiles(communityOf(url), filters));
         if (new URL(url).pathname === "/events") {
           acceptPublication(communityOf(url), filters);
           return Response.json({ accepted: true, event_id: filters.id });

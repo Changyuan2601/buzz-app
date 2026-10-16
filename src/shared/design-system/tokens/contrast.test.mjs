@@ -115,6 +115,17 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it("rejects a shell color that hides navigation text", () => {
+    const result = check(
+      tokens.replace(
+        "--bg-app: var(--neutral-quiet-hover);",
+        "--bg-app: var(--neutral-7);",
+      ),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toMatch(/light\s+--text-subtle .* on --bg-app/);
+  });
+
   it("checks other text roles without a link exception", () => {
     const result = check(
       tokens.replaceAll(

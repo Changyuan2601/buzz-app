@@ -147,7 +147,7 @@ export function DraftSessionSettings({
           raw === undefined ? (
             <WorkspaceFields value={workspace} onChange={setWorkspace} />
           ) : (
-            <Field label="Canvas">
+            <Field label="Instructions">
               <Textarea
                 rows={12}
                 value={raw}

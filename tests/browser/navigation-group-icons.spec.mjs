@@ -47,6 +47,15 @@ test("group icons resolve custom media without overlapping labels, and the creat
     await expect(placeholder).toBeVisible();
     await expect(placeholder).toHaveCSS("width", "16px");
     await expect(placeholder).toHaveCSS("height", "16px");
+    const loadingLayout = await placeholder.evaluate((element) => {
+      const artwork = element.getBoundingClientRect();
+      const slot = element.parentElement.getBoundingClientRect();
+      return {
+        artworkCenter: artwork.left + artwork.width / 2,
+        slotCenter: slot.left + slot.width / 2,
+      };
+    });
+    expect(loadingLayout.artworkCenter).toBe(loadingLayout.slotCenter);
     await expect(placeholder).not.toHaveCSS(
       "background-color",
       "rgba(0, 0, 0, 0)",
@@ -77,6 +86,8 @@ test("group icons resolve custom media without overlapping labels, and the creat
       const iconBounds = icon.getBoundingClientRect();
       const summaryBounds = element.getBoundingClientRect();
       return {
+        width: iconBounds.width,
+        labelOffset: title.getBoundingClientRect().left - iconBounds.left,
         gap: title.getBoundingClientRect().left - iconBounds.right,
         height: summaryBounds.height,
         iconTop: iconBounds.top,
@@ -85,7 +96,9 @@ test("group icons resolve custom media without overlapping labels, and the creat
         summaryBottom: summaryBounds.bottom,
       };
     });
-    expect(layout.gap).toBe(8);
+    expect(layout.width).toBe(20);
+    expect(layout.gap).toBe(4);
+    expect(layout.labelOffset).toBe(24);
     expect(layout.height).toBe(32);
     expect(layout.iconTop).toBeGreaterThanOrEqual(layout.summaryTop);
     expect(layout.iconBottom).toBeLessThanOrEqual(layout.summaryBottom);

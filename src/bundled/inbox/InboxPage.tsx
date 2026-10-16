@@ -27,6 +27,7 @@ import { messagePreview } from "../../features/notifications/content";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   InboxFilters,
@@ -879,31 +880,38 @@ export function InboxView({
                 !loading &&
                 !failure && (
                   <div className={styles.empty} role="status">
-                    <h3 className="text-label">
-                      {show === "archived"
-                        ? unreadOnly
-                          ? "No archived conversations match Unread only"
-                          : "No archived conversations in this view"
-                        : unreadOnly
-                          ? "No unread activity in this view"
-                          : "No recent activity in this view"}
-                    </h3>
-                    <p className="text-body text-subtle">
-                      {show === "archived"
-                        ? activity === "mentions"
-                          ? "Archived mentions stay here until you restore them or receive a new mention."
-                          : "Archived conversations stay here until you restore them, receive a new participating-thread reply, or receive a new mention."
-                        : "Mentions, direct messages, and replies in threads you participate in appear here."}
-                    </p>
-                    {show === "archived" && unreadOnly && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setFilter({ attention: "all" })}
-                      >
-                        Show all archived conversations
-                      </Button>
-                    )}
+                    <EmptyState
+                      icon={
+                        show === "archived" ? <ArchiveIcon /> : <BellIcon />
+                      }
+                      title={
+                        show === "archived"
+                          ? unreadOnly
+                            ? "No archived conversations match Unread only"
+                            : "No archived conversations in this view"
+                          : unreadOnly
+                            ? "No unread activity in this view"
+                            : "No recent activity in this view"
+                      }
+                      description={
+                        show === "archived"
+                          ? activity === "mentions"
+                            ? "Archived mentions stay here until you restore them or receive a new mention."
+                            : "Archived conversations stay here until you restore them, receive a new participating-thread reply, or receive a new mention."
+                          : "Mentions, direct messages, and replies in threads you participate in appear here."
+                      }
+                      action={
+                        show === "archived" && unreadOnly ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setFilter({ attention: "all" })}
+                          >
+                            Show all archived conversations
+                          </Button>
+                        ) : undefined
+                      }
+                    />
                   </div>
                 )}
               <ul
@@ -1030,29 +1038,27 @@ export function InboxView({
                             label={
                               <span className={styles.content}>
                                 <span className={styles.heading}>
-                                  <strong
-                                    className={`text-label-sm text-standard ${styles.sender}`}
-                                  >
-                                    {sender}
-                                  </strong>
+                                  <span className={styles.identity}>
+                                    <strong
+                                      className={`text-label-sm text-standard ${styles.sender}`}
+                                    >
+                                      {sender}
+                                    </strong>
+                                    <span
+                                      className={`text-caption ${styles.source}`}
+                                      data-inbox-source=""
+                                    >
+                                      {context}
+                                    </span>
+                                  </span>
                                   <time
-                                    className="text-caption text-subtle"
+                                    className={`text-caption text-subtle ${styles.rowDate}`}
                                     dateTime={new Date(
                                       item.createdAt * 1000,
                                     ).toISOString()}
                                   >
                                     {relativeTimestamp(item.createdAt)}
                                   </time>
-                                </span>
-                                <span className={styles.sourceLine}>
-                                  <span
-                                    className={`text-caption ${styles.source}`}
-                                    data-inbox-source=""
-                                  >
-                                    <span className={styles.sourceName}>
-                                      {context}
-                                    </span>
-                                  </span>
                                 </span>
                                 <span
                                   id={`${previewId}-${item.id}`}
@@ -1089,6 +1095,7 @@ export function InboxView({
                           <span className={styles.rowArchive}>
                             <IconButton
                               size="sm"
+                              variant="ghost"
                               disabled={pending}
                               aria-label={`${rowArchived ? "Restore" : "Archive"} ${sender} in ${context}`}
                               title={rowArchived ? "Restore" : "Archive"}

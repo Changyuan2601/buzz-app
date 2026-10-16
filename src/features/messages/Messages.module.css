@@ -207,6 +207,13 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+.authorWithStatus {
+  --user-status-emoji-size: var(--text-body-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
 .author {
   font-weight: var(--type-weight-medium);
   min-width: 0;
@@ -531,6 +538,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
 }
+.feed:has(.emptyConversation) .edge:empty {
+  min-height: 0;
+}
+.emptyConversation {
+  padding-block: var(--space-panel-inset);
+}
 .composer[data-chat-presentation] {
   width: min(calc(100% - 2 * var(--space-4)), 52rem);
   margin-inline: auto;
@@ -546,6 +559,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 @media (max-width: 40.625rem) {
   .feed {
     padding-inline: var(--space-3);
+  }
+  .emptyConversation {
+    padding-block: var(--space-3);
   }
   .composer {
     margin: 0 var(--space-3) var(--space-3);
@@ -800,7 +816,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
    both read it as the thread's placeholder, not a stray icon. */
 .threadLoading picture {
   display: block;
-  width: clamp(5rem, 24cqmin, 10rem);
+  width: clamp(3.35rem, 16cqmin, 6.7rem);
   line-height: 0;
 }
 .threadLoading img {

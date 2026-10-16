@@ -17,6 +17,15 @@ export type ReadOptions = {
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
   readStateSnapshot?(options?: ReadOptions): Promise<readonly RelayEvent[]>;
+  /** One page of the relay's name-only profile search (see
+   * `ReadTransport.searchProfiles`), under the same deadline and cancellation
+   * as `read`. Absent when the transport has no such endpoint. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+    page: number,
+    options?: ReadOptions,
+  ): Promise<readonly RelayEvent[]>;
   read(
     filters: readonly ReadFilter[],
     options?: ReadOptions,
@@ -38,6 +47,9 @@ type Job = {
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
   snapshot: boolean;
+  /** Set for a name-only profile search; `filters` then hold the equivalent
+   * NIP-50 filter, so invalidation treats both searches alike. */
+  profiles?: { query: string; limit: number; page: number };
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 
@@ -142,19 +154,29 @@ export function createRelayReader(
       try {
         if (job.snapshot && !transport.readStateSnapshot)
           throw new Error("Read-state snapshots unavailable");
+        if (job.profiles && !transport.searchProfiles)
+          throw new Error("Profile name search unavailable");
         const query =
-          job.snapshot && transport.readStateSnapshot
-            ? transport.readStateSnapshot(
+          job.profiles && transport.searchProfiles
+            ? transport.searchProfiles(
+                job.profiles.query,
+                job.profiles.limit,
+                job.profiles.page,
                 job.controller.signal,
-                job.id,
                 job.priority,
               )
-            : transport.query(
-                job.filters,
-                job.controller.signal,
-                job.id,
-                job.priority,
-              );
+            : job.snapshot && transport.readStateSnapshot
+              ? transport.readStateSnapshot(
+                  job.controller.signal,
+                  job.id,
+                  job.priority,
+                )
+              : transport.query(
+                  job.filters,
+                  job.controller.signal,
+                  job.id,
+                  job.priority,
+                );
         void query
           .then(async (events) => {
             if (byteSize(events) > 8 * 1024 * 1024)
@@ -181,6 +203,7 @@ export function createRelayReader(
     filters: readonly ReadFilter[],
     { signal, priority = "foreground", fresh = false }: ReadOptions = {},
     snapshot = false,
+    profiles?: Job["profiles"],
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
     if (!transport)
@@ -243,6 +266,7 @@ export function createRelayReader(
         );
       key = `read-state-snapshot:${key}`;
     }
+    if (profiles) key = `profile-names:${JSON.stringify(profiles)}`;
     if (fresh) key = `${key}:fresh:${++sequence}`;
     let job = jobs.get(key);
     if (!job) {
@@ -261,6 +285,7 @@ export function createRelayReader(
         consumers: new Set(),
         running: false,
         snapshot,
+        ...(profiles ? { profiles } : {}),
         timer: setTimeout(
           () =>
             finish(
@@ -305,6 +330,30 @@ export function createRelayReader(
         options,
         true,
       ),
+    ...(transport?.searchProfiles
+      ? {
+          searchProfiles: (
+            query: string,
+            limit: number,
+            page: number,
+            options?: ReadOptions,
+          ) =>
+            read(
+              [
+                {
+                  kinds: [0],
+                  search: query,
+                  search_mode: "prefix",
+                  limit,
+                  page,
+                },
+              ],
+              options,
+              false,
+              { query, limit, page },
+            ),
+        }
+      : {}),
   });
   return {
     reader,

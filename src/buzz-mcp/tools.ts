@@ -10,7 +10,12 @@ import {
   lifecycleChannelId,
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
+import {
+  PROFILE_SEARCH_MAX,
+  PROFILE_SEARCH_QUERY_MAX,
+} from "../features/relay/profile-search";
 import { sessionMetadata } from "../features/sessions/metadata";
+import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -128,6 +133,15 @@ export const TOOLS: readonly Tool[] = [
   tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
     "url",
   ]),
+  tool(
+    "tabs",
+    "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
+    {
+      action: { type: "string", enum: ["open", "close", "rename"] },
+      thread: str,
+      name: str,
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -463,11 +477,21 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const ids = list(args.ids).map(pubkey);
     const q = text(args.q)?.toLowerCase();
     if (!ids.length && !q) throw new Error("Give ids or q.");
-    const profiles = await client.query([
-      ids.length
-        ? { kinds: [0], authors: ids, limit: ids.length }
-        : { kinds: [0], search: q, limit: 100 },
-    ]);
+    // Name search matches only name and display_name, best match first;
+    // NIP-50 search matches the whole profile, so text in avatars or `about`
+    // can fill its results and hide the person asked for. Name search refuses
+    // a query longer than its limit, so a longer name uses NIP-50 search.
+    const named =
+      !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await client.query([
+        ids.length
+          ? { kinds: [0], authors: ids, limit: ids.length }
+          : { kinds: [0], search: q, limit: 100 },
+      ]));
     const rows = newest(profiles)
       .map((event) => {
         const profile = parse(event.content);
@@ -478,7 +502,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             : "";
         return { name, row: `${event.pubkey} ${name}${about}` };
       })
-      .filter(({ name }) => !q || ids.length || name.toLowerCase().includes(q));
+      .filter(
+        ({ name }) =>
+          !q || ids.length || named || name.toLowerCase().includes(q),
+      );
     return rows.map(({ row }) => row).join("\n") || "No users.";
   },
 
@@ -520,27 +547,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async mem_get(tools, args) {
-    const entries = await tools.client.memories();
     const slug = text(args.slug);
-    if (!slug)
-      return (
-        entries
-          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-          .join("\n") || "No memory."
-      );
+    if (!slug) {
+      const { entries, partial } = await tools.client.memories();
+      const lines = entries
+        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+        .join("\n");
+      if (!partial) return lines || "No memory.";
+      if (!lines) throw new Error("Memory could not be read; try again.");
+      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+    }
     const key = memorySlug(slug);
-    return (
-      entries.find((entry) => entry.slug === key)?.body ?? `No memory ${key}.`
-    );
+    const { entries, partial } = await tools.client.memories(key);
+    const body = entries.find((entry) => entry.slug === key)?.body;
+    if (body !== undefined) return body;
+    if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
+    return `No memory ${key}.`;
   },
 
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories().catch(() => [])).find(
-      (entry) => entry.slug === key,
-    );
+    // A write must be dated after the entry it replaces, so it waits for a
+    // read that finds the entry or confirms there is none.
+    const { entries, partial } = await tools.client.memories(key);
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },
@@ -571,6 +604,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!type?.startsWith("image/"))
       throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
     return { data, type };
+  },
+
+  async tabs(tools, args) {
+    const { client, context } = tools;
+    const tabs = client.tabs;
+    if (!tabs)
+      throw new Error(
+        "Tabs are kept in Buzz Desktop and are unavailable here.",
+      );
+    // Only the channel the agent works in, so it never pulls the owner
+    // toward another conversation.
+    const channel = context.channel;
+    if (!channel) throw new Error("Tabs need a channel to work in.");
+    if (args.action === undefined) {
+      const open = tabs.list(channel);
+      return open.length
+        ? open
+            .map(
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.name ? ` ${JSON.stringify(tab.name)}` : ""}${tab.shown ? " (shown)" : ""}`,
+            )
+            .join("\n")
+        : "No thread tabs open.";
+    }
+    if (
+      args.action !== "open" &&
+      args.action !== "close" &&
+      args.action !== "rename"
+    )
+      throw new Error("action must be open, close or rename.");
+    const event = await tools.event(required(args, "thread"));
+    if (tag(event, "h") !== channel)
+      throw new Error(`${event.id} is not in this channel.`);
+    // Resolve the root as the reader does, so the tab matched is the one shown.
+    const root = threadReference(event)?.rootId ?? event.id;
+    if (args.action === "open")
+      return tabs.open(channel, root) ? `opened ${root}` : "already open";
+    if (args.action === "rename")
+      return tabs.rename(channel, root, optional(args, "name") ?? "")
+        ? "renamed"
+        : "not open";
+    const closed = tabs.close(channel, root);
+    if (closed === "shown")
+      throw new Error("Your owner is looking at that tab, so it stays open.");
+    return closed === "closed" ? "closed" : "not open";
   },
 };
 

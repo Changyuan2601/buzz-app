@@ -168,12 +168,10 @@ test("record, preview, send and play the chat card with speed and seeking", {
     "stroke",
     "rgb(255, 255, 255)",
   );
-  await expect(draftPlay).toHaveCSS("clip-path", /^path\(/);
-  await expect(draftCard.locator("[data-image-outline] path")).toHaveAttribute(
-    "d",
-    / c .* a /,
-  );
-  // The background is smoothed separately so the floating remove control escapes.
+  await expect(draftPlay).toHaveCSS("clip-path", "none");
+  await expect(draftPlay).toHaveCSS("border-radius", "7px");
+  await expect(draftCard).toHaveCSS("border-radius", "10px");
+  // The draft uses concentric circular corners and an inset remove control.
   await draftCard
     .getByRole("button", { name: "Remove voice note" })
     .click({ trial: true });

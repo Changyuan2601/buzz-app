@@ -16,6 +16,9 @@ export type AgentIdentity = Readonly<{
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;
+  /** Its Delete started and has not finished. It keeps its key, so it cannot
+   * be imported again, and stays stopped until Delete is pressed again. */
+  deleting?: true;
 }>;
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */
@@ -91,12 +94,16 @@ export type AgentsNative = {
     destination: string,
     owner: string,
     type: string,
-  ): Promise<Readonly<{ agent: AgentIdentity; carry: Carry }>>;
+  ): Promise<
+    Readonly<{ agent: AgentIdentity; carry: Carry; notes?: readonly string[] }>
+  >;
   rename(pubkey: string, name: string): Promise<void>;
   /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */
   setPicture(pubkey: string, picture: string | null): Promise<void>;
   /** Makes it an agent of another type, keeping its identity and profile. */
   setType(pubkey: string, type: string): Promise<void>;
+  /** Marks its Delete as started; only `remove` finishing it clears that. */
+  beginDelete(pubkey: string): Promise<void>;
   /** Deletes the key and marks the identity deleted. */
   remove(pubkey: string): Promise<void>;
   /** Drops a deleted identity. */
@@ -107,6 +114,14 @@ export type AgentsNative = {
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Finds profiles by `name` or `display_name` in the agent's community, as
+   * the agent, best match first. `undefined` when the community has no
+   * profile name search. */
+  searchProfiles(
+    pubkey: string,
+    query: string,
+    limit: number,
+  ): Promise<RelayEvent[] | undefined>;
   /** Uploads base64 `data` (an image or MP4) as the agent. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
   /** Downloads one of its community's media blobs as the agent, as base64. */
@@ -148,6 +163,7 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_set_picture", { pubkey, picture }),
         setType: (pubkey, agentType) =>
           invoke("app_agent_set_type", { pubkey, agentType }),
+        beginDelete: (pubkey) => invoke("app_agent_begin_delete", { pubkey }),
         remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
         forget: (pubkey) => invoke("app_agent_forget", { pubkey }),
         publish: (pubkey, event) =>
@@ -161,6 +177,14 @@ export const nativeAgents = (): AgentsNative | undefined =>
           }),
         query: async (pubkey, filters) =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
+        searchProfiles: async (pubkey, query, limit) => {
+          const found = await invoke("app_agent_search_profiles", {
+            pubkey,
+            query,
+            limit,
+          });
+          return found == null ? undefined : eventsDto(found);
+        },
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),

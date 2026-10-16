@@ -34,6 +34,7 @@ import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   panelTabId,
+  selectedTabId,
   tabPane,
   type ConversationTab as Tab,
   type TabPane,
@@ -111,8 +112,9 @@ export function useConversationTabs({
   const focusSplit = useRef(false);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
-    if (focusSplit.current && splitTrigger.current) {
-      splitTrigger.current.focus({ preventScroll: true });
+    if (focusSplit.current) {
+      const target = splitTrigger.current ?? fallbackFocus?.current;
+      target?.focus({ preventScroll: true });
       focusSplit.current = false;
     }
   });
@@ -299,9 +301,7 @@ export function useConversationTabs({
     ...sideTabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
   ];
-  const selectedTab = rootTabIds.includes(tabState.selected)
-    ? tabState.selected
-    : (rootTabIds[0] ?? "");
+  const selectedTab = selectedTabId(tabState.selected, rootTabIds);
   // A tab-placed channel launcher keeps one retained tab per channel.
   const channelTab = (panel: Opening["panel"], channelId: string) =>
     panelTabs.find(
@@ -361,6 +361,14 @@ export function useConversationTabs({
         openConversationLink(drawerContext.channelId, target),
     },
   );
+  // The pane's page-local side panel, so a tab opened from outside the page
+  // knows the pane is in use; it ends with this mount.
+  const sidePanel = !!drawer.side;
+  const { setSidePanel } = tabState;
+  useLayoutEffect(() => {
+    setSidePanel(sidePanel);
+    return () => setSidePanel(false);
+  }, [setSidePanel, sidePanel]);
   const selectPanelTab = (id: string) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
     tabState.select(id);
@@ -578,6 +586,7 @@ export function useConversationTabs({
   );
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
+    if (tab.name) return tab.name;
     const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
     const root = queries.channels
       .window(tab.channelId)
@@ -611,6 +620,7 @@ export function useConversationTabs({
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
+        rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
       content:
         !usable || !target ? (

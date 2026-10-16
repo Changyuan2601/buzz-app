@@ -24,6 +24,7 @@ export default defineConfig({
       "src/**/*.test.{ts,tsx,mjs}",
       "browser-host/**/*.test.mjs",
       "scripts/**/*.test.{ts,mjs}",
+      "tests/browser/perf/**/*.test.mjs",
       "tests/fixtures/design-system/**/*.test.{ts,tsx}",
     ],
   },

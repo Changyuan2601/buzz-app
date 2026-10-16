@@ -191,6 +191,31 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
         );
       }),
     true,
+    undefined,
+    (section, signal) =>
+      serialize(async () => {
+        const { value, entry, active } = await current(signal);
+        const name = section.name.trim();
+        const existing = value.groups.find((group) => group.id === section.id);
+        if (existing) {
+          if (existing.name !== name)
+            throw new Error(
+              "The new Me group changed; refresh before retrying",
+            );
+          return project(value);
+        }
+        return save(
+          {
+            ...value,
+            groups: [
+              ...value.groups,
+              { id: section.id, name, defaultTemplateId: "" },
+            ],
+          },
+          entry,
+          active,
+        );
+      }),
   );
   return {
     ...store,

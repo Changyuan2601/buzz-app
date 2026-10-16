@@ -1509,7 +1509,7 @@ function ChannelWorkspace({
                             );
                           }}
                         />
-                        {current && !showingChannelPanel && (
+                        {current && hasChannelPanel && !showingChannelPanel && (
                           <span className={panelStyles.paneToggle}>
                             <IconButton
                               ref={splitTrigger}
@@ -1522,8 +1522,6 @@ function ChannelWorkspace({
                                   : "Open tab pane"
                               }
                               aria-expanded={!!showingChannelPanel}
-                              disabled={!hasChannelPanel}
-                              focusableWhenDisabled
                               onClick={() =>
                                 tabState.setPaneOpen(!showingChannelPanel)
                               }

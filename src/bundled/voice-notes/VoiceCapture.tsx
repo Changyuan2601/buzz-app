@@ -74,9 +74,7 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
         aria-label="Finish voice note"
         title="Finish voice note"
         onClick={() => void finish()}
-        icon={
-          <Square size={16} fill="var(--text-inverse)" aria-hidden="true" />
-        }
+        icon={<Square size={16} fill="currentColor" aria-hidden="true" />}
       />
     </div>
   );

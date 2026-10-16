@@ -75,6 +75,7 @@ function fixture() {
     refresh: vi.fn(async (_id: string, _member: string) => {}),
     canvasHead: vi.fn(async () => canvas),
     place: vi.fn(async (_id: string, _group: string) => {}),
+    star: vi.fn(async (_id: string) => {}),
     preflight: vi.fn(async (_input: ChannelCreationInput) => {}),
     signal: new AbortController().signal,
   };
@@ -94,6 +95,107 @@ function receipts() {
     key.startsWith("buzz-channel-setup.v2:setup-test:"),
   );
 }
+
+it.each(["ready", "unavailable", "failed", "conflicting"] as const)(
+  "integrates Starred creation with the session preference writer (%s)",
+  async (status) => {
+    const relay = keypair();
+    const events: RelayEvent[] = [];
+    let starred: readonly string[] = [];
+    const writeStar = vi.fn(
+      async ({ channelId }: { channelId: string; starred: boolean }) => {
+        if (status === "failed") throw new Error("Star publication failed");
+        starred = [...starred, channelId];
+        return starred;
+      },
+    );
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        scope: "https://starred.example.test",
+        media: () => undefined,
+        query: async (filters) =>
+          events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        channelKit: { prepare: async () => "", decode: async () => [] },
+        decodeSidebarPreferences: async () => ({
+          sections: [],
+          assignments: {},
+          starred,
+          muted: [],
+        }),
+        writeSidebarAssignment: async () => ({ sections: [], assignments: {} }),
+        ...(status !== "unavailable" ? { writeSidebarStar: writeStar } : {}),
+        writer: {
+          kinds: [9007],
+          sign: async (template) => signed(viewer, template),
+          publish: async (event) => {
+            events.push(event);
+            const id = event.tags.find(([tag]) => tag === "h")?.[1];
+            assert.exists(id);
+            events.push(
+              metadata(relay, id, "Starred channel"),
+              roster(relay, id, [viewer.pubkey]),
+            );
+          },
+        },
+      },
+      { outboxStorage: { load: async () => [], save: async () => {} } },
+    );
+    const draft: ChannelCreationInput = {
+      name: "Starred channel",
+      visibility: "open",
+      setup: {
+        agents: [],
+        canvas: "",
+        groupId: status === "conflicting" ? "work" : "",
+        templateId: "",
+        starred: true,
+      },
+    };
+    try {
+      const creation = owner.session.channelCreation.create(draft);
+      if (status === "unavailable" || status === "conflicting") {
+        await expect(creation).rejects.toThrow(
+          status === "unavailable"
+            ? "Starred placement is unavailable"
+            : "Invalid template or group selection",
+        );
+        expect(events.filter((event) => event.kind === 9007)).toEqual([]);
+        return;
+      }
+      const id = await creation;
+      if (status === "failed") {
+        await vi.waitFor(() =>
+          expect(owner.session.channelCreation.notices()).toEqual([
+            expect.objectContaining({
+              id,
+              error: expect.stringContaining("Star publication failed"),
+            }),
+          ]),
+        );
+      } else {
+        const receipt = `buzz-channel-setup.v2:https://starred.example.test:${viewer.pubkey}:${id}`;
+        await vi.waitFor(() =>
+          expect(localStorage.getItem(receipt)).toBeNull(),
+        );
+        expect(
+          owner.session.sidebarPreferences.snapshot().data?.starred,
+        ).toContain(id);
+        expect(owner.session.channelCreation.notices()).toEqual([]);
+      }
+      expect(writeStar).toHaveBeenCalledExactlyOnceWith(
+        { channelId: id, starred: true },
+        expect.any(AbortSignal),
+      );
+      expect(events.filter((event) => event.kind === 9007)).toHaveLength(1);
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 function firstReceipt() {
   const key = receipts()[0];
   assert.exists(key);
@@ -250,27 +352,36 @@ it("keeps partial intent without locking a second Create or replaying the first 
   expect(f.outbox.retry).not.toHaveBeenCalled();
 });
 
-it("checks an uncertain attempt without replaying Create or template writes", async () => {
-  const f = fixture();
-  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
-  const run = f.setup.run(input, viewer.pubkey);
-  await expect(run.admission).rejects.toThrow("Unknown delivery");
-  await expect(run.completion).rejects.toThrow("Unknown delivery");
-  expect(f.setup.snapshot()).toEqual(input);
-  const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
-  const next = f.setup.run(input, viewer.pubkey);
-  await expect(next.admission).resolves.toBe(saved.id);
-  await expect(next.completion).rejects.toThrow(
-    "Template setup was not continued",
-  );
-  expect(f.opts.delivered.mock.calls).toEqual([
-    [saved.operations.create],
-    [saved.operations.create, expect.any(Function)],
-  ]);
-  expect(f.setup.snapshot()).toBeUndefined();
-  expect(f.events.map((e) => e.event.kind)).toEqual([9007]);
-  expect(f.outbox.retry).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "checks an uncertain attempt without replaying Create or setup writes (Starred: %s)",
+  async (starred) => {
+    const f = fixture();
+    assert.exists(input.setup);
+    const draft = starred
+      ? { ...input, setup: { ...input.setup, groupId: "", starred: true } }
+      : input;
+    f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+    const run = f.setup.run(draft, viewer.pubkey);
+    await expect(run.admission).rejects.toThrow("Unknown delivery");
+    await expect(run.completion).rejects.toThrow("Unknown delivery");
+    expect(f.setup.snapshot()).toEqual(draft);
+    const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
+    const next = f.setup.run(draft, viewer.pubkey);
+    await expect(next.admission).resolves.toBe(saved.id);
+    await expect(next.completion).rejects.toThrow(
+      "Template setup was not continued",
+    );
+    expect(f.opts.delivered.mock.calls).toEqual([
+      [saved.operations.create],
+      [saved.operations.create, expect.any(Function)],
+    ]);
+    expect(f.setup.snapshot()).toBeUndefined();
+    expect(f.events.map((e) => e.event.kind)).toEqual([9007]);
+    expect(f.outbox.retry).not.toHaveBeenCalled();
+    expect(f.opts.star).not.toHaveBeenCalled();
+    expect(f.opts.place).not.toHaveBeenCalled();
+  },
+);
 
 it("retires a proven-failed Create so the form can try a new attempt", async () => {
   const f = fixture();
@@ -345,15 +456,42 @@ it.each(["failed", "unknown"] as const)(
   },
 );
 
-it("group failure does not skip Canvas and members; retains the incomplete destination", async () => {
+it.each([false, true])(
+  "placement failure does not skip Canvas and members; retains the incomplete destination (Starred: %s)",
+  async (starred) => {
+    const f = fixture();
+    f.opts.place.mockRejectedValue(new Error("Group unavailable"));
+    f.opts.star.mockRejectedValue(new Error("Star unavailable"));
+    assert.exists(input.setup);
+    const draft = starred
+      ? { ...input, setup: { ...input.setup, groupId: "", starred: true } }
+      : input;
+    const run = f.setup.run(draft, viewer.pubkey);
+    const failure = expect(run.completion).rejects.toThrow(
+      starred ? "Star unavailable" : "Group unavailable",
+    );
+    await run.admission;
+    await failure;
+    expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100, 9000]);
+    expect(receipts()).toHaveLength(1);
+    expect(
+      JSON.parse(localStorage.getItem(firstReceipt()) ?? "null").input,
+    ).toEqual(draft);
+  },
+);
+
+it("stars a confirmed channel through the setup owner without assigning a custom group", async () => {
   const f = fixture();
-  f.opts.place.mockRejectedValue(new Error("Group unavailable"));
-  const run = f.setup.run(input, viewer.pubkey);
-  const failure = expect(run.completion).rejects.toThrow("Group unavailable");
-  await run.admission;
-  await failure;
-  expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100, 9000]);
-  expect(receipts()).toHaveLength(1);
+  assert.exists(input.setup);
+  const run = f.setup.run(
+    { ...input, setup: { ...input.setup, groupId: "", starred: true } },
+    viewer.pubkey,
+  );
+  const id = await run.admission;
+  await run.completion;
+  expect(f.opts.star).toHaveBeenCalledExactlyOnceWith(id);
+  expect(f.opts.place).not.toHaveBeenCalled();
+  expect(receipts()).toHaveLength(0);
 });
 
 it("leaves historical/corrupt records untouched and never lets them occupy a fresh form", async () => {

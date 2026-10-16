@@ -1,6 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+const localAgentKey =
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
 // One real app-composition/geometry journey. Matrices stay in the host and
 // adapter tests; only native identity custody and the agent's external work are fake.
 test.use({
@@ -15,7 +18,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   app,
 }, testInfo) => {
   await open(page, app);
-  const agent = "b".repeat(64);
+  const agent = localAgentKey;
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
@@ -143,7 +146,7 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   app,
 }) => {
   await open(page, app);
-  const agent = "b".repeat(64);
+  const agent = localAgentKey;
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
@@ -238,7 +241,7 @@ test("opens an active message's empty thread without losing its activity preview
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["h", "alpha"],
-      ["p", "b".repeat(64)],
+      ["p", localAgentKey],
     ],
   });
   app.histories.get("primary/alpha").push(request);
@@ -328,7 +331,7 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
       tags: [
         ["h", "alpha"],
         ["e", root.id, "", "reply"],
-        ["p", "b".repeat(64)],
+        ["p", localAgentKey],
       ],
     });
     app.relay.publish("primary", request);

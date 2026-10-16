@@ -29,6 +29,7 @@ import {
   subscribeView,
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   PanelHeader,
@@ -243,9 +244,13 @@ export function DraftsView({
       {toolbar}
       <div className={styles.draftList}>
         {!entries.length && !saved.unavailable && !active && (
-          <p role="status" className={styles.notice}>
-            No drafts
-          </p>
+          <div role="status" className={styles.empty}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No drafts"
+              description="Messages you start writing appear here."
+            />
+          </div>
         )}
         <ul className={styles.list} aria-label="Drafts">
           {visible.map((entry) => {

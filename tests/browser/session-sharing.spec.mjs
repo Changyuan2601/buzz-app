@@ -483,13 +483,8 @@ test("People search holds loading, scrolls portalled results and restores keyboa
     name: "Morgan agent",
     is_agent: true,
   });
-  await page.route("**/api/relay/**/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (
-      filters.some(
-        (filter) => filter.kinds?.includes(0) && filter.search === "Morgan",
-      )
-    ) {
+  await page.route("**/api/relay/**/profile-search", async (route) => {
+    if (route.request().postDataJSON().query === "Morgan") {
       signal();
       await held;
       return route.fulfill({ json: [...humans, bot] });
@@ -644,21 +639,8 @@ test.describe("Messages Share navigation", () => {
     page,
     app,
   }) => {
-    const aria = app.serveProfile(generateSecretKey(), { name: "Aria" });
-    await page.route("**/api/relay/**/query", async (route) => {
-      const filters = route.request().postDataJSON();
-      if (
-        filters.some(
-          (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
-        )
-      ) {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify([aria]),
-        });
-      } else await route.continue();
-    });
+    // The fixture relay's name search finds the served profile.
+    app.serveProfile(generateSecretKey(), { name: "Aria" });
     await page.goto(app.origin);
     await openSession(page, app, "alpha");
     await page.getByRole("button", { name: "Share", exact: true }).click();

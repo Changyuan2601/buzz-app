@@ -44,11 +44,13 @@ test.each([undefined, { defaultWidth: 420, maxRatio: 0.5 }])(
         disconnect() {}
       },
     );
-    function Workspace() {
+    const renders = vi.fn();
+    function Workspace({ open = true }: { open?: boolean }) {
+      renders();
       const split = usePanelSplit(undefined, 316, primary);
       return (
         <div ref={split.ref} style={split.style} data-testid="workspace">
-          <section>{split.handle}</section>
+          <section>{open && split.handle}</section>
         </div>
       );
     }
@@ -68,16 +70,33 @@ test.each([undefined, { defaultWidth: 420, maxRatio: 0.5 }])(
     fireEvent.keyDown(handle, { key: "End" });
     expect(width()).toBe("640px");
     available = 720;
+    const beforeResize = renders.mock.calls.length;
     act(measure);
+    expect(renders).toHaveBeenCalledTimes(beforeResize);
     expect(width()).toBe("400px");
-    fireEvent.keyDown(handle, { key: "Home" });
+    view.rerender(
+      <StrictMode>
+        <Workspace open={false} />
+      </StrictMode>,
+    );
+    available = 800;
+    view.rerender(
+      <StrictMode>
+        <Workspace />
+      </StrictMode>,
+    );
+    expect(width()).toBe("480px");
+    available = 720;
+    act(measure);
+    const reopenedHandle = screen.getByRole("separator");
+    fireEvent.keyDown(reopenedHandle, { key: "Home" });
     expect(width()).toBe(primary ? "360px" : "316px");
-    fireEvent.doubleClick(handle);
+    fireEvent.doubleClick(reopenedHandle);
     expect(width()).toBe(primary ? "360px" : "");
     available = 1200;
     act(measure);
     expect(width()).toBe(primary ? "780px" : "");
     view.unmount();
-    expect(disconnect).toHaveBeenCalledTimes(2);
+    expect(disconnect).toHaveBeenCalledTimes(4);
   },
 );

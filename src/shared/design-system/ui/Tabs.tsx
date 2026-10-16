@@ -1,8 +1,21 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { NavigationItem } from "./NavigationItem";
 import { IconButton } from "./IconButton";
+import { Input } from "./Input";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuPopup,
+} from "./Menu";
 import { XIcon } from "../icons";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 export type TabItem<Value extends string> = {
   value: Value;
@@ -17,6 +30,8 @@ export type TabItem<Value extends string> = {
   /** Option/Alt+Shift+Arrow moves this tab one position; the caller places it. */
   draggable?: boolean | undefined;
   onMove?: ((delta: -1 | 1) => void) | undefined;
+  /** Double-click, F2 or the tab's menu edits its name; blank restores the default. */
+  onRename?: ((name: string) => void) | undefined;
 };
 
 /**
@@ -64,6 +79,9 @@ export function Tabs<Value extends string>({
   /** Brief visual confirmation of a tab arriving after a completed move. */
   arrivalValue?: Value | undefined;
 }) {
+  const [renaming, setRenaming] = useState<Value>();
+  if (renaming !== undefined && !items.some((item) => item.value === renaming))
+    setRenaming(undefined);
   const strip = (
     <>
       <BaseTabs.List className="buzz-tabs-list" aria-label={label}>
@@ -71,10 +89,11 @@ export function Tabs<Value extends string>({
           <BaseTabs.Indicator className="buzz-tabs-indicator" />
         )}
         {items.map((item) => (
-          <span
+          <TabMenu
             key={item.value}
-            className="buzz-tabs-item"
-            data-closable={!!item.onClose || undefined}
+            label={item.label}
+            onClose={item.onClose}
+            onRename={item.onRename && (() => setRenaming(item.value))}
           >
             <BaseTabs.Tab
               value={item.value}
@@ -105,7 +124,12 @@ export function Tabs<Value extends string>({
               onClick={() => {
                 if (item.value === value) onReselect?.(item.value);
               }}
+              onDoubleClick={item.onRename && (() => setRenaming(item.value))}
               onKeyDown={(event) => {
+                if (item.onRename && event.key === "F2") {
+                  event.preventDefault();
+                  setRenaming(item.value);
+                }
                 if (item.onClose && event.key === "Delete") {
                   event.preventDefault();
                   item.onClose();
@@ -158,7 +182,16 @@ export function Tabs<Value extends string>({
                 icon={<XIcon size="1rem" aria-hidden="true" />}
               />
             )}
-          </span>
+            {item.onRename && renaming === item.value && (
+              <TabRename
+                label={item.label}
+                onDone={(name) => {
+                  setRenaming(undefined);
+                  if (name !== undefined) item.onRename?.(name);
+                }}
+              />
+            )}
+          </TabMenu>
         ))}
       </BaseTabs.List>
       {trailingAction}
@@ -195,6 +228,109 @@ export function Tabs<Value extends string>({
           </BaseTabs.Panel>
         ))}
     </BaseTabs.Root>
+  );
+}
+
+/** One tab's wrapper; a renamable tab's right-click offers Rename tab. */
+function TabMenu({
+  label,
+  onClose,
+  onRename,
+  children,
+}: {
+  label: string;
+  onClose: (() => void) | undefined;
+  onRename: (() => void) | undefined;
+  children: ReactNode;
+}) {
+  // Middle-click closes a closable tab, without the browser's own default.
+  const item = {
+    className: "buzz-tabs-item",
+    "data-closable": !!onClose || undefined,
+    onMouseDown: (event: MouseEvent) => {
+      if (event.button === 1 && onClose) event.preventDefault();
+    },
+    onAuxClick: (event: MouseEvent) => {
+      if (event.button !== 1 || !onClose) return;
+      event.preventDefault();
+      onClose();
+    },
+  };
+  if (!onRename) return <span {...item}>{children}</span>;
+  return (
+    <ContextMenuRoot>
+      <ContextMenuTrigger render={<span {...item} />}>
+        {children}
+      </ContextMenuTrigger>
+      <MenuPopup aria-label={`Actions for ${label} tab`} size="compact">
+        <MenuItem onClick={onRename}>Rename tab</MenuItem>
+      </MenuPopup>
+    </ContextMenuRoot>
+  );
+}
+
+/** Edits a tab's name over the tab; Enter or leaving saves, Escape cancels. */
+function TabRename({
+  label,
+  onDone,
+}: {
+  label: string;
+  onDone(name: string | undefined): void;
+}) {
+  const done = useRef(false);
+  const initial = useRef(label);
+  const finish = (input: HTMLInputElement, name: string | undefined) => {
+    if (done.current) return;
+    done.current = true;
+    const tab = input
+      .closest(".buzz-tabs-item")
+      ?.querySelector<HTMLElement>('[role="tab"]');
+    onDone(name?.trim() === initial.current ? undefined : name);
+    // Enter and Escape return to the tab; leaving keeps focus where it went.
+    if (input === document.activeElement) tab?.focus();
+  };
+  return (
+    <span className="buzz-tabs-rename">
+      <Input
+        controlSize="sm"
+        aria-label="Tab name"
+        defaultValue={label}
+        autoFocus
+        // The field keeps its own text menu and middle-click paste rather than
+        // the tab's.
+        onContextMenu={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onAuxClick={(event) => event.stopPropagation()}
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={(event) =>
+          finish(event.currentTarget, event.currentTarget.value)
+        }
+        onKeyDown={(event) => {
+          // The tab list would take arrows, Home and End at either end of the
+          // text; other keys still reach the app's shortcuts.
+          if (
+            event.key.startsWith("Arrow") ||
+            event.key === "Home" ||
+            event.key === "End"
+          )
+            event.stopPropagation();
+          // WebKit's IME commit Enter arrives after composition ends.
+          if (
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          )
+            return;
+          if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            finish(
+              event.currentTarget,
+              event.key === "Enter" ? event.currentTarget.value : undefined,
+            );
+          }
+        }}
+      />
+    </span>
   );
 }
 

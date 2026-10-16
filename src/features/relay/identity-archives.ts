@@ -259,6 +259,8 @@ export function createIdentityArchives(
       ensure: () =>
         snapshot.status === "idle" ? refresh() : (pending ?? Promise.resolve()),
       refresh,
+      /** Whether this community keeps archives at all; fixed per session. */
+      supported: available,
       writable: !!writer,
       consent,
       request,
