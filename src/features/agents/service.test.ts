@@ -24,7 +24,12 @@ import {
   fromOwner,
   teamPrompt,
 } from "./service";
-import type { ClassifierNative } from "./classifier";
+import type {
+  DecisionFailure,
+  DecisionResult,
+  Decisions,
+  DecisionBackend,
+} from "../decisions/service";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
@@ -83,7 +88,7 @@ async function setup({
   history = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
-  jev = undefined as ClassifierNative | undefined,
+  jev = undefined as FakeJev | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
   sessionControls = undefined as
     | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
@@ -115,6 +120,7 @@ async function setup({
     storage,
     authorize,
     activity,
+    jev,
     jev,
     binding,
   );
@@ -3609,9 +3615,12 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
   expect(triggers[1]).not.toHaveProperty("interest");
 });
 
-/** A native classifier whose answers the test sets. */
+/** The saved TypeSafe key and a decisions service whose answers the test
+ * sets, on the `typesafe` backend unless the test chooses another. */
 function fakeJev(configured = true) {
   let key = configured;
+  let backend: DecisionBackend = "typesafe";
+  const listeners = new Set<() => void>();
   const jev = {
     status: vi.fn(async () => key),
     setKey: vi.fn(async (_: string) => {
@@ -3620,14 +3629,44 @@ function fakeJev(configured = true) {
     clearKey: vi.fn(async () => {
       key = false;
     }),
-    classify: vi.fn<ClassifierNative["classify"]>(async () => ({
-      outcome: "answered",
-      answers: { deploy: { type: "noul", noul: 0.9 } },
-    })),
+    decide: vi.fn<Decisions["decide"]>(async () => yes),
+    backend: () => backend,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    use(next: DecisionBackend) {
+      backend = next;
+      for (const listener of [...listeners]) listener();
+    },
   };
   return jev;
 }
-async function classifiedAgent(jev: ReturnType<typeof fakeJev>) {
+type FakeJev = ReturnType<typeof fakeJev>;
+const answered = (probability: number): DecisionResult => ({
+  outcome: "answered",
+  backend: "typesafe",
+  model: "jev-1.13.0",
+  answers: { deploy: { type: "yes_no", probability } },
+});
+const yes = answered(0.9);
+/** What the `i`th call sent: its state parsed back, and its questions. */
+function sent(jev: FakeJev, i = 0) {
+  const request = jev.decide.mock.calls[i]?.[0];
+  if (!request) throw new Error(`no call ${i}`);
+  return {
+    state: JSON.parse(request.state) as {
+      context: { thread: { is_reply: boolean; parent: unknown } };
+    },
+    questions: request.questions,
+  };
+}
+const failure = (reason: DecisionFailure): DecisionResult => ({
+  outcome: "failed",
+  backend: "typesafe",
+  reason,
+});
+async function classifiedAgent(jev: FakeJev) {
   const harness = await setup({ jev });
   await harness.service.create({ type: "example/echo", name: "Echo" });
   await harness.service.save(bot, {
@@ -3666,40 +3705,45 @@ it("runs a watch's classifier after its selectors and passes the event with each
       policy: "deploy",
     },
   });
-  const [state, questions] = jev.classify.mock.calls[0] ?? [];
+  const { state, questions } = sent(jev);
   expect(state).toMatchObject({
     event: { id: expect.stringMatching(/^w0+$/), content: "shipping v2" },
     author: { role: "other" },
     context: { channel: expect.any(Object), thread: { is_reply: false } },
   });
-  expect(questions).toMatchObject({
+  expect(questions).toEqual({
     deploy: {
-      type: "noul",
-      instructions: { question: "Is it about a deploy?" },
-      criteria: { true: expect.any(String), false: expect.any(String) },
+      type: "yes_no",
+      instructions: expect.stringContaining(
+        "Question: Is it about a deploy?\nYes means: ",
+      ),
     },
   });
+  expect(questions.deploy?.instructions).toContain("\nNo means: ");
+  expect(questions.deploy?.instructions).toContain("untrusted data");
 });
 
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
   const jev = fakeJev();
-  jev.classify.mockResolvedValue({
-    outcome: "answered",
-    answers: { deploy: { type: "noul", noul: 0.2 } },
-  });
+  jev.decide.mockResolvedValue(answered(0.2));
   const { run, emit } = await classifiedAgent(jev);
   emit({ events: [event("w", { content: "lunch?" })] });
   emit({ events: [event("x", { kind: 7 })] });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
   await settle();
   expect(run).not.toHaveBeenCalled();
 });
 
 it("passes the event when the classifier fails, and says why", async () => {
   const jev = fakeJev();
-  jev.classify
-    .mockResolvedValueOnce({ outcome: "failed", reason: "timeout" })
-    .mockResolvedValueOnce({ outcome: "answered", answers: {} })
+  jev.decide
+    .mockResolvedValueOnce(failure("timeout"))
+    .mockResolvedValueOnce({
+      outcome: "answered",
+      backend: "typesafe",
+      model: "jev-1.13.0",
+      answers: {},
+    })
     .mockRejectedValueOnce(new Error("ipc"));
   const { run, emit } = await classifiedAgent(jev);
   emit({ events: [event("a"), event("b"), event("c")] });
@@ -3720,7 +3764,7 @@ it("without a key the classifier does not run and the turn is told so", async ()
   const { service, run, emit } = await classifiedAgent(jev);
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(jev.classify).not.toHaveBeenCalled();
+  expect(jev.decide).not.toHaveBeenCalled();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "not-run" },
   });
@@ -3737,10 +3781,7 @@ it("a key set or cleared takes effect at once, and one removed elsewhere is noti
   await service.clearClassifierKey();
   expect(service.classifier()).toBe("unavailable");
   await service.setClassifierKey("tk");
-  jev.classify.mockResolvedValueOnce({
-    outcome: "failed",
-    reason: "missing_credentials",
-  });
+  jev.decide.mockResolvedValueOnce(failure("missing_credentials"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
@@ -3760,12 +3801,9 @@ it("shows a key it cannot read as unreadable, and one the service refuses as ref
   // the key is saved.
   emit({ events: [event("a")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(jev.decide).toHaveBeenCalledOnce();
   expect(service.snapshot().classifierKey).toBe("saved");
-  jev.classify.mockResolvedValueOnce({
-    outcome: "failed",
-    reason: "unauthorized",
-  });
+  jev.decide.mockResolvedValueOnce(failure("unauthorized"));
   emit({ events: [event("b")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
@@ -3774,7 +3812,7 @@ it("shows a key it cannot read as unreadable, and one the service refuses as ref
   expect(service.snapshot().classifierKey).toBe("refused");
   expect(service.classifier()).toBe("available");
   // Another failure does not say whether the key was accepted.
-  jev.classify.mockResolvedValueOnce({ outcome: "failed", reason: "timeout" });
+  jev.decide.mockResolvedValueOnce(failure("timeout"));
   emit({ events: [event("c")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
   expect(service.snapshot().classifierKey).toBe("refused");
@@ -3782,15 +3820,13 @@ it("shows a key it cannot read as unreadable, and one the service refuses as ref
 
 it("does not run an event classified against a classifier changed since", async () => {
   const jev = fakeJev();
-  let answer!: (
-    value: Awaited<ReturnType<ClassifierNative["classify"]>>,
-  ) => void;
-  jev.classify.mockImplementationOnce(
+  let answer!: (value: DecisionResult) => void;
+  jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
   const { service, run, emit } = await classifiedAgent(jev);
   emit({ events: [event("w")] });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
   if (watch?.type !== "event") throw new Error("no watch");
   await service.save(bot, {
@@ -3801,30 +3837,23 @@ it("does not run an event classified against a classifier changed since", async 
       },
     },
   });
-  answer({
-    outcome: "answered",
-    answers: { deploy: { type: "noul", noul: 1 } },
-  });
+  answer(answered(1));
   await settle();
   await settle();
   expect(run).not.toHaveBeenCalled();
 });
 
-type Answer = Awaited<ReturnType<ClassifierNative["classify"]>>;
-const yes: Answer = {
-  outcome: "answered",
-  answers: { deploy: { type: "noul", noul: 0.9 } },
-};
+type Answer = DecisionResult;
 
 it("queues classified events in arrival order, whichever answer comes first", async () => {
   const jev = fakeJev();
   let first!: (value: Answer) => void;
-  jev.classify
+  jev.decide
     .mockImplementationOnce(() => new Promise((resolve) => (first = resolve)))
     .mockResolvedValueOnce(yes);
   const { run, emit } = await classifiedAgent(jev);
   emit({ events: [event("a"), event("b")] });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(2));
   await settle();
   expect(run).not.toHaveBeenCalled();
   first(yes);
@@ -3848,7 +3877,7 @@ it("an event heard before the saved key's status is read waits for it, then is c
   expect(run).not.toHaveBeenCalled();
   known(true);
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(jev.decide).toHaveBeenCalledOnce();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "passed" },
   });
@@ -3861,7 +3890,7 @@ it("a failed read of the key's status does not stop a saved key from classifying
   expect(service.classifier()).toBe("unavailable");
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(jev.decide).toHaveBeenCalledOnce();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     classifier: { outcome: "passed" },
   });
@@ -3871,7 +3900,7 @@ it("a failed read of the key's status does not stop a saved key from classifying
 it("keeps a key removed while a call that used it ran shown as missing", async () => {
   const jev = fakeJev();
   let answer!: (value: Answer) => void;
-  jev.classify.mockImplementationOnce(
+  jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
   const { service, run, emit } = await classifiedAgent(jev);
@@ -3879,7 +3908,7 @@ it("keeps a key removed while a call that used it ran shown as missing", async (
     expect(service.snapshot().classifierKey).toBe("saved"),
   );
   emit({ events: [event("w")] });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
   await service.clearClassifierKey();
   answer(yes);
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
@@ -3890,7 +3919,7 @@ it("keeps a key removed while a call that used it ran shown as missing", async (
 it("keeps a key saved while an old key's call ran shown as saved, though the old one was refused", async () => {
   const jev = fakeJev();
   let answer!: (value: Answer) => void;
-  jev.classify.mockImplementationOnce(
+  jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
   const { service, run, emit } = await classifiedAgent(jev);
@@ -3898,9 +3927,9 @@ it("keeps a key saved while an old key's call ran shown as saved, though the old
     expect(service.snapshot().classifierKey).toBe("saved"),
   );
   emit({ events: [event("w")] });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
   await service.setClassifierKey("new");
-  answer({ outcome: "failed", reason: "unauthorized" });
+  answer(failure("unauthorized"));
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(service.snapshot().classifierKey).toBe("saved");
 });
@@ -3926,7 +3955,7 @@ it("classifies a watched event of an agent whose community is not selected", asy
   expect(service.find(bot)).toBeUndefined();
   emit({ events: [event("w", { content: "shipping v2" })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(jev.decide).toHaveBeenCalledOnce();
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     slug: "watch/channel",
     classifier: { outcome: "passed" },
@@ -3950,11 +3979,11 @@ it("classifies a reply without its parent when the parent lookup does not answer
       ],
     });
     await vi.waitFor(() => expect(native.query).toHaveBeenCalled());
-    expect(jev.classify).not.toHaveBeenCalled();
+    expect(jev.decide).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-    const [state] = jev.classify.mock.calls[0] ?? [];
-    expect((state as { context: { thread: unknown } }).context.thread).toEqual({
+    const { state } = sent(jev);
+    expect(state.context.thread).toEqual({
       is_reply: true,
       parent: null,
     });
@@ -3980,7 +4009,7 @@ it("sends nothing to the classifier for a watch stopped while its event waited",
   known(true);
   await settle();
   await settle();
-  expect(jev.classify).not.toHaveBeenCalled();
+  expect(jev.decide).not.toHaveBeenCalled();
   expect(run).not.toHaveBeenCalled();
 });
 
@@ -3992,7 +4021,7 @@ it("a copy of the app that does not hold the agent sends nothing to the classifi
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
   await settle();
   await settle();
-  expect(jev.classify).not.toHaveBeenCalled();
+  expect(jev.decide).not.toHaveBeenCalled();
   expect(run).not.toHaveBeenCalled();
 });
 
@@ -4018,10 +4047,8 @@ it("gives the classifier Buzz's thread parent: the marked reply, in any case; a 
       }),
     ],
   });
-  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledTimes(2));
-  const states = jev.classify.mock.calls.map(
-    ([state]) => state as { context: { thread: { is_reply: boolean } } },
-  );
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(2));
+  const states = jev.decide.mock.calls.map((_, i) => sent(jev, i).state);
   expect(states.map((state) => state.context.thread.is_reply)).toEqual([
     false,
     true,
@@ -5131,7 +5158,7 @@ it("keeps an Interest's room for a catch-up being classified, so live events can
   try {
     const jev = fakeJev();
     let answer!: (value: Answer) => void;
-    jev.classify.mockImplementationOnce(
+    jev.decide.mockImplementationOnce(
       () => new Promise((resolve) => (answer = resolve)),
     );
     let release!: () => void;
@@ -5181,7 +5208,7 @@ it("keeps an Interest's room for a catch-up being classified, so live events can
     history.push(posted("missed", now + 30));
     recover();
     // The catch-up turn is being classified, and its checkpoint is past it.
-    await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
     await settle();
     // One runs; of the eight that then wait, the catch-up keeps one.
     const likes = Array.from({ length: 9 }, (_, i) =>

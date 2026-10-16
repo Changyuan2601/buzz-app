@@ -87,6 +87,8 @@ export function createServices() {
     undefined,
     undefined,
     localActivity,
+    undefined,
+    decisions,
   );
   ctx.effect(() =>
     localAgents.bind({

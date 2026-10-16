@@ -49,9 +49,9 @@ import {
   classify,
   notRun,
   type ClassifierContext,
-  type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
+import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord, TimerProgress } from "./store";
@@ -365,12 +365,13 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
-  /** The classifier, where one can run. */
-  jev(): ClassifierNative | undefined;
-  /** Settles once the saved key's status is known; until then a classified
-   * event waits rather than pass unchecked. */
-  jevStatus(): Promise<void> | undefined;
-  /** What is known about the saved classifier key. */
+  /** The decisions service that runs classifiers, where there is one. */
+  decisions(): Decisions | undefined;
+  /** Settles once the saved TypeSafe key's status is known; until then an
+   * event classified on the `typesafe` backend waits rather than pass
+   * unchecked. */
+  keyStatus(): Promise<void> | undefined;
+  /** What is known about the saved TypeSafe key. */
   classifierKey(): ClassifierKey;
   /** Changes each time the owner saves or removes the key. */
   classifierKeyGeneration(): number;
@@ -1564,18 +1565,22 @@ export class AgentRunners {
     event: RelayEvent,
     live: () => boolean,
   ): Promise<ClassifierOutcome | undefined> {
-    // A saved key is not known to be missing until its status is read.
-    await this.host.jevStatus();
-    const jev = this.host.jev();
-    // While the key cannot be read, native is still asked: it may find one.
-    if (!jev || this.host.classifierKey() === "missing") return notRun();
+    const decisions = this.host.decisions();
+    if (!decisions) return notRun();
+    // Only the `typesafe` backend needs the saved key, and it is not known to
+    // be missing until its status is read. While the key cannot be read,
+    // native is still asked: it may find one.
+    if (decisions.backend() === "typesafe") {
+      await this.host.keyStatus();
+      if (this.host.classifierKey() === "missing") return notRun();
+    }
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const context = await this.host.context(agent, event);
     // Stopped or changed while its context was looked up: nothing is sent.
     if (!live()) return undefined;
     const generation = this.host.classifierKeyGeneration();
-    const { pass, result } = await classify(jev, {
+    const { pass, result, backend } = await classify(decisions, {
       classifier,
       event,
       author: {
@@ -1584,8 +1589,10 @@ export class AgentRunners {
       },
       context,
     });
-    // The key was removed outside the app since it was read, the service
-    // refused it, or native found one the failed status read could not.
+    // On the `typesafe` backend: the key was removed outside the app since it
+    // was read, the service refused it, or native found one the failed status
+    // read could not. Other backends say nothing about the key.
+    if (backend !== "typesafe") return pass ? result : undefined;
     if (result.outcome === "not-run")
       this.host.setClassifierKey("missing", generation);
     else if (result.outcome === "passed")
