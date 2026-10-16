@@ -12,6 +12,8 @@ import {
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
+import type { DecisionsService } from "../features/decisions/service";
+import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -571,6 +573,7 @@ function PluginDetails({
 
 export function Settings({
   agents,
+  decisions,
   cards,
   plugins,
   adminAccess,
@@ -588,6 +591,7 @@ export function Settings({
   onUnsavedChange,
 }: {
   agents?: Agents | undefined;
+  decisions?: DecisionsService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   adminAccess?: AdminAccessReader;
@@ -1112,6 +1116,15 @@ export function Settings({
         <div hidden={selected !== "agents"}>
           <AgentSettings agents={agents} active={selected === "agents"} />
         </div>
+        {agents && decisions && (
+          <div hidden={selected !== "decisions"}>
+            <DecisionsSettings
+              decisions={decisions}
+              agents={agents}
+              active={() => selected === "decisions"}
+            />
+          </div>
+        )}
         <div hidden={selected !== "updates"}>
           <UpdateSettings updates={updates} active={selected === "updates"} />
         </div>

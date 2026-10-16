@@ -406,6 +406,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : (
                 <Settings
                   agents={services.agents}
+                  decisions={services.decisions}
                   plugins={plugins}
                   cards={services.settingsCards}
                   adminAccess={services.adminAccess}
