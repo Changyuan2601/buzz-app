@@ -247,17 +247,16 @@ export function useFloatingActionBar(
           viewport?.right ?? rowBounds.right,
         ) - (viewport ? gap : 0);
       const maxWidth = `${Math.max(0, end - start)}px`;
-      let size = bar.getBoundingClientRect();
-      // Measure again only when this frame changes the bar's own layout.
+      // Update the constraint only when the toolbar layout changes.
       if (bar.style.maxWidth !== maxWidth || !bar.matches(":popover-open")) {
         bar.style.maxWidth = maxWidth;
         bar.showPopover?.();
-        size = bar.getBoundingClientRect();
       }
-      const { width } = size;
+      const width = bar.offsetWidth;
       // Layout height: an opening scale transition must not move the bar.
       const height = bar.offsetHeight;
-      const besideLeft = rtl
+      const towardLeft = rtl !== row.hasAttribute("data-viewer-message");
+      const besideLeft = towardLeft
         ? anchor.left - overlap - width
         : anchor.right + overlap;
       const center = anchor.top + anchor.height / 2;
@@ -270,6 +269,13 @@ export function useFloatingActionBar(
       const placement = beside ? "beside" : "above";
       if (bar.dataset.placement !== placement)
         bar.dataset.placement = placement;
+      bar.style.transformOrigin = beside
+        ? towardLeft
+          ? "right center"
+          : "left center"
+        : rtl
+          ? "left bottom"
+          : "right bottom";
       const top = beside ? center : anchor.top + overlap;
       const paintedTop = top - height / (beside ? 2 : 1);
       if (

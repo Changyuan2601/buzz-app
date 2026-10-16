@@ -1,5 +1,6 @@
 // The part of the Codex agent type that runs agents, without its views: the
 // desktop app registers it with its tabs, and a standalone host runs it alone.
+import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 import type { AgentType } from "../../features/agents/service";
 import type { Config } from "./config";
 import type { CodexRuntime } from "./runtime";
@@ -14,7 +15,10 @@ const HANDOVER_MS = 2 * 60_000;
 export const codexRun = (
   runtime: CodexRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+> => ({
   models: (agent) => runtime.preview(agent),
   run: async (delivery) => {
     await ready?.(delivery.signal);
@@ -25,4 +29,8 @@ export const codexRun = (
     return runtime.runOnce(turn);
   },
   timeoutMs: HANDOVER_MS,
+  syncedSettings: {
+    schema: syncedSettingsSchema,
+    withSynced: withSyncedSettings,
+  },
 });

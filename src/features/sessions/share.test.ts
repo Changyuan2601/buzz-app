@@ -5,11 +5,13 @@ import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
+import { SESSION_NAMED_LABEL } from "./metadata";
 import {
   destinationShareAudience,
   grantSessionAccess,
   publishSessionLink,
   sessionLinkMessage,
+  isSessionLinkReceipt,
 } from "./share";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
@@ -31,6 +33,7 @@ function setup() {
   ]);
   let clock = 1_700_000_000;
   let failLink = false;
+  let chosenName: string | undefined;
   let rejectGrant = false;
   let records: readonly import("../relay/outbox").OutgoingEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -52,8 +55,9 @@ function setup() {
   const query = vi.fn(
     async (filters: readonly import("../relay/events").ReadFilter[]) => {
       const events = [
-        metadata(relay, sessionId, "Work", 1_700_000_000, [
+        metadata(relay, sessionId, chosenName ?? "Work", clock, [
           ["t", "stream"],
+          ...(chosenName ? [["t", SESSION_NAMED_LABEL]] : []),
           ["private"],
           ["about", "Buzz session (buzz.sessions/v1)"],
         ]),
@@ -75,6 +79,7 @@ function setup() {
   let knownAgent = false;
   const owner = createRelaySession(
     {
+      channelIdentity: true,
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://community.test",
@@ -122,6 +127,21 @@ function setup() {
     query,
     records: () => records,
     published,
+    async chooseName(name: string) {
+      chosenName = name;
+      clock++;
+      await owner.session.read(
+        [
+          {
+            kinds: [39000],
+            authors: [relay.pubkey],
+            "#d": [sessionId],
+            limit: 1,
+          },
+        ],
+        { fresh: true },
+      );
+    },
     failLink: (value: boolean) => {
       failLink = value;
     },
@@ -272,6 +292,7 @@ it("Everyone blocks a known-archived destination identity rather than silently d
 it("does not publish on failed grant, nor duplicate an accepted grant or rejected link on retry", async () => {
   const t = setup();
   await t.ready();
+  await t.chooseName("PR_45 & <fix>");
   t.rejectGrant(true);
   const intents = new Map();
   await expect(
@@ -308,6 +329,12 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
       },
     ),
   ).rejects.toThrow("Post denied");
+  const saved = t.records().find((item) => item.event.id === queued);
+  expect(saved?.event.content).toBe(
+    sessionLinkMessage(sessionId, "PR_45 & <fix>"),
+  );
+  expect(saved && isSessionLinkReceipt(saved)).toBe(true);
+  await t.chooseName("A different chosen name");
   t.failLink(false);
   await publishSessionLink(
     t.session,
@@ -318,6 +345,7 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
     () => {},
   );
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  expect(t.published[1]?.content).toBe(saved?.event.content);
   expect(t.records().filter((item) => item.event.kind === 9)).toHaveLength(1);
 });
 

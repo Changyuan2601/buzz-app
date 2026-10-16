@@ -31,7 +31,6 @@ import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { MessageComposer } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
@@ -333,8 +332,6 @@ function ReviewShell({
           aria-hidden={!commentsOpen || undefined}
           aria-label="Media comments"
           data-attachment-drop-zone=""
-          onDragOver={rejectUnhandledFileDrop}
-          onDrop={rejectUnhandledFileDrop}
         >
           <div className={styles.mediaReviewConversationContent}>
             <div className={styles.mediaReviewThreadHeading}>

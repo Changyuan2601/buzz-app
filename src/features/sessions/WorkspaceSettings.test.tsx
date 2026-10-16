@@ -257,6 +257,7 @@ function combined(personal = false) {
     clock = 100,
     description = sessionDescription(undefined, personal),
     name = "Plan";
+  let labels: string[][] = [];
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -269,6 +270,7 @@ function combined(personal = false) {
       ["name", name],
       ["about", description],
       ["t", "stream"],
+      ...labels,
       ["private"],
       ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
     ]),
@@ -284,10 +286,13 @@ function combined(personal = false) {
       event.tags.find(([key]) => key === "about")?.[1] ?? description;
     const duration = event.tags.find(([key]) => key === "ttl");
     if (duration) ttl = duration[1] === "" ? undefined : Number(duration[1]);
+    if (event.tags.some(([key]) => key === "t"))
+      labels = event.tags.filter(([key]) => key === "t");
     clock++;
   };
   const publish = vi.fn(async (event: EventTemplate) => apply(event));
   const details = createChannelDetails({
+    labels: true,
     reader: { read },
     writer: { sign, publish },
     viewer: viewer.pubkey,
@@ -693,6 +698,7 @@ it("saves name and lifetime together after Canvas; clearing later preserves the 
     ["h", h.id],
     ["name", "Better name"],
     ["ttl", ""],
+    ["t", "buzz.session.named"],
   ]);
   expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
     h.sign.mock.invocationCallOrder[0] ?? 0,
@@ -955,6 +961,7 @@ it("renaming and clearing a personal session preserve its signed personal marker
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", h.id],
     ["name", "Solo title"],
+    ["t", "buzz.session.named"],
   ]);
   expect(await h.details.capability.load(h.id)).toMatchObject({
     name: "Solo title",

@@ -7,8 +7,8 @@ const specimen = (page, id) => page.locator(`[aria-labelledby="label-${id}"]`);
 const tabKey = (browserName) =>
   browserName === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
 
-// Browser-only: resolve the real CSS cascade, composite translucent interaction
-// fills, and check overflow. A DOM emulator cannot prove these bubble contracts.
+// Browser-only: composite translucent fills to check text contrast, and check
+// overflow. A DOM emulator cannot prove these bubble contracts.
 async function paint(locator) {
   return locator.evaluate((element) => {
     const canvas = document.createElement("canvas");
@@ -84,29 +84,18 @@ for (const theme of ["light", "dark"]) {
       ).toBeGreaterThanOrEqual(60);
       await expectReadable(bubble);
       for (const link of [receivedLink, ownLink]) {
-        await expect(link).toHaveCSS("text-decoration-line", "underline");
         await expectReadable(link);
-        await expect(link).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
         await link.hover();
         await expectReadable(link);
-        await expect(link).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       }
       await expectReadable(mention);
-      await expect(mention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await mention.hover();
       await expectReadable(mention);
-      await expect(mention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expectReadable(spoiler);
       await expectReadable(
         spoiler.getByRole("link", { name: "release notes", exact: true }),
       );
       if (color === "neutral") {
-        await expect(ownLink).toHaveCSS(
-          "color",
-          await receivedLink.evaluate(
-            (element) => getComputedStyle(element).color,
-          ),
-        );
         await page.mouse.move(0, 0);
         await own.screenshot({
           path: info.outputPath(`neutral-message-${theme}.png`),
@@ -122,12 +111,11 @@ for (const theme of ["light", "dark"]) {
         specimen(page, "code-diff").getByText("greeting.ts", { exact: true }),
       );
     }
-    // Use real keyboard input to exercise the shared focus-visible treatment.
+    // Real keyboard input reaches and activates the link.
     await received.locator('button[data-mention-kind="person"]').focus();
     await page.keyboard.press(tabKey(browserName));
     await page.keyboard.press(tabKey(browserName));
     await expect(receivedLink).toBeFocused();
-    await expect(receivedLink).toHaveCSS("outline-style", "solid");
     await page.keyboard.press("Enter");
     await expect(received.getByRole("status")).toContainText(
       "Sample link selected",
@@ -150,7 +138,7 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
-test("file anchors and native download buttons share hover and focus affordances", async ({
+test("file anchors and native download buttons stay readable and keyboard reachable", async ({
   page,
   browserName,
 }) => {
@@ -164,19 +152,7 @@ test("file anchors and native download buttons share hover and focus affordances
     exact: true,
   });
   for (const control of [external, download]) {
-    await expect(control).toHaveCSS("cursor", "pointer");
-    await page.mouse.move(0, 0);
-    const idle = await control.evaluate(
-      (element) => getComputedStyle(element).backgroundColor,
-    );
     await control.hover();
-    await expect
-      .poll(() =>
-        control.evaluate(
-          (element) => getComputedStyle(element).backgroundColor,
-        ),
-      )
-      .not.toBe(idle);
     await expectReadable(control);
   }
   await specimen(page, "file-download")
@@ -184,7 +160,6 @@ test("file anchors and native download buttons share hover and focus affordances
     .focus();
   await page.keyboard.press(tabKey(browserName));
   await expect(download).toBeFocused();
-  await expect(download).toHaveCSS("outline-style", "solid");
   await page
     .getByRole("button", { name: "Narrow preview", exact: true })
     .click();

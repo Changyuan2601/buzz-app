@@ -505,7 +505,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
       "Decorative artwork composed from Avatar; identity data stays with the caller.",
-    variants: ["compact", "small", "circle", "squircle", "overflow count"],
+    variants: [
+      "mini",
+      "compact",
+      "small",
+      "circle",
+      "squircle",
+      "overflow count",
+    ],
     status: "proposed",
     collection: "components",
     owner: "Messages",
@@ -520,7 +527,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Show received/waiting activity with unison breathing, and working activity with staggered dots. The caller supplies the state and accessible text.",
     behavior:
       "CSS-only decorative motion. Reduced motion keeps the dots still; receipt detection and lifecycle state stay with the feature.",
-    variants: ["waiting", "working (default)", "reduced motion"],
+    variants: ["waiting", "working (default)", "small", "reduced motion"],
     status: "proposed",
     collection: "components",
     owner: "Messages",

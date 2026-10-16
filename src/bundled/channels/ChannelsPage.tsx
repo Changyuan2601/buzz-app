@@ -70,7 +70,6 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
-import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -745,6 +744,18 @@ function ChannelWorkspace({
     focusConversation.current = true;
     return true;
   };
+  const focusKept = useRef<string>(undefined);
+  const closeOtherTabs = (id: string) => {
+    if (!secondary.closeOtherTabs(id)) return false;
+    returnFocus.current = undefined;
+    focusKept.current = id;
+    return true;
+  };
+  const tabMenu = {
+    key: JSON.stringify([scope, currentId]),
+    closeAll: closeAllTabs,
+    closeOthers: closeOtherTabs,
+  };
   // The channel owns this command, including sessions without a main tab strip.
   useLayoutEffect(() => {
     const close = (event: Event) => {
@@ -789,6 +800,18 @@ function ChannelWorkspace({
             ) ?? settingsTrigger.current;
         target?.focus({ preventScroll: true });
       }
+    }
+    // A pane whose selected tab closed refocuses its new selection; the kept
+    // tab, where the menu was, takes focus back.
+    const kept = focusKept.current;
+    if (kept !== undefined) {
+      focusKept.current = undefined;
+      historyContainer.current
+        ?.closest("[data-channel-workspace]")
+        ?.querySelector<HTMLElement>(
+          `[role="tab"][data-tab-value="${CSS.escape(kept)}"]`,
+        )
+        ?.focus({ preventScroll: true });
     }
     const pending = returnFocus.current;
     if (!pending) return;
@@ -1381,7 +1404,6 @@ function ChannelWorkspace({
         />
       )}
       <Panel as="article" aria-label="Conversation">
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
           className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
           style={
@@ -1393,8 +1415,6 @@ function ChannelWorkspace({
             } as React.CSSProperties
           }
           data-attachment-drop-zone=""
-          onDragOver={rejectUnhandledFileDrop}
-          onDrop={rejectUnhandledFileDrop}
         >
           {composingMessage ? (
             <NewMessage
@@ -1475,10 +1495,7 @@ function ChannelWorkspace({
                 <div className={styles.mainWorkspace}>
                   <PanelWorkspace
                     main
-                    tabMenu={{
-                      key: JSON.stringify([scope, currentId]),
-                      closeAll: closeAllTabs,
-                    }}
+                    tabMenu={tabMenu}
                     drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
@@ -1675,10 +1692,7 @@ function ChannelWorkspace({
                       icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
                     />
                   }
-                  tabMenu={{
-                    key: JSON.stringify([scope, currentId]),
-                    closeAll: closeAllTabs,
-                  }}
+                  tabMenu={tabMenu}
                   drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={

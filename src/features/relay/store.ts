@@ -44,6 +44,10 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   atHead: boolean;
+  /** Oldest point any page read reached, in created_at seconds; 0 once a read
+   * reached the start. Only falls while the window lives: a catch-up head can
+   * move `cursor` past rows the reader already has, and those must stay. */
+  floor?: number | undefined;
   generation: number;
   controller?: AbortController | undefined;
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
@@ -118,7 +122,8 @@ export function createChannelStore(
         /** Explicit NIP-11 self; only it may attribute messages to others. */
         archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
-        revokeAccess(commit: () => void): void;
+        /** `ids` names the channels that lost access when known; omitted means any. */
+        revokeAccess(commit: () => void, ids?: readonly string[]): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
@@ -279,14 +284,28 @@ export function createChannelStore(
     });
     notify(listListeners);
   }
+  function moveCursor(state: WindowState, cursor: WindowCursor | null) {
+    state.cursor = cursor;
+    state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
+  }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
+      // Session reads (agents, search, previews) and the live tail can carry
+      // rows from before the loaded history. Showing one leaves a gap that a
+      // later page fills mid-list, where the timeline can neither anchor the
+      // reader nor tell it from new arrivals. That page shows them instead.
+      const floor =
+        (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
       const combined = new Map(
-        [...state.events, ...state.traffic.values()].map((event) => [
-          event.id,
-          event as import("./events").EventData,
-        ]),
+        [...state.events, ...state.traffic.values()]
+          .filter(
+            (event) =>
+              floor === undefined ||
+              event.created_at >= floor ||
+              !channelRowKind(event.kind),
+          )
+          .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
       for (const item of local?.snapshot() ?? [])
@@ -365,6 +384,7 @@ export function createChannelStore(
     state.generation++;
     state.controller?.abort();
     state.events = [];
+    state.floor = undefined;
     state.snapshot = idleWindow(state.channelId);
     notify(windowListeners.get(state.channelId));
   }
@@ -500,6 +520,7 @@ export function createChannelStore(
         state.generation++;
         state.controller?.abort();
         state.events = [];
+        state.floor = undefined;
         state.traffic.clear();
         setWindow(state, {
           status: "error",
@@ -522,7 +543,7 @@ export function createChannelStore(
       );
       void persistence?.remove(channelId).catch(() => {});
       saveDiscovery();
-    });
+    }, [channelId]);
   }
   const isSession = (channelId: string) => !!discovery?.isSession(channelId);
   async function readPage(
@@ -631,7 +652,7 @@ export function createChannelStore(
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
-        state.cursor = head.cursor;
+        moveCursor(state, head.cursor);
         state.events = head.events;
         state.atHead = true;
         state.restored = head.restored === true;
@@ -663,7 +684,7 @@ export function createChannelStore(
       }
       state.events = retained;
       state.atHead = !cursor;
-      state.cursor = page.cursor;
+      moveCursor(state, page.cursor);
       state.restored = false;
       setWindow(state, {
         status: "ready",
@@ -821,7 +842,7 @@ export function createChannelStore(
           (state.snapshot.status === "idle" ||
             state.snapshot.status === "loading")
         ) {
-          state.cursor = head.cursor;
+          moveCursor(state, head.cursor);
           state.events = head.events;
           state.atHead = true;
           state.restored = head.restored === true;
@@ -955,7 +976,11 @@ export function createChannelStore(
         discovery.canAccess(channel.id),
     );
     const channels = Object.freeze(discovery.channels());
-    const nextAllowed = new Set(channels.map((channel) => channel.id));
+    // A system channel never lists but stays readable: its saved history is
+    // kept and restored like any other channel's.
+    const nextAllowed = new Set(
+      discovery.readable().map((channel) => channel.id),
+    );
     const known = new Set([
       ...(allowed ?? []),
       ...windows.keys(),
@@ -1061,6 +1086,78 @@ export function createChannelStore(
       let complete: Set<string> | undefined;
       let retainedComplete = false;
       let paged = false;
+      // NIP-CL: the relay leaves system channels out of the `#p` roster read
+      // below, so a NIP-CL pass also reads them through their opt-in filter.
+      // Their ids join the same complete set, which proves their loss like any
+      // other channel's. They apply with the first roster page, never before
+      // it: applying commits the list as ready.
+      let system: RelayEvent[] = [];
+      if (transport.channelIdentity) {
+        let systemCursor: RelayEvent | undefined;
+        for (let page = 0; ; page++) {
+          if (page > discovery.capacity / DISCOVERY_LIMIT)
+            throw new ReadError(
+              "invalid-response",
+              "System channel discovery exceeded its read budget",
+            );
+          const rosters = await transport.read(
+            [
+              {
+                kinds: [39002],
+                ...consistency,
+                "#p": [transport.viewer],
+                "#t": ["system"],
+                limit: DISCOVERY_LIMIT,
+                ...(systemCursor
+                  ? {
+                      until: systemCursor.created_at,
+                      before_id: systemCursor.id,
+                    }
+                  : {}),
+              },
+            ],
+            { signal: controller.signal },
+          );
+          if (disposed || generation !== epoch) return;
+          const members = rosters
+            .filter(
+              (event) =>
+                event.kind === 39002 &&
+                event.pubkey === transport.relayAuthor &&
+                hasTag(event, "p", transport.viewer) &&
+                hasTag(event, "t", "system") &&
+                tag(event, "d"),
+            )
+            .sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            );
+          const last = members.at(-1);
+          if (
+            !members.every(
+              (event) =>
+                !systemCursor ||
+                event.created_at < systemCursor.created_at ||
+                (event.created_at === systemCursor.created_at &&
+                  event.id > systemCursor.id),
+            ) ||
+            (rosters.length >= DISCOVERY_LIMIT && !last)
+          )
+            throw new ReadError(
+              "invalid-response",
+              "System channel discovery cursor did not advance",
+            );
+          for (const event of members) {
+            const id = tag(event, "d");
+            if (id) ids.add(id);
+          }
+          system.push(...members);
+          if (rosters.length < DISCOVERY_LIMIT) break;
+          systemCursor = last;
+          // A roster can move ahead of this cursor mid-scan, as below, so a
+          // paged system read needs the same omission confirmation.
+          paged = true;
+        }
+      }
       // At most the retained roster budget plus its final exhaustion read.
       // This also bounds a relay returning repeated coordinates with new versions.
       for (let page = 0; page <= discovery.capacity / DISCOVERY_LIMIT; page++) {
@@ -1108,9 +1205,11 @@ export function createChannelStore(
           (rosters.length < DISCOVERY_LIMIT || !!last);
         const shortPage = advances && rosters.length < DISCOVERY_LIMIT;
         const pageComplete = shortPage ? ids : undefined;
+        const evidence = system.length ? [...system, ...rosters] : rosters;
+        system = [];
         if (
           !applyDiscovery(
-            rosters,
+            evidence,
             pageComplete && !paged ? pageComplete : undefined,
             started,
           )
@@ -2089,7 +2188,7 @@ export function createChannelStore(
       const state = touch(channelId);
       const retained = prepared ? heads.peek(channelId) : undefined;
       if (retained && ["idle", "error"].includes(state.snapshot.status)) {
-        state.cursor = retained.cursor;
+        moveCursor(state, retained.cursor);
         state.events = retained.events;
         state.atHead = true;
         state.restored = retained.restored === true;
@@ -2129,7 +2228,7 @@ export function createChannelStore(
       }
       const head = prepared ? heads.get(channelId) : undefined;
       if (head) {
-        state.cursor = head.cursor;
+        moveCursor(state, head.cursor);
         state.events = head.events;
         state.atHead = true;
         state.restored = head.restored === true;
@@ -2521,7 +2620,7 @@ export function createChannelStore(
       let changed = false;
       for (const id of ids)
         changed = (discovery?.suspend(id) ?? false) || changed;
-      if (changed) transport?.revokeAccess(() => setList(list, true));
+      if (changed) transport?.revokeAccess(() => setList(list, true), ids);
     },
     suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
     acceptDiscovery: applyDiscovery,
@@ -2559,7 +2658,7 @@ export function createChannelStore(
         accept(head.events);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
-        if (retained.atHead) retained.cursor = head.cursor;
+        if (retained.atHead) moveCursor(retained, head.cursor);
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: head.hasMore } : {}),
           status: "ready",

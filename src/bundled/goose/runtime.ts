@@ -49,6 +49,8 @@ export type Config = Readonly<{
   model: string;
   /** A goose provider; empty uses the goose config's. */
   provider: string;
+  /** A thinking level goose offers for the model; empty uses goose's. */
+  effort: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
@@ -58,6 +60,7 @@ export type Config = Readonly<{
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
   provider: "",
+  effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
@@ -508,6 +511,7 @@ export class GooseRuntime {
       choice: () => ({
         provider: entry.config.provider.trim(),
         model: entry.config.model.trim(),
+        effort: entry.config.effort,
       }),
       fingerprint: () =>
         JSON.stringify([

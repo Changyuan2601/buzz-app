@@ -129,7 +129,7 @@ export type ChannelTimelineProps = {
   launchPending?: boolean | undefined;
   /** Sessions page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
-  /** Me's quieter centered transcript and viewer-message alignment. */
+  /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
   /** A following composer shows conversation activity; the jump button leaves it a lane. */
   activityLane?: boolean | undefined;
@@ -775,7 +775,19 @@ function Timeline({
       onPointerCancel={() => {
         pointerHeld.current = false;
       }}
-      onScrollEnd={() => {
+      onScrollEnd={(event) => {
+        // Virtual rows can finish measuring after the last scroll event,
+        // especially at the top where reflow cannot change scrollTop.
+        const element = event.currentTarget;
+        if (
+          settled.current &&
+          element.clientWidth === size.width &&
+          element.clientHeight === size.height
+        )
+          recordPosition(
+            element,
+            layoutCorrection.current && !pointerHeld.current,
+          );
         upwardGesture.current = false;
       }}
       onFocus={(event) => {
@@ -889,7 +901,6 @@ function Timeline({
                   <MessageRow
                     stackPrevious={continuesMessageGroup(rows[index - 1], row)}
                     stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
-                    alignViewer={chatPresentation}
                     session={queries}
                     scope={scope}
                     row={row}

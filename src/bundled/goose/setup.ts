@@ -36,6 +36,23 @@ export type Providers = Readonly<{
 
 export type Tested = Readonly<{ ok: boolean; message: string }>;
 
+/** The thinking levels goose offers for a provider and model. */
+export type Efforts = Readonly<{
+  /** The level goose runs it on when none is chosen. */
+  current: string;
+  levels: readonly string[];
+}>;
+
+/** A session's settings, as `session/new` and `session/set_config_option`
+ * return them. */
+type ConfigOptions = {
+  configOptions?: {
+    category?: string | null;
+    currentValue?: string;
+    options?: { value: string }[];
+  }[];
+};
+
 type Entry = {
   providerId: string;
   providerName: string;
@@ -67,6 +84,7 @@ const TEST_TIMEOUT_MS = 60_000;
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
   private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
+  private readonly thinking = new Map<string, Promise<Efforts>>();
 
   constructor(private readonly spawn: Spawn | undefined) {}
 
@@ -159,6 +177,52 @@ export class GooseSetup {
     return models;
   }
 
+  /** The thinking levels goose offers on `choice`'s provider and model, as a
+   * session opened on them lists. goose without them offers none.
+   *
+   * ACP lists config options only per session, and only for the model the
+   * session is on, so this opens a throwaway session and moves it to the
+   * model to read them. */
+  efforts(choice: Choice): Promise<Efforts> {
+    const provider = choice.provider.trim();
+    const model = choice.model.trim();
+    const key = `${provider}\u0000${model}`;
+    let efforts = this.thinking.get(key);
+    if (!efforts) {
+      efforts = this.with(async (goose, cwd) => {
+        const opened = (await goose.request("session/new", {
+          cwd,
+          mcpServers: [],
+          _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
+        })) as ConfigOptions & { sessionId: string };
+        try {
+          const { configOptions = [] } = model
+            ? ((await goose.request("session/set_config_option", {
+                sessionId: opened.sessionId,
+                configId: "model",
+                value: model,
+              })) as ConfigOptions)
+            : opened;
+          const option = configOptions.find(
+            (item) => item.category === "thought_level",
+          );
+          return {
+            current: option?.currentValue ?? "",
+            levels: (option?.options ?? []).map(({ value }) => value),
+          };
+        } finally {
+          // goose keeps every session; this one is not worth keeping.
+          await goose
+            .request("session/delete", { sessionId: opened.sessionId })
+            .catch(() => undefined);
+        }
+      });
+      efforts.catch(() => this.thinking.delete(key));
+      this.thinking.set(key, efforts);
+    }
+    return efforts;
+  }
+
   /** Which of a provider's fields goose already holds. */
   saved(id: string): Promise<ReadonlySet<string>> {
     return this.with(async (goose) => {
@@ -182,6 +246,7 @@ export class GooseSetup {
     );
     this.listing = undefined;
     this.live.delete(id);
+    this.thinking.clear();
   }
 
   /** Asks the provider for one short reply, without tools. goose reports a

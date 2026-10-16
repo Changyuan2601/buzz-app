@@ -806,6 +806,8 @@ it("refuses a label lookup without sending it when the relay does not advertise 
 it("finds one creator's labeled channels oldest first and admits only relay-proven matches", async () => {
   const h = setup({}, { channelIdentity: true });
   h.channels.ensureList();
+  // A NIP-CL pass reads the viewer's system channels first.
+  (await h.next(39002)).respond([]);
   await h.rosters(0);
   await h.settled();
   const creator = keypair().pubkey;

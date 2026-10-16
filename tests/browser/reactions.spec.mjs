@@ -46,6 +46,12 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     name: "Copy link",
     exact: true,
   });
+  // Visibility precedes the toolbar's entrance animation settling.
+  await root
+    .getByRole("group", { name: "Message actions" })
+    .evaluate((bar) =>
+      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+    );
   const shortcutBox = await shortcut.boundingBox();
   const neighborBox = await neighbor.boundingBox();
   expect(shortcutBox.width).toBeCloseTo(neighborBox.width, 1);

@@ -1629,10 +1629,17 @@ export const test = base.extend({
         const id = event.tags.find(([key]) => key === "h")[1];
         const base = answer(community, { kinds: [39000], "#d": [id] })[0];
         const tags = base.tags.filter(
-          ([key]) =>
+          ([key, value]) =>
             !event.tags.some(
               ([changed]) =>
-                changed === key ||
+                (changed === key &&
+                  // Label updates preserve the relay's channel-type tag.
+                  !(
+                    key === "t" &&
+                    ["stream", "forum", "dm", "workflow", "system"].includes(
+                      value,
+                    )
+                  )) ||
                 (changed === "visibility" &&
                   ["public", "private"].includes(key)),
             ),
@@ -1820,6 +1827,8 @@ export const test = base.extend({
             : {}),
           discovery: (community) => ({
             self: getPublicKey(relayKey),
+            // Me details publications below retain label changes as well as names.
+            ...(meChannels.length ? { supported_extensions: ["nip-cl"] } : {}),
             ...(readState
               ? {
                   read_state_snapshot: {
@@ -2081,6 +2090,9 @@ export const test = base.extend({
                     : {
                         authority: async () => ({
                           relayAuthor: getPublicKey(relayKey),
+                          ...(meChannels.length
+                            ? { channelIdentity: true }
+                            : {}),
                         }),
                       }),
                   upstreamFetch: relay.fetch,

@@ -20,6 +20,16 @@ Handled keys are prevented once, not also sent to the shell. Ordinary message
 editors retain their local-first bubbling behavior. The launcher tooltip still
 shows the registered default rather than the effective binding.
 
+The renderer pins xterm 6.0.0 and FitAddon 0.11.0. Buzz preserves xterm 5.5's
+Alt-arrow sequences after shortcut dispatch: Option+Left/Right send backward/forward
+word navigation on macOS, while Alt+arrows send the corresponding Ctrl-arrow
+sequences on Linux. Additional modifiers retain xterm's normal translation.
+Compatible terminal applications can use synchronized output (DEC mode 2026)
+to batch redraws; xterm recovers an unfinished frame after its safety timeout.
+The scrollbar is now xterm's own themed control. User input and parser replies
+still use the pinned private `coreService.onUserInput` signal for provenance;
+the public `onData` event does not expose that distinction.
+
 ## Run locally
 
 From the agreed feature worktree, use `bin/just desktop`. Native commands require

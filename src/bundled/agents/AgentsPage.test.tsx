@@ -748,11 +748,11 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
   expect(
-    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+    within(rail).queryByRole("button", { name: "Change harness from Echo" }),
   ).not.toBeInTheDocument();
   agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
   const typeTrigger = screen.getByRole("button", {
-    name: "Change provider from Echo",
+    name: "Change harness from Echo",
   });
   expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
   await user.click(typeTrigger);
@@ -798,7 +798,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(agents.retype).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
   expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
   expect(
@@ -823,7 +823,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     config: { endpoint: "wss://custom.example" },
   });
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
 });
 
@@ -1578,7 +1578,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   const choose = async () => {
     await user.click(
-      screen.getByRole("button", { name: "Change provider from Echo" }),
+      screen.getByRole("button", { name: "Change harness from Echo" }),
     );
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Destination" }),
@@ -1592,7 +1592,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
   expect(
-    screen.getByRole("button", { name: "Change provider from Echo" }),
+    screen.getByRole("button", { name: "Change harness from Echo" }),
   ).toBeInTheDocument();
   await choose();
   await user.click(screen.getByRole("button", { name: "Install and connect" }));
@@ -1600,7 +1600,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Change provider from Destination" }),
+    screen.getByRole("button", { name: "Change harness from Destination" }),
   ).toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1872,4 +1872,37 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(field).toBeVisible();
   expect(field).toHaveValue("Unsaved reply");
   expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("announces the default agent and presents its menu status without a fake toggle", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable" },
+  };
+  const connection = {
+    status: "ready",
+    scope: "default-card",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
 });

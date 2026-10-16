@@ -76,15 +76,9 @@ import {
   ConversationTimeline,
   useMediaReview,
 } from "../../features/conversation/Conversation";
-import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
 import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
-import {
-  readSelectedAssistant,
-  writeSelectedAssistant,
-} from "../../features/sessions/selected-assistant";
 import {
   SessionColumn,
   SessionHeading,
@@ -403,13 +397,6 @@ function SessionWork({
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
   }>();
-  const [selectedAgent, setSelectedAgent] = useState(() =>
-    readSelectedAssistant(scope, channel.id),
-  );
-  const selectAgent = (agent: string) => {
-    setSelectedAgent(agent);
-    writeSelectedAssistant(scope, channel.id, agent);
-  };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const personalChat = inMe && channel.channelType === "session";
@@ -514,8 +501,6 @@ function SessionWork({
           tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
-          onDragOver={rejectUnhandledFileDrop}
-          onDrop={rejectUnhandledFileDrop}
         >
           <SessionHeading channel={channel} parentName={parentName}>
             <ChannelMembersButton session={session} channelId={channel.id} />
@@ -675,27 +660,16 @@ function SessionWork({
                 channel.channelType === "session" &&
                 (placement.status !== "ready" || inMe)
               }
-              selectedAgent={personalChat ? selectedAgent : undefined}
+              requireMention={personalChat}
               trailingTool={
                 personalChat ? (
-                  <>
-                    <SessionAgentControl
-                      session={session}
-                      channelId={channel.id}
-                      value={selectedAgent}
-                      onChange={selectAgent}
-                      disabled={
-                        !!channel.archived || placement.status !== "ready"
-                      }
-                    />
-                    <SessionProjectControl
-                      session={session}
-                      channelId={channel.id}
-                      disabled={
-                        !!channel.archived || placement.status !== "ready"
-                      }
-                    />
-                  </>
+                  <SessionProjectControl
+                    session={session}
+                    channelId={channel.id}
+                    disabled={
+                      !!channel.archived || placement.status !== "ready"
+                    }
+                  />
                 ) : undefined
               }
               onSend={setSent}

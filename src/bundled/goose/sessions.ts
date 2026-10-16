@@ -126,7 +126,8 @@ export type SessionsOptions = Readonly<{
   pool: ServerPool;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
-  /** The agent's provider and model now, which each new turn runs on. */
+  /** The agent's provider, model and thinking level now, which each new
+   * turn runs on. */
   choice(): Choice;
   /** Changes when a setting a session was opened with has changed. */
   fingerprint(): string;
@@ -330,8 +331,13 @@ export class AgentSessions {
     for (const live of this.once.values()) if (live) void this.close(live);
   }
 
+  /** Opened with old settings, or on a thinking level when goose's own is
+   * chosen now, which only a new session runs on. */
   private stale(live: Live) {
-    return live.fingerprint !== this.options.fingerprint();
+    return (
+      live.fingerprint !== this.options.fingerprint() ||
+      Boolean(live.session.effort && !this.options.choice().effort)
+    );
   }
 
   /** Opens a session for `key` in the agent's workspace, which `use` records

@@ -1184,7 +1184,18 @@ companionReadingTest(
       gesture++
     ) {
       const before = await history.evaluate((el) => el.scrollTop);
-      await wheel(page, -300);
+      // Keep the old anchor intersecting under the narrower message measure.
+      const room = await history
+        .locator(`[data-message-id="${original.id}"]`)
+        .evaluate((row) => {
+          const feed = row.closest("section");
+          return (
+            feed.getBoundingClientRect().bottom -
+            row.getBoundingClientRect().top
+          );
+        });
+      expect(room).toBeGreaterThan(1);
+      await wheel(page, -Math.min(300, room / 2));
       await expect
         .poll(() => history.evaluate((el) => el.scrollTop))
         .toBeLessThan(before);

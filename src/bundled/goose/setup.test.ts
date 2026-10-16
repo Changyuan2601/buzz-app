@@ -236,6 +236,41 @@ describe("GooseSetup", () => {
     expect(tested?.configured).toEqual([]);
   });
 
+  it("reads the thinking levels a session on the provider and model lists, once", async () => {
+    const { fake, setup: goose } = setup({
+      thinking: {
+        "": { current: "medium", levels: ["off", "low", "medium", "high"] },
+        "claude-haiku-5-5": { current: "off", levels: ["off"] },
+      },
+    });
+    expect(
+      await goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).toEqual({ current: "off", levels: ["off"] });
+    expect(await goose.efforts({ provider: "anthropic", model: " " })).toEqual({
+      current: "medium",
+      levels: ["off", "low", "medium", "high"],
+    });
+    await goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" });
+    expect(fake.geese).toHaveLength(2);
+    const [read] = fake.geese;
+    expect(read?.opened[0]).toMatchObject({
+      mcpServers: [],
+      _meta: { enabledExtensions: [], provider: "anthropic" },
+    });
+    // No turn runs, and goose keeps no session for it.
+    expect(read?.turns).toEqual([]);
+    expect(read?.deleted).toEqual(["session-1"]);
+    expect(read?.killed).toBe(true);
+  });
+
+  it("reads no thinking levels from a goose that lists none", async () => {
+    const { setup: goose } = setup();
+    expect(await goose.efforts({ provider: "", model: "" })).toEqual({
+      current: "",
+      levels: [],
+    });
+  });
+
   it("says when the bundled goose-acp is missing", async () => {
     const spawn: Spawn = async (id, options) => {
       if (id === "goose")

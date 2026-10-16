@@ -4,6 +4,193 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Real keyboard, paste and parser events must cross the renderer's provenance
+// seam. A DOM emulator or mocked Terminal cannot establish that contract.
+for (const platform of ["MacIntel", "Linux x86_64"]) {
+  test(`real xterm preserves navigation and input provenance on ${platform}`, async ({
+    page,
+  }) => {
+    await page.addInitScript((platform) => {
+      Object.defineProperty(navigator, "platform", { value: platform });
+    }, platform);
+    const server = await createServer({
+      configFile: false,
+      envDir: false,
+      server: { host: "127.0.0.1", port: 0 },
+    });
+    const errors = watchPageErrors(page);
+    try {
+      await server.listen();
+      await page.goto(
+        `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
+      );
+      await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+      const apple = platform === "MacIntel";
+      const generated = () =>
+        page.evaluate(() => window.terminalRenderer.generated);
+      const expected = [];
+      for (const [key, data] of [
+        ["ArrowLeft", "\x1b[D"],
+        ["Control+ArrowRight", "\x1b[1;5C"],
+        ["Alt+ArrowLeft", apple ? "\x1bb" : "\x1b[1;5D"],
+        ["Alt+ArrowRight", apple ? "\x1bf" : "\x1b[1;5C"],
+        ["Alt+ArrowUp", apple ? "\x1b[1;3A" : "\x1b[1;5A"],
+        ["Alt+ArrowDown", apple ? "\x1b[1;3B" : "\x1b[1;5B"],
+        ["Alt+Shift+ArrowLeft", "\x1b[1;4D"],
+        ["Alt+Control+ArrowRight", "\x1b[1;7C"],
+      ]) {
+        await page.keyboard.press(key);
+        expected.push({ data, source: "user" });
+        await expect.poll(generated).toEqual(expected);
+      }
+      await page.evaluate(() =>
+        window.terminalRenderer.output("\x1b[?1h\x1b[?2004h"),
+      );
+      await page.keyboard.press("ArrowUp");
+      expected.push({ data: "\x1bOA", source: "user" });
+      await page.keyboard.press("Alt+ArrowLeft");
+      expected.push({
+        data: apple ? "\x1bb" : "\x1b[1;5D",
+        source: "user",
+      });
+      await page.locator(".xterm-helper-textarea").evaluate((textarea) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", "first\nsecond");
+        textarea.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      expected.push({
+        data: "\x1b[200~first\rsecond\x1b[201~",
+        source: "user",
+      });
+      await page.evaluate(() =>
+        window.terminalRenderer.output("\x1b[5n\x1b[6n"),
+      );
+      expected.push(
+        { data: "\x1b[0n", source: "reply" },
+        { data: "\x1b[1;1R", source: "reply" },
+      );
+      await expect.poll(generated).toEqual(expected);
+      expect(errors.unexplained()).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+}
+
+// Rendering barriers and wheel scrolling require the real xterm renderer and
+// browser layout. Hold the clock to observe an incomplete synchronized frame.
+test("real xterm batches synchronized redraws, recovers an unfinished frame and retains scrollback", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envDir: false,
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
+    );
+    await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    await page.evaluate(() => document.fonts.ready);
+    await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
+    const rows = page.locator(".xterm-rows");
+    const output = async (data) => {
+      await page.evaluate((data) => {
+        window.terminalOutputParsed = false;
+        void window.terminalRenderer.output(data).then(() => {
+          window.terminalOutputParsed = true;
+        });
+      }, data);
+      await page.clock.runFor(50);
+      await expect
+        .poll(() => page.evaluate(() => window.terminalOutputParsed))
+        .toBe(true);
+    };
+    await output("\x1b[2J\x1b[HBEFORE_FRAME");
+    await expect(rows).toContainText("BEFORE_FRAME");
+    await output("\x1b[?2026h\x1b[HINTERMEDIATE_FRAME");
+    await expect(rows).toContainText("BEFORE_FRAME");
+    await expect(rows).not.toContainText("INTERMEDIATE_FRAME");
+    await output("\x1b[HAFTER_FRAME\x1b[K\x1b[?2026l");
+    await expect(rows).toContainText("AFTER_FRAME");
+    await expect(rows).not.toContainText("INTERMEDIATE_FRAME");
+    await output("\x1b[?2026h\x1b[HRECOVERED_FRAME");
+    await page.clock.runFor(800);
+    await expect(rows).toContainText("AFTER_FRAME");
+    await page.clock.runFor(300);
+    await expect(rows).toContainText("RECOVERED_FRAME");
+    await page.clock.resume();
+
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.press("Shift"); // Dismiss the welcome before wheel input.
+
+    await page.evaluate(() =>
+      window.terminalRenderer.output(
+        "\x1b[2J\x1b[H" +
+          Array.from({ length: 80 }, (_, i) => `SCROLL_LINE_${i}`).join("\r\n"),
+      ),
+    );
+    await expect(rows).toContainText("SCROLL_LINE_79");
+    const screen = page.locator(".xterm-screen");
+    await screen.hover();
+    await page.mouse.wheel(0, -120);
+    await expect(rows).not.toContainText("SCROLL_LINE_79");
+    const dragScrollbar = async (bottom) => {
+      const track = await page
+        .locator(".xterm-scrollable-element > .scrollbar.vertical")
+        .boundingBox();
+      const thumb = await page
+        .locator(".xterm-scrollable-element > .scrollbar.vertical > .slider")
+        .boundingBox();
+      if (!track || !thumb) throw new Error("Missing terminal scrollbar");
+      const x = thumb.x + thumb.width / 2;
+      await page.mouse.move(x, thumb.y + thumb.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(x, bottom ? track.y + track.height : track.y);
+      await page.mouse.up();
+    };
+    await dragScrollbar(false);
+    await expect(rows).toContainText("SCROLL_LINE_0");
+    const scrolled = await rows.textContent();
+    await page.evaluate(() =>
+      window.terminalRenderer.output("\x1b[?1049h\x1b[2J\x1b[HFULL_SCREEN"),
+    );
+    await expect(rows).toContainText("FULL_SCREEN");
+    await page.mouse.wheel(0, -1000);
+    await page.evaluate(() => window.terminalRenderer.output("\x1b[?1049l"));
+    await expect(rows).toHaveText(scrolled);
+    await page
+      .getByRole("button", { name: "Toggle mount", exact: true })
+      .click();
+    await expect(page.locator(".xterm")).toHaveCount(0);
+    await page.evaluate(() =>
+      window.terminalRenderer.output("\r\nHIDDEN_OUTPUT"),
+    );
+    await page
+      .getByRole("button", { name: "Toggle mount", exact: true })
+      .click();
+    await expect(rows).toHaveText(scrolled);
+    await screen.hover();
+    await page.mouse.wheel(0, 120);
+    await expect(rows).not.toContainText("SCROLL_LINE_0");
+    await dragScrollbar(true);
+    await expect(rows).toContainText("HIDDEN_OUTPUT");
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("real xterm retains output across detach, handles input and resize, and does not reserve absent shortcuts", async ({
   page,
 }) => {
@@ -73,7 +260,7 @@ test("real xterm retains output across detach, handles input and resize, and doe
     await page.screenshot({
       path: test.info().outputPath("buzzterm-light.png"),
     });
-    const xterm = page.locator(".xterm-viewport");
+    const xterm = page.locator(".xterm-scrollable-element");
     const assertAnsiContrast = async () => {
       for (const text of [
         "ANSI_WHITE_ON_BLACK",
@@ -84,7 +271,8 @@ test("real xterm retains output across detach, handles input and resize, and doe
         const ratio = await page
           .getByText(text, { exact: true })
           .evaluate((el) => {
-            const css = getComputedStyle(el);
+            // xterm can split one ANSI run across several glyph spans.
+            const css = getComputedStyle(el.querySelector("span") ?? el);
             const luminance = (color) => {
               const rgb = color
                 .match(/[\d.]+/g)
@@ -101,8 +289,9 @@ test("real xterm retains output across detach, handles input and resize, and doe
             const fg = luminance(css.color);
             const background =
               css.backgroundColor === "rgba(0, 0, 0, 0)"
-                ? getComputedStyle(document.querySelector(".xterm-viewport"))
-                    .backgroundColor
+                ? getComputedStyle(
+                    document.querySelector(".xterm-scrollable-element"),
+                  ).backgroundColor
                 : css.backgroundColor;
             const bg = luminance(background);
             return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
@@ -437,7 +626,9 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(restart).toBeInViewport();
     await expect(button("End session")).toBeInViewport();
     expect(
-      await drawer.locator(".xterm-viewport").evaluate((el) => el.clientHeight),
+      await drawer
+        .locator(".xterm-scrollable-element")
+        .evaluate((el) => el.clientHeight),
     ).toBeGreaterThanOrEqual(78); // two 26px mono lines at 1.5 leading
     expect(
       await drawer.locator(".panel-header").evaluate((el) => el.scrollWidth),
@@ -671,6 +862,21 @@ test("focused terminal follows rebind, restore and reset without swallowing the 
     await page.keyboard.press("Control+Enter");
     await expect(drawer).toHaveCount(0);
     expect(await page.evaluate(() => window.terminalPanel.toggles())).toBe(2);
+    expect(await page.evaluate(() => window.terminalPanel.written())).toBe("");
+    // Compatibility mappings must still yield to a live app binding.
+    await settings.click();
+    await row
+      .getByRole("button", {
+        name: "Change shortcut for Toggle channel terminal",
+        exact: true,
+      })
+      .click();
+    await page.keyboard.press("Alt+ArrowLeft");
+    await expect(row.locator("kbd")).toHaveAttribute("data-binding", "Alt+←");
+    await launcher.click();
+    await expect(textarea).toBeFocused();
+    await page.keyboard.press("Alt+ArrowLeft");
+    await expect(drawer).toHaveCount(0);
     expect(await page.evaluate(() => window.terminalPanel.written())).toBe("");
     await page.evaluate(() => window.terminalPanel.dispose());
     expect(errors.unexplained()).toEqual([]);

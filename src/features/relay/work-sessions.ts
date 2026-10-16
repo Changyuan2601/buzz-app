@@ -1,8 +1,8 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
-import { channelLabelTags } from "./channel-labels";
-import { sessionDescription } from "../sessions/metadata";
+import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
+import { SESSION_NAMED_LABEL, sessionDescription } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
-import type { ChannelQueries } from "./contracts";
+import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -25,6 +25,7 @@ export function createWorkSessions(
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
+  channelIdentity = false,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -182,13 +183,18 @@ export function createWorkSessions(
    * its `refreshRoster` (roster only) for a channel it already carries, such
    * as one an agent was just added to. Otherwise, or when that read leaves the
    * gate unsatisfied, the full viewer-roster discovery runs. All three apply
-   * through the same discovery path. */
+   * through the same discovery path.
+   *
+   * A system channel (NIP-CL) never joins the list, so the gate finds it
+   * through `get` once the list is ready. The full pass reads system rosters
+   * too, so it follows the same path. */
   async function refresh(
     id: string,
     expected: {
       member?: string;
       members?: readonly string[];
       parent?: string;
+      system?: boolean | undefined;
     } = {},
     sessionOnly = true,
   ) {
@@ -197,6 +203,16 @@ export function createWorkSessions(
     // Aborted once the gate decides, so a still-running exact read releases
     // its reader slot instead of holding it until the connection closes.
     const exact = new AbortController();
+    // A system channel never lists; `get` carries it once discovery is ready.
+    const found = (
+      matches: (channel: ChannelSummary) => boolean | undefined,
+    ) => {
+      if (!expected.system) return channels.list().channels.some(matches);
+      const channel = channels.get?.(id);
+      return (
+        channel?.channelType === "system" && !channel.cached && matches(channel)
+      );
+    };
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
@@ -219,26 +235,18 @@ export function createWorkSessions(
           ),
         15000,
       );
+      const matches = (channel: ChannelSummary) =>
+        channel.id === id &&
+        (!sessionOnly || channel.channelType === "session") &&
+        (!expected.member || channel.members?.includes(expected.member)) &&
+        (!expected.members ||
+          expected.members.every((key) => channel.members?.includes(key))) &&
+        (!expected.parent || channel.parentChannelId === expected.parent);
       const inspect = (reportError = true) => {
         const list = channels.list();
         if (reportError && list.status === "error")
           done(new Error(list.error ?? "Session membership could not load."));
-        else if (
-          list.status === "ready" &&
-          list.channels.some(
-            (channel) =>
-              channel.id === id &&
-              (!sessionOnly || channel.channelType === "session") &&
-              (!expected.member ||
-                channel.members?.includes(expected.member)) &&
-              (!expected.members ||
-                expected.members.every((key) =>
-                  channel.members?.includes(key),
-                )) &&
-              (!expected.parent || channel.parentChannelId === expected.parent),
-          )
-        )
-          done();
+        else if (list.status === "ready" && found(matches)) done();
       };
       unsubscribe = channels.subscribeList(inspect);
       signal.addEventListener("abort", abort, { once: true });
@@ -259,9 +267,7 @@ export function createWorkSessions(
       // member addition re-reads that one roster through `refreshRoster`; a
       // channel the list lacks (just created) is admitted by `resolve`'s exact
       // metadata-and-roster read.
-      const listed = channels
-        .list()
-        .channels.some((channel) => channel.id === id);
+      const listed = found((channel) => channel.id === id);
       await Promise.race([
         gate,
         (async () => {
@@ -506,7 +512,11 @@ export function createWorkSessions(
       description?: string,
       ttlSeconds?: number,
       active?: () => boolean,
-      options: Readonly<{ labels?: readonly string[] | undefined }> = {},
+      options: Readonly<{
+        labels?: readonly string[] | undefined;
+        /** NIP-CL system channel: left out of reads that do not name it. */
+        system?: boolean | undefined;
+      }> = {},
     ) {
       writer();
       identifier(id);
@@ -534,7 +544,7 @@ export function createWorkSessions(
             ["h", id],
             ["name", name],
             ["visibility", visibility],
-            ["channel_type", "stream"],
+            ["channel_type", options.system ? "system" : "stream"],
             ...(about ? [["about", about]] : []),
             ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
             ...labelTags,
@@ -550,10 +560,12 @@ export function createWorkSessions(
       parentId?: string,
       ttlSeconds?: number,
       personal = false,
+      named = false,
     ) {
       writer();
       identifier(id);
       if (parentId) identifier(parentId);
+      if (named && !channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -576,6 +588,7 @@ export function createWorkSessions(
           ["channel_type", "stream"],
           ["about", sessionDescription(parentId, personal)],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+          ...(named ? channelLabelTags([SESSION_NAMED_LABEL]) : []),
         ],
       });
     },

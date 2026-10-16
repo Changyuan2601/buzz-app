@@ -48,7 +48,7 @@ it("changes a new-chat project locally instead of moving a saved channel", async
   render(
     <SessionProjectControl session={session} value="" onChange={change} />,
   );
-  await user.click(screen.getByRole("button", { name: "Project: No project" }));
+  await user.click(screen.getByRole("button", { name: "Add project" }));
   await user.click(
     await screen.findByRole("menuitemradio", { name: "Buzz App" }),
   );
@@ -68,7 +68,7 @@ it("keeps project recovery reachable after preferences fail", async () => {
   } as unknown as RelaySession;
   const user = userEvent.setup();
   render(<SessionProjectControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Project: No project" }));
+  await user.click(screen.getByRole("button", { name: "Add project" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Retry projects" }),
   );

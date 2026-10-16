@@ -68,6 +68,7 @@ function setup(description = sessionDescription()) {
     writer: { sign, publish },
     viewer,
     relayAuthor,
+    labels: true,
     canAccess: () => true,
     acceptDiscovery: () => {},
   });

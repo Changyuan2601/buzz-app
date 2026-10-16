@@ -41,7 +41,11 @@ import {
   turnPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
-import { readTranscript, type Conversation } from "./transcript";
+import {
+  readSessionTitle,
+  readTranscript,
+  type Conversation,
+} from "./transcript";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -128,6 +132,8 @@ export class ClaudeRuntime {
     string,
     ReturnType<AgentSessions["snapshot"]>
   >();
+  /** Me chats whose title was already offered to the host this app run. */
+  private readonly titled = new Set<string>();
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
@@ -331,6 +337,7 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
+    named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -434,6 +441,46 @@ export class ClaudeRuntime {
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error, topLevel);
     });
+    if (topLevel && named)
+      void this.offerTitle(done, agent.pubkey, key, settings.workspace, named);
+  }
+
+  /** After a Me chat's turn, offers the host the title Claude Code generated
+   * for its session, once. The host decides whether the chat takes it. */
+  private async offerTitle(
+    done: Promise<Settled>,
+    pubkey: string,
+    key: string,
+    workspace: string,
+    named: (title: string) => void,
+  ) {
+    const once = `${pubkey}:${key}`;
+    if (this.titled.has(once)) return;
+    this.titled.add(once);
+    if (!(await done).ok) {
+      // A failed turn has offered no title; a successful retry may still name it.
+      this.titled.delete(once);
+      return;
+    }
+    const signal = AbortSignal.timeout(30_000);
+    // Claude Code writes the title alongside the first reply; give it a moment.
+    for (const wait of [0, 3_000, 10_000]) {
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      const session = localSessions(this.storage, pubkey).get(key)?.id;
+      if (!session || signal.aborted) return;
+      try {
+        const title = await readSessionTitle(
+          this.spawn,
+          workspace,
+          session,
+          signal,
+        );
+        if (title) return named(title);
+      } catch (error) {
+        console.warn("Claude could not read its session title", error);
+        return;
+      }
+    }
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, as a one-off

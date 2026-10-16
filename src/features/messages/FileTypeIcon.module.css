@@ -1,0 +1,26 @@
+.icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: calc(var(--space-8) + var(--space-1));
+  height: calc(var(--space-8) + var(--space-1));
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+.icon[data-kind="pdf"] {
+  background: var(--file-pdf-surface);
+  color: var(--file-pdf-ink);
+}
+.icon[data-kind="sheet"] {
+  background: var(--affordance-success);
+  color: var(--text-success);
+}
+.icon[data-kind="archive"] {
+  background: var(--affordance-warning);
+  color: var(--text-warning);
+}
+.icon[data-kind="code"] {
+  background: var(--affordance-selected);
+  color: var(--text-link);
+}

@@ -2,6 +2,7 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
+import { startingChatTitle } from "./chat-title";
 import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
@@ -20,13 +21,15 @@ import type { ChannelSummary } from "../relay/contracts";
 import {
   readView,
   writeView,
+  replaceView,
   subscribeView,
   viewRevision,
 } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
-import { AgentChoice } from "./AgentChoice";
+import { useDefaultAgent } from "./default-agent";
 import { SessionProjectControl } from "./SessionProjectControl";
-import { writeSelectedAssistant } from "./selected-assistant";
+import { legacyAssistantDraft } from "./legacy-assistant";
+import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -102,18 +105,9 @@ export function NewSessionComposer({
         ? `${namespace}:section:${sectionId}`
         : namespace);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState(() => {
-    const receipt = readPending(scope, draftKey);
-    if (receipt?.invitationId) return receipt.agent ?? "";
-    const saved = readView<unknown>(
-      scope,
-      `${draftKey}:new-agent`,
-      receipt?.agent ?? "",
-    );
-    return typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved)
-      ? saved
-      : "";
-  });
+  // New chats tag their agent in the draft; an interrupted start keeps the
+  // assistant its receipt was admitted with.
+  const defaultAgent = useDefaultAgent(session, scope);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
       scope,
@@ -159,13 +153,25 @@ export function NewSessionComposer({
         ?.focus();
   }, [focusRequest]);
   const [pending, setPending] = useState(() => readPending(scope, draftKey));
+  const selectedAgent = pending?.agent;
   const available = pending?.messageId
     ? session.workSessions.available
     : personal
       ? session.workSessions.available && session.mePlacement.available
       : session.workSessions.available;
   const [channelId] = useState(() => pending?.id ?? crypto.randomUUID());
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(
+    // Older builds admitted untagged drafts. Preserve their creation/placement
+    // progress, but let their author add a tag before any unsigned send.
+    () =>
+      !!(
+        personal &&
+        pending &&
+        !pending.messageId &&
+        !pending.agent &&
+        !mentionDraft(pending.draft).recipients.length
+      ),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
@@ -186,7 +192,7 @@ export function NewSessionComposer({
   async function start(draft: MentionDraft) {
     if (
       submitting.current ||
-      !(pending?.text ?? draft.text).trim() ||
+      !(pending?.text ?? composerMarkdown(draft)).trim() ||
       !available
     )
       return;
@@ -204,10 +210,13 @@ export function NewSessionComposer({
       : {
           id: channelId,
           ttlSeconds: draftSettings.ttlSeconds,
+          named:
+            typeof draftSettings.name === "string" &&
+            !!canonicalDetailsName(draftSettings.name),
           name:
             typeof draftSettings.name === "string"
               ? canonicalDetailsName(draftSettings.name) ||
-                automaticTitle(composerMarkdown(draft))
+                startingChatTitle(draft)
               : draftSettings.name,
           text: composerMarkdown(draft),
           draft,
@@ -230,7 +239,9 @@ export function NewSessionComposer({
         throw new Error("The saved session name could not be verified.");
       // Receipts from before optional naming have no frozen title.
       if (!current.name)
-        current.name = automaticTitle(pending?.text ?? current.text);
+        current.name = startingChatTitle(
+          pending?.draft ?? pending?.text ?? current.draft ?? current.text,
+        );
       const errors = detailsDraftErrors({
         name: current.name ?? "Session",
         description: "",
@@ -319,6 +330,7 @@ export function NewSessionComposer({
           parent?.id,
           current.ttlSeconds,
           personal,
+          current.named === true,
         );
         save({ ...current });
       }
@@ -430,12 +442,26 @@ export function NewSessionComposer({
       }
       await session.workSessions.delivered(current.messageId);
       if (!mounted.current) return;
+      if (personal) {
+        // Never overwrite a draft already opened or edited in another window.
+        const source = mentionDraft(current.draft);
+        if (current.agent && !source.recipients.length) {
+          await session.agentChoices.refresh();
+          if (!mounted.current) return;
+        }
+        const next =
+          current.agent && !source.recipients.length
+            ? legacyAssistantDraft(session, current.agent)
+            : rememberedMentions(session, source, recipients);
+        if (replaceView(scope, `draft:${current.id}`, null, next) === "failed")
+          throw new Error(
+            "Your follow-up draft couldn’t be saved on this device. Retry to finish opening the chat.",
+          );
+      }
       writeView(scope, `${draftKey}:pending`, null);
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
-      writeView(scope, `${draftKey}:new-agent`, "");
       writeView(scope, `${draftKey}:new-project`, null);
-      writeSelectedAssistant(scope, current.id, selectedAgent);
       setPending(undefined);
       onStarted(current.id);
     } catch (reason) {
@@ -464,8 +490,6 @@ export function NewSessionComposer({
         if (failedId === next.invitationId) {
           delete next.invitationId;
           delete next.agent;
-          setSelectedAgent("");
-          writeView(scope, `${draftKey}:new-agent`, "");
         } else delete next.messageId;
         save(next);
       }
@@ -489,43 +513,28 @@ export function NewSessionComposer({
         channelName={parent?.name ?? "this session"}
         label={personal ? "Message your agents" : "Message this session"}
         inviteAgents
-        selectedAgent={personal ? selectedAgent : undefined}
+        defaultMention={personal ? defaultAgent : undefined}
+        // An interrupted start keeps the assistant its receipt was admitted with.
+        requireMention={personal && !selectedAgent && !pending?.messageId}
         trailingTool={
-          personal ? (
-            <>
-              <AgentChoice
-                session={session}
-                value={selectedAgent}
-                onChange={(agent) => {
-                  setSelectedAgent(agent);
-                  writeView(scope, `${draftKey}:new-agent`, agent);
-                }}
-                disabled={
-                  busy || !!pending?.invitationId || !!pending?.messageId
-                }
-                emptyLabel="Choose follow-up assistant"
-                clearLabel="No assistant"
-              />
-              {session.mePreferences && (
-                <SessionProjectControl
-                  session={session}
-                  value={selectedProject}
-                  onChange={(project) => {
-                    if (project === selectedProject) return;
-                    setSelectedProject(project);
-                    writeView(scope, `${draftKey}:new-project`, project);
-                    const next = {
-                      name: draftSettings.name,
-                      ttlSeconds: draftSettings.ttlSeconds,
-                      canvas: undefined,
-                    };
-                    setDraftSettings(next);
-                    writeView(scope, `${draftKey}:settings`, next);
-                  }}
-                  disabled={busy || !!pending}
-                />
-              )}
-            </>
+          personal && session.mePreferences ? (
+            <SessionProjectControl
+              session={session}
+              value={selectedProject}
+              onChange={(project) => {
+                if (project === selectedProject) return;
+                setSelectedProject(project);
+                writeView(scope, `${draftKey}:new-project`, project);
+                const next = {
+                  name: draftSettings.name,
+                  ttlSeconds: draftSettings.ttlSeconds,
+                  canvas: undefined,
+                };
+                setDraftSettings(next);
+                writeView(scope, `${draftKey}:settings`, next);
+              }}
+              disabled={busy || !!pending}
+            />
           ) : undefined
         }
         submission={{
@@ -622,13 +631,5 @@ export function NewSessionComposer({
         />
       )}
     </NewSessionView>
-  );
-}
-
-function automaticTitle(text: string) {
-  return (
-    canonicalDetailsName(
-      [...text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
-    ) || "Session"
   );
 }

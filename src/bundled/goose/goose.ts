@@ -72,9 +72,13 @@ export const ENV: Readonly<Record<string, string | null>> = {
   GOOSE_MODEL: null,
 };
 
-/** The provider and model a session's turns run on; empty is what goose's
- * config picks. */
-export type Choice = Readonly<{ provider: string; model: string }>;
+/** The provider, model and thinking level a session's turns run on; empty is
+ * what goose's config picks. */
+export type Choice = Readonly<{
+  provider: string;
+  model: string;
+  effort?: string;
+}>;
 /** goose's provider id for the provider and model its config picks. */
 const CONFIGURED = "goose";
 
@@ -475,6 +479,10 @@ export class GooseSession {
   get open() {
     return !this.closed;
   }
+  /** The thinking level it was put on; empty while it runs on goose's own. */
+  get effort() {
+    return this.chosen.effort ?? "";
+  }
 
   /** Sends one user message, whose turn runs on `model` of the provider when
    * given. Resolves when it, and anything sent after it, has been answered,
@@ -617,9 +625,9 @@ export class GooseSession {
     if (!this.steering && !this.closed) this.done();
   }
 
-  /** Puts the session on the provider and model chosen now, or `model` of
-   * that provider. A steer joins the running turn, so a change waits for the
-   * next. */
+  /** Puts the session on the provider, model and thinking level chosen now,
+   * or `model` of that provider. A steer joins the running turn, so a change
+   * waits for the next. */
   private async select(model?: string) {
     const chosen = this.choice?.();
     if (!chosen) return;
@@ -633,11 +641,17 @@ export class GooseSession {
       if (want.provider && want.provider === this.chosen.provider)
         await this.configure("model", await this.defaultModel(want.provider));
       else await this.configure("provider", want.provider || CONFIGURED);
-      this.chosen = { provider: want.provider, model: "" };
+      this.chosen = { ...this.chosen, provider: want.provider, model: "" };
     }
     if (want.model !== this.chosen.model) {
       await this.configure("model", want.model);
-      this.chosen = want;
+      this.chosen = { ...this.chosen, model: want.model };
+    }
+    // goose keeps the level across models and providers. It has no value
+    // for its own default, so a session put on a level is reopened for it.
+    if (want.effort && want.effort !== this.chosen.effort) {
+      await this.configure("thinking_effort", want.effort);
+      this.chosen = { ...this.chosen, effort: want.effort };
     }
   }
   private async configure(configId: string, value: string) {

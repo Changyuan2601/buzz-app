@@ -47,13 +47,15 @@ function Fixture({
   authorized = true,
   focusOnMount = true,
   menuScope,
+  initial = ["Thread", "Profile"],
 }: {
   authorized?: boolean;
   focusOnMount?: boolean;
   menuScope?: string;
+  initial?: string[];
 }) {
-  const [ids, setIds] = useState(["Thread", "Profile"]);
-  const [value, select] = useState("Thread");
+  const [ids, setIds] = useState(initial);
+  const [value, select] = useState(initial[0] ?? "");
   return ids.length ? (
     <PanelWorkspace
       focusOnMount={focusOnMount}
@@ -63,6 +65,13 @@ function Fixture({
               key: menuScope,
               closeAll: () => {
                 setIds([]);
+                return true;
+              },
+              // Like the channel store, which knows nothing of local details.
+              closeOthers: (id: string) => {
+                if (!ids.some((item) => item !== id)) return false;
+                setIds([id]);
+                select(id);
                 return true;
               },
             }
@@ -707,6 +716,32 @@ test("a tab context menu dismisses without closing a tab and supports keyboard c
   await user.keyboard("{Enter}");
   expect(screen.getByText("No open panels")).toBeVisible();
 });
+
+test.each(["Harness log", "Ada"])(
+  "Close other tabs on %s keeps the profile alone, selected and focused, even with nothing else in the store",
+  async (chosen) => {
+    for (const initial of [["Profile"], ["Thread", "Profile"]]) {
+      const user = userEvent.setup();
+      const view = render(<Fixture menuScope="alpha" initial={initial} />);
+      await user.click(tab("Ada"));
+      await user.click(screen.getByRole("button", { name: "Open log" }));
+      expect(tab("Harness log")).toHaveAttribute("aria-selected", "true");
+      await user.pointer({ target: tab(chosen), keys: "[MouseRight]" });
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Close other tabs" }),
+      );
+      expect(
+        within(tabs())
+          .getAllByRole("tab")
+          .map((t) => t.textContent),
+      ).toEqual(["Ada"]);
+      expect(tab("Ada")).toHaveAttribute("aria-selected", "true");
+      await vi.waitFor(() => expect(tab("Ada")).toHaveFocus());
+      expect(screen.queryByRole("textbox", { name: "Log filter" })).toBeNull();
+      view.unmount();
+    }
+  },
+);
 
 test("a menu opened in the previous channel cannot close the new channel's tabs", async () => {
   const view = render(<Fixture menuScope="alpha" />);

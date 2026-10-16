@@ -291,16 +291,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message",
         variable: "--surface-message",
-        pointsAt: "neutral-2 light / neutral-4 dark",
+        pointsAt: "bubble-received in both modes",
         use: "Received message bubbles; pair with standard text and links.",
         status: "core",
       },
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt:
-          "received fill with 5% black light / 5% white dark; selected accent otherwise",
+        pointsAt: "bubble-neutral in both modes; selected accent otherwise",
         use: "Own message bubbles; pair with --text-message-own.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-highlight",
+        variable: "--surface-message-highlight",
+        pointsAt: "20% selected message bubble mixed with the panel surface",
+        use: "Temporary return-to-message cue; follows the bubble color preference.",
         status: "core",
       },
       {
@@ -455,6 +461,31 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "file-artwork",
+    name: "File artwork",
+    description: "Fixed document-format artwork colors in both themes.",
+    roles: [
+      {
+        token: "file-pdf-surface",
+        variable: "--file-pdf-surface",
+        pointsAt: "#ffffff",
+        use: "White PDF icon tile, paired with file-pdf-ink.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+      {
+        token: "file-pdf-ink",
+        variable: "--file-pdf-ink",
+        pointsAt: "#d32f2f",
+        use: "Red PDF glyph on file-pdf-surface.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+    ],
+  },
+  {
     id: "semantic-status",
     name: "Status",
     description:
@@ -536,6 +567,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--border-standard",
         pointsAt: "neutral-3 light / neutral-4 dark",
         use: "A quiet separator or panel edge.",
+        status: "core",
+      },
+      {
+        token: "border-message-thread",
+        variable: "--border-message-thread",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Reply connectors and thread spines on conversation surfaces.",
         status: "core",
       },
       {

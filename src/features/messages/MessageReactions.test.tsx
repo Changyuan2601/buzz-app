@@ -109,7 +109,9 @@ function harness(
   function Controls({
     disabled = false,
     onFocusedRemoval,
+    audience,
   }: {
+    audience?: "agents";
     disabled?: boolean;
     onFocusedRemoval?: () => void;
   }) {
@@ -122,7 +124,7 @@ function harness(
       row && (
         <>
           <MessageReactionControls
-            row={row}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -131,7 +133,7 @@ function harness(
           />
           <MessageReactions
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
-            row={row}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -513,23 +515,6 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("opens the reactor preview after a short hover, not a long dwell", async () => {
-  const h = harness([react(other)]);
-  vi.useFakeTimers();
-  try {
-    render(<h.Controls />);
-    fireEvent.mouseEnter(
-      screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
-    );
-    await act(() => vi.advanceTimersByTimeAsync(99));
-    expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(screen.getByRole("tooltip")).toBeTruthy();
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
 it("hands focus back when my emoji is removed while another person's remains", async () => {
   const h = harness([react(), react(other)]);
   const onFocusedRemoval = vi.fn();
@@ -547,41 +532,38 @@ it("hands focus back when my emoji is removed while another person's remains", a
     await flush();
   });
 });
-
-it("chooses a new bounded tilt on each pointer entry", () => {
-  const h = harness([react(other)]);
-  render(<h.Controls />);
-  const emoji = screen.getByRole("button", {
-    name: `👍: ${other.pubkey.slice(0, 10)}`,
-  });
-  const random = vi.spyOn(Math, "random");
-  try {
-    random.mockReturnValue(0);
-    fireEvent.mouseEnter(emoji);
-    expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("-10deg");
-    fireEvent.mouseLeave(emoji);
-    random.mockReturnValue(0.75);
-    fireEvent.mouseEnter(emoji);
-    expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("5deg");
-  } finally {
-    random.mockRestore();
-  }
-});
-
-it("marks the reaction row populated only while active reactions render", () => {
-  const h = harness([react(other)]);
-  const view = render(<h.Controls />);
-  const populated = () =>
-    screen.getByTestId("reaction-row").hasAttribute("data-populated");
-  expect(populated()).toBe(true);
-  view.rerender(
-    <ConversationPresentation value={false}>
-      <h.Controls />
-    </ConversationPresentation>,
+it("offers the first reaction inline for coordination messages and respects disabled state", () => {
+  const pickerTools = registry<ComposerTool>([
+    {
+      key: "picker",
+      pluginId: "picker",
+      revision: "one",
+      id: "picker",
+      title: "Picker",
+      component: () => null,
+      reactionComponent: ({ select }: ReactionToolProps) => (
+        <button type="button" onClick={() => select("👍")}>
+          Choose reaction
+        </button>
+      ),
+    },
+  ]);
+  const h = harness([], undefined, pickerTools);
+  const view = render(<h.Controls audience="agents" />);
+  expect(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  ).toBeTruthy();
+  view.rerender(<h.Controls audience="agents" disabled />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls audience="agents" />);
+  fireEvent.click(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
   );
-  expect(populated()).toBe(false);
-  view.unmount();
-  const empty = harness();
-  render(<empty.Controls />);
-  expect(populated()).toBe(false);
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
 });

@@ -354,6 +354,17 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it("runs a mention on the agent's thinking level", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander think"), {
+      config: { ...DEFAULT_CONFIG, effort: "max" },
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=max",
+    ]);
+  });
+
   it("runs a mention on the model its owner picked", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander hi"), {

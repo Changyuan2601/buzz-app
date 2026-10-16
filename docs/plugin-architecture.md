@@ -348,6 +348,15 @@ The shared renderer owns deterministic order, error isolation and command
 revocation on removal/unmount. Composer destination keys fence session/channel/
 thread changes. The accessory remains usable on read-only connections.
 
+Message-placed accessories may opt into `decoratesMessageSummary`. The first
+ordered decorator receives the optional `renderMessageSummary(activity?)` hook;
+other accessories do not. The host retains reply counts, participant identity,
+unread state, and thread navigation. The decorator supplies its activity identities,
+inline status content, accessible label and trigger ref, allowing its existing
+popover to wrap the host button. It renders the ordinary summary when idle.
+When no decorator is registered, or it fails, the host renders the ordinary summary.
+This presentation hook grants no additional data or navigation permissions.
+
 Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
 multiple composers subscribe to the same session capability. No global selected
 channel or activity-specific dependency is added to reusable message components.

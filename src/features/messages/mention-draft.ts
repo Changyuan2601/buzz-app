@@ -1,3 +1,4 @@
+import { canonicalSessionCard } from "./session-cards";
 import {
   projectComposerDocument,
   readComposerSnapshot,
@@ -10,6 +11,8 @@ export type DraftRecipient = MentionRecipient &
 export type ComposerSnapshot = { version: 1; content: unknown };
 export type MentionDraft = {
   text: string;
+  /** Session references staged above the editor; serialized with the caption. */
+  sessionCards?: readonly string[];
   recipients: readonly DraftRecipient[];
   document?: ComposerSnapshot;
 };
@@ -48,6 +51,14 @@ export function mentionDraft(value: unknown): MentionDraft {
     : [];
   return {
     text,
+    ...(Array.isArray(record.sessionCards) && record.sessionCards.length
+      ? {
+          sessionCards: record.sessionCards
+            .map(canonicalSessionCard)
+            .filter((item): item is string => item !== undefined)
+            .slice(0, 32),
+        }
+      : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)

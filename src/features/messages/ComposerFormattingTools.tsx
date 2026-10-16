@@ -69,8 +69,11 @@ export function ComposerFormattingTools({
   activeFormats,
   toggleFormat,
   editLink,
+  trailing,
 }: {
   children: ReactNode;
+  /** Conversation controls that follow the tools on the same row. */
+  trailing?: ReactNode;
   disabled: boolean;
   singleRow?: boolean;
   activeFormats: readonly ComposerFormat[];
@@ -226,6 +229,7 @@ export function ComposerFormattingTools({
           </ToolGroup>
         )}
       </AnimatePresence>
+      {trailing && !open && <div className={styles.trailing}>{trailing}</div>}
     </div>
   );
 }

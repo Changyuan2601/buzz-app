@@ -172,6 +172,73 @@ describe("channel store", () => {
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
+  it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
+    // Agents, search and previews read single old messages through the
+    // session. Merging one into an open window above its loaded history makes
+    // a gap that later pages fill in the middle, which the timeline reads as
+    // new arrivals and does not anchor, so the reader jumps back.
+    const { store, queries, next, pending } = setup();
+    const page = (filter: Record<string, unknown>) => {
+      const index = pending.findIndex((entry) =>
+        Object.entries(filter).every(
+          ([key, value]) =>
+            JSON.stringify(entry.filters[0]?.[key as "limit"]) ===
+            JSON.stringify(value),
+        ),
+      );
+      const [entry] = pending.splice(index, 1);
+      assert.exists(entry);
+      return entry;
+    };
+    const newer = message(alice, "c", "newer", 20),
+      middle = message(alice, "c", "middle", 10),
+      old = message(alice, "c", "old", 5);
+    // Read before the window opens: it also seeds the live tail.
+    const early = store.session.read([{ ids: [old.id], limit: 1 }]);
+    next().respond([old]);
+    await early;
+    queries.ensure("c");
+    next().respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
+    // Read while the window is open.
+    const late = store.session.read([{ ids: [old.id], limit: 1 }]);
+    page({ ids: [old.id] }).respond([old]);
+    await late;
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
+    // A read inside the loaded history still lands.
+    const live = message(alice, "c", "live", 30);
+    const current = store.session.read([{ ids: [live.id], limit: 1 }]);
+    page({ ids: [live.id] }).respond([live]);
+    await current;
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      newer.id,
+      live.id,
+    ]);
+    queries.loadOlder("c");
+    page({ until: 20 }).respond([
+      middle,
+      old,
+      bounds(relay, "c", `20:${newer.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      old.id,
+      middle.id,
+      newer.id,
+      live.id,
+    ]);
+    store.dispose();
+  });
   it("evicts the least recently ensured window beyond capacity, aborting its request and rejecting late results", async () => {
     const { queries, store, next, pending } = setup(2);
     const evicted = vi.fn();

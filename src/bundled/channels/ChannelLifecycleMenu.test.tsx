@@ -98,33 +98,6 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
   await user.click(remove);
   expect(choose).toHaveBeenCalledWith("delete");
 });
-it("orders Leave, Archive, Delete and uses danger only for Delete", async () => {
-  const lifecycle = capability();
-  lifecycle.load.mockResolvedValue({ ...settings, canLeave: true });
-  render(
-    <ContextMenuRoot open>
-      <MenuPopup>
-        <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
-          choose={() => {}}
-          disabled={false}
-          separator={false}
-        />
-      </MenuPopup>
-    </ContextMenuRoot>,
-  );
-  await screen.findByRole("menuitem", { name: "Delete channel" });
-  expect(
-    screen
-      .getAllByRole("menuitem")
-      .map((item) => [item.textContent, item.dataset.tone]),
-  ).toEqual([
-    ["Leave channel", "default"],
-    ["Archive channel", "default"],
-    ["Delete channel", "danger"],
-  ]);
-});
 it.each([
   { action: "leave", label: "Leave channel", channelType: "stream" },
   { action: "hide", label: "Hide conversation", channelType: "dm" },

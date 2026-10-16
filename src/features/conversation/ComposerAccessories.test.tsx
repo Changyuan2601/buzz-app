@@ -146,3 +146,47 @@ it("keeps message accessories out of the composer and revokes commands on messag
   expect(props.onFocusedRemoval).toHaveBeenCalledOnce();
   expect(props.openThread).toHaveBeenCalledTimes(2);
 });
+
+it("gives only one decorator the host summary and restores the fallback on removal", () => {
+  const renderMessageSummary = vi.fn(() => (
+    <button type="button">6 replies</button>
+  ));
+  function Decorator(props: ComposerAccessoryProps) {
+    return (
+      <>
+        {props.renderMessageSummary?.()}
+        <span>Activity preview</span>
+      </>
+    );
+  }
+  const first: Contribution<ComposerAccessory> = {
+    id: "summary",
+    key: "test:summary",
+    pluginId: "test",
+    revision: "one",
+    title: "Summary",
+    placement: "message",
+    decoratesMessageSummary: true,
+    component: Decorator,
+  };
+  let entries = [first, { ...first, key: "test:summary-two" }];
+  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  const props = {
+    registry,
+    session: {} as RelaySession,
+    scope: "scope",
+    channelId: "channel",
+    message: { id: "message" } as NonNullable<
+      ComposerAccessoryProps["message"]
+    >,
+    open: () => false,
+    canOpen: () => false,
+    renderMessageSummary,
+  };
+  const view = render(<ComposerAccessories {...props} />);
+  expect(screen.getAllByRole("button", { name: "6 replies" })).toHaveLength(1);
+  entries = [];
+  view.rerender(<ComposerAccessories {...props} />);
+  expect(screen.getAllByRole("button", { name: "6 replies" })).toHaveLength(1);
+  expect(screen.queryByText("Activity preview")).toBeNull();
+});

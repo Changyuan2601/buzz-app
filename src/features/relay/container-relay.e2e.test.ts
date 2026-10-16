@@ -1,8 +1,11 @@
 // End-to-end checks against a real Buzz relay, for example the docker compose
 // stack. Skipped unless BUZZ_E2E_RELAY_URL names the relay's https origin.
+// BUZZ_E2E_OLD_RELAY_URL names a relay without NIP-CL (for example one built
+// from block/buzz main before NIP-CL) for the compatibility check.
 // For a relay behind a private CA, start vitest with NODE_EXTRA_CA_CERTS.
 //
 //   BUZZ_E2E_RELAY_URL=https://localhost:3443 \
+//   BUZZ_E2E_OLD_RELAY_URL=https://localhost:3444 \
 //   NODE_EXTRA_CA_CERTS=caddy-root.crt \
 //   pnpm exec vitest run src/features/relay/container-relay.e2e.test.ts
 import { createServer, type RequestListener } from "node:http";
@@ -10,12 +13,12 @@ import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { afterAll, assert, expect, it, vi } from "vitest";
 import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
-import { openBrokerSocket } from "../../../tests/broker-socket.mjs";
 import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import { keypair } from "./testing";
 
 const relayUrl = process.env.BUZZ_E2E_RELAY_URL;
+const oldRelayUrl = process.env.BUZZ_E2E_OLD_RELAY_URL;
 // Channel setup keeps local receipts; Node has no localStorage of its own.
 const stored = new Map<string, string>();
 vi.stubGlobal("localStorage", {
@@ -34,9 +37,8 @@ afterAll(async () => {
 });
 
 /** One viewer's real broker (real upstream fetch and socket) and session. */
-async function viewerSession() {
-  assert.exists(relayUrl);
-  const key = keypair();
+async function viewerSession(key = keypair(), relay = relayUrl) {
+  assert.exists(relay);
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => {
     req.headers.origin = `http://${req.headers.host}`;
@@ -44,7 +46,7 @@ async function viewerSession() {
   });
   const plugin = relayBrokerPlugin({
     archiveFile: ":memory:",
-    relayUrl,
+    relayUrl: relay,
     identity: () => key.secret,
   });
   await (plugin.configureServer as (server: ViteDevServer) => Promise<void>)({
@@ -59,14 +61,13 @@ async function viewerSession() {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const transport = await connectBrokerTransport(base);
-  const live = await openBrokerSocket(transport);
-  const owner = createRelaySession(
-    { ...transport, subscribe: undefined } as unknown as typeof transport,
-    { outboxStorage: { load: () => [], save() {} } },
-  );
+  // The session owns the live socket, as in the app: history windows load
+  // through its demand-driven subscription.
+  const owner = createRelaySession(transport, {
+    outboxStorage: { load: () => [], save() {} },
+  });
   cleanup.push(async () => {
     owner.dispose();
-    live.dispose();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -139,5 +140,158 @@ it.skipIf(!relayUrl)(
     expect((await details.load(first)).labels).toEqual([]);
     expect(await find(bob, "moved")).toEqual([]);
     console.info("[e2e] relabel and clear confirmed");
+  },
+);
+
+it.skipIf(!relayUrl)(
+  "keeps a private system channel out of lists but readable by its members",
+  { timeout: 60_000 },
+  async () => {
+    const alice = await viewerSession();
+    const bob = await viewerSession();
+    const label = `e2e-sys-${Date.now().toString(36)}`;
+    const id = await alice.session.channelCreation.create({
+      name: "records",
+      visibility: "private",
+      system: true,
+      labels: [label],
+    });
+    console.info("[e2e] system channel", { label, id });
+    alice.session.messages.send(id, "record one");
+    // The relay accepted the message into the system channel. A seen
+    // message may already have left the outbox.
+    await vi.waitFor(
+      () =>
+        expect(
+          alice.session.outbox
+            ?.snapshot()
+            .filter((item) => item.event.kind === 9)
+            .every((item) => /accepted|seen/.test(item.delivery ?? "")),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
+
+    // A fresh session for the same key: the full pass reads the system
+    // channel through its opt-in filter, and the list never shows it.
+    const again = await viewerSession(alice.key);
+    const [found] =
+      (await again.session.channels.findLabeled?.({
+        creator: alice.key.pubkey,
+        label,
+      })) ?? [];
+    expect(found).toMatchObject({
+      id,
+      channelType: "system",
+      private: true,
+      hidden: true,
+      labels: [label],
+      creator: alice.key.pubkey,
+    });
+    again.session.channels.ensureList();
+    await vi.waitFor(
+      () => expect(again.session.channels.list().status).toBe("ready"),
+      { timeout: 10_000 },
+    );
+    expect(
+      again.session.channels.list().channels.map((c) => c.id),
+    ).not.toContain(id);
+    // The complete pass carried the system roster, so access stands.
+    expect(again.session.channels.get?.(id)?.channelType).toBe("system");
+    again.session.channels.ensure(id);
+    await vi.waitFor(
+      () =>
+        expect(
+          again.session.channels.window(id).rows.map((row) => row.content),
+        ).toContain("record one"),
+      { timeout: 10_000 },
+    );
+    console.info(
+      "[e2e] member read",
+      again.session.channels.window(id).rows.length,
+    );
+
+    // A non-member cannot find a private system channel.
+    expect(
+      await bob.session.channels.findLabeled?.({
+        creator: alice.key.pubkey,
+        label,
+      }),
+    ).toEqual([]);
+  },
+);
+
+it.skipIf(!oldRelayUrl)(
+  "keeps ordinary channel work and refuses NIP-CL calls on a relay without NIP-CL",
+  { timeout: 60_000 },
+  async () => {
+    const alice = await viewerSession(keypair(), oldRelayUrl);
+    const bob = await viewerSession(keypair(), oldRelayUrl);
+    const s = alice.session;
+    // Ordinary work: create, list, edit details, another user joins, archive.
+    const id = await s.channelCreation.create({
+      name: "plain",
+      visibility: "open",
+    });
+    s.channels.ensureList();
+    await vi.waitFor(
+      () => expect(s.channels.list().channels.map((c) => c.id)).toContain(id),
+      { timeout: 15_000 },
+    );
+    expect(s.channels.get?.(id)?.channelType).toBe("stream");
+    await vi.waitFor(() => s.channelDetails.load(id), { timeout: 10_000 });
+    const loaded = await s.channelDetails.load(id);
+    expect(loaded.labels).toEqual([]);
+    await s.channelDetails.save(loaded, {
+      ...loaded,
+      description: "edited on an old relay",
+    });
+    expect((await s.channelDetails.load(id)).description).toBe(
+      "edited on an old relay",
+    );
+    await bob.session.channelLifecycle.run("join", id);
+    await s.channelLifecycle.run("archive", id);
+
+    // NIP-CL calls refuse before anything is sent or saved for retry.
+    const sent = () => s.outbox?.snapshot().length ?? 0;
+    const queued = sent();
+    const unsupported = /does not support channel labels or system channels/;
+    await expect(
+      s.channelCreation.create({
+        name: "labeled",
+        visibility: "open",
+        labels: ["e2e-old"],
+      }),
+    ).rejects.toThrow(unsupported);
+    await expect(
+      s.channelCreation.create({
+        name: "records",
+        visibility: "private",
+        system: true,
+        labels: ["for-you"],
+      }),
+    ).rejects.toThrow(unsupported);
+    await expect(
+      bob.session.channels.findLabeled?.({
+        creator: alice.key.pubkey,
+        label: "e2e-old",
+      }),
+    ).rejects.toThrow(unsupported);
+    const details = await s.channelDetails.load(id);
+    await expect(
+      s.channelDetails.save(details, { ...details, labels: ["e2e-old"] }),
+    ).rejects.toThrow(unsupported);
+    expect(sent()).toBe(queued);
+    expect(s.channelCreation.snapshot()).toBeUndefined();
+
+    // The refusals left nothing stuck: the next ordinary create works.
+    const after = await s.channelCreation.create({
+      name: "plain after",
+      visibility: "open",
+    });
+    await vi.waitFor(
+      () =>
+        expect(s.channels.list().channels.map((c) => c.id)).toContain(after),
+      { timeout: 15_000 },
+    );
   },
 );

@@ -106,6 +106,11 @@ export function fakeSpawn(
     history?: readonly FakeSession[];
     /** Requests each process never answers. */
     silent?: readonly string[];
+    /** The thinking levels a session lists on each model, `""` being the
+     * one it opens on; one not here lists none. */
+    thinking?: Readonly<
+      Record<string, Readonly<{ current: string; levels: readonly string[] }>>
+    >;
   }> = {},
 ) {
   const processes: FakeGoose[] = [];
@@ -163,6 +168,24 @@ export function fakeSpawn(
     let mcpRequests = 0;
     /** The Buzz MCP server each session was given. */
     const declared = new Map<string, string>();
+    /** The model each session was put on; `""` is the one it opened on. */
+    const models = new Map<string, string>();
+    const configOptions = (sessionId: string) => {
+      const thinking = options.thinking?.[models.get(sessionId) ?? ""];
+      return thinking
+        ? [
+            {
+              id: "thinking_effort",
+              category: "thought_level",
+              currentValue: thinking.current,
+              options: thinking.levels.map((level) => ({
+                value: level,
+                name: level,
+              })),
+            },
+          ]
+        : [];
+    };
     const answers = new Map<number | string, (message: Message) => void>();
     const send = (message: Message) =>
       queueMicrotask(() => {
@@ -246,7 +269,10 @@ export function fakeSpawn(
             ?.enabledExtensions ?? []) as { server?: { url?: string } }[];
           const url = extensions.find((item) => item.server?.url)?.server?.url;
           if (url) declared.set(sessionId, url);
-          return reply(id, { sessionId });
+          return reply(id, {
+            sessionId,
+            configOptions: configOptions(sessionId),
+          });
         }
         case "_goose/unstable/session/system-prompt/set":
           fake.prompts.set(sessionId, String(params.text));
@@ -311,7 +337,10 @@ export function fakeSpawn(
           fake.configured.push(
             `${sessionId} ${String(params.configId)}=${String(params.value)}`,
           );
-          return reply(id, { configOptions: [] });
+          if (params.configId === "model")
+            models.set(sessionId, String(params.value));
+          if (params.configId === "provider") models.delete(sessionId);
+          return reply(id, { configOptions: configOptions(sessionId) });
         case "session/cancel":
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");

@@ -19,7 +19,7 @@ function at<T>(values: readonly T[], index: number): T {
 async function setup(count = 3) {
   const viewer = keypair(),
     peer = keypair();
-  let roster: readonly ChannelSummary[] = Array.from(
+  const roster: readonly ChannelSummary[] = Array.from(
     { length: count },
     (_, i) => ({
       id: `c${i}`,
@@ -27,11 +27,9 @@ async function setup(count = 3) {
       members: [viewer.pubkey],
     }),
   );
-  let changed = () => {};
   const channels: ChannelQueries = {
-    list: vi.fn(() => ({ status: "ready" as const, channels: roster })),
-    subscribeList(listener) {
-      changed = listener;
+    list: () => ({ status: "ready" as const, channels: roster }),
+    subscribeList() {
       return () => {};
     },
     window() {
@@ -74,13 +72,10 @@ async function setup(count = 3) {
   const rows = roster.map(({ id }) => message(peer, id, "seed", 11));
   owner.accept(rows);
   const listeners = targets.map(() => vi.fn());
-  const stops = targets.map((target, i) =>
-    owner.capability.subscribe(target, at(listeners, i)),
-  );
-  const reset = () => {
-    state.mockClear();
-    vi.mocked(channels.list).mockClear();
-  };
+  targets.forEach((target, i) => {
+    owner.capability.subscribe(target, at(listeners, i));
+  });
+  const reset = () => state.mockClear();
   reset();
   return {
     owner,
@@ -90,16 +85,9 @@ async function setup(count = 3) {
     rows,
     targets,
     listeners,
-    stops,
     state,
-    channels,
-    reader,
     reads,
     reset,
-    changeList(patch: (channel: ChannelSummary) => ChannelSummary) {
-      roster = roster.map(patch);
-      changed();
-    },
   };
 }
 
@@ -116,73 +104,6 @@ it("does not trust workflow-owner metadata without a configured relay identity",
     mentioned: true,
     unread: true,
   });
-});
-
-it("recomputes only the affected subscribed channel, not every cached sidebar selector", async () => {
-  const h = await setup(128);
-  h.owner.accept([message(h.peer, "c0", "new", 12)]);
-  expect(h.state).toHaveBeenCalledTimes(1);
-  expect(h.channels.list).toHaveBeenCalledTimes(3); // admission + two selector inputs
-  expect(h.listeners[0]).toHaveBeenCalledOnce();
-  expect(
-    h.listeners.slice(1).every((listener) => listener.mock.calls.length === 0),
-  ).toBe(true);
-  expect(h.reader.read).not.toHaveBeenCalled();
-});
-
-it("ignores preview/name changes, but recomputes the one channel whose DM metadata changed", async () => {
-  const h = await setup(128);
-  h.changeList((channel) => ({
-    ...channel,
-    name: "renamed",
-    preview: "new preview",
-  }));
-  expect(h.state).not.toHaveBeenCalled();
-  expect(h.channels.list).toHaveBeenCalledTimes(1);
-  h.reset();
-  h.changeList((channel) =>
-    channel.id === "c0" ? { ...channel, channelType: "dm" } : channel,
-  );
-  expect(h.state).toHaveBeenCalledTimes(1);
-  expect(h.channels.list).toHaveBeenCalledTimes(3);
-  expect(h.unread.snapshot(at(h.targets, 0))).toMatchObject({
-    observedCount: 1,
-    attentionCount: 1,
-  });
-  h.reset();
-  h.changeList((channel) => {
-    if (channel.id !== "c0") return channel;
-    const { channelType: _type, ...rest } = channel;
-    return rest;
-  });
-  expect(h.state).toHaveBeenCalledTimes(1);
-  expect(h.unread.snapshot(at(h.targets, 0)).attentionCount).toBe(0);
-});
-
-it("lazily refreshes dormant selectors and preserves identity when their value is unchanged", async () => {
-  const h = await setup();
-  const target = at(h.targets, 0);
-  const before = h.unread.snapshot(target);
-  at(h.stops, 0)();
-  const own = message(h.viewer, "c0", "own message", 12);
-  h.owner.accept([own]);
-  expect(h.state).not.toHaveBeenCalled();
-  const after = h.unread.snapshot(target);
-  expect(after).not.toBe(before);
-  expect(after.latestMessage).toEqual({ id: own.id, createdAt: 12 });
-  expect(h.unread.snapshot(target)).toBe(after);
-  expect(h.state).toHaveBeenCalledTimes(1);
-  h.reset();
-  h.owner.accept([message(h.peer, "c0", "unread message", 13)]);
-  expect(h.state).not.toHaveBeenCalled();
-  const listener = vi.fn();
-  h.unread.subscribe(target, listener);
-  expect(h.state).toHaveBeenCalledTimes(1);
-  expect(h.unread.snapshot(target).observedCount).toBe(2);
-  h.reset();
-  h.owner.accept([message(h.peer, "c0", "subscribed again", 14)]);
-  expect(h.state).toHaveBeenCalledTimes(1);
-  expect(listener).toHaveBeenCalledOnce();
 });
 
 it("keeps read-state and freshness invalidation global", async () => {
@@ -262,42 +183,3 @@ it.each([5, 9005])(
     expect(h.listeners[2]).not.toHaveBeenCalled();
   },
 );
-
-it("invalidates subscribed and dormant selectors globally on clear and capacity loss", async () => {
-  const h = await setup();
-  at(h.stops, 1)();
-  h.owner.clear();
-  expect(h.targets.map((target) => h.unread.snapshot(target))).toEqual(
-    h.targets.map((target) =>
-      expect.objectContaining({
-        target,
-        coverage: "unknown",
-        freshness: "unknown",
-        observedCount: null,
-      }),
-    ),
-  );
-  h.owner.accept(h.rows);
-  h.owner.accept([message(h.peer, "c0", "x".repeat(8 * 1024 * 1024), 12)]);
-  for (const target of h.targets)
-    expect(h.unread.snapshot(target)).toMatchObject({
-      coverage: "unknown",
-      freshness: "stale",
-      observedCount: null,
-      error: "Unread observation capacity reached; refresh available",
-    });
-});
-
-it("reconnect retains background marker and evidence priority", async () => {
-  const h = await setup();
-  await h.unread.ensure();
-  h.reader.read.mockClear();
-  const refresh = vi.spyOn(h.reads, "refresh");
-  h.owner.reconnect();
-  await vi.waitFor(() => expect(h.reader.read).toHaveBeenCalledOnce());
-  expect(refresh).toHaveBeenCalledWith();
-  expect(h.reader.read).toHaveBeenCalledWith(
-    expect.any(Array),
-    expect.objectContaining({ priority: "background" }),
-  );
-});

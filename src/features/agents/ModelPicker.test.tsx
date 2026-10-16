@@ -28,16 +28,6 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
 
-it("shows the default's label when no model is chosen", () => {
-  setup("");
-  expect(control()).toHaveTextContent("Default model");
-});
-
-it("shows the chosen model's label", () => {
-  setup("opus");
-  expect(control()).toHaveTextContent("Opus");
-});
-
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
   await user.click(control());

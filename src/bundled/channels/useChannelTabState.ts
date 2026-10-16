@@ -565,18 +565,28 @@ export function useChannelTabState(
       })),
     [update],
   );
-  const closeAllTabs = useCallback(
-    () =>
-      update((s) => ({
-        ...s,
-        entries: [],
-        tabs: [],
-        selected: "",
-        mainSelected: undefined,
-        paneOpen: false,
-        thread: undefined,
-        settings: undefined,
-      })),
+  /** Closes this channel's tabs in both panes, except `keep` if given, which
+   * stays open and selected. */
+  const closeTabs = useCallback(
+    (keep?: string) =>
+      update((s) => {
+        const tab = s.tabs.find((item) => item.id === keep);
+        const entry = s.entries.find((item) => panelTabId(item) === keep);
+        const settings = keep === "settings" ? s.settings : undefined;
+        const main = !!tab && tabPane(tab) === "main";
+        // The channel conversation is not stored: keeping it closes them all.
+        const side = !main && !!(tab || entry || settings);
+        return {
+          ...s,
+          entries: entry ? [entry] : [],
+          tabs: tab ? [tab] : [],
+          selected: (side && keep) || "",
+          mainSelected: main ? keep : undefined,
+          paneOpen: side,
+          thread: undefined,
+          settings,
+        };
+      }),
     [update],
   );
   const setPaneOpen = useCallback(
@@ -619,7 +629,7 @@ export function useChannelTabState(
       setPaneOpen,
       setSidePanel,
       renameTab,
-      closeAllTabs,
+      closeTabs,
     }),
     [
       state,
@@ -641,7 +651,7 @@ export function useChannelTabState(
       setPaneOpen,
       setSidePanel,
       renameTab,
-      closeAllTabs,
+      closeTabs,
     ],
   );
 }

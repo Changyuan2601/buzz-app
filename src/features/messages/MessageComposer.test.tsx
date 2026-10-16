@@ -421,9 +421,12 @@ function mount(
         for (const listener of profileListeners) listener();
       });
     },
-    setLibrary(identities: AgentLibrarySnapshot["identities"]) {
+    setLibrary(
+      identities: AgentLibrarySnapshot["identities"],
+      status: AgentLibrarySnapshot["status"] = "ready",
+    ) {
       act(() => {
-        library = { ...library, identities };
+        library = { ...library, identities, status };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -1047,12 +1050,15 @@ async function mountUploadComposer(
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
+    profiles?: readonly RelayEvent[];
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
     agents?: Agents;
     /** Channel members besides the viewer; only members can be mentioned. */
     members?: readonly string[];
+    defaultMention?: MessageComposerProps["defaultMention"];
+    requireMention?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1089,6 +1095,8 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return [...(options.profiles ?? [])];
         if (
           filters.some((filter) => filter.kinds?.includes(30030)) &&
           options.emojiRead
@@ -1143,6 +1151,8 @@ async function mountUploadComposer(
         scope={scope}
         channelId="channel"
         channelName="General"
+        defaultMention={options.defaultMention}
+        requireMention={options.requireMention}
         {...(options.extensions ? { extensions: options.extensions } : {})}
         {...(options.threadRootId
           ? { threadRootId: options.threadRootId }
@@ -1264,42 +1274,60 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
 
-it("restores a failed background upload into the composer with Desktop's toast", async () => {
-  const h = await mountUploadComposer();
-  attachByPaste(h.input(), attachmentFile("metadata.txt"));
-  await waitFor(() =>
-    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
-  );
-  await userEvent.type(h.input(), "caption");
+it.each([false, true])(
+  "restores failed background upload before inserting any next-draft default (default=%s)",
+  async (tagged) => {
+    const agent = { pubkey: "b".repeat(64), name: "Honey" };
+    const h = await mountUploadComposer(
+      tagged
+        ? {
+            members: [agent.pubkey],
+            defaultMention: agent,
+            requireMention: true,
+          }
+        : {},
+    );
+    if (tagged) await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    attachByPaste(h.input(), attachmentFile("metadata.txt"));
+    await waitFor(() =>
+      expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+    );
+    // jsdom cannot place a pointer caret around the inserted chip. Exercise
+    // keyboard continuation at the editor's own end without a synthetic click.
+    const editor = screen.getByRole<ComposerInputElement>("textbox");
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await userEvent.type(h.input(), "caption", { skipClick: true });
 
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  await act(async () => {
-    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
-  });
-  await waitFor(() =>
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+    });
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").map((node) => node.textContent),
+      ).toEqual([UPLOAD_FAILURES.metadata]),
+    );
     expect(
-      screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([UPLOAD_FAILURES.metadata]),
-  );
-  expect(
-    screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
-  ).toBeVisible();
-  expect(h.input()).toHaveValue("caption");
-  expect(h.publish).not.toHaveBeenCalled();
+      screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue(tagged ? "@Honey caption" : "caption");
+    expect(h.publish).not.toHaveBeenCalled();
 
-  fireEvent.keyDown(
-    screen.getByRole("button", { name: "Retry metadata.txt" }),
-    { key: "Delete" },
-  );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Retry metadata.txt" }),
+      { key: "Delete" },
+    );
 
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(
-      within(h.form()).queryByText("metadata.txt"),
-    ).not.toBeInTheDocument(),
-  );
-});
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(h.form()).queryByText("metadata.txt"),
+      ).not.toBeInTheDocument(),
+    );
+  },
+);
 
 // Remounting after the failure covers the usual leave-and-return case: the
 // recovery lands with no mounted listener and must wait for the composer.
@@ -2837,25 +2865,6 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
-it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
-  const h = mount();
-  await h.user.type(h.input(), "```");
-  expect(h.input().querySelector("pre > code")).not.toBeNull();
-  expect(h.input()).toHaveValue("");
-  expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
-  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
-  await h.user.keyboard("{Enter}");
-  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
-    "channel",
-    "```\nconst answer = 42;\nanswer\n```",
-    [],
-    [],
-  );
-  expect(h.input()).toHaveValue("");
-  expect(h.input().querySelector("pre")).toBeNull();
-});
-
 it.each([
   ["- ", "ul", "- first\n- second"],
   ["3. ", "ol", "3. first\n4. second"],
@@ -3142,16 +3151,6 @@ it("subscribes to emoji changes and releases the subscription when unmounted", (
   expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(0);
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
-});
-
-it("enlarges Unicode-only drafts and restores normal text presentation", () => {
-  const h = mount();
-  for (const draft of ["😀", "😀 🙏 👏", "😀 🙏 👏 😄"]) {
-    h.fill(draft);
-    expect(h.input()).toHaveAttribute("data-single-emoji", "true");
-    h.fill(`${draft} hello`);
-    expect(h.input()).not.toHaveAttribute("data-single-emoji");
-  }
 });
 
 it.each([undefined, "root"])(
@@ -4364,11 +4363,19 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   expect(h.input()).toHaveValue("");
 });
 
-it("uses Me's selected assistant for plain follow-ups while explicit mentions override it", async () => {
+it("tags a Berd draft with the default agent once and needs a tag to send", async () => {
+  const submit = vi.fn();
   const h = mount({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit,
+    },
     personalConversation: true,
     sessionConversation: true,
-    selectedAgent: second.pubkey,
+    requireMention: true,
+    defaultMention: { pubkey: second.pubkey, name: "Selected" },
   });
   h.setLibrary([
     { pubkey: first.pubkey, name: "Explicit" },
@@ -4380,59 +4387,33 @@ it("uses Me's selected assistant for plain follow-ups while explicit mentions ov
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  const channel = {
-    id: "channel",
-    channelType: "session" as const,
-    members: [first.pubkey, second.pubkey],
-  };
-  Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => channel),
-      addAgents: vi.fn(async () => {}),
-    },
-  });
-
-  h.fill("plain follow-up");
+  Object.assign(h.session, { mePlacement: { has: () => true } });
+  // The default agent arrives in the empty draft as an ordinary tag.
+  await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
+  const send = screen.getByRole("button", { name: "Send message" });
+  // Removing the tag is respected: no re-tag, and Enter explains even an empty draft.
+  h.fill("");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
+  h.fill("no agent here");
+  expect(h.input()).toHaveValue("no agent here");
+  // Enter and native form submission obey the same rule, not just the button.
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
   h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
-  expect(h.input()).toHaveValue("");
-
-  h.fill("override");
+  expect(submit).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("no agent here");
+  // Still focusable, so its tooltip explains why.
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await userEvent.hover(send);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Tag an agent to send",
+  );
+  await userEvent.unhover(send);
   act(() => {
     h.commands().insertMention(first);
   });
-  h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
-  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
-  expect(h.input()).toHaveValue("");
-});
-
-it("keeps a Me draft when its selected assistant is unavailable", async () => {
-  const h = mount({
-    personalConversation: true,
-    sessionConversation: true,
-    selectedAgent: second.pubkey,
-  });
-  Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => ({
-        id: "channel",
-        channelType: "session" as const,
-        members: [],
-      })),
-      addAgents: vi.fn(async () => {}),
-    },
-  });
-  h.fill("keep this draft");
-  h.submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "selected assistant is no longer available",
-  );
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("keep this draft");
+  expect(send).not.toHaveAttribute("aria-disabled");
 });
 
 it.each([
@@ -7242,60 +7223,6 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("marks the composer for conversation controls only while they render", () => {
-  const h = mount(
-    { trailingTool: <button type="button">Tool</button> },
-    undefined,
-    first.pubkey,
-  );
-  const form = () => h.container.querySelector("form");
-  expect(form()).toHaveAttribute("data-conversation-controls");
-  h.setRows([editableMessage()]);
-  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-  expect(form()).toHaveAttribute("data-editing");
-  expect(form()).not.toHaveAttribute("data-conversation-controls");
-  h.unmount();
-});
-
-it("marks the leading tools while explicit recipients are shown", async () => {
-  const h = mount();
-  expect(h.container.querySelector("[data-recipients]")).toBeNull();
-  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  const region = screen.getByRole("region", { name: "Explicit mentions" });
-  const tools = region.parentElement;
-  expect(tools).toHaveAttribute("data-recipients");
-  await h.user.click(
-    within(region).getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
-  expect(
-    screen.queryByRole("region", { name: "Explicit mentions" }),
-  ).not.toBeInTheDocument();
-  expect(tools).not.toHaveAttribute("data-recipients");
-  h.unmount();
-});
-
-it("marks the composer with attachments until the emptied section has animated out", async () => {
-  // jsdom applies no CSS module styles, so the gap/padding this attribute
-  // drives cannot be measured here; the attribute's timeline is asserted.
-  const h = await mountUploadComposer();
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("notes.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  const section = screen.getByRole("region", { name: "Attachments" });
-  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
-  // The list is empty but the section is still exiting: keep the mark.
-  expect(section).toBeInTheDocument();
-  expect(h.form()).toHaveAttribute("data-attachments");
-  await waitFor(() => expect(section).not.toBeInTheDocument());
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("again.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
-});
-
 it("drops the attachments mark while a row-requested edit holds pending items", async () => {
   // Arrow-up refuses to edit over pending items; the row's Edit action does not.
   const h = await mountUploadComposer({ editable: true });
@@ -7337,3 +7264,343 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   expect(form).toHaveAttribute("data-attachments");
   expect(within(view.container).getByText("pending.txt")).toBeVisible();
 });
+
+it("stages session cards above an ordinary caption editor, persists them, and sends both", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  const region = screen.getByRole("region", { name: "Session attachments" });
+  expect(region).toHaveTextContent("Session:");
+  expect(h.input()).toHaveValue("");
+  expect(
+    region.compareDocumentPosition(h.input()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.type(h.input(), "please review");
+  expect(h.input()).not.toHaveTextContent("Session:");
+  expect(
+    readView<{ sessionCards: string[] } | null>("scope", "draft:channel", null)
+      ?.sessionCards,
+  ).toEqual([link]);
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey please review`,
+    [first.pubkey],
+    [],
+  );
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+});
+
+it("stages pasted session links, restores them on remount, and removes them without changing the caption", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  const h = mount();
+  act(() => h.input().insertText(`${link} Caption`));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  expect(h.input()).toHaveValue(" Caption");
+  h.unmount();
+  const restored = mount();
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  await restored.user.click(
+    screen.getByRole("button", { name: "Remove session attachment 1" }),
+  );
+  expect(restored.input()).toHaveValue(" Caption");
+  expect(document.activeElement).toBe(restored.input());
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+  await restored.user.click(
+    screen.getByRole("button", { name: "Send message" }),
+  );
+  expect(restored.messages.send).toHaveBeenCalledWith(
+    "channel",
+    " Caption",
+    [],
+    [],
+  );
+});
+
+it("sends a staged session without a caption", async () => {
+  const link = "[Session: 12345678](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith("channel", link, [], []);
+});
+
+it("retains a new card-only followup when a background upload fails", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const link = "[Session: New work](buzz://channel/session-id)";
+  act(() => (h.input() as ComposerInputElement).insertText(link));
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("New work");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    sessionCards: [link],
+  });
+  expect(
+    await screen.findByText(/Failed send was kept because this draft changed/),
+  ).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("restores and sends an older session-link draft with its selected mention intact", async () => {
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", {
+    text: `@Honey ${link}`,
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount();
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("Fix");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey `,
+    [first.pubkey],
+    [],
+  );
+});
+
+it("does not publish an unchanged inline session edit, including reverting a caption change", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const content =
+    "please review [Session: Fix](buzz://channel/session-id) before merge";
+  h.setRows([editableMessage({ content })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const caption = h.input().textContent ?? "";
+  h.fill("Changed caption");
+  h.fill(caption);
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("does not take focus when a default recipient arrives after mount", () => {
+  const h = mount();
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    h.retarget({ defaultMention: second });
+    expect(h.input()).toHaveValue(`@${second.name} `);
+    expect(outside).toHaveFocus();
+  } finally {
+    outside.remove();
+  }
+});
+
+it("edits the last message from an untouched automatic tag and restores that tag on cancel", () => {
+  const h = mount({ defaultMention: second }, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  h.fill("my own draft");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+});
+
+it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
+  const key = keypair();
+  const agent = { pubkey: key.pubkey, name: "Honey" };
+  const h = await mountUploadComposer({
+    members: [agent.pubkey],
+    profiles: [
+      signed(key, {
+        kind: 0,
+        content: JSON.stringify({ name: "Honey", is_agent: true }),
+        tags: [],
+      }),
+    ],
+    defaultMention: agent,
+    requireMention: true,
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  await act(() => h.owner.session.profiles.ensure([agent.pubkey]));
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  const editor = screen.getByRole<ComposerInputElement>("textbox");
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+  await userEvent.type(editor, "next", { skipClick: true });
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+    });
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(outside).toHaveFocus();
+    expect(h.input()).toHaveValue("@Honey next");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "p",
+      agent.pubkey,
+    ]);
+  } finally {
+    outside.remove();
+  }
+});
+
+it.each(["thread", "solo"])(
+  "%s follow-ups retain every selected agent, honor removal and share the opt-out",
+  async (surface) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setLibrary([first, second]);
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: first.name, isAgent: true }],
+        [second.pubkey, { name: second.name, isAgent: true }],
+      ]),
+    );
+    const personal = surface === "solo";
+    h.retarget({
+      ...(personal
+        ? { personalConversation: true, requireMention: true }
+        : { threadRootId: "root" }),
+      session: {
+        ...h.session,
+        mePlacement: { has: () => true },
+        workSessions: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: [first.pubkey, second.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+      h.commands().insertText("hello");
+    });
+    h.submit();
+    const send = personal ? h.messages.send : h.messages.reply;
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
+    if (personal) {
+      h.setRows([editableMessage()]);
+      fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      fireEvent.keyDown(h.input(), { key: "Escape" });
+      expect(h.input()).toHaveValue("@Honey @Honey ");
+    }
+    // Keep only the second agent for the next send.
+    act(() => {
+      h.input().removeRecipient(first.pubkey);
+      h.commands().insertText("next");
+    });
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    expect(send.mock.calls.at(-1)?.[personal ? 2 : 3]).toEqual([second.pubkey]);
+    setRememberAgentsPreference(false);
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+    setRememberAgentsPreference(true);
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it.each([
+  "empty",
+  "draft",
+  "off",
+  "unavailable",
+  "typed-while-loading",
+  "storage-failure",
+  "archived",
+  "session-card",
+])(
+  "upgrades the exact legacy Solo assistant once without replacing authored intent (%s)",
+  async (mode) => {
+    writeView("scope", "me:assistant:channel", second.pubkey);
+    if (mode === "draft") writeView("scope", "draft:channel", "Keep my draft");
+    if (mode === "session-card")
+      writeView(
+        "scope",
+        "draft:channel",
+        "[Session: Keep](buzz://channel/session-id)",
+      );
+    if (mode === "off") setRememberAgentsPreference(false);
+    const h = mount();
+    h.setLibrary([], "loading");
+    h.retarget({ personalConversation: true, requireMention: true });
+    if (mode === "typed-while-loading") h.fill("Started typing");
+    if (mode === "archived")
+      h.retarget({
+        session: {
+          ...h.session,
+          archives: { state: () => "archived" },
+        } as unknown as RelaySession,
+      });
+    const setItem = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (mode === "storage-failure" && key.includes('"draft:channel"'))
+          throw new Error("Storage unavailable");
+        setItem.call(this, key, value);
+      });
+    h.setLibrary(mode === "unavailable" ? [first] : [first, second]);
+    const expected =
+      mode === "empty"
+        ? "@Honey "
+        : mode === "draft"
+          ? "Keep my draft"
+          : mode === "typed-while-loading"
+            ? "Started typing"
+            : "";
+    await waitFor(() => expect(h.input()).toHaveValue(expected));
+    if (mode === "empty") {
+      h.fill("");
+      h.retarget({ channelId: "other" });
+      h.retarget({ channelId: "channel" });
+      expect(h.input()).toHaveValue("");
+      expect(readView("scope", "me:assistant:channel", null)).toBe("");
+    }
+    if (mode === "session-card")
+      expect(readView("scope", "draft:channel", null)).toBe(
+        "[Session: Keep](buzz://channel/session-id)",
+      );
+    if (mode === "storage-failure") {
+      expect(h.input()).toHaveValue("");
+      expect(readView("scope", "me:assistant:channel", null)).toBe(
+        second.pubkey,
+      );
+      storage.mockRestore();
+      h.setLibrary([first, second]);
+      await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    }
+    storage.mockRestore();
+    setRememberAgentsPreference(true);
+  },
+);

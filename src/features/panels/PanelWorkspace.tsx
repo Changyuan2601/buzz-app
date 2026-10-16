@@ -83,7 +83,13 @@ export function PanelWorkspace({
   drag,
 }: {
   /** The channel owner closes tabs across both panes, including hidden tabs. */
-  tabMenu?: { key: string; closeAll(): boolean } | undefined;
+  tabMenu?:
+    | {
+        key: string;
+        closeAll(): boolean;
+        closeOthers?: ((id: string) => boolean) | undefined;
+      }
+    | undefined;
   drag?: TabDragHost | undefined;
   items: Item[];
   value: string;
@@ -366,7 +372,27 @@ export function PanelWorkspace({
                   }
                 : undefined,
             }))}
-            tabMenu={tabMenu}
+            tabMenu={
+              tabMenu && {
+                ...tabMenu,
+                // A detail tab cannot outlive its owner, so the owner is kept.
+                // Details live only here: close the kept owner's ones too,
+                // even when the channel has no other tab to close.
+                closeOthers:
+                  tabMenu.closeOthers &&
+                  ((id) => {
+                    const local = owned.find((tab) => tab.id === id);
+                    const keep = local?.owner ?? id;
+                    const details = owned.filter((tab) => tab.owner === keep);
+                    const closed = tabMenu.closeOthers?.(keep) ?? false;
+                    if (!closed && !details.length) return false;
+                    // Focus follows the chosen detail's removal to its owner.
+                    if (local) closingTab.current = local.id;
+                    for (const tab of details) tab.close();
+                    return true;
+                  }),
+              }
+            }
             onValueChange={(id) => {
               focusContent.current = pointerTab.current;
               pointerTab.current = false;

@@ -291,7 +291,8 @@
   /* Reference hues kept in OKLCH, with lightness lowered only to meet 4.5:1
      for white ink. Chroma is preserved up to the sRGB gamut boundary. */
   --bubble-ink: #ffffff;
-  --bubble-neutral: #e9e9ea; /* Received fill mixed with 5% black. */
+  --bubble-neutral: #e9e9ea;
+  --bubble-received: #f3f3f4;
   --bubble-blue: #0077db;
   --bubble-green: #008934;
   --bubble-orange: #c95100;
@@ -422,7 +423,8 @@
   --image-rim: oklch(1 0 0 / 0.1);
   --neutral-raised: #282828;
   --neutral-quiet-hover: #2e2e2e;
-  --bubble-neutral: #2e2e2e; /* Received fill mixed with 5% white. */
+  --bubble-neutral: #2e2e2e;
+  --bubble-received: #292929;
   --bubble-blue: #0077db;
   --bubble-green: #008934;
   --bubble-orange: #c95100;
@@ -544,7 +546,7 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
-  --surface-message: var(--neutral-2);
+  --surface-message: var(--bubble-received);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
@@ -576,6 +578,7 @@
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
+  --border-message-thread: var(--neutral-4);
   --scrollbar-thumb: var(--neutral-8);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -619,7 +622,7 @@
 
 :root[data-color-mode="dark"],
 .dark {
-  --surface-message: var(--neutral-4);
+  --surface-message: var(--bubble-received);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
@@ -658,6 +661,7 @@
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
+  --border-message-thread: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -806,6 +810,9 @@
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
+  /* Fixed PDF artwork colors, paired in both themes. */
+  --file-pdf-surface: #ffffff;
+  --file-pdf-ink: #d32f2f;
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);
@@ -882,6 +889,15 @@
    `text-gray-500` does not exist. Only the roles above do.
    ============================================================ */
 
+:root,
+[data-bubble-color] {
+  --surface-message-highlight: color-mix(
+    in srgb,
+    var(--surface-message-own) 20%,
+    var(--surface-panel)
+  );
+}
+
 @theme inline {
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
@@ -912,6 +928,7 @@
   --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
+  --border-color-message-thread: var(--border-message-thread);
   --border-color-prominent: var(--border-prominent);
   --border-color-floating-control: var(--border-floating-control);
   --border-color-focus: var(--border-focus);
@@ -1119,6 +1136,7 @@
 }
 
 /* Device-local message colors; scopes also paint the settings swatches. */
+
 :root[data-bubble-color="neutral"],
 [data-bubble-color="neutral"] {
   --surface-message-own: var(--bubble-neutral);

@@ -3131,3 +3131,74 @@ it("a converted stream uses threaded replies despite an agent owner's retained M
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
+
+it("method calls: a thread and a turn make no relay-session call beyond the turn's message-context reads (launch-boundary.test.ts runs the real service path)", async () => {
+  const f = fixture();
+  const session = f.snapshot.session;
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "agentMemories.open": f.memoryOpen,
+    "memoryView.refresh": f.memoryView.refresh,
+    "profiles.ensure": session.profiles.ensure,
+    "mePlacement.refresh": session.mePlacement.refresh,
+    publish: f.publish,
+    query: f.query,
+    upload: f.upload,
+    media: f.media,
+    remember: f.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .map(([name, fn]) => [name, fn.mock.calls.length] as const)
+        .filter(([, count]) => count > 0),
+    );
+  // The core-memory cache is seeded, so starts need no memory read.
+  f.core.mockResolvedValue("seeded");
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = made();
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  // A thread/start and its first turn: only the deliberate message-context
+  // read of the triggering conversation.
+  expect(Object.keys(started)).toEqual(
+    Object.keys(started).filter((name) => name === "session.read"),
+  );
+  // Those reads are message history in the triggering channel, nothing else.
+  const context = () =>
+    (f.read.mock.calls as unknown as [readonly Record<string, unknown>[]][])
+      .flatMap(([filters]) => filters)
+      .every(
+        (filter) =>
+          JSON.stringify(filter.kinds) === "[9,40002]" &&
+          JSON.stringify(filter["#h"]) === '["channel"]',
+      );
+  expect(context()).toBe(true);
+  // The counter counts: the agent's own read tool during the turn is seen.
+  await f.tool("read", {});
+  expect(Object.values(made()).reduce((a, b) => a + b, 0)).toBeGreaterThan(
+    Object.values(started).reduce((a, b) => a + b, 0),
+  );
+  await f.complete(0, "FIRST");
+  // A second turn on the same thread: again no request but context reads.
+  const before = made();
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turn = Object.fromEntries(
+    Object.entries(made()).map(([name, count]) => [
+      name,
+      count - (before[name] ?? 0),
+    ]),
+  );
+  expect(
+    Object.entries(turn).filter(
+      ([name, count]) => count > 0 && name !== "session.read",
+    ),
+  ).toEqual([]);
+  expect(context()).toBe(true);
+  expect(f.core).toHaveBeenCalled();
+});

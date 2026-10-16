@@ -59,6 +59,8 @@ import {
 import { createTyping } from "./typing";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
+import type { SnapshotRead } from "../agents/agent-config-artifacts";
+
 import { createInboxFeed } from "./inbox-feed";
 import type {
   IncomingListener,
@@ -181,7 +183,7 @@ function parseChannelCreation(
     !["open", "private"].includes(channelVisibility) ||
     channelType?.length !== 2 ||
     channelType[0] !== "channel_type" ||
-    channelType[1] !== "stream" ||
+    (channelType[1] !== "stream" && channelType[1] !== "system") ||
     !validOptionalOrder ||
     optional.some((tag) => tag.length !== 2) ||
     labelTags.some(
@@ -208,6 +210,7 @@ function parseChannelCreation(
     ...(description ? { description } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     ...(labels.length ? { labels: Object.freeze(labels) } : {}),
+    ...(channelType[1] === "system" ? { system: true as const } : {}),
   });
   return Object.freeze({
     signature: JSON.stringify(input),
@@ -374,12 +377,14 @@ export function createRelaySession(
   const localViews = writes
     ? { snapshot: local, subscribe: writes.local.subscribe }
     : undefined;
-  function revokeAccess(commit: () => void) {
+  function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
       accessEpoch++;
       cancelUploads();
-      lifecycle.cancel();
+      // Lifecycle work is keyed by channel and rechecks access after every
+      // read; with known ids, other channels' permission reads need not die.
+      lifecycle.cancel(ids);
       details.cancel();
       memberAdministration.clear();
       typing.clear();
@@ -528,6 +533,22 @@ export function createRelaySession(
           (event) =>
             [39000, 39002].includes(event.kind) || visible.includes(event),
         );
+  }
+  /** The relay's verified answer only: no projection, discovery or inbox. */
+  async function relayRead(
+    filters: readonly ReadFilter[],
+    settings: ReadOptions,
+  ): Promise<readonly RelayEvent[]> {
+    if (options.cachedOnly)
+      throw new ReadError(
+        "unavailable",
+        "Reconnect to refresh conversation access.",
+      );
+    const epoch = accessEpoch;
+    const events = await requests.reader.read(filters, settings);
+    if (closed || epoch !== accessEpoch)
+      throw new DOMException("Stale relay read", "AbortError");
+    return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
   }
   // Name-only profile search, when the relay has it. Like directory reads,
   // results stay out of the shared profile views: admitting a search page
@@ -1213,6 +1234,7 @@ export function createRelaySession(
     },
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
+    transport?.channelIdentity === true,
   );
   // Roster authority invalidates in-flight reads, including account-owned
   // preferences. Retry those once at the current epoch, never channel content
@@ -1412,7 +1434,7 @@ export function createRelaySession(
               input.description,
               input.ttlSeconds,
               active,
-              { labels: input.labels },
+              { labels: input.labels, system: input.system },
             ),
           delivered: (id, active) =>
             workSessions.delivered(
@@ -1433,7 +1455,8 @@ export function createRelaySession(
             )
               throw new Error("Setup is awaiting exact relay confirmation");
           },
-          refresh: (id, member) => workSessions.refresh(id, { member }, false),
+          refresh: (id, member, input) =>
+            workSessions.refresh(id, { member, system: input.system }, false),
           canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
             if (
@@ -1580,9 +1603,12 @@ export function createRelaySession(
     async create(input: ChannelCreationInput) {
       input = { ...input, name: canonicalDetailsName(input.name) };
       if (!transport) throw new Error("The community connection changed.");
-      // A relay without NIP-CL drops label tags: refuse before any new write.
-      // A saved creation that was already signed may still be retried below.
-      const unsupported = !!input.labels?.length && !transport.channelIdentity;
+      // A relay without NIP-CL drops label tags and refuses system channels:
+      // refuse before any new write. A saved creation that was already signed
+      // may still be retried below.
+      const unsupported =
+        (!!input.labels?.length || input.system === true) &&
+        !transport.channelIdentity;
       await writes?.ready;
       if (channelSetup && !pendingCreation()) {
         if (unsupported) throw channelIdentityUnsupported();
@@ -1613,6 +1639,7 @@ export function createRelaySession(
         ...(input.labels?.length
           ? { labels: Object.freeze([...new Set(input.labels)]) }
           : {}),
+        ...(input.system ? { system: true as const } : {}),
       };
       const signature = JSON.stringify(normalized);
       await writes?.ready;
@@ -1635,7 +1662,7 @@ export function createRelaySession(
             normalized.description,
             normalized.ttlSeconds,
             undefined,
-            { labels: normalized.labels },
+            { labels: normalized.labels, system: normalized.system },
           ),
         };
         restoredOperation = pendingChannelCreation.operation;
@@ -1651,7 +1678,7 @@ export function createRelaySession(
         );
         await workSessions.refresh(
           pending.id,
-          { member: transport.viewer },
+          { member: transport.viewer, system: pending.input.system },
           false,
         );
         await writes?.outbox.dismiss(pending.operation);
@@ -1756,6 +1783,17 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    /** NIP-AP config artifacts: the relay's own verified answer, never merged
+     * with live or local outgoing events or fed to any projection, and a
+     * kind-45010 writer when the host has one. Each read starts fresh. */
+    snapshotRead: transport
+      ? (((filters, { signal }) =>
+          relayRead(
+            filters,
+            signal ? { signal, fresh: true } : { fresh: true },
+          )) satisfies SnapshotRead)
+      : undefined,
+    configArtifactWriter: transport?.configArtifacts,
     workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,
@@ -2816,6 +2854,8 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarPreferences.dispose();
       mePreferences.dispose();
+      // Before requests.dispose(): lifecycle rereads retired shared reads
+      // until its own controllers abort.
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();

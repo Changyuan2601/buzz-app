@@ -280,6 +280,32 @@ describe("AgentSessions", () => {
     ]);
   });
 
+  it("puts the live session on a chosen thinking level, and a new one on goose's own", async () => {
+    const { fake, sessions, choose } = setup();
+    await sessions.deliver("a", "one", 1);
+    choose({ provider: "", model: "", effort: "high" });
+    await sessions.deliver("a", "two", 2);
+    choose({ provider: "openai", model: "", effort: "high" });
+    await sessions.deliver("a", "three", 3);
+    choose({ provider: "openai", model: "", effort: "low" });
+    await sessions.deliver("a", "four", 4);
+    const [goose] = fake.geese;
+    // goose keeps a level across providers: it is set only when it changes.
+    expect(goose?.configured).toEqual([
+      "session-1 thinking_effort=high",
+      "session-1 provider=openai",
+      "session-1 thinking_effort=low",
+    ]);
+    expect(goose?.closed).toEqual([]);
+    // goose names no value for its own level, so only a new session is on it.
+    choose({ provider: "openai", model: "" });
+    await flush();
+    expect(goose?.closed).toEqual(["session-1"]);
+    await sessions.deliver("a", "five", 5);
+    expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
+    expect(goose?.configured).toHaveLength(3);
+  });
+
   it("fails a turn goose cannot switch, and switches at the next", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);

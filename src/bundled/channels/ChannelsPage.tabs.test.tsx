@@ -312,3 +312,30 @@ it.each([false, true])(
     expect(h.composer).toHaveTextContent("Keep typing");
   },
 );
+
+it.each(["side", "main"] as const)(
+  "closing others from a %s tab keeps focus on it while the other pane's selected tab closes",
+  async (kept) => {
+    const h = await page();
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    const root = "c".repeat(64);
+    act(() =>
+      tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
+    );
+    await h.open();
+    const main = within(screen.getByRole("tablist", { name: "Channel tabs" }));
+    const thread = main.getAllByRole("tab")[1];
+    if (!thread) throw new Error("missing main-pane thread tab");
+    expect(thread).toHaveAttribute("aria-selected", "true");
+    const target =
+      kept === "side" ? screen.getByRole("tab", { name: "Notes" }) : thread;
+    await h.user.pointer({ target, keys: "[MouseRight]" });
+    await h.user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(target).toBeInTheDocument();
+    expect(target).toHaveAttribute("aria-selected", "true");
+    expect(target).toHaveFocus();
+  },
+);

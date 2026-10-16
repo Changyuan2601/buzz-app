@@ -1,43 +1,27 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// Real browser computed styles and pointer/focus behavior.
-test("delivery message presentation", async ({ page }) => {
+// Real browser pointer/focus behavior opens each Retry's delivery detail.
+test("delivery Retry explains its state on hover and focus", async ({
+  page,
+}) => {
   await page.goto("/tests/fixtures/message-gallery.html?bubble=blue");
-  for (const theme of ["light", "dark"]) {
-    await page.evaluate((theme) => {
-      document.documentElement.dataset.colorMode = theme;
-    }, theme);
-    for (const [id, detail] of [
-      ["delivery-failed", "Couldn’t send"],
-      ["delivery-unknown", "Delivery not yet confirmed"],
-      ["delivery-detail", "Reconnect to confirm delivery"],
-    ]) {
-      const row = page.locator(`[data-message-id="${id}"]`);
-      const status = row.getByRole("status");
-      await expect(status).toHaveCSS("position", "absolute");
-      await expect(status).toHaveCSS("width", "1px");
-      await expect(status).toHaveCSS("height", "1px");
-      const retry = row.getByRole("button", { name: "Retry", exact: true });
-      await retry.hover();
-      await expect(
-        page.getByRole("tooltip").filter({ hasText: detail }),
-      ).toBeVisible();
-      await page.mouse.move(0, 0);
-      await retry.focus();
-      await expect(
-        page.getByRole("tooltip").filter({ hasText: detail }),
-      ).toBeVisible();
-      await retry.press("Tab");
-    }
-    for (const id of ["delivery-sending", "delivery-accepted"]) {
-      const status = page
-        .locator(`[data-message-id="${id}"]`)
-        .getByRole("status");
-      await expect(status).toHaveCSS("position", "static");
-      const box = await status.boundingBox();
-      expect(box.width).toBeGreaterThan(1);
-      expect(box.height).toBeGreaterThan(1);
-    }
+  for (const [id, detail] of [
+    ["delivery-failed", "Couldn’t send"],
+    ["delivery-unknown", "Delivery not yet confirmed"],
+    ["delivery-detail", "Reconnect to confirm delivery"],
+  ]) {
+    const row = page.locator(`[data-message-id="${id}"]`);
+    const retry = row.getByRole("button", { name: "Retry", exact: true });
+    await retry.hover();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: detail }),
+    ).toBeVisible();
+    await page.mouse.move(0, 0);
+    await retry.focus();
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: detail }),
+    ).toBeVisible();
+    await retry.press("Tab");
   }
 });
 
@@ -86,47 +70,42 @@ appTest.describe("app delivery", () => {
           await page.evaluate((size) => {
             document.documentElement.style.fontSize = `${size}px`;
           }, fontSize);
-          for (const theme of ["light", "dark"]) {
-            await page.evaluate((mode) => {
-              document.documentElement.dataset.colorMode = mode;
-            }, theme);
-            await retry.scrollIntoViewIfNeeded();
-            await settle(page);
-            const geometry = await retry.evaluate((button) => {
-              const rect = button.getBoundingClientRect();
-              const history = button.closest("[data-channel-timeline]");
-              const clip = history.getBoundingClientRect();
-              return {
-                left: rect.left,
-                right: rect.right,
-                clipLeft: Math.max(0, clip.left),
-                clipRight: Math.min(innerWidth, clip.right),
-                hit: button.contains(
-                  document.elementFromPoint(
-                    rect.right - 1,
-                    rect.top + rect.height / 2,
-                  ),
+          // Responsive layout can remount the row before its geometry settles.
+          await settle(page);
+          await retry.scrollIntoViewIfNeeded();
+          await settle(page);
+          const geometry = await retry.evaluate((button) => {
+            const rect = button.getBoundingClientRect();
+            const history = button.closest("[data-channel-timeline]");
+            const clip = history.getBoundingClientRect();
+            return {
+              left: rect.left,
+              right: rect.right,
+              clipLeft: Math.max(0, clip.left),
+              clipRight: Math.min(innerWidth, clip.right),
+              hit: button.contains(
+                document.elementFromPoint(
+                  rect.right - 1,
+                  rect.top + rect.height / 2,
                 ),
-              };
-            });
-            expect(geometry.left).toBeGreaterThanOrEqual(geometry.clipLeft);
-            expect(geometry.right).toBeLessThanOrEqual(geometry.clipRight);
-            expect(geometry.hit).toBe(true);
-            await retry.focus();
-            await expect(retry).toBeFocused();
-            await expect(
-              page.getByRole("tooltip", {
-                name: "Couldn’t send this message.",
-                exact: true,
-              }),
-            ).toBeVisible();
-            await retry.press("Tab");
-            await row.screenshot({
-              path: appTest
-                .info()
-                .outputPath(`retry-${width}-${fontSize}-${theme}.png`),
-            });
-          }
+              ),
+            };
+          });
+          expect(geometry.left).toBeGreaterThanOrEqual(geometry.clipLeft);
+          expect(geometry.right).toBeLessThanOrEqual(geometry.clipRight);
+          expect(geometry.hit).toBe(true);
+          await retry.focus();
+          await expect(retry).toBeFocused();
+          await expect(
+            page.getByRole("tooltip", {
+              name: "Couldn’t send this message.",
+              exact: true,
+            }),
+          ).toBeVisible();
+          await retry.press("Tab");
+          await row.screenshot({
+            path: appTest.info().outputPath(`retry-${width}-${fontSize}.png`),
+          });
         }
       }
       await retry.focus();

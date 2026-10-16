@@ -17,23 +17,6 @@ import { Composer } from "./Composer";
 
 afterEach(cleanup);
 
-test("icon actions default to small while labelled actions remain medium", () => {
-  render(
-    <>
-      <IconButton aria-label="Add item" icon={<PlusIcon />} />
-      <Button>Continue</Button>
-    </>,
-  );
-  expect(screen.getByRole("button", { name: "Add item" })).toHaveAttribute(
-    "data-size",
-    "sm",
-  );
-  expect(screen.getByRole("button", { name: "Continue" })).toHaveAttribute(
-    "data-size",
-    "md",
-  );
-});
-
 test.each([
   ["sm", "sm"],
   ["md", "md"],

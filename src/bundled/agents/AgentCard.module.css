@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 /* Cards share one grid; each is a soft control surface. */
 .grid {
   display: grid;
@@ -277,4 +279,12 @@
   .newTile[data-full-width] .newArtwork img:nth-child(11) {
     display: none;
   }
+}
+/* Placeholder treatment until the card's status styling is designed. */
+.tag {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-start: var(--space-3);
+  color: var(--text-subtle);
+  @apply text-caption;
 }

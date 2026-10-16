@@ -613,3 +613,46 @@ it.each(["picker", "completion"])(
     ]);
   },
 );
+
+it.each(["", "Please review these fixes"])(
+  "sends a staged session with caption %j and restores its exact event after receipt loss",
+  async (caption) => {
+    const t = setup();
+    const link = "[Session: Fix](buzz://channel/session-id)";
+    writeView(scope, "direct-message:new-draft", {
+      text: caption,
+      recipients: [],
+      sessionCards: [link],
+    });
+    t.publish.mockRejectedValueOnce(new Error("Receipt lost"));
+    const first = t.create();
+    const page = t.mount(first);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await waitFor(() => expect(send()).toBeEnabled());
+    await t.user.click(send());
+    await waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+    const original = t.publish.mock.calls[0]?.[0];
+    assert.exists(original);
+    expect(original.content).toBe([link, caption].filter(Boolean).join("\n\n"));
+    await waitFor(() =>
+      expect(t.records().find((item) => item.recovery)?.delivery).toBe(
+        "unknown",
+      ),
+    );
+    page.unmount();
+    first.dispose();
+    const second = t.create();
+    t.mount(second);
+    const retry = await screen.findByRole("button", { name: "Retry send" });
+    expect(
+      await screen.findByRole("region", { name: "Session attachments" }),
+    ).toHaveTextContent("Fix");
+    expect(screen.getByRole("textbox")).toHaveValue(caption);
+    await t.user.click(retry);
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0]).toEqual(original);
+    expect(t.records().some((item) => item.recovery)).toBe(false);
+    expect(readView(scope, "direct-message:new-draft", null)).toBeNull();
+  },
+);

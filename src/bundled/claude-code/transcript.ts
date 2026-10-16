@@ -272,16 +272,13 @@ async function otherSessions(spawn: Spawn, project: string, pattern: string) {
     .filter((name) => /^[^/]+\.jsonl$/.test(name));
 }
 
-/** The conversation's transcript across its sessions, or undefined when this
- * computer has no file for it: deleted, or started in a workspace the agent
- * no longer uses. */
-export async function readTranscript(
+/** The Claude Code project directory name for the agent's workspace, or
+ * undefined when it is too long to be one. */
+async function workspaceProject(
   spawn: Spawn,
   workspace: string,
-  conversation: Conversation,
-  working: boolean,
   signal: AbortSignal,
-): Promise<(Transcript & { more: boolean }) | undefined> {
+) {
   let directory = "";
   const process = await spawn("workspace", {
     cwd: workspace,
@@ -293,7 +290,61 @@ export async function readTranscript(
     throw new Error("Could not find the agent's workspace");
   signal.throwIfAborted();
   const project = projectName(directory.trim());
-  if (project.length > PROJECT_NAME_LIMIT) return undefined;
+  return project.length > PROJECT_NAME_LIMIT ? undefined : project;
+}
+
+/** The title Claude Code generated for a session (its latest `ai-title`
+ * record), or undefined before it has one. */
+export async function readSessionTitle(
+  spawn: Spawn,
+  workspace: string,
+  sessionId: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const project = await workspaceProject(spawn, workspace, signal);
+  if (!project || !/^[\w-]+$/.test(sessionId)) return undefined;
+  let file: string;
+  try {
+    file = new TextDecoder().decode(
+      await readFile(
+        spawn,
+        "~/.claude/projects",
+        `./${project}/${sessionId}.jsonl`,
+        signal,
+      ),
+    );
+  } catch (error) {
+    signal.throwIfAborted();
+    if (/no such file/i.test(error instanceof Error ? error.message : ""))
+      return undefined;
+    throw error;
+  }
+  let title: string | undefined;
+  for (const line of file.split("\n")) {
+    if (!line.includes('"ai-title"')) continue;
+    try {
+      const record = object(JSON.parse(line));
+      const value = str(record?.aiTitle).trim();
+      if (record?.type === "ai-title" && value) title = value;
+    } catch {
+      // A partial last line is still being written.
+    }
+  }
+  return title;
+}
+
+/** The conversation's transcript across its sessions, or undefined when this
+ * computer has no file for it: deleted, or started in a workspace the agent
+ * no longer uses. */
+export async function readTranscript(
+  spawn: Spawn,
+  workspace: string,
+  conversation: Conversation,
+  working: boolean,
+  signal: AbortSignal,
+): Promise<(Transcript & { more: boolean }) | undefined> {
+  const project = await workspaceProject(spawn, workspace, signal);
+  if (!project) return undefined;
   const saved = conversation.sessionId && `${conversation.sessionId}.jsonl`;
   const names = new Set([
     ...(saved ? [saved] : []),

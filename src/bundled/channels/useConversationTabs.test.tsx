@@ -1010,3 +1010,180 @@ it.each(["main", "side"] as const)(
     expect(restored.result.current.entries).toEqual([]);
   },
 );
+
+// Close other tabs shares Close all's owner and scope; only the kept tab stays.
+it.each([
+  ["a main thread", "Channel tabs", "First"],
+  ["a side thread", "Side tabs", "Second"],
+  ["a panel", "Side tabs", "Profile"],
+  ["settings", "Side tabs", "Channel settings"],
+] as const)(
+  "closing others from %s keeps it selected and clears the rest of this channel",
+  async (_, strip, kept) => {
+    const user = userEvent.setup();
+    const channels = [
+      { id: "alpha", name: "Alpha" },
+      { id: "beta", name: "Beta" },
+    ];
+    const rows = [
+      { id: "first", content: "First" },
+      { id: "second", content: "Second" },
+    ];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows }) },
+    } as unknown as RelaySession;
+    const panel: RegisteredPanel = {
+      key: "fixture:profile",
+      id: "profile",
+      pluginId: "fixture",
+      revision: "1",
+      title: "Profile",
+      matches: () => true,
+      component: () => null,
+    };
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: () => panel,
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "connecting", session }),
+    } as unknown as RelayData;
+    const onCloseThread = vi.fn();
+    let state!: ReturnType<typeof useChannelTabState>;
+    let beta!: ReturnType<typeof useChannelTabState>;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    function Harness() {
+      state = useChannelTabState(session, "alpha");
+      beta = useChannelTabState(session, "beta");
+      workspace = useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: state.settings ? ["settings"] : [],
+        continuingVisit: true,
+        isLive: () => false,
+        openLink: () => false,
+        mainPane: true,
+        routed: {
+          channelId: "alpha",
+          messageId: "first",
+          navigation: {} as never,
+        },
+        onCloseThread,
+      });
+      const tabMenu = {
+        key: "alpha",
+        closeAll: workspace.closeAllTabs,
+        closeOthers: workspace.closeOtherTabs,
+      };
+      const simple = (
+        items: { id: string; label: string; close?: () => void }[],
+      ) => items.map((item) => ({ ...item, content: null }));
+      return (
+        <>
+          <PanelWorkspace
+            main
+            label="Channel tabs"
+            value={workspace.selectedMain}
+            select={(id) =>
+              state.selectMain(id === "conversation" ? undefined : id)
+            }
+            tabMenu={tabMenu}
+            items={[
+              {
+                id: "conversation",
+                label: "Alpha",
+                content: <p>Channel conversation</p>,
+              },
+              ...simple(workspace.mainItems),
+            ]}
+          />
+          {state.paneOpen && (
+            <PanelWorkspace
+              label="Side tabs"
+              value={workspace.selectedTab}
+              select={workspace.selectPanelTab}
+              tabMenu={tabMenu}
+              items={[
+                ...(state.settings
+                  ? [
+                      {
+                        id: "settings",
+                        label: "Channel settings",
+                        content: null,
+                      },
+                    ]
+                  : []),
+                ...simple(workspace.items),
+              ]}
+            />
+          )}
+        </>
+      );
+    }
+    render(<Harness />);
+    act(() => {
+      state.openThreadTab("alpha", "first", "first", undefined, "main");
+      state.openThreadTab("alpha", "second", "second", undefined, "side");
+      workspace.open({ panel, channelId: "alpha", target: "profile" }, true);
+      state.setSettings({ channelId: "alpha" });
+      beta.openThreadTab("beta", "other", "other");
+    });
+    const target = within(
+      screen.getByRole("tablist", { name: strip }),
+    ).getByRole("tab", { name: kept });
+    fireEvent.contextMenu(target);
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(
+      kept === "First" || kept === "Second"
+        ? ["Rename tab", "Close other tabs", "Close all tabs"]
+        : ["Close other tabs", "Close all tabs"],
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Alpha",
+      kept,
+    ]);
+    const tab = screen.getByRole("tab", { name: kept });
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(state.thread).toBeUndefined();
+    // The routed thread is retired only when it is one of those closed.
+    expect(onCloseThread).toHaveBeenCalledTimes(kept === "First" ? 0 : 1);
+    expect(beta.tabs.map((item) => item.id)).toEqual(["thread:beta:other"]);
+    // Nothing else is left to close; the repeat changes nothing.
+    const closedSnapshot = state;
+    act(() =>
+      expect(
+        workspace.closeOtherTabs(
+          tab.getAttribute("data-tab-value") ?? "missing",
+        ),
+      ).toBe(false),
+    );
+    expect(state).toBe(closedSnapshot);
+    if (kept !== "First") return;
+    // With nothing else to close, an inactive kept thread is still selected.
+    act(() => state.selectMain(undefined));
+    expect(tab).toHaveAttribute("aria-selected", "false");
+    fireEvent.contextMenu(tab);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.getByRole("tab", { name: kept })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: kept })).toHaveFocus();
+  },
+);

@@ -15,7 +15,7 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { XIcon } from "../../shared/design-system/icons";
+import { WarningCircleIcon, XIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -153,11 +153,26 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
   const bubble = shown.length
     ? shown
     : (leaving ?? (ended ? retained.current : []));
+  if (props.renderMessageSummary) {
+    return (
+      <>
+        {shown.map((entry) => (
+          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
+        ))}
+        <ActivityBubble
+          {...props}
+          entries={bubble}
+          interactive={shown.length > 0}
+        />
+      </>
+    );
+  }
   if (!bubble.length) return null;
   return (
     <section
       ref={section}
       className={`${styles.root} buzz-arrive`}
+      data-message-activity=""
       data-arrive="grow"
       data-leaving={shown.length ? undefined : ""}
       data-buzz-ui=""
@@ -219,9 +234,9 @@ function ActivityBubble({
   const stepping = entries.some((entry) => entry.working && !starting(entry));
 
   const unknown = entries.some((entry) => !entry.lifecycle && !entry.working);
-  const failed = entries.some(
+  const failedCount = entries.filter(
     (entry) => entry.lifecycle && entry.state === "error",
-  );
+  ).length;
   const label = (entry: Entry) =>
     entry.lifecycle
       ? localWorkLabel({
@@ -237,45 +252,99 @@ function ActivityBubble({
       : entry.working
         ? "working"
         : "status unknown";
+  const failedEntries = entries.filter(
+    (entry) => entry.lifecycle && entry.state === "error",
+  );
+  const otherEntries = entries.filter(
+    (entry) => !failedEntries.includes(entry),
+  );
+  const avatars = (group: Entry[]) => (
+    <AvatarStack
+      size="mini"
+      items={group.map((entry) => ({
+        id: entry.agent,
+        name: entry.name,
+        src: avatarMedia(entry.picture, props.session.media),
+        shape: "squircle",
+      }))}
+    />
+  );
+  const content = (
+    <span className={styles.summaryGroups}>
+      {otherEntries.length > 0 && (
+        <span className={styles.summaryActivity} data-thread-working="">
+          {avatars(otherEntries)}
+          {(working || waiting) && (
+            <TypingDots size="small" state={stepping ? "working" : "waiting"} />
+          )}
+          {unknown && <span>Status unknown</span>}
+        </span>
+      )}
+      {failedCount > 0 && (
+        <span
+          className={`${styles.summaryActivity} ${styles.failure}`}
+          data-activity-failure=""
+        >
+          {avatars(failedEntries)}
+          <WarningCircleIcon size={12} aria-hidden="true" />
+          <span>{failedCount} failed</span>
+        </span>
+      )}
+    </span>
+  );
+  const summary = props.renderMessageSummary?.(
+    entries.length
+      ? {
+          participants: entries.map((entry) => entry.agent),
+          content,
+          label: entries
+            .map((entry) => `${entry.name}, ${label(entry)}`)
+            .join("; "),
+          ref: trigger,
+        }
+      : undefined,
+  );
+  if (!entries.length && !summary) return null;
   return (
     <PopoverRoot
       open={expanded}
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
       <PopoverTrigger
-        openOnHover
+        openOnHover={interactive}
+        {...(!interactive
+          ? {
+              "aria-haspopup": undefined,
+              "aria-expanded": undefined,
+              "aria-controls": undefined,
+            }
+          : {})}
         onClick={(event) => {
           if (!interactive) {
             event.preventBaseUIHandler();
             return;
           }
-          if (props.openThread?.()) {
+          if (summary) {
+            event.preventBaseUIHandler();
+            setExpanded(false);
+          } else if (props.openThread?.()) {
             event.preventBaseUIHandler();
             setExpanded(false);
           }
         }}
         render={
-          <Button
-            ref={trigger}
-            tabIndex={interactive ? undefined : -1}
-            size="xs"
-            variant="subtle"
-            aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
-          >
-            <AvatarStack
-              items={entries.map((entry) => ({
-                id: entry.agent,
-                name: entry.name,
-                src: avatarMedia(entry.picture, props.session.media),
-                shape: "squircle",
-              }))}
-            />
-            {(working || waiting) && (
-              <TypingDots state={stepping ? "working" : "waiting"} />
-            )}
-            {failed && <span>Could not finish</span>}
-            {unknown && <span>Status unknown</span>}
-          </Button>
+          summary ?? (
+            <Button
+              ref={trigger}
+              tabIndex={interactive ? undefined : -1}
+              size="xs"
+              shape="control"
+              variant="ghost"
+              aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+            >
+              {content}
+            </Button>
+          )
         }
       />
       <PopoverPopup
@@ -283,6 +352,7 @@ function ActivityBubble({
         finalFocus={interactive ? undefined : false}
         side="top"
         padding="list"
+        size="compact"
         aria-label="Agent activity"
       >
         {expanded && (

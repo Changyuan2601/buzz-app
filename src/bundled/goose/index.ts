@@ -6,13 +6,12 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 
 export const TYPE_ID = "goose";
-/** A turn's run returns once goose has it, so this bounds only the hand-over. */
-const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -78,6 +77,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {
@@ -88,8 +88,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
-    run: (delivery) => runtime.run(delivery),
-    runOnce: (turn) => runtime.runOnce(turn),
-    timeoutMs: HANDOVER_MS,
+    ...gooseRun(runtime),
   });
 };

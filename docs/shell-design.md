@@ -352,7 +352,12 @@ Right-click any channel tab and choose **Close all tabs** to close this channel'
 thread, plugin and settings tabs across both panes, including hidden side-pane
 tabs. The permanent channel conversation stays; focus returns there if its previous
 target closed, while typing in surviving content remains uninterrupted. Other
-channels and saved message drafts are untouched. Shift+F10 on a focused tab opens the same
+channels and saved message drafts are untouched. **Close other tabs** in the
+same menu does the same, except that the right-clicked tab stays open, selected
+and focused. On the channel conversation it is the same as Close all tabs. On a
+detail tab, such as an agent log, the tab that owns it stays instead, without
+its details.
+Shift+F10 on a focused tab opens the same
 menu. Hiding the pane remains separate from closing its tabs.
 The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains

@@ -195,13 +195,13 @@ function TypeField({
   return (
     <>
       <PreferenceRow
-        title="Provider"
+        title="Harness"
         trailing={
           others.length > 0 ? (
             <div className="buzz-select" data-variant="compact">
               <MenuRoot onOpenChange={(open) => open && setError("")}>
                 <MenuTrigger
-                  aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
+                  aria-label={`Change harness from ${selectedType?.title ?? "unavailable harness"}`}
                   render={
                     <Button
                       ref={providerButton}

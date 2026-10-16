@@ -62,6 +62,13 @@ const PROVIDERS = [
       { name: "DATABRICKS_TOKEN", required: false, secret: true },
     ],
   },
+  // A provider Buzz has no mark for.
+  {
+    providerId: "openrouter",
+    providerName: "OpenRouter",
+    visibleInSetup: true,
+    configKeys: [],
+  },
 ];
 
 function created(
@@ -126,6 +133,35 @@ it("keeps New agent's card to instructions; the model field shows goose's defaul
       "goose default (Databricks · goose-claude)",
     ),
   );
+});
+
+it("marks the model field with goose, and with the provider's mark when Buzz has one", async () => {
+  created();
+  const user = userEvent.setup();
+  // goose's default provider, Databricks, has a mark.
+  await waitFor(() =>
+    expect(
+      modelButton().querySelector(".tabler-icon-brand-databricks"),
+    ).not.toBeNull(),
+  );
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+
+  const dialog = await openChoices();
+  await user.click(within(dialog).getByRole("combobox", { name: "Provider" }));
+  const databricks = await screen.findByRole("option", { name: "Databricks" });
+  expect(
+    databricks.querySelector(".tabler-icon-brand-databricks"),
+  ).not.toBeNull();
+  const openRouter = screen.getByRole("option", { name: "OpenRouter" });
+  expect(openRouter.querySelector("svg")).toBeNull();
+  await user.click(openRouter);
+  await user.click(within(dialog).getByRole("button", { name: "Use" }));
+
+  // Only goose's own mark stays.
+  const field = await screen.findByRole("button", {
+    name: "OpenRouter · default model",
+  });
+  expect(field.querySelectorAll("svg")).toHaveLength(1);
 });
 
 it("chooses a provider in its dialog, saves its key into goose, and tests it", async () => {
@@ -238,14 +274,115 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
   );
 });
 
-it("keeps the providers shown when reading them again fails", async () => {
+it("saves a thinking level goose lists for the model, and marks one it does not", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-claude" },
-    saved: new Map(),
+    thinking: {
+      "": { current: "medium", levels: ["off", "low", "medium", "high"] },
+      "plain-model": { current: "off", levels: ["off"] },
+    },
   });
-  const setup = new GooseSetup(fake.spawn);
-  const { SettingsTab } = createTabs({ setup, ...unused });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake.spawn),
+    ...unused,
+  });
+  const agent = (config: Config) =>
+    ({
+      pubkey: "c".repeat(64),
+      name: "Gander",
+      type: "buzz.goose/goose",
+      owner: "a".repeat(64),
+      config,
+    }) as Agent<Config>;
+  const save = vi.fn(async (_config: Config) => undefined);
+  const { rerender } = render(
+    <SettingsTab agent={agent(DEFAULT_CONFIG)} save={save} />,
+  );
+  const user = userEvent.setup();
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  await waitFor(() => expect(thinking).toHaveTextContent("Medium"));
+  await user.click(thinking);
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Medium · Default", "Off", "Low", "Medium", "High"]);
+  await user.click(screen.getByRole("option", { name: "High" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ effort: "high" }),
+    ),
+  );
+
+  rerender(
+    <SettingsTab
+      key="plain"
+      agent={agent({ ...DEFAULT_CONFIG, model: "plain-model", effort: "high" })}
+      save={save}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("High (unavailable)"),
+  );
+});
+
+it("splits Settings as the profile does: choices under Identity, the rest apart", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake.spawn),
+    ...unused,
+  });
+  const agent = {
+    pubkey: "c".repeat(64),
+    name: "Gander",
+    type: "buzz.goose/goose",
+    owner: "a".repeat(64),
+    config: { ...DEFAULT_CONFIG, provider: "anthropic" },
+  } as Agent<Config>;
+  const save = vi.fn(async (_config: Config) => undefined);
+  const { rerender } = render(
+    <SettingsTab agent={agent} save={save} settingsSection="identity" />,
+  );
+  expect(
+    await screen.findByText("Set up Anthropic in Settings."),
+  ).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
+  expect(screen.getByLabelText("Instructions")).toBeVisible();
+  expect(screen.queryByLabelText("Workspace")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Sessions" })).toBeNull();
+  expect(screen.queryByLabelText("API key")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
+  // Save shows only once there is something to save.
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+
+  rerender(<SettingsTab agent={agent} save={save} settingsSection="runtime" />);
+  expect(await screen.findByLabelText("API key")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();
+  expect(screen.getByLabelText("Workspace")).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Sessions" })).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  expect(screen.queryByLabelText("Instructions")).toBeNull();
+});
+
+it("says in Settings when goose cannot list providers, and tries again", async () => {
+  let installed = false;
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(async (id, options) => {
+      if (id === "goose" && !installed)
+        throw new Error("No such file or directory (os error 2)");
+      return fake.spawn(id, options);
+    }),
+    ...unused,
+  });
   render(
     <SettingsTab
       agent={
@@ -254,22 +391,49 @@ it("keeps the providers shown when reading them again fails", async () => {
           name: "Gander",
           type: "buzz.goose/goose",
           owner: "a".repeat(64),
-          config: DEFAULT_CONFIG,
+          config: { ...DEFAULT_CONFIG, provider: "anthropic" },
         } as Agent<Config>
       }
-      save={async () => undefined}
+      save={vi.fn(async (_config: Config) => undefined)}
+      settingsSection="runtime"
     />,
   );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /goose-acp is missing/,
+  );
+  expect(screen.queryByLabelText("API key")).toBeNull();
+  installed = true;
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByLabelText("API key")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the providers shown when reading them again fails", async () => {
+  let setup!: GooseSetup;
+  created({
+    spawn: (fake) => {
+      setup = new GooseSetup(fake.spawn);
+      return setup;
+    },
+  });
+  const dialog = await openChoices();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("combobox", { name: "Provider" }),
+    ).toBeEnabled(),
+  );
   await choose("Provider", "Anthropic");
-  const key = await screen.findByLabelText("API key");
+  const key = await within(dialog).findByLabelText("API key");
   // Saving reads the providers again, which fails.
   vi.spyOn(setup, "providers").mockRejectedValue(new Error("goose went away"));
   await userEvent.setup().type(key, "sk-test{Enter}");
   expect(
-    await screen.findByRole("button", { name: "Try again" }),
+    await within(dialog).findByRole("button", { name: "Try again" }),
   ).toBeVisible();
-  expect(screen.getByText("goose went away")).toBeVisible();
-  const provider = screen.getByRole("combobox", { name: "Provider" });
+  expect(within(dialog).getByText("goose went away")).toBeVisible();
+  const provider = within(dialog).getByRole("combobox", { name: "Provider" });
   expect(provider).toBeEnabled();
   expect(provider).toHaveTextContent("Anthropic");
 });

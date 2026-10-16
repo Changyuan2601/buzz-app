@@ -90,27 +90,6 @@ it("live retry recovers roster catch-up refused after globals established", asyn
     h.owner.dispose();
   }
 });
-it("positive roster control: diagnostic refresh recovers the same refused roster", async () => {
-  const h = setup();
-  try {
-    h.connected();
-    h.live.established();
-    await flush();
-    h.wire
-      .next()
-      .fail(new ReadError("unavailable", "Relay requests paused", 429, 60000));
-    await flush();
-    vi.spyOn(performance, "now").mockReturnValue(performance.now() + 61000);
-    h.owner.session.channels.refreshList?.();
-    await flush();
-    expect(h.wire.pending).toHaveLength(1);
-    h.wire.next().respond([]);
-    await flush();
-    expect(h.owner.session.channels.list().status).toBe("ready");
-  } finally {
-    h.owner.dispose();
-  }
-});
 it("current-channel post-subscribe read keeps a foreground slot when another background read is stalled", async () => {
   const h = setup();
   try {

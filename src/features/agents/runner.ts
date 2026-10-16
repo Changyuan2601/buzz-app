@@ -57,6 +57,7 @@ import {
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord } from "./store";
+import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -339,6 +340,8 @@ export type RunnerHost = {
   write(record: AgentRecord): void;
   /** The team sections of its prompt; empty without a team. */
   team(pubkey: string): string;
+  /** What its next run starts with, from this device's storage only. */
+  start(agent: Agent): Start<unknown>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -384,10 +387,14 @@ export type RunnerHost = {
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
+  /** A harness's title for the conversation a mention started; may name a Me chat. */
+  named(agent: Agent, event: RelayEvent, title: string): void;
 };
 
 export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
+  /** The synced revisions each agent's current run started from. */
+  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -1757,15 +1764,24 @@ export class AgentRunners {
       attention: this.attention(agent.pubkey),
     });
     const working = this.working(runner, job, agent);
+    const trigger = job.trigger;
+    const named =
+      trigger.type === "mention"
+        ? (title: string) => this.host.named(agent, trigger.event, title)
+        : undefined;
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
+      const start = this.host.start(agent);
+      if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.pubkey);
       signal.throwIfAborted();
+      this.started.start(agent.pubkey, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
-        config: agent.config,
+        config: start.config,
+        revisions: start.revisions,
         ...pick,
         ...(team ? { team } : {}),
         signal,
@@ -1773,6 +1789,7 @@ export class AgentRunners {
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
+        ...(named ? { named } : {}),
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });

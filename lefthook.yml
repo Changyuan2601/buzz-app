@@ -1,7 +1,7 @@
-# Stock runners must stop before their unsafe partial-staging guard runs.
-# Under lhm, activate Hermit (source bin/activate-hermit) before committing.
-# Temporary gate: reassess before adopting any new upstream release.
-min_version: 2.1.18-buzz.3
+# Stock 2.2.2 still races positional stash cleanup. Require owned recovery refs
+# before hiding unstaged edits. Under lhm, activate Hermit to select this runner.
+# Temporary gate: reassess before adopting any newer upstream release.
+min_version: 2.2.3-buzz.1
 lefthook: bin/lefthook
 # Without lhm, `bin/lefthook install` writes shims that fail instead of silently
 # skipping when they cannot find Lefthook. lhm users install nothing: lhm merges

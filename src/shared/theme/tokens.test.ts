@@ -182,19 +182,12 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    const received = palette["--surface-message"];
-    if (!received) throw new Error("Missing received message fill");
-    const target = mode === "light" ? 0 : 255;
-    const expected = `#${[1, 3, 5]
-      .map((i) =>
-        Math.round(
-          Number.parseInt(received.slice(i, i + 2), 16) * 0.95 + target * 0.05,
-        )
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("")}`;
-    expect(palette["--surface-message-own"]).toBe(expected);
+    // Received and neutral own fills are independent authored pairs.
+    expect(palette["--surface-message"]).toBe(palette["--bubble-received"]);
+    expect(palette["--surface-message-own"]).toBe(palette["--bubble-neutral"]);
+    expect(palette["--surface-message"]).not.toBe(
+      palette["--surface-message-own"],
+    );
     expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
   },
 );

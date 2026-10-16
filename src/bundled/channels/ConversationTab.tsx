@@ -10,7 +10,6 @@ import {
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
-import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
 import {
   SessionColumn,
@@ -80,8 +79,6 @@ export function ConversationTab({
     >
       <section
         data-attachment-drop-zone=""
-        onDragOver={rejectUnhandledFileDrop}
-        onDrop={rejectUnhandledFileDrop}
         className={styles.conversation}
         aria-label={`Conversation in ${channel.name}`}
       >
