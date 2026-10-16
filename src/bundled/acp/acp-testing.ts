@@ -49,6 +49,8 @@ export function fakeHarness(
     hold?: boolean;
     /** Kill asks it to stop, and it never exits. */
     holdExit?: boolean;
+    /** Every prompt is answered with this error. */
+    promptError?: { code: number; message: string };
   }> = {},
 ) {
   const harnesses: FakeHarness[] = [];
@@ -170,7 +172,8 @@ export function fakeHarness(
               finish: () => send({ id, result: { stopReason: "end_turn" } }),
             };
             fake.turns.push(turn);
-            if (!options.hold) turn.finish();
+            if (options.promptError) send({ id, error: options.promptError });
+            else if (!options.hold) turn.finish();
           } else if (method === "session/close") send({ id, result: {} });
           else
             send({ id, error: { code: -32601, message: `Unknown ${method}` } });
