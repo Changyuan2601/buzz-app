@@ -17,6 +17,7 @@ test("a short conversation paints its restored rows on the first frame", async (
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
+  await expect(history.locator("ol > li")).toHaveCount(3);
   await settle(page);
   expect(
     await history.evaluate(
