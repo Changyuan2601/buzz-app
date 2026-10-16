@@ -650,9 +650,11 @@ explicit clear attempts full free-page reclamation after the delete commits.
 Newer schema versions are rejected without downgrade.
 
 Reopening/reloading reads 100-row keyset pages through the key-owning host.
-Historical decode revalidates signatures, exact tags, recipient and, for
-activity, the 90-day maximum age and five-minute future-skew limit (saved
-metrics passed the live gate at ingest and are bounded by their retention),
+Historical decode revalidates signatures, exact tags and recipient. The
+90-day maximum age applies to activity only; the native host also skips the
+five-minute future-skew limit for saved metrics, while browser dev mode still
+applies it to both kinds (saved metrics passed the live gate at ingest and are
+bounded by their retention),
 without weakening the live five-minute freshness gate. Bad rows are counted and
 skipped without trapping pagination. Live records win event-ID deduplication.
 Restored rows are display-only: they never create working turns or typing evidence.
