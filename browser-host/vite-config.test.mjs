@@ -169,6 +169,24 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               (error) => /BUZZ_BUILDERLAB_TENANTS must be/.test(error.message) && !error.message.includes('secret'),
             );
             process.env.BUZZ_BUILDERLAB_TENANTS = '';
+            // The first-run account seed reaches only a dev server, and a
+            // malformed value fails at configuration time without being echoed.
+            for (const command of ['serve', 'build']) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = 'unlinked';
+              const seeded = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(
+                seeded.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+                JSON.stringify(command === 'serve' ? 'unlinked' : ''),
+              );
+            }
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = '{"npub":"s3cret"}';
+            await assert.rejects(
+              loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+              (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+            );
+            delete process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';

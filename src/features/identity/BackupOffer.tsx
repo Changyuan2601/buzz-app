@@ -1,0 +1,34 @@
+import { Button } from "../../shared/design-system/ui/Button";
+
+/**
+ * Pause after an imported key on the linked lane. Importing must never upload
+ * silently: the backup is offered, and the key continues either way.
+ */
+export function BackupOffer({
+  onSkip,
+  onBackUp,
+}: {
+  onSkip: () => void;
+  onBackUp: () => void;
+}) {
+  return (
+    <>
+      <div>
+        <h1 id="welcome-title" className="text-title text-primary">
+          Back up this key?
+        </h1>
+        <p className="mt-2 text-body text-secondary">
+          Builderlab can keep an encrypted copy so you can skip this step on
+          your next device.
+        </p>
+      </div>
+      {/* Footer order: secondary first, primary last. */}
+      <div className="flex gap-3">
+        <Button onClick={onSkip}>Not now</Button>
+        <Button variant="primary" onClick={onBackUp}>
+          Back it up
+        </Button>
+      </div>
+    </>
+  );
+}

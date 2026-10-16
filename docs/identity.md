@@ -29,19 +29,31 @@ look it up again. A community no row hosts is not known to be Builderlab-hosted,
 so it skips sign-in entirely and goes straight to setup with the key alone.
 
 Success continues to a **Setting up Buzz** page that shows the current step
-beside a spinner. It runs *Finding communities* — only when no community URL
-was supplied on the welcome screen — and then *Checking for a backed-up key*;
-both are placeholders marked `[TODO]` that wait two seconds each until their
-backends exist (`src/features/identity/setup.ts`), and the lookup always
-answers that no key was found. Setup then pauses on **Set up your key**: it
+beside a spinner. It first runs **Checking your account**, a real read of the
+Nostr key bound to the signed-in Builderlab account
+(`POST /api/goose/v1/buzz/nostr-identities/current` at the portal that signed
+the user in, authenticated with the first-run session credential and sent
+through the bundled plugin's native grant; `src/features/identity/builderlab-account.ts`,
+sharing the hosted-communities card's routes and reply parsers). A `400`
+`MISSING_MAPPING` / `setup_needed` answer means no key is linked; any other
+failure is **Couldn’t finish setup**. Binding is 1:1 and enforced, so the answer
+picks the lane: a linked account is never given a second key.
+
+**Not linked** continues with *Checking for a backed-up key*, a placeholder
+marked `[TODO]` that waits two seconds until its backend exists
+(`src/features/identity/setup.ts`) and always answers that no key was found.
+Setup then pauses on **Set up your key**: it
 says no backed-up key was found for the signed-in email and that Builderlab
 can keep a copy so you can sign in on other devices, and offers **Manage my
 keys for me** and two smaller choices, **I want to manage my own key** and
 **I already have a key**. Manage runs **Creating keys** — the only
 step that does real work: it generates a Nostr key through the same native
 create command as the key setup screen, so the next launch opens as a
-returning user — then *Backing up your key*, a `[TODO]` placeholder; nothing
-is uploaded yet. Managing your own key runs **Creating keys** alone and pauses
+returning user — then *Backing up and linking your key*, a `[TODO]`
+placeholder; nothing is uploaded or bound yet (the real step uploads the
+encrypted copy and binds the key through the kind-24243 challenge the
+hosted-communities card already drives). Managing your own key runs
+**Creating keys** alone and pauses
 on **Your private identity key**: the nsec, shown on arrival (see [UI and
 sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
 *I’ve saved my private key somewhere safe*, and two actions — **Please back
@@ -63,13 +75,46 @@ invalid key, or a key already saved in this slot — appears under the field wit
 the form kept. An imported key is already backed up wherever it came from, so
 it skips the backup and reveal pages. Key-only setup (a community no tenant hosts) has no account to
 look a backup up in or back up to, so it runs **Creating keys** alone with no
-choice or reveal page. A failed step shows **Couldn’t finish setup** with the
+choice or reveal page.
+
+**Linked** runs the same silent backed-up-key placeholder (a linked key does
+not mean a backed-up one, and no copy implies the user lost a backup), then
+pauses on **Welcome back**: the account is already linked to a Buzz identity —
+the key on the user's other device — shown as the full npub under *Linked
+public key (npub)* with **Copy**. **Enter your private key** (primary) opens the
+same import page, which here accepts only the linked key: any other valid nsec
+is refused under the field with *That isn’t the key linked to this account. It
+expects npub1…*, and **Back** returns to Welcome back. **Recover from another
+device** is *Coming soon* (device pairing is its future entry). A successful
+import pauses on **Back up this key?** — importing never uploads silently —
+with **Not now** and **Back it up**, which runs the *Backing up your key*
+placeholder. **I lost this key** (quieter) runs **Finding communities**, a real
+read of the communities the account owns
+(`POST /api/goose/v1/buzz/communities/list`), and shows **Start over with a new
+key**: a new key loses everything the old one could reach; *Communities you
+own* lists their hostnames (*None* when empty, or that the list could not be
+loaded), and memberships in other people's communities cannot be listed and are
+lost too. **Back** returns to Welcome back; **Start over with a new key**
+(destructive) runs *Unlinking your old key*, a `[TODO]` placeholder that does
+not call kgoose's delete endpoint yet, and continues on the ordinary **Set up
+your key** page so the new key is backed up and linked. The lane never offers
+Manage my keys for me or I want to manage my own key while the old key is
+linked.
+
+Every lane ends the same way. A linked account runs **Finding communities**
+(the same real read) once its key is on the device; the old key's list is not
+read after starting over. A failed step shows **Couldn’t finish setup** with the
 error and **Back** to the welcome screen. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
-a **Community URL** field with **Join** beside it, and **Scan a QR code** and
-**Create a community**, both *Coming soon*. No invite list is shown; nothing
-serves pending invites yet.
+when the account owns communities, rows under *Communities you own* — icon
+placeholder, hostname and **Join**, which takes exactly the typed-URL path for
+that host — then a **Community URL** field with **Join** beside it, and
+**Scan a QR code** and **Create a community**, both *Coming soon*. An empty or
+failed list shows the page without rows. No invite list is shown; nothing
+serves pending invites yet. In development,
+[`BUZZ_DEV_FIRST_RUN_ACCOUNT`](configuration.md#first-run-account-seed-development)
+answers the two account reads in place of kgoose.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
@@ -287,7 +332,12 @@ and Reveal is offered again once it is hidden. The first-run **Enter your
 private key** page is the other: the typed, pasted or file-read nsec lives only
 in that page's state, masked until **Reveal private key**, and crosses IPC once,
 on **Continue with this key**, through `identity_import`; leaving the page
-discards it, and nothing logs or persists it.
+discards it, and nothing logs or persists it. On the returning-user lane the
+page compares the typed key's derived npub with the account's linked npub in
+the page, before IPC, so a mismatched nsec never reaches native import. The
+**Welcome back** page shows only the linked public key; the first-run
+Builderlab session credential is held by the OAuth session store and sent only
+in the two account reads' `X-BB-Session-Credential` header, never rendered.
 
 The app UI passes a private string through IPC only during explicit import/export
 interaction. JavaScript/IPC string memory is not guaranteed zeroized. Native

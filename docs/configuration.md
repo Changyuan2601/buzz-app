@@ -15,6 +15,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
+| `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: answers the first-run Builderlab account reads (linked key, owned communities) in place of kgoose. Builds define it empty. See [below](#first-run-account-seed-development). |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. Desktop preview release runs supply both for every platform (see [releases](releases.md)); candidate-only and local builds report automatic updates as unavailable. |
 
@@ -132,6 +133,29 @@ BUZZ_BUILDERLAB_TENANTS='[{"relayHost":"communities.buzz.xyz","self":"12f6870117
 A community URL that matches no row sets up a key only, without Builderlab.
 Malformed rows fail the Vite configuration and the native build without echoing
 the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
+
+## First-run account seed (development)
+
+After Builderlab sign-in, the first-launch flow reads two things about the
+account from kgoose: the Nostr key bound to it and the communities it owns
+([identity](identity.md)). A developer's real account is bound to their real key
+and that binding must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those
+two reads — and nothing else — on a dev server:
+
+```sh
+# A brand-new account: the key-setup choice follows sign-in.
+BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
+# A returning user: Welcome back for this npub, with these owned communities.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
+```
+
+`communities` is optional and lists hostnames (or `wss://`/`https://` origins)
+the way the Community URL field accepts them. Vite exposes the value as
+`VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
+`pnpm tauri build` define it empty, so packaged apps always ask kgoose. A
+malformed value fails the Vite configuration without being echoed. Restart the
+dev server after changing it. The faked steps (key backup, binding, unlinking)
+are unaffected: they wait whether or not a seed is set.
 
 ## Whole-video limit
 

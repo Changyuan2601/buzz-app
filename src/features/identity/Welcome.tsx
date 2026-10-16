@@ -7,29 +7,43 @@ import {
 } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
-import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
+import {
+  bundledHost,
+  firstRunCredential,
+} from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { inspectProfile } from "../communities/api";
 import { FindCommunity } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
-import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { BackupOffer } from "./BackupOffer";
+import {
+  builderlabAccount,
+  type FirstRunAccount,
+  type OwnedCommunity,
+  seededAccount,
+} from "./builderlab-account";
 import {
   type BuilderlabTenant,
   configuredBuilderlabTenants,
   discoverAuthentication,
 } from "./builderlab-tenants";
 import { CommunityUrlField } from "./CommunityUrlField";
+import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
 import { KeyImport } from "./KeyImport";
+import { KeyLost } from "./KeyLost";
 import { KeyReveal } from "./KeyReveal";
 import { ProfileStep } from "./ProfileStep";
+import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Identity } from "./service";
 import {
+  checkAccount,
   createSetup,
+  findCommunities,
   firstRunSteps,
   importKey,
   type SetupPause,
@@ -37,6 +51,21 @@ import {
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
 import { SetupWindowHeader } from "./SetupWindowHeader";
+import { WelcomeBack } from "./WelcomeBack";
+
+/**
+ * The signed-in account's reads: the development seed when a dev server set
+ * one (production builds define it empty), else the tenant's kgoose through
+ * the same bundled grant the sign-in used.
+ */
+const firstRunAccount = (credential: Credential, origin?: string) => {
+  const seed = parseFirstRunAccountSeed(
+    import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
+  );
+  return seed
+    ? seededAccount(seed)
+    : builderlabAccount(credential, origin, bundledHost.request);
+};
 
 /**
  * First-launch gate: renders children once a human key exists on this device,
@@ -47,6 +76,7 @@ export function Welcome({
   communities,
   children,
   connect = firstRunCredential,
+  account = firstRunAccount,
   tenants = configuredBuilderlabTenants,
   delay = wait,
 }: {
@@ -56,6 +86,10 @@ export function Welcome({
   children: ReactNode;
   /** `origin` is the tenant portal a community URL selected; the build default otherwise. */
   connect?: (signal: AbortSignal, origin?: string) => Promise<Credential>;
+  /** The account reads for a credential `connect` returned, at the same origin. */
+  account?:
+    | ((credential: Credential, origin?: string) => FirstRunAccount)
+    | undefined;
   tenants?: readonly BuilderlabTenant[];
   delay?: (ms: number) => Promise<void>;
 }) {
@@ -68,6 +102,13 @@ export function Welcome({
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  // The signed-in account's reads, from sign-in until the landing is shown again.
+  const reads = useRef<FirstRunAccount | undefined>(undefined);
+  // The hex key the account check found bound to the account: the returning-
+  // user lane. Cleared by starting over, which unlinks it, and on the landing.
+  const [linked, setLinked] = useState<string>();
+  // The communities that key owns; `undefined` until found, or when the list failed.
+  const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   // The canonical origin the user asked to join: before sign-in it drives the
@@ -95,28 +136,33 @@ export function Welcome({
   if (state.status === "ready" && progress.status === "idle") return children;
   const steps = firstRunSteps(identity, delay);
   /**
-   * `findCommunities` is false when a landing-page URL already names the
-   * community. Sign-in leads to the backed-up-key lookup, then pauses for the
-   * key choice; each choice below resumes setup with its own steps.
+   * Sign-in leads to the account check, which picks the lane: a linked key
+   * pauses on Welcome back, otherwise the backed-up-key lookup pauses for the
+   * key choice. Each choice below resumes setup with its own steps.
    */
-  const signIn = async (findCommunities: boolean, origin?: string) => {
+  const signIn = async (origin?: string) => {
     loginOrigin.current = origin;
     await login.signIn();
-    if (login.snapshot().status === "signed-in")
-      void setup.start(
-        [
-          ...(findCommunities ? [steps.findCommunities] : []),
-          steps.checkBackup,
-        ],
-        { status: "paused", at: "key-choice" },
-      );
+    if (login.snapshot().status !== "signed-in") return;
+    const current = account(login.credential(), origin);
+    reads.current = current;
+    void setup.start([checkAccount(current, setLinked), steps.checkBackup], {
+      status: "paused",
+      at: "key-choice",
+    });
   };
   /** Between pauses nothing runs: no key exists until a choice resumes setup. */
   const pause = (at: SetupPause) =>
     void setup.start([], { status: "paused", at });
+  /** How every lane ends: a linked account's owned communities feed Join a community. */
+  const finish = () =>
+    linked && reads.current ? [findCommunities(reads.current, setOwned)] : [];
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
     setFinding(undefined);
+    setLinked(undefined);
+    setOwned(undefined);
+    reads.current = undefined;
     setup.reset();
     login.cancel();
   };
@@ -178,6 +224,88 @@ export function Welcome({
     }
   };
   const denied = joinError?.denied;
+  /** The pages setup rests on. A pause this component did not reach has nothing to render. */
+  const paused = (at: SetupPause) => {
+    const current = reads.current;
+    switch (at) {
+      case "key-choice":
+        return (
+          <KeyChoice
+            email={auth.account?.email}
+            onManaged={() =>
+              void setup.start([steps.createKey, steps.backUpAndLink])
+            }
+            onOwn={() =>
+              void setup.start([steps.createKey], {
+                status: "paused",
+                at: "key-reveal",
+              })
+            }
+            onImport={() => pause("key-import")}
+          />
+        );
+      case "key-import":
+        // On the linked lane only the linked key is accepted, and the backup is
+        // offered rather than assumed. Otherwise an imported key is already
+        // backed up wherever it came from, so it skips the backup and reveal.
+        return (
+          <KeyImport
+            expectedPubkey={linked}
+            onBack={() => pause(linked ? "welcome-back" : "key-choice")}
+            onImport={async (nsec) => {
+              await importKey(identity, nsec);
+              if (linked) pause("backup-offer");
+              else void setup.start([]);
+            }}
+          />
+        );
+      case "key-reveal":
+        return (
+          <KeyReveal
+            identity={identity}
+            onBackUp={() => void setup.start([steps.backUpAndLink])}
+            onContinue={() => void setup.start([])}
+          />
+        );
+      case "welcome-back":
+        return linked && current ? (
+          <WelcomeBack
+            npub={npubEncode(linked)}
+            onImport={() => pause("key-import")}
+            onLost={() =>
+              void setup.start([findCommunities(current, setOwned)], {
+                status: "paused",
+                at: "key-lost",
+              })
+            }
+          />
+        ) : null;
+      case "backup-offer":
+        return (
+          <BackupOffer
+            onSkip={() => void setup.start(finish())}
+            onBackUp={() => void setup.start([steps.backUp, ...finish()])}
+          />
+        );
+      case "key-lost":
+        // Unlinked, the account is a new user's: the ordinary key choice follows,
+        // and the old key's communities are not offered to the new one.
+        return (
+          <KeyLost
+            owned={owned}
+            onBack={() => pause("welcome-back")}
+            onStartOver={() => {
+              setLinked(undefined);
+              setOwned(undefined);
+              void setup.start([steps.unlink], {
+                status: "paused",
+                at: "key-choice",
+              });
+            }}
+          />
+        );
+    }
+  };
   return (
     <main className="p-8" aria-labelledby="welcome-title">
       <SetupWindowHeader />
@@ -230,42 +358,13 @@ export function Welcome({
               url={entered}
               onUrlChange={setEntered}
               onFind={setFinding}
+              owned={owned}
             />
           )
         ) : progress.status === "running" ? (
           <SetupProgress label={progress.label} />
         ) : progress.status === "paused" ? (
-          progress.at === "key-choice" ? (
-            <KeyChoice
-              email={auth.account?.email}
-              onManaged={() =>
-                void setup.start([steps.createKey, steps.backUp])
-              }
-              onOwn={() =>
-                void setup.start([steps.createKey], {
-                  status: "paused",
-                  at: "key-reveal",
-                })
-              }
-              onImport={() => pause("key-import")}
-            />
-          ) : progress.at === "key-import" ? (
-            // An imported key is already backed up wherever it came from, so
-            // it skips the backup and reveal pages.
-            <KeyImport
-              onBack={() => pause("key-choice")}
-              onImport={async (nsec) => {
-                await importKey(identity, nsec);
-                void setup.start([]);
-              }}
-            />
-          ) : (
-            <KeyReveal
-              identity={identity}
-              onBackUp={() => void setup.start([steps.backUp])}
-              onContinue={() => void setup.start([])}
-            />
-          )
+          paused(progress.at)
         ) : progress.status === "failed" ? (
           <Failure
             title="Couldn’t finish setup"
@@ -288,8 +387,7 @@ export function Welcome({
             onCancel={backToLanding}
             onFound={(found) => {
               const method = discoverAuthentication(found, tenants);
-              if (method.kind === "builderlab")
-                void signIn(false, method.origin);
+              if (method.kind === "builderlab") void signIn(method.origin);
               // Key-only: no account to look a backup up in or back up to.
               else void setup.start([steps.createKey]);
             }}
@@ -311,7 +409,7 @@ export function Welcome({
                 size="lg"
                 onClick={() => {
                   if (auth.status === "pending") backToLanding();
-                  else void signIn(true);
+                  else void signIn();
                 }}
               >
                 {auth.status === "pending"
@@ -372,8 +470,6 @@ function Failure({
   onRetry?: (() => void) | undefined;
   busy?: boolean;
 }) {
-  // Copy feedback is inline: this page renders outside ToastProvider.
-  const [copyStatus, setCopyStatus] = useState("");
   return (
     <>
       <h1 id="welcome-title" className="text-title text-primary">
@@ -382,45 +478,7 @@ function Failure({
       <p role="alert" className="text-body text-danger">
         {error}
       </p>
-      {publicKey && (
-        // Unstyled wireframe: a plain border until the key panel gets a design.
-        <div className="flex flex-col gap-2 rounded-lg border border-standard p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="m-0 text-body text-secondary">
-              Your public key (npub)
-            </h2>
-            <Button
-              size="compact"
-              variant="ghost"
-              aria-label="Copy npub"
-              onClick={() => {
-                setCopyStatus("");
-                void Promise.resolve()
-                  .then(() => navigator.clipboard.writeText(publicKey))
-                  .then(
-                    () => setCopyStatus("Public key copied."),
-                    () =>
-                      setCopyStatus(
-                        "Could not copy. Select the key above to copy it.",
-                      ),
-                  );
-              }}
-            >
-              <CopyIcon size={16} aria-hidden="true" />
-              Copy
-            </Button>
-          </div>
-          <code className="block select-text break-all font-mono text-mono">
-            {publicKey}
-          </code>
-          <p className="m-0 text-body-sm text-secondary">
-            This is your public identity — it’s safe to share.
-          </p>
-          <span role="status" className="text-body-sm text-secondary">
-            {copyStatus}
-          </span>
-        </div>
-      )}
+      {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
         <Button onClick={onBack} disabled={busy}>

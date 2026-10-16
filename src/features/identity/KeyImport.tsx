@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -13,11 +14,16 @@ import { SetupProgress } from "./SetupProgress";
  * component's state and is never logged or stored, so leaving the page
  * discards it. While import runs the form gives way to the progress page but
  * stays mounted, so a native refusal returns to it with the typed key kept.
+ * With `expectedPubkey`, only that key continues: any other valid nsec is
+ * refused under the field.
  */
 export function KeyImport({
+  expectedPubkey,
   onBack,
   onImport,
 }: {
+  /** The hex key linked to the signed-in account, when the lane has one. */
+  expectedPubkey?: string | undefined;
   onBack: () => void;
   /** Rejects with the native refusal, shown under the field. */
   onImport: (nsec: string) => Promise<void>;
@@ -29,6 +35,11 @@ export function KeyImport({
   const form = useRef<HTMLFormElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const input = classifyKeyImport(text);
+  const expected =
+    expectedPubkey === undefined ? undefined : npubEncode(expectedPubkey);
+  const mismatch =
+    input.kind === "nsec" && expected !== undefined && input.npub !== expected;
+  const ready = input.kind === "nsec" && !mismatch;
   const change = (next: string) => {
     setText(next);
     setFailure(undefined);
@@ -48,7 +59,7 @@ export function KeyImport({
   // The whole form is the drop target; the hook rebinds when the form returns.
   const dragging = useFileDrop(form, !busy, (files) => void fromFile(files[0]));
   const submit = async () => {
-    if (input.kind !== "nsec" || busy) return;
+    if (!ready || busy) return;
     setBusy(true);
     try {
       await onImport(input.nsec);
@@ -63,11 +74,13 @@ export function KeyImport({
   if (busy) return <SetupProgress label="Importing your key…" />;
   const message =
     failure ??
-    (input.kind === "encrypted"
-      ? "Password-protected backups aren’t supported here yet. Paste the nsec1 key itself."
-      : input.kind === "invalid"
-        ? "That doesn’t look like a valid nsec. Paste an nsec1 key."
-        : undefined);
+    (mismatch
+      ? `That isn’t the key linked to this account. It expects ${expected} (the key on your other device).`
+      : input.kind === "encrypted"
+        ? "Password-protected backups aren’t supported here yet. Paste the nsec1 key itself."
+        : input.kind === "invalid"
+          ? "That doesn’t look like a valid nsec. Paste an nsec1 key."
+          : undefined);
   return (
     <form
       ref={form}
@@ -155,11 +168,7 @@ export function KeyImport({
         <Button type="button" onClick={onBack}>
           Back
         </Button>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={input.kind !== "nsec"}
-        >
+        <Button type="submit" variant="primary" disabled={!ready}>
           Continue with this key
         </Button>
       </div>
