@@ -91,6 +91,20 @@ it("keeps a native event newer than an in-flight restore and ignores delivery af
   await expect(service.signIn()).rejects.toThrow("desktop");
 });
 
+it("fails closed when the native session event listener cannot be registered", async () => {
+  vi.mocked(listen).mockRejectedValue(new Error("permission denied"));
+  const { service } = setup();
+
+  await vi.waitFor(() =>
+    expect(service.snapshot()).toMatchObject({
+      status: "unavailable",
+      authority: null,
+      failure: "native-unavailable",
+    }),
+  );
+  expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot");
+});
+
 it("uses the caller's native grant registration, shares only public account state, and retries failed admission", async () => {
   const { root, service } = setup();
   const a = await plugin(root),
