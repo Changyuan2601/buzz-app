@@ -49,6 +49,12 @@ import {
   type Config,
   type Model,
 } from "./config";
+import {
+  DEFAULTS_KEY,
+  type ProviderDefaults,
+  readDefaults,
+  resolveConfig,
+} from "./defaults";
 import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
@@ -64,7 +70,6 @@ type Read =
 type Catalog = {
   models: Model[];
 };
-type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
   Readonly<{
     checking: boolean;
@@ -72,7 +77,6 @@ type ProviderState = AgentProviderSnapshot &
     error: string;
     defaults: ProviderDefaults;
   }>;
-const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "Codex is not installed.";
 const CONVERSATION_LIMIT = 30;
@@ -113,7 +117,7 @@ export class CodexProvider {
       checking: false,
       data: undefined,
       error: "",
-      defaults: this.readDefaults(),
+      defaults: readDefaults(this.storage),
     });
     // An install or sign-in holds the dialog open, then Codex is checked again.
     this.offSetup = setup?.subscribe(() => {
@@ -203,32 +207,13 @@ export class CodexProvider {
         : (selected?.defaultReasoningEffort ?? "");
     const defaults = Object.freeze({ model: next.model, effort });
     await this.storage.set(
-      STORAGE_KEY,
+      DEFAULTS_KEY,
       JSON.stringify({ version: 1, ...defaults }),
     );
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
-    const explicit = readConfig(raw);
-    const inheritedModel = this.state.defaults.model;
-    const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
-    );
-    const model = explicit.model || (unavailable ? "" : inheritedModel);
-    if (explicit.effort) return { ...explicit, model };
-    const selected = this.model(model);
-    const preferred =
-      unavailable && !explicit.model ? "" : this.state.defaults.effort;
-    const effort = !preferred
-      ? ""
-      : !this.state.data
-        ? preferred
-        : selected?.supportedReasoningEfforts.some(
-              (choice) => choice.reasoningEffort === preferred,
-            )
-          ? preferred
-          : (selected?.defaultReasoningEffort ?? "");
-    return { ...explicit, model, effort };
+    return resolveConfig(raw, this.state.defaults, this.state.data?.models);
   }
   dispose() {
     this.offSetup?.();
@@ -237,27 +222,6 @@ export class CodexProvider {
   }
   private model(model: string) {
     return catalogModel(model, this.state.data);
-  }
-  private readDefaults(): ProviderDefaults {
-    try {
-      const value: unknown = JSON.parse(
-        this.storage.get(STORAGE_KEY) ?? "null",
-      );
-      if (
-        value &&
-        typeof value === "object" &&
-        (value as { version?: unknown }).version === 1 &&
-        typeof (value as { model?: unknown }).model === "string" &&
-        typeof (value as { effort?: unknown }).effort === "string"
-      )
-        return Object.freeze({
-          model: readConfig(value).model,
-          effort: (value as { effort: string }).effort,
-        });
-    } catch {
-      // Malformed local preferences follow Codex's recommendation.
-    }
-    return Object.freeze({ model: "", effort: "" });
   }
 }
 

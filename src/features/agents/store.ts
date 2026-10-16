@@ -106,6 +106,16 @@ export function readRecords(storage: AgentStore): Record<string, AgentRecord> {
   return records;
 }
 
+/** One agent's saved record, from its own key or the legacy shared one. */
+export function readOne(
+  storage: AgentStore,
+  pubkey: string,
+): AgentRecord | undefined {
+  const record =
+    parsed(storage.get(recordKey(pubkey))) ?? legacyRecords(storage)[pubkey];
+  return record ? readRecord(pubkey, record as AgentRecord) : undefined;
+}
+
 function parsed(text: string | null): unknown {
   try {
     return JSON.parse(text ?? "null");

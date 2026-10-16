@@ -39,3 +39,4 @@ dist-buzz-mcp/
 # its bundled resources.
 src-tauri/resources/bin/*
 !src-tauri/resources/bin/.gitkeep
+dist-agent-host/

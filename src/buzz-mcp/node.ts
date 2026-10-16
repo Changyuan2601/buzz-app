@@ -37,6 +37,11 @@ const MEDIA_FILE_LIMIT = 500 * 1024 * 1024;
 /** Images an agent can be shown. */
 const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+/** A BuzzClient whose memory writes give back the event they posted. */
+export type NodeClient = Omit<BuzzClient, "remember"> & {
+  remember(slug: string, body: string, after: number): Promise<BuzzEvent>;
+};
+
 export function nodeClient(
   options: Readonly<{
     relay: string;
@@ -49,7 +54,7 @@ export function nodeClient(
     /** Where fetched media is saved; a temporary directory by default. */
     media?: string;
   }>,
-): BuzzClient {
+): NodeClient {
   const secret = options.key.startsWith("nsec1")
     ? (decode(options.key as `nsec1${string}`).data as Uint8Array)
     : hexToBytes(options.key);
@@ -321,7 +326,7 @@ export function nodeClient(
       const plaintext = JSON.stringify(
         slug === "core" ? { slug, profile: body } : { slug, value: body },
       );
-      await post(
+      return post(
         sign(
           {
             kind: 30174,
