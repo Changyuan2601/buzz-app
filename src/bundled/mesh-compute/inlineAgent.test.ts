@@ -180,9 +180,10 @@ it("returns a bounded error for large memory instead of leaving a callback pendi
   const runtime = new InlineAgent({
     spawn: vi.fn(),
     current: async () => true,
-    memories: async () => [
-      { slug: "core", body: "x".repeat(40_000), createdAt: 1 },
-    ],
+    memories: async () => ({
+      entries: [{ slug: "core", body: "x".repeat(40_000), createdAt: 1 }],
+      partial: false,
+    }),
   });
   let resolve!: () => void;
   const response = new Promise<void>((r) => {

@@ -183,8 +183,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       spawn,
       current: (lease) =>
         invoke<boolean>("mesh_compute_inference_current", { lease }),
-      memories: async (agent, signal) =>
-        (await readMemory(agent, signal)).entries,
+      memories: readMemory,
       remembered: (agent) => {
         const snapshot = agents.relay(agent)?.snapshot();
         if (snapshot?.status === "ready")
@@ -217,8 +216,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             .channels.find((row) => row.id === channelId)?.channelType === "dm"
         );
       },
-      memories: async (agent, signal) =>
-        (await readMemory(agent, signal)).entries,
+      memories: readMemory,
       coreMemory: async (agent, signal) => {
         try {
           return coreOf(await readMemory(agent, signal));

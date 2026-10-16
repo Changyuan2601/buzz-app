@@ -125,7 +125,7 @@ export class InlineAgent {
       },
       memories: () =>
         this.deps.memories?.(delivery.agent.pubkey, signal) ??
-        Promise.resolve([]),
+        Promise.resolve({ entries: [], partial: false }),
       remembered: () => this.deps.remembered?.(delivery.agent.pubkey),
     });
     // Each turn is rebuilt from relay conversation. Keep partial tool evidence for inspection,

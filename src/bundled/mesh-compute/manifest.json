@@ -1,6 +1,8 @@
 {
   "id": "buzz.mesh-compute",
   "name": "Shared compute",
+  "description": "Share this computer's compute with your community and run Mesh helper agents.",
+  "discovery": { "category": "agents" },
   "apiVersion": 1,
   "host": {
     "processes": [

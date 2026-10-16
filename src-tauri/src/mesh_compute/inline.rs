@@ -79,6 +79,7 @@ const BUZZ_TOOLS: &[&str] = &[
     "buzz_read",
     "buzz_members",
     "buzz_users",
+    "buzz_tabs",
     "buzz_mem_get",
     "buzz_mem_set",
 ];

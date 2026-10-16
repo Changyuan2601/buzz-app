@@ -9,7 +9,7 @@ import type {
 } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Memory } from "../../buzz-mcp/client";
+import type { Memories } from "../../buzz-mcp/client";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
 
@@ -87,7 +87,8 @@ export type MeshAgentDeps = Readonly<{
   origin(agent: string): string | undefined;
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
-  memories?(agent: string, signal: AbortSignal): Promise<readonly Memory[]>;
+  /** The agent's memory listing, with `partial` when some may be missing. */
+  memories?(agent: string, signal: AbortSignal): Promise<Memories>;
   coreMemory?(
     agent: string,
     signal: AbortSignal,
@@ -195,7 +196,9 @@ export class MeshAgentRuntime {
   run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const { trigger, agent, channelId } = delivery;
-    if (trigger.type === "timer" || !channelId) return Promise.resolve();
+    // Catch-up batches have no single triggering event; Mesh agents answer live turns only.
+    if (trigger.type === "timer" || trigger.type === "catch-up" || !channelId)
+      return Promise.resolve();
     const event = trigger.event;
     const config = meshAgentConfig(delivery.config);
     // Both modes retain owner-only admission; watches do not grant authority.
