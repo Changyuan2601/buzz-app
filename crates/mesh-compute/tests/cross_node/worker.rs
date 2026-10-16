@@ -1,4 +1,4 @@
-//! Child process for scripts/mesh-cross-node.py; never opens the desktop or Keychain.
+//! Child process for tests/cross_node/run.py; never opens the desktop or Keychain.
 use anyhow::{bail, Context, Result};
 use buzz_mesh_compute::{
     config::{ClientConfig, ServeConfig},

@@ -1,6 +1,6 @@
 # Cross-node inference smoke
 
-`ci-mesh-cross-node.sh` builds the real Buzz lifecycle example with the `mesh`
+`scripts/ci-mesh-cross-node.sh` builds the real Buzz lifecycle test worker with the `mesh`
 feature and runs two separate processes on Linux x86-64 using a checksum-pinned
 v0.78.1 CPU runtime and revision/checksum-pinned SmolLM2-135M GGUF. The workflow
 runs on relevant PRs/main pushes and supports manual dispatch. Budget: 20 minutes
@@ -18,8 +18,7 @@ run cleanup. Evidence goes to `test-results/mesh-cross-node`.
 For macOS or an already provisioned runtime:
 
 ```sh
-bin/cargo build --locked -p buzz-mesh-compute --features mesh --example cross_node
-python3 scripts/mesh-cross-node.py --binary target/debug/examples/cross_node \
+python3 crates/mesh-compute/tests/cross_node/run.py \
   --runtime-bundle /path/to/native-runtime --cache /path/to/model-cache \
   --output /path/to/evidence
 ```
@@ -32,3 +31,9 @@ stranger admission, the leased gateway/GDK agent loop, desktop packaging or
 cross-host firewall/NAT behavior. Two processes on one runner are deliberate:
 this detects accidental local-model dependence without requiring two machines.
 Native macOS runs do not establish that the Linux CPU workflow passes.
+
+The explicit `cross_node_worker` Cargo test target has `harness = false` and
+`test = false`: ordinary crate tests do not launch an interactive child worker.
+The orchestrator builds it explicitly with `cargo test --test cross_node_worker
+--no-run` and takes the executable path from Cargo JSON (no hashed-path guessing).
+Use `--binary` to reuse a prebuilt worker. This is not a shipped example or binary.

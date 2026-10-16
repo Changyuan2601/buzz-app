@@ -96,13 +96,29 @@ class Node:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--binary", type=Path, help="Prebuilt worker; otherwise build the explicit test target")
     parser.add_argument("--runtime-bundle", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--skip-join", action="store_true", help="Negative control: must fail readiness")
     parser.add_argument("--readiness-timeout", type=int, default=240)
     args = parser.parse_args()
+    if args.binary is None:
+        repo = Path(__file__).resolve().parents[4]
+        started = time.monotonic()
+        build = subprocess.run([
+            str(repo / "bin/cargo"), "test", "--locked", "-p", "buzz-mesh-compute",
+            "--features", "mesh", "--test", "cross_node_worker", "--no-run",
+            "--message-format=json",
+        ], cwd=repo, stdout=subprocess.PIPE, text=True, check=True)
+        artifacts = [json.loads(line) for line in build.stdout.splitlines()]
+        executables = [item["executable"] for item in artifacts
+                       if item.get("reason") == "compiler-artifact"
+                       and item.get("target", {}).get("name") == "cross_node_worker"
+                       and item.get("executable")]
+        assert len(executables) == 1, "expected exactly one cross-node worker"
+        args.binary = Path(executables[0])
+        print(f"Worker build: {time.monotonic() - started:.2f}s", flush=True)
     binary, bundle = args.binary.resolve(), args.runtime_bundle.resolve()
     assert binary.is_file() and bundle.is_dir()
     args.cache.mkdir(parents=True, exist_ok=True)
