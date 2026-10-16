@@ -290,8 +290,9 @@ export class AcpRuntime {
             agent,
             channel,
             event,
-            login ? `${result.error}. ${login}` : result.error,
+            result.error,
             topLevel,
+            login,
           );
         }
         // An answer the harness wrote without `send` is posted for it, so the
@@ -343,12 +344,17 @@ export class AcpRuntime {
     event: EventData,
     error: string,
     topLevel: boolean,
+    /** What to do about it, kept whole after the shortened error. */
+    hint?: string,
   ) {
+    const said = error.slice(0, 500);
     return this.post(
       agent,
       channel,
       event,
-      `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+      `⚠️ I couldn't finish that: ${said}${
+        hint ? `${said.endsWith(".") ? "" : "."} ${hint}` : ""
+      }`,
       topLevel,
       [["p", agent.owner]],
     );

@@ -330,4 +330,48 @@ describe("AcpRuntime", () => {
       else expect(report?.content).not.toContain("opencode auth login");
     }
   });
+
+  it("keeps a long error's sign-in hint whole, after one period", async () => {
+    const config = await confirmed();
+    const { deliver, sync, published } = setup({
+      promptError: { code: -32000, message: `${"x".repeat(600)}.` },
+    });
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toMatch(/x\. Run `opencode auth login`\.$/);
+    const config2 = await confirmed();
+    const short = setup({
+      promptError: { code: -32000, message: "Authentication required." },
+    });
+    short.sync(config2);
+    await short.deliver(message("1", "@Opal hello"), config2).run;
+    await vi.waitFor(() => expect(short.published).toHaveLength(1));
+    expect(short.published[0]?.content).toContain(
+      "Authentication required. Run `opencode auth login`.",
+    );
+  });
+
+  it("gives no sign-in hint for a later turn that needs a login", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync, published } = setup({
+      promptError: {
+        code: -32000,
+        message: "Authentication required",
+        from: 1,
+      },
+    });
+    sync(config);
+    const first = message("1", "@Opal one");
+    await deliver(first, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    await flush(50);
+    const reply = message("2", "@Opal two");
+    reply.tags.push(["e", first.id, "", "reply"]);
+    await deliver(reply, config).run;
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(fake.harnesses).toHaveLength(1);
+    expect(published[0]?.content).toContain("Authentication required");
+    expect(published[0]?.content).not.toContain("opencode auth login");
+  });
 });
