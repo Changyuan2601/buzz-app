@@ -92,7 +92,7 @@ test("list toolbar, native item splitting and indentation survive reload and sen
 
 // Native text input, caret selection and history are browser-owned; the marker
 // matrix and completion/IME guards remain in the component tests.
-test("typed lists use Enter to split and exit, preserve mentions and send by button", async ({
+test("typed lists use Enter to split and exit, preserve mentions and send on Cmd/Ctrl+Enter", async ({
   page,
 }) => {
   const input = await composer(page);
@@ -137,7 +137,7 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.length),
   ).toBe(0);
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await input.press("ControlOrMeta+Enter");
   await expect
     .poll(() => page.evaluate(() => window.linkComposerFixture.sent.at(-1)))
     .toEqual({

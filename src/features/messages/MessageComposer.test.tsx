@@ -2900,6 +2900,23 @@ it("exits an empty list item on Enter, then sends from ordinary prose", async ()
   );
 });
 
+it.each([{ metaKey: true }, { ctrlKey: true }])(
+  "sends from inside a list on %j Enter",
+  async (keys) => {
+    const h = mount();
+    await h.user.type(h.input(), "- first");
+    fireEvent.keyDown(h.input(), { key: "Enter", repeat: true, ...keys });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    fireEvent.keyDown(h.input(), { key: "Enter", ...keys });
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "- first",
+      [],
+      [],
+    );
+  },
+);
+
 it("uses Enter to leave a nested empty item without sending", async () => {
   const h = mount();
   await h.user.type(h.input(), "- first{Enter}nested{Tab}{Enter}{Enter}");
@@ -4767,6 +4784,20 @@ it("continues a list while editing and saves through Save changes", async () => 
   expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
     "c".repeat(64),
     "- Revised\n- Added",
+    "c".repeat(64),
+  );
+});
+
+it("saves a list edit on Cmd+Enter", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised");
+  act(() => h.input().toggleFormat("bullet_list"));
+  fireEvent.keyDown(h.input(), { key: "Enter", metaKey: true });
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "- Revised",
     "c".repeat(64),
   );
 });

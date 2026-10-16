@@ -1686,19 +1686,16 @@ function Composer({
                   }
                   return;
                 }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
+                if (event.key === "Enter" && !event.shiftKey && !event.altKey) {
                   event.preventDefault();
                   // Holding Enter must not send after an empty list item exits.
                   if (event.repeat) return;
+                  // Cmd/Ctrl+Enter sends from anywhere, including a list.
                   if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    (activeFormats.includes("bullet_list") ||
+                      activeFormats.includes("ordered_list"))
                   ) {
                     event.currentTarget.insertLineBreak();
                     return;
