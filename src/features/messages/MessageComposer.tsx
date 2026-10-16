@@ -412,11 +412,22 @@ function Composer({
     // A navigation/dialog owner may restore focus during this commit. Let that
     // explicit handoff win over the conversation's default initial focus. A
     // loading conversation defers it until its composer is first enabled.
+    // Focus moved while the composer waits also ends it, even if that control
+    // later unmounts: restoring an archived channel must not pull focus back.
+    const endOnFocusMove = () => {
+      const moved = (event: FocusEvent) => {
+        if (event.target !== focusOnMount.current)
+          focusOnMount.current = undefined;
+      };
+      document.addEventListener("focusin", moved, true);
+      return () => document.removeEventListener("focusin", moved, true);
+    };
     if (disabled) {
       // Disabling after the handoff ends it; re-enabling must not refocus.
       if (focusOnMount.current === input.current)
         focusOnMount.current = undefined;
-      return;
+      if (!focusOnMount.current) return;
+      return endOnFocusMove();
     }
     if (!focusOnMount.current) return;
     const focus = () => {
@@ -446,9 +457,11 @@ function Composer({
     };
     const inertAncestor = input.current?.closest("[inert]");
     if (inertAncestor) {
+      const stopWatching = endOnFocusMove();
       const observer = new MutationObserver(() => {
         if (!inertAncestor.hasAttribute("inert")) {
           observer.disconnect();
+          stopWatching();
           focus();
         }
       });
@@ -456,7 +469,10 @@ function Composer({
         attributes: true,
         attributeFilter: ["inert"],
       });
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        stopWatching();
+      };
     }
     focus();
   }, [disabled]);

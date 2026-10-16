@@ -569,6 +569,17 @@ it("does not take focus when the composer is enabled after another control takes
   }
 });
 
+it("does not take focus when the composer is enabled after a control that took focus unmounts", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  const other = document.createElement("button");
+  document.body.append(other);
+  other.focus();
+  other.remove();
+  expect(document.activeElement).toBe(document.body);
+  h.retarget({ disabled: false });
+  expect(h.input()).not.toHaveFocus();
+});
+
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
   document.body.setAttribute("inert", "");
   try {
@@ -594,6 +605,23 @@ it("does not reclaim startup focus after another control takes it", async () => 
   } finally {
     document.body.removeAttribute("inert");
     other.remove();
+  }
+});
+
+it("does not reclaim startup focus after a control that took focus unmounts", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    other.remove();
+    expect(document.activeElement).toBe(document.body);
+    document.body.removeAttribute("inert");
+    await act(async () => {}); // Observer callback runs as a microtask.
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
   }
 });
 
