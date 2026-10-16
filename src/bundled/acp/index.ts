@@ -22,7 +22,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = host.spawn?.bind(host);
   if (!spawn) return;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.acp"}/${TYPE_ID}`;
-  const runtime = new AcpRuntime(host, agents.relay);
+  const runtime = new AcpRuntime(
+    host,
+    agents.relay,
+    (pubkey, signal) => agents.core(pubkey, signal),
+    () => agents.tools(),
+  );
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -44,6 +49,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Any harness that speaks the Agent Client Protocol, from a preset or a command you confirm.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    // No `syncedSettings` on purpose: command, args, env and workspace must
+    // never come from the relay, only from this device.
     adopt,
     carry,
     summary: (agent) => {

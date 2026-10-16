@@ -1,5 +1,6 @@
 // ACP agents' turns, end to end against a fake plain-ACP harness.
 import { describe, expect, it, vi } from "vitest";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { RelayEvent } from "../../features/relay/events";
@@ -41,7 +42,16 @@ const confirmed = (value: Partial<Config> = {}) =>
   });
 
 /** A runtime for one of Alice's agents in `channel`, on a fake harness. */
-function setup(options: Parameters<typeof fakeHarness>[0] = {}) {
+function setup(
+  options: Parameters<typeof fakeHarness>[0] = {},
+  {
+    core = async () => null,
+    added = () => [],
+  }: {
+    core?: () => Promise<string | null | undefined>;
+    added?: () => readonly AddedTool[];
+  } = {},
+) {
   const fake = fakeHarness(options);
   const host = { spawn: fake.spawn, serveMcp: fake.serve } as unknown as Host;
   const session = {
@@ -65,7 +75,7 @@ function setup(options: Parameters<typeof fakeHarness>[0] = {}) {
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new AcpRuntime(host, () => relay);
+  const runtime = new AcpRuntime(host, () => relay, core, added);
   const published: { content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -227,6 +237,46 @@ describe("AcpRuntime", () => {
     expect(published[0]?.content).toContain(
       "This OpenCode cannot reach Buzz tools (no HTTP MCP support)",
     );
+  });
+
+  it("leads a new session with the core memory the host keeps", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync } = setup(
+      {},
+      { core: async () => "Prefers tabs." },
+    );
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    expect(fake.harnesses[0]?.turns[0]?.text).toContain("Prefers tabs.");
+  });
+
+  it("lists plugin-added tools, and reopens an idle session when they change", async () => {
+    const tool = (name: string): AddedTool => ({
+      name,
+      description: name,
+      inputSchema: { type: "object" },
+      call: async () => ({ content: [] }) as never,
+    });
+    let added: readonly AddedTool[] = [tool("pin")];
+    const config = await confirmed();
+    const { fake, deliver, sync } = setup({}, { added: () => added });
+    sync(config);
+    const first = message("1", "@Opal one");
+    await deliver(first, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    const [harness] = fake.harnesses;
+    const one = harness?.turns[0]?.sessionId ?? "";
+    const listed = await harness?.mcp(one, "tools/list");
+    const result = listed?.result as { tools?: { name: string }[] } | undefined;
+    expect(result?.tools?.map((t) => t.name)).toContain("pin");
+    await flush(50);
+    added = [tool("pin"), tool("star")];
+    const reply = message("2", "@Opal two");
+    reply.tags.push(["e", first.id, "", "reply"]);
+    await deliver(reply, config).run;
+    await vi.waitFor(() => expect(harness?.turns).toHaveLength(2));
+    expect(harness?.turns[1]?.sessionId).not.toBe(one);
   });
 
   it("restarts the harness when its launch changes, and keeps it otherwise", async () => {
