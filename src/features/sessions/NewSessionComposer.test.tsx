@@ -1,3 +1,4 @@
+import { saveDefaultAssistant } from "./welcome";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
@@ -1322,4 +1323,64 @@ it("allows changing an unavailable assistant before any remote creation", async 
     "Keep my draft",
     ["a".repeat(64)],
   );
+});
+
+it("selects the saved community default for a new Solo draft without overriding an existing explicit choice", async () => {
+  const test = setup();
+  saveDefaultAssistant("test", "b".repeat(64));
+  const first = render(
+    <NewSessionComposer
+      personal
+      session={test.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Outside agent" }),
+  ).toBeVisible();
+  first.unmount();
+  writeView("test", "me:new-agent", "a".repeat(64));
+  render(
+    <NewSessionComposer
+      personal
+      session={test.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Member agent" }),
+  ).toBeVisible();
+});
+
+it("restores the default on the next new Solo chat after a successful send", async () => {
+  const test = setup();
+  saveDefaultAssistant("default-consecutive", "b".repeat(64));
+  const onStarted = vi.fn();
+  const view = render(
+    <NewSessionComposer
+      personal
+      session={test.session}
+      scope="default-consecutive"
+      onStarted={onStarted}
+    />,
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Change agent: Outside agent" });
+  await user.type(screen.getByRole("textbox"), "First task");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  view.unmount();
+  render(
+    <NewSessionComposer
+      personal
+      session={test.session}
+      scope="default-consecutive"
+      onStarted={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Outside agent" }),
+  ).toBeVisible();
 });

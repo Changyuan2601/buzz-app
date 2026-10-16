@@ -10,6 +10,7 @@ import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
+import { suggestNames } from "./name-ideas";
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -80,6 +81,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    startConversation: async (input) => {
+      await setup.installed(input.signal);
+      return runtime.startConversation(input);
+    },
+    suggestNames: async (raw, exclude, signal) => {
+      await setup.installed(signal);
+      if (!spawn) throw new Error("Claude is unavailable on this device.");
+      return suggestNames(
+        spawn,
+        providerDefaults.resolve(raw),
+        exclude,
+        signal,
+      );
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

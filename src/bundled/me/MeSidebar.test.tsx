@@ -11,6 +11,12 @@ import { ChannelNavigationProvider } from "../../features/channel-navigation/Cha
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { MeSidebar } from "./MeSidebar";
 import { meTarget } from "./routes";
+import {
+  defaultAssistant,
+  readWelcome,
+  saveDefaultAssistant,
+  saveWelcome,
+} from "../../features/sessions/welcome";
 
 stubAvatarBrowserApis();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -193,6 +199,78 @@ function fixture() {
     activitySnapshot: activity,
   };
 }
+it.each([false, true])(
+  "opens Welcome in the selected relay with completed setup=%s without changing another relay or existing chats/default",
+  async (complete) => {
+    const saved = {
+      channelId: id,
+      agent,
+      type: "claude/claude",
+      complete: true,
+    };
+    const otherScope = `https://other-relay.test:${viewer}`;
+    saveWelcome(otherScope, saved);
+    if (complete) saveWelcome(scope, saved);
+    saveDefaultAssistant(scope, agent);
+    const f = fixture();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Restart welcome" }),
+    );
+    if (complete) {
+      expect(readWelcome(scope)).toEqual(saved);
+      await userEvent.click(
+        within(
+          screen.getByRole("alertdialog", { name: "Restart welcome?" }),
+        ).getByRole("button", { name: "Restart welcome" }),
+      );
+    }
+    expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, "welcome"));
+    expect(readWelcome(scope)).toBeUndefined();
+    expect(readWelcome(otherScope)).toEqual(saved);
+    expect(defaultAssistant(scope)).toBe(agent);
+    expect(screen.getByRole("button", { name: /^Planning/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Other/ })).toBeVisible();
+  },
+);
+
+it("offers restart during customization, preserves it on Cancel, and resets only after confirmation", async () => {
+  const saved = {
+    channelId: id,
+    agent,
+    type: "claude/claude",
+    replyId: root,
+    kickoff: "observed" as const,
+  };
+  saveWelcome(scope, saved);
+  const f = fixture();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Restart welcome" });
+  await user.click(trigger);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(readWelcome(scope)).toEqual(saved);
+  expect(f.open).not.toHaveBeenCalled();
+  expect(trigger).toHaveFocus();
+  await user.click(trigger);
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Restart welcome",
+    }),
+  );
+  expect(readWelcome(scope)).toBeUndefined();
+  expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, "welcome"));
+});
+
+it("keeps restart visible but unavailable while setup has no confirmed welcome", () => {
+  const saved = { channelId: id, type: "claude/claude", creatingAgent: true };
+  saveWelcome(scope, saved);
+  const f = fixture();
+  expect(
+    screen.getByRole("button", { name: "Restart welcome" }),
+  ).toBeDisabled();
+  expect(readWelcome(scope)).toEqual(saved);
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();
   expect(screen.getByRole("img", { name: "Berd" })).toBeVisible();

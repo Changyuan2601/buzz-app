@@ -1,3 +1,12 @@
+import { useContext } from "react";
+import { AgentsContext } from "../../features/agents/react";
+import { SoloWelcome, WelcomeControls, useWelcomeReceipt } from "./SoloWelcome";
+import {
+  WelcomeIntro,
+  WelcomeConnected,
+  WelcomeComposer,
+} from "./WelcomeIntro";
+import { defaultAssistant } from "../../features/sessions/welcome";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "../channels/useConversationTabs";
@@ -202,9 +211,30 @@ function SessionsView({
       selected !== "new" ? pendingSessionDraft(scope, selected) : undefined,
   );
   const selectedSession = list.channels.find((item) => item.id === selected);
+  const { receipt: setupReceipt } = useWelcomeReceipt(scope);
   const select = (id: string) => {
     void navigator?.open(meTarget(scope, id));
   };
+  if (
+    selected === "welcome" ||
+    (selected === "new" &&
+      !newSection &&
+      !pendingDraft &&
+      placement.status === "ready" &&
+      list.status === "ready" &&
+      ((!placement.ids.length && !defaultAssistant(scope)) ||
+        (setupReceipt && !setupReceipt.complete)))
+  )
+    return (
+      <PanelFrame companion={companion}>
+        <SoloWelcome
+          session={session}
+          scope={scope}
+          signal={navigation?.signal ?? new AbortController().signal}
+          onCreated={select}
+        />
+      </PanelFrame>
+    );
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>
@@ -332,6 +362,8 @@ function SessionWork({
   navigator?: Navigation | undefined;
   chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
+  const agents = useContext(AgentsContext);
+  const { receipt: welcomeReceipt } = useWelcomeReceipt(scope);
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
@@ -347,6 +379,8 @@ function SessionWork({
   };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
+  const settingUpWelcome =
+    welcomeReceipt?.channelId === channel.id && !welcomeReceipt.complete;
   const list = useChannelList(session.channels);
   const { channels } = useChannelLabels(
     list.channels,
@@ -444,6 +478,21 @@ function SessionWork({
   const hasTabs = secondary.items.length > 0;
   const hasLocalPanel = hasTabs || !!drawer.side;
   const showingPanel = tabState.paneOpen && hasLocalPanel;
+  const welcomeControls =
+    agents && inMe && welcomeReceipt?.channelId === channel.id ? (
+      <WelcomeControls
+        agents={agents}
+        session={session}
+        scope={scope}
+        signal={navigation?.signal ?? new AbortController().signal}
+        receipt={welcomeReceipt}
+        onSaved={() => selectAgent(welcomeReceipt.agent ?? "")}
+      />
+    ) : undefined;
+  const welcomeType =
+    welcomeControls && welcomeReceipt
+      ? agents?.types().find((type) => type.key === welcomeReceipt.type)
+      : undefined;
   const workspace = (
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
@@ -597,6 +646,14 @@ function SessionWork({
               ) : (
                 <ChannelTimeline
                   chatPresentation={inMe}
+                  beforeMessages={
+                    welcomeControls ? (
+                      <WelcomeIntro>
+                        {welcomeType && <WelcomeConnected type={welcomeType} />}
+                      </WelcomeIntro>
+                    ) : undefined
+                  }
+                  afterMessages={welcomeControls}
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -604,59 +661,68 @@ function SessionWork({
                   scope={scope}
                   channelId={channel.id}
                   window={window}
-                  revealMessageId={sent}
+                  revealMessageId={
+                    sent ??
+                    (welcomeReceipt?.channelId === channel.id
+                      ? welcomeReceipt.replyId
+                      : undefined)
+                  }
                   onOpenLink={openLink}
                   canOpenLink={canOpenLink}
                 />
               )}
             </div>
-            <MessageComposer
-              chatPresentation={inMe}
-              sessionConversation
-              activityClickOpensPanel
-              personalConversation={placement.status !== "ready" || inMe}
-              selectedAgent={inMe ? selectedAgent : undefined}
-              trailingTool={
-                inMe ? (
-                  <>
-                    <SessionAgentControl
-                      session={session}
-                      channelId={channel.id}
-                      value={selectedAgent}
-                      onChange={selectAgent}
-                      disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
-                      }
-                    />
-                    <SessionProjectControl
-                      session={session}
-                      channelId={channel.id}
-                      disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
-                      }
-                    />
-                  </>
-                ) : undefined
-              }
-              onSend={setSent}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              channelId={channel.id}
-              channelName={channel.name}
-              label="Message your agents"
-              disabled={
-                !!channel.archived ||
-                window.status !== "ready" ||
-                placement.status !== "ready"
-              }
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
-            />
+            {settingUpWelcome ? (
+              <WelcomeComposer phase="customize" />
+            ) : (
+              <MessageComposer
+                chatPresentation={inMe}
+                sessionConversation
+                activityClickOpensPanel
+                personalConversation={placement.status !== "ready" || inMe}
+                selectedAgent={inMe ? selectedAgent : undefined}
+                trailingTool={
+                  inMe ? (
+                    <>
+                      <SessionAgentControl
+                        session={session}
+                        channelId={channel.id}
+                        value={selectedAgent}
+                        onChange={selectAgent}
+                        disabled={
+                          !!channel.archived ||
+                          placement.status !== "ready" ||
+                          !inMe
+                        }
+                      />
+                      <SessionProjectControl
+                        session={session}
+                        channelId={channel.id}
+                        disabled={
+                          !!channel.archived ||
+                          placement.status !== "ready" ||
+                          !inMe
+                        }
+                      />
+                    </>
+                  ) : undefined
+                }
+                onSend={setSent}
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                channelId={channel.id}
+                channelName={channel.name}
+                label="Message your agents"
+                disabled={
+                  !!channel.archived ||
+                  window.status !== "ready" ||
+                  placement.status !== "ready"
+                }
+                onOpenLink={openLink}
+                canOpenLink={canOpenLink}
+              />
+            )}
           </SessionColumn>
           {drawer.content}
         </section>

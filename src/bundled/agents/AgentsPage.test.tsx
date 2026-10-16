@@ -328,6 +328,9 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    welcome: vi.fn(async () => {
+      throw new Error("Welcome is not exercised by agent-library tests");
+    }),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
         ...snapshot,

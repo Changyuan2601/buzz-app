@@ -1,4 +1,13 @@
-import { useSyncExternalStore, type ComponentProps } from "react";
+import { useWelcomeReceipt } from "../sessions/SoloWelcome";
+import { clearView } from "../../shared/view-state";
+import { readWelcome, WELCOME_KEY } from "../../features/sessions/welcome";
+import {
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+} from "react";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { ChannelActivityPopover } from "../channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../channels/useWorkingAgents";
@@ -72,6 +81,32 @@ function PersonalHistory({
   const placement = useMePlacement(session);
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected = meSelection(target);
+  const { receipt: welcomeReceipt, error: welcomeError } =
+    useWelcomeReceipt(scope);
+  const [restartRevision, setRestartRevision] = useState<string>();
+  const [restartError, setRestartError] = useState("");
+  const restartTrigger = useRef<HTMLButtonElement>(null);
+  const restartReady =
+    !welcomeError &&
+    (!welcomeReceipt || !!welcomeReceipt.complete || !!welcomeReceipt.replyId);
+  const restart = () => {
+    try {
+      const current = readWelcome(scope);
+      if (JSON.stringify(current) !== restartRevision && current) {
+        setRestartError(
+          "Welcome changed. Close this confirmation and try again.",
+        );
+        return;
+      }
+      clearView(scope, WELCOME_KEY);
+      setRestartRevision(undefined);
+      void navigator.open(meTarget(scope, "welcome"));
+    } catch {
+      setRestartError(
+        "Couldn't restart Welcome. Your existing setup is kept. Try again.",
+      );
+    }
+  };
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
@@ -118,7 +153,48 @@ function PersonalHistory({
       aria-label="Solo conversations"
     >
       <SessionSections
-        header={<SidebarBrand mark="berd" />}
+        header={
+          <div>
+            <SidebarBrand mark="berd" />
+            {!welcomeReceipt?.complete &&
+              (!import.meta.env.DEV || !!welcomeReceipt) &&
+              !conversations.some(
+                (item) => item.id === welcomeReceipt?.channelId,
+              ) && (
+                <NavigationItem
+                  label="Welcome"
+                  selected={
+                    selected === "welcome" ||
+                    (selected === "new" &&
+                      placement.status === "ready" &&
+                      !placement.ids.length)
+                  }
+                  onClick={() =>
+                    void navigator.open(meTarget(scope, "welcome"))
+                  }
+                />
+              )}
+            {import.meta.env.DEV && (
+              <NavigationItem
+                ref={restartTrigger}
+                label="Restart welcome"
+                selected={selected === "welcome"}
+                disabled={!restartReady}
+                title={
+                  !restartReady
+                    ? "Finish or resume the current setup before restarting"
+                    : undefined
+                }
+                onClick={() => {
+                  setRestartError("");
+                  if (welcomeReceipt)
+                    setRestartRevision(JSON.stringify(welcomeReceipt));
+                  else void navigator.open(meTarget(scope, "welcome"));
+                }}
+              />
+            )}
+          </div>
+        }
         personal
         visit={navigator.snapshot().attempt.signal}
         session={session}
@@ -158,6 +234,26 @@ function PersonalHistory({
           />
         )}
       />
+      {restartRevision !== undefined && (
+        <AlertDialog
+          title="Restart welcome?"
+          description="Your existing agent and chat will stay. Continue will create a new agent and Welcome chat in this community. Your provider stays connected, and your current default stays selected until you save the new setup."
+          finalFocus={restartTrigger}
+          onClose={() => setRestartRevision(undefined)}
+          actions={
+            <>
+              <Button onClick={() => setRestartRevision(undefined)}>
+                Cancel
+              </Button>
+              <Button variant="prominent" onClick={restart}>
+                Restart welcome
+              </Button>
+            </>
+          }
+        >
+          {restartError && <p role="alert">{restartError}</p>}
+        </AlertDialog>
+      )}
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
       {list.status === "error" && !recoveryShown && (
         <p role="alert">{list.error}</p>

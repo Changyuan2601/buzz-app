@@ -23,10 +23,15 @@ import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
+import { saveWelcome } from "../../features/sessions/welcome";
+import { AgentsContext } from "../../features/agents/react";
+import type { Agents } from "../../features/agents/service";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { meTarget } from "../me/routes";
 import { SessionsPage } from "./SessionsPage";
 
 composerDOMFixture();
+stubAvatarBrowserApis();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
@@ -213,6 +218,86 @@ function fixture(
     state,
   };
 }
+it("keeps Welcome's composer disabled through customization and restores its existing draft only after confirmation", async () => {
+  const f = fixture();
+  const receipt = {
+    channelId: id,
+    agent: "a".repeat(64),
+    type: "claude/claude",
+  };
+  saveWelcome(f.scope, receipt);
+  writeView(f.scope, `draft:${id}`, "My first question");
+  f.update({
+    ...f.state,
+    entries: [
+      {
+        eventId: "placement",
+        createdAt: 1,
+        record: {
+          version: 2,
+          community: "https://test.example",
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "me",
+            groups: [],
+            assignments: {},
+            channels: [id],
+          },
+        },
+      },
+    ],
+  });
+  const saved = {
+    ...receipt,
+    kickoff: "observed" as const,
+    replyId: "b".repeat(64),
+  };
+  saveWelcome(f.scope, saved);
+  const agent = {
+    pubkey: receipt.agent,
+    name: "Welcome",
+    config: {},
+    type: receipt.type,
+  };
+  const snapshot = { status: "ready", agents: [agent] };
+  const types: readonly never[] = [];
+  const agents = {
+    find: () => agent,
+    snapshot: () => snapshot,
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+  render(
+    <AgentsContext.Provider value={agents}>{f.page()}</AgentsContext.Provider>,
+  );
+  const history = screen.getByLabelText("Channel message history");
+  expect(history).toBeVisible();
+  expect(within(history).getByText("Welcome", { exact: true })).toBeVisible();
+  expect(
+    within(history).getByRole("form", { name: "Make this agent yours" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: "Message your agent" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByText("Choose a name and select Looks good to start chatting"),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+  act(() => saveWelcome(f.scope, { ...saved, complete: true }));
+  expect(
+    within(history).queryByRole("form", { name: "Make this agent yours" }),
+  ).toBeNull();
+  expect(
+    within(history).getByText("Your default agent for new Solo chats"),
+  ).toBeVisible();
+  expect(
+    await screen.findByRole("textbox", { name: "Message your agents" }),
+  ).toHaveTextContent("My first question");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
 it("keeps the current audience and removal controls available after Share fails to move a chat", async () => {
   const person = keypair();
   // Start with an existing member; grant confirmation is covered by SessionShare tests.

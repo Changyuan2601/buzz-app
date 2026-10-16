@@ -1,3 +1,4 @@
+import type { ConversationStart } from "./conversation-start";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -108,6 +109,16 @@ type Job = {
    * then does not run it. */
   matched?: { object: AttentionObject; epoch: number };
 };
+type StartJob = {
+  admitted?(): void;
+  type: "conversation-start";
+  channelId: string;
+  prompt: string;
+  signal: AbortSignal;
+  check(): void;
+  resolve(event: RelayEvent): void;
+  reject(error: unknown): void;
+};
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
   filter?: ReturnType<typeof compileFilter>;
@@ -121,7 +132,7 @@ type Runner = {
   type: RegisteredAgentType | undefined;
   controller: AbortController;
   /** Events waiting to run; due timers are found when a run starts instead. */
-  queue: Job[];
+  queue: (Job | StartJob)[];
   running: boolean;
   windowStart: number;
   admitted: number;
@@ -145,6 +156,7 @@ type Runner = {
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
+  claimError?: string | undefined;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -234,7 +246,7 @@ export class AgentRunners {
       ) {
         runner.epoch++;
         runner.queue = runner.queue.filter(
-          (job) => job.trigger.type !== "watch",
+          (job) => "type" in job || job.trigger.type !== "watch",
         );
         runner.lanes.clear();
       }
@@ -313,6 +325,54 @@ export class AgentRunners {
       void this.drain(runner);
     }
   }
+  /** A first turn shares the normal queue, native claim, rate limit and lifetime.
+   * Its input is never cast to a RelayEvent. */
+  startConversation(
+    pubkey: string,
+    channelId: string,
+    prompt: string,
+    signal: AbortSignal,
+    check: () => void,
+  ) {
+    const runner = this.runners.get(pubkey);
+    if (
+      !runner?.type?.startConversation ||
+      runner.transitioning ||
+      runner.working
+    )
+      return Promise.reject(
+        new Error("This agent cannot start a conversation right now."),
+      );
+    return new Promise<RelayEvent>((resolve, reject) => {
+      const job: StartJob = {
+        type: "conversation-start",
+        channelId,
+        prompt,
+        signal,
+        check,
+        resolve,
+        reject,
+      };
+      const abort = () => {
+        runner.queue = runner.queue.filter((queued) => queued !== job);
+        signal.removeEventListener("abort", abort);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      const finish = () => signal.removeEventListener("abort", abort);
+      job.admitted = finish;
+      job.resolve = (event) => {
+        finish();
+        resolve(event);
+      };
+      job.reject = (error) => {
+        finish();
+        reject(error);
+      };
+      if (signal.aborted) abort();
+      else this.enqueue(runner, job);
+    });
+  }
   /** Retires every runner, as when the host stops. */
   clear() {
     for (const runner of this.runners.values()) this.retire(runner);
@@ -343,7 +403,7 @@ export class AgentRunners {
   }
   private retire(runner: Runner) {
     this.host.activity.clear(undefined, runner.pubkey);
-    runner.queue.length = 0;
+    this.dropQueue(runner, "The agent stopped before Welcome started.");
     runner.controller.abort();
     runner.lanes.stop();
   }
@@ -538,13 +598,17 @@ export class AgentRunners {
     };
   }
 
-  private enqueue(runner: Runner, job: Job) {
+  private enqueue(runner: Runner, job: Job | StartJob) {
     const now = Date.now();
     if (now - runner.windowStart >= RATE_WINDOW_MS) {
       runner.windowStart = now;
       runner.admitted = 0;
     }
     if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
+      if ("type" in job) {
+        job.reject(new Error("The agent is busy. Try Welcome again later."));
+        return;
+      }
       if (runner.activityClaimed) {
         this.showWork(runner, job);
         job.work?.finish({
@@ -564,7 +628,8 @@ export class AgentRunners {
     void this.drain(runner);
   }
 
-  private showWork(runner: Runner, job: Job) {
+  private showWork(runner: Runner, job: Job | StartJob) {
+    if ("type" in job) return;
     if (job.work || job.trigger.type !== "mention") return;
     const agent = this.host.agent(runner.pubkey);
     const scope = agent && this.host.scope(agent);
@@ -597,7 +662,7 @@ export class AgentRunners {
       if (!agent || !type || !run) {
         if (agent) {
           this.host.activity.clear(undefined, runner.pubkey);
-          runner.queue.length = 0;
+          this.dropQueue(runner, "The agent is no longer available.");
         }
         await this.release(runner);
         // It may have come back into view, or gained its type, meanwhile.
@@ -611,7 +676,10 @@ export class AgentRunners {
       if (!(await this.claim(runner))) {
         this.host.activity.clear(undefined, runner.pubkey);
         runner.activityClaimed = false;
-        runner.queue.length = 0;
+        this.dropQueue(
+          runner,
+          "Another copy of Buzz is running this agent. Start Welcome in that copy, or close it first.",
+        );
         break;
       }
       // Retype may have reserved this idle runner while claim was pending.
@@ -622,6 +690,15 @@ export class AgentRunners {
       runner.activityClaimed = true;
       for (const queued of runner.queue) this.showWork(runner, queued);
       const queued = runner.queue.shift();
+      if (queued && "type" in queued) {
+        queued.admitted?.();
+        try {
+          queued.resolve(await this.beginConversation(runner, agent, queued));
+        } catch (error) {
+          queued.reject(error);
+        }
+        continue;
+      }
       const job = queued
         ? this.current(runner, agent, queued)
         : this.dueTimer(runner, agent);
@@ -709,6 +786,112 @@ export class AgentRunners {
     runner.running = false;
   }
 
+  private dropQueue(runner: Runner, reason: string) {
+    for (const job of runner.queue)
+      if ("type" in job) job.reject(new Error(reason));
+    runner.queue.length = 0;
+  }
+
+  private async beginConversation(runner: Runner, agent: Agent, job: StartJob) {
+    const start = runner.type?.startConversation;
+    if (runner.claimError)
+      throw new Error(
+        "Agent hosting could not be confirmed. Retry Welcome after closing other dev builds.",
+      );
+    if (!start) throw new Error("This provider cannot start Welcome.");
+    const lifetime = runner.controller.signal;
+    const deadline = AbortSignal.timeout(STANDALONE_DEADLINE_MS);
+    const signal = AbortSignal.any([lifetime, job.signal, deadline]);
+    let finished = false;
+    const check = () => {
+      if (finished) throw new Error("Welcome has finished.");
+      signal.throwIfAborted();
+      job.check();
+      if (
+        this.host.ready(agent.pubkey)?.type !== agent.type ||
+        this.runners.get(agent.pubkey) !== runner
+      )
+        throw new Error("The agent changed before Welcome could finish.");
+    };
+    check();
+    let reply: RelayEvent | undefined;
+    let publication: Promise<RelayEvent> | undefined;
+    const unavailable = () => {
+      throw new Error(
+        "Welcome can only send its introduction in this conversation.",
+      );
+    };
+    const handle: AgentHandle = Object.freeze({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      owner: agent.owner,
+      publish: async (event: AgentEventTemplate) => {
+        check();
+        const channels = event.tags?.filter(([key]) => key === "h") ?? [];
+        if (
+          event.kind !== 9 ||
+          channels.length !== 1 ||
+          channels[0]?.length !== 2 ||
+          channels[0]?.[1] !== job.channelId ||
+          event.tags?.some(([key]) => key === "e")
+        )
+          return unavailable();
+        if (publication)
+          throw new Error("Welcome already submitted its introduction.");
+        publication = this.publish(runner, event);
+        const signed = await publication;
+        reply = signed;
+        return signed;
+      },
+      query: (filters: readonly object[]) => {
+        check();
+        return this.require().query(agent.pubkey, filters);
+      },
+      upload: unavailable,
+      media: unavailable,
+      remember: unavailable,
+      templates: () => [],
+      attention: this.attention(agent.pubkey),
+    });
+    runner.working++;
+    try {
+      const input: ConversationStart = {
+        agent: handle,
+        config: agent.config,
+        channelId: job.channelId,
+        prompt: job.prompt,
+        signal,
+        check,
+      };
+      const done = start(input);
+      const result = await new Promise<Awaited<typeof done>>(
+        (resolve, reject) => {
+          const abort = () => {
+            // Custody publication cannot be cancelled once entered. Preserve its
+            // accepted/unknown outcome instead of pretending navigation unsent it.
+            if (publication)
+              void publication.then(() => resolve({ ok: true }), reject);
+            else reject(signal.reason);
+          };
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+          void done
+            .then(resolve, reject)
+            .finally(() => signal.removeEventListener("abort", abort));
+        },
+      );
+      if (reply) return reply;
+      check();
+      throw new Error(
+        result.error ||
+          "The provider finished without publishing an introduction. Retry or send a message yourself.",
+      );
+    } finally {
+      finished = true;
+      runner.working--;
+    }
+  }
+
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
    * mention run is shown typing in its thread meanwhile, from its first
@@ -790,8 +973,10 @@ export class AgentRunners {
     try {
       runner.mayHold = (await this.host.custody?.claim(runner.pubkey)) ?? false;
       runner.asked = true;
+      runner.claimError = undefined;
       return runner.mayHold;
     } catch (error) {
+      runner.claimError = message(error);
       runner.mayHold = true;
       runner.asked = true;
       // Answering twice beats not answering at all.

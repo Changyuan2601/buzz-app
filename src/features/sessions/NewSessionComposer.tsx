@@ -1,3 +1,4 @@
+import { defaultAssistant } from "./welcome";
 import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
@@ -69,7 +70,7 @@ export function NewSessionComposer({
     const saved = readView<unknown>(
       scope,
       `${draftKey}:new-agent`,
-      receipt?.agent ?? "",
+      receipt?.agent ?? (personal ? defaultAssistant(scope) : ""),
     );
     return typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved)
       ? saved
@@ -343,7 +344,7 @@ export function NewSessionComposer({
       writeView(scope, `${draftKey}:pending`, null);
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
-      writeView(scope, `${draftKey}:new-agent`, "");
+      writeView(scope, `${draftKey}:new-agent`, null);
       writeView(scope, `${draftKey}:new-project`, null);
       writeSelectedAssistant(scope, current.id, selectedAgent);
       setPending(undefined);

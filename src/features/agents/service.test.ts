@@ -333,6 +333,7 @@ async function setup({
   listed = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  startConversation = undefined as AgentType<Config>["startConversation"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -415,6 +416,17 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
+    ...(startConversation
+      ? {
+          startConversation,
+          provider: {
+            snapshot: () => ({ readiness: "ready" as const }),
+            subscribe: () => () => {},
+            check() {},
+            DialogBody: () => null,
+          },
+        }
+      : {}),
   };
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -3838,4 +3850,240 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+it("starts Welcome through the claimed runner with app input, target-only signed reply, and retired handle", async () => {
+  let execute: NonNullable<
+    AgentType<Config>["startConversation"]
+  > = async () => ({ ok: true });
+  const { service, session, native, select } = await setup({
+    startConversation: (input) => execute(input),
+  });
+  await service.create({ type: "example/echo", name: "Welcome" });
+  const roster = {
+    id: channel,
+    name: "Welcome",
+    channelType: "session" as const,
+    private: true as const,
+    members: [viewer, bot],
+  };
+  Object.assign(session, {
+    workSessions: { refresh: vi.fn(async () => {}) },
+    mePlacement: {
+      snapshot: () => ({ status: "ready" }),
+      refresh: vi.fn(async () => {}),
+      has: (id: string) => id === channel,
+    },
+  });
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [roster],
+  });
+  let held: import("./conversation-start").ConversationStart | undefined;
+  const started = vi.fn(
+    async (input: import("./conversation-start").ConversationStart) => {
+      held = input;
+      await expect(
+        input.agent.publish({
+          kind: 9,
+          content: "wrong",
+          tags: [["h", "elsewhere"]],
+        }),
+      ).rejects.toThrow("only send");
+      await expect(
+        input.agent.publish({
+          kind: 9,
+          content: "wrong",
+          tags: [
+            ["h", channel],
+            ["e", "x"],
+          ],
+        }),
+      ).rejects.toThrow("only send");
+      await input.agent.publish({
+        kind: 9,
+        content: "Welcome!",
+        tags: [["h", channel]],
+      });
+      await expect(
+        input.agent.publish({
+          kind: 9,
+          content: "duplicate",
+          tags: [["h", channel]],
+        }),
+      ).rejects.toThrow("already submitted");
+      return { ok: true };
+    },
+  );
+  execute = started;
+  native.publish.mockClear();
+  const reply = await service.welcome(
+    bot,
+    channel,
+    new AbortController().signal,
+  );
+  expect(reply.pubkey).toBe(bot);
+  expect(reply.content).toBe("Welcome!");
+  expect(started).toHaveBeenCalledTimes(1);
+  expect(native.claim).toHaveBeenCalledWith(bot);
+  expect(native.publish).toHaveBeenCalledTimes(1);
+  expect(held).not.toHaveProperty("trigger");
+  expect(held?.prompt).toContain("app-authored onboarding instruction");
+  await expect(
+    held?.agent.publish({ kind: 9, content: "late", tags: [["h", channel]] }),
+  ).rejects.toThrow("finished");
+  select(null);
+  await expect(
+    service.welcome(bot, channel, new AbortController().signal),
+  ).rejects.toThrow("community");
+});
+
+it.each(["foreign-roster", "shared", "not-solo", "claim-failed", "claim-held"])(
+  "refuses unsafe Welcome start: %s",
+  async (failure) => {
+    const started = vi.fn(async () => ({ ok: true }));
+    const { service, session, native } = await setup({
+      startConversation: started,
+    });
+    await service.create({ type: "example/echo", name: "Welcome" });
+    Object.assign(session, {
+      workSessions: { refresh: vi.fn(async () => {}) },
+      mePlacement: {
+        snapshot: () => ({ status: "ready" }),
+        refresh: vi.fn(async () => {}),
+        has: () => failure !== "not-solo",
+      },
+    });
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      status: "ready",
+      channels: [
+        {
+          id: channel,
+          name: "Welcome",
+          channelType: "session",
+          ...(failure !== "shared" ? { private: true as const } : {}),
+          members:
+            failure === "foreign-roster" ? [viewer, bot, other] : [viewer, bot],
+        },
+      ],
+    });
+
+    if (failure === "claim-failed")
+      native.claim.mockRejectedValue(new Error("unavailable"));
+    if (failure === "claim-held") native.claim.mockResolvedValue(false);
+    await expect(
+      service.welcome(bot, channel, new AbortController().signal),
+    ).rejects.toThrow();
+    expect(started).not.toHaveBeenCalled();
+  },
+);
+
+it("revokes an in-flight Welcome publication after community replacement", async () => {
+  let execute: NonNullable<
+    AgentType<Config>["startConversation"]
+  > = async () => ({ ok: true });
+  const { service, session, connect } = await setup({
+    startConversation: (input) => execute(input),
+  });
+  await service.create({ type: "example/echo", name: "Welcome" });
+  Object.assign(session, {
+    workSessions: { refresh: vi.fn(async () => {}) },
+    mePlacement: {
+      snapshot: () => ({ status: "ready" }),
+      refresh: vi.fn(async () => {}),
+      has: () => true,
+    },
+  });
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [
+      {
+        id: channel,
+        name: "Welcome",
+        channelType: "session",
+        private: true,
+        members: [viewer, bot],
+      },
+    ],
+  });
+  let release!: () => void;
+  let held: import("./conversation-start").ConversationStart | undefined;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  execute = async (input) => {
+    held = input;
+    await waiting;
+    return { ok: true };
+  };
+  const controller = new AbortController();
+  const request = service.welcome(bot, channel, controller.signal);
+  const rejected = expect(request).rejects.toThrow();
+  try {
+    await vi.waitFor(() => expect(held).toBeDefined());
+    connect(false);
+    await expect(
+      held?.agent.publish({ kind: 9, content: "late", tags: [["h", channel]] }),
+    ).rejects.toThrow();
+    controller.abort();
+    await rejected;
+  } finally {
+    release();
+  }
+});
+
+it("preserves an accepted startup publication already in native custody when navigation retires", async () => {
+  let execute: NonNullable<
+    AgentType<Config>["startConversation"]
+  > = async () => ({ ok: true });
+  const { service, session, native } = await setup({
+    startConversation: (input) => execute(input),
+  });
+  await service.create({ type: "example/echo", name: "Welcome" });
+  Object.assign(session, {
+    workSessions: { refresh: async () => {} },
+    mePlacement: {
+      snapshot: () => ({ status: "ready" }),
+      refresh: async () => {},
+      has: () => true,
+    },
+  });
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [
+      {
+        id: channel,
+        name: "Welcome",
+        channelType: "session",
+        private: true,
+        members: [viewer, bot],
+      },
+    ],
+  });
+  let finish!: (event: RelayEvent) => void;
+  native.publish.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  execute = async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "Hello", tags: [["h", channel]] });
+    return { ok: true };
+  };
+  const controller = new AbortController();
+  const requested = service.welcome(bot, channel, controller.signal);
+  try {
+    await vi.waitFor(() => expect(native.publish).toHaveBeenCalledOnce());
+    controller.abort();
+    const reply = event("published", {
+      pubkey: bot,
+      content: "Hello",
+      tags: [["h", channel]],
+    });
+    finish(reply);
+    expect(await requested).toBe(reply);
+  } finally {
+    if (finish) finish(event("released"));
+  }
 });

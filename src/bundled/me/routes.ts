@@ -5,6 +5,7 @@ export function isMeRoute(value: JsonValue): value is string {
   return (
     typeof value === "string" &&
     (value === "new" ||
+      value === "welcome" ||
       (value.startsWith("new:") && value.length > 4 && value.length <= 260) ||
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
         value,

@@ -78,6 +78,7 @@ export class AgentSessions {
       }
     | undefined;
   private disposed = false;
+  private readonly cancelledStarts = new WeakSet<Promise<Live | undefined>>();
   private readonly now: () => number;
   private readonly newId: () => string;
 
@@ -215,6 +216,10 @@ export class AgentSessions {
     this.opening.set(key, starting);
     live = await starting;
     if (this.opening.get(key) === starting) this.opening.delete(key);
+    if (this.cancelledStarts.has(starting)) {
+      if (live) void live.process.kill();
+      return { ok: false, error: "Conversation start was cancelled" };
+    }
     if (live && !this.disposed) this.adopt(key, live, seen);
     if (!live) return { ok: false, error: "Claude could not start" };
     if (this.disposed) {
@@ -240,6 +245,15 @@ export class AgentSessions {
       });
     }
     return delivered;
+  }
+
+  /** Stops only this conversation when an app-authored startup is cancelled.
+   * A process still opening is stopped when its start finishes. */
+  stop(key: string) {
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    const opening = this.opening.get(key);
+    if (opening) this.cancelledStarts.add(opening);
   }
 
   /** Runs one turn in a new session, then stops its process. The session is

@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   Fragment,
+  type ReactNode,
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
@@ -129,6 +130,9 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Me's quieter centered transcript and viewer-message alignment. */
   chatPresentation?: boolean | undefined;
+  /** Host-owned setup content around the messages, in the same scrollport. */
+  beforeMessages?: ReactNode;
+  afterMessages?: ReactNode;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -183,6 +187,8 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
+  beforeMessages,
+  afterMessages,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -805,9 +811,10 @@ function Timeline({
     >
       <div
         ref={edge}
-        className={styles.edge}
+        className={beforeMessages ? styles.introEdge : styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
+        {beforeMessages}
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
@@ -899,7 +906,7 @@ function Timeline({
                     day={day}
                   />
                 )}
-                {index === rows.length - 1 && (
+                {index === rows.length - 1 && !afterMessages && (
                   <div className={styles.timelineEnd} aria-hidden="true" />
                 )}
               </Fragment>
@@ -907,9 +914,10 @@ function Timeline({
           })}
         </Virtualizer>
       )}
-      {!rows.length && !window.hasMore && (
+      {!rows.length && !window.hasMore && !afterMessages && (
         <p className={styles.empty}>No messages yet.</p>
       )}
+      {afterMessages}
     </section>
   );
 }
