@@ -14,6 +14,7 @@ Commands:
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   install DIRECTORY        Install a built artifact (new plugins start disabled)
+  reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
   enable ID | disable ID | remove ID | rollback ID
   recover                  Back up settings and reset to bundled defaults
@@ -98,6 +99,26 @@ fn run() -> Result<()> {
                 installed.publisher.as_deref().unwrap_or("unsigned")
             );
         }
+        ("reload", [id]) => {
+            let before = manager.catalog()?;
+            let after = manager.reload_live(id)?;
+            for (label, catalog) in [
+                ("Previous host access", &before),
+                ("Updated host access", &after),
+            ] {
+                let grants = catalog
+                    .plugins
+                    .iter()
+                    .find(|p| p.manifest.id == *id)
+                    .and_then(|p| p.manifest.host.as_ref());
+                println!(
+                    "{label}: {}",
+                    serde_json::to_string_pretty(&grants).map_err(|e| e.to_string())?
+                );
+            }
+            println!("Reloaded {id} in profile {profile}. The running app picks up changed builds automatically.");
+        }
+        ("reload", _) => return Err("Usage: buzzodz plugin reload ID".into()),
         ("list", []) => print_catalog(&manager.catalog()?)?,
         ("recover", []) => {
             let catalog = manager.recover()?;

@@ -255,3 +255,28 @@ export type ComposerCompletion = Readonly<{
   ): CompletionQuery | null;
   component: ComponentType<ComposerCompletionProps>;
 }>;
+
+/** A conversation a page opens in a tab beside its own. `messageId` opens at
+ * that message: in its thread when `threadId` is given, or else in the
+ * conversation, or its thread if it is a reply or too old to find. */
+export type PageTabTarget = {
+  channelId: string;
+  threadId?: string;
+  messageId?: string;
+};
+/** `keep` opens a tab beside the others instead of in place of the last.
+ * `markRead: false` keeps a conversation tab from marking what it shows read,
+ * so the page decides; threads read as in Channels. */
+export type PageTabOptions = { keep?: boolean; markRead?: boolean };
+export type PageTabsProps = {
+  /** Keys the page's tabs, which last as long as its community session. */
+  id: string;
+  session: RelaySession;
+  scope: string;
+  label: string;
+  icon?: ReactNode;
+  /** The page's own first tab. `open` shows a joined conversation in a host tab. */
+  children(
+    open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+  ): ReactNode;
+};

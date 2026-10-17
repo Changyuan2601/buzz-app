@@ -794,7 +794,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Menu",
     purpose: "Present contextual actions and choices from a compact trigger.",
     behavior:
-      "Base UI owns positioning, dismissal, keyboard navigation, selection, and nested submenus.",
+      "Base UI owns positioning, dismissal, keyboard navigation, selection, and nested submenus. Context menus appear immediately and expose their visible lifetime to source rows; dropdowns and submenus retain their entrance motion.",
     variants: [
       "actions",
       "compact",

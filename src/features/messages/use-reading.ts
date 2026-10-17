@@ -15,6 +15,8 @@ type Reading = {
   rootId?: string | undefined;
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
+  /** False: this list marks nothing read; its owner decides what was read. */
+  enabled?: boolean | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -33,10 +35,11 @@ export function useReading({
   rootId,
   scroller,
   settled,
+  enabled = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   useEffect(() => {
-    if (!scroller.current) return;
+    if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
     let handle: ReadingHandle | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -231,5 +234,6 @@ export function useReading({
     scroller,
     settled,
     composer,
+    enabled,
   ]);
 }

@@ -25,21 +25,27 @@ function useChosenAgent(scope: string) {
 /**
  * The agent new Berd messages are tagged for: the one chosen as default when
  * it can still be tagged, otherwise the first agent the viewer runs here, else
- * the first agent they can tag. Bestie may own this choice later.
+ * the first agent they can tag. Bestie may own this choice later. A requested
+ * agent, as when search opens a new chat with it, replaces that choice: it is
+ * tagged once it can be, and no other agent stands in for it.
  */
 export function useDefaultAgent(
   session: RelaySession,
   scope: string,
+  requested?: string,
 ): MentionRecipient | undefined {
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
   const fallbackReady =
+    !requested &&
     choices.complete &&
     choices.archives.status !== "idle" &&
     choices.archives.status !== "loading";
   const agent =
-    choices.selectable.find((choice) => choice.pubkey === chosen) ??
+    choices.selectable.find(
+      (choice) => choice.pubkey === (requested ?? chosen),
+    ) ??
     (fallbackReady
       ? (choices.selectable.find((choice) => choice.managed) ??
         choices.selectable[0])

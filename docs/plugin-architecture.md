@@ -749,6 +749,16 @@ reloading reads the recorded candidate folder and requires the manifest ID to st
 same. Reload rejects changed host declarations; use Load from folder to review and
 install that revision. Enabled plugins must be disabled before reload so memory-only
 plugin state, such as credentials, is not discarded by replacing the running module.
+For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
+folder plugin while preserving its enabled state. The running desktop observes the
+shared profile catalog every second and disposes the previous revision before
+activating the new one. Use the same `--home` and `--profile` as the app. Reloading
+identical build bytes does not restart the plugin. CLI reload applies the same
+manifest ID and publisher checks as Settings. CLI reload accepts changed host
+access and reports the previous and updated declarations. Rejected builds leave
+the installed revision unchanged. Replacing an active plugin ends its in-memory
+work, including a voice call. This is a host-management capability, since an
+external plugin cannot manage other installations or add CLI commands.
 Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
@@ -980,7 +990,7 @@ unambiguous signed person/agent mentions share the inline hover styling. Names i
 ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -1009,6 +1019,33 @@ Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
+
+`conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
+page's content the first main tab of the host's conversation tab workspace.
+`children(open)` renders that tab; `open({ channelId, threadId? }, { keep? })`
+shows a joined conversation in a host tab and returns false for any other. A
+thread opens as a side-pane thread tab and a whole conversation as a side-pane
+conversation tab, each with the same reader and composer as Channels tabs, so
+the page stays in view; any thread can then move to the main pane. A plain open
+replaces the tab the previous one added, and `keep: true` adds a tab beside it;
+an already-open conversation's tab is selected wherever it is. `id` keys the page's tabs, which last for its community session as
+Channels tabs do; they keep no Back/Forward visits.
+The tab workspace belongs to Channels, which supplies it with
+`conversation.registerTabs(component)`; the conversation service only holds that
+slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads
+it at render and falls back to its own layout.
+
+`open({ channelId, messageId })` opens the conversation at that message. The
+shared `useMessageOpening` reader waits for verified history (cached rows
+decide nothing), reads older pages until the message loads (at most 25 pages
+of 20 top-level posts) and mounts the list once, at the message; a reply, or a
+message it does not find, opens as its thread in the same tab, scrolled to the
+message. Each open asks again, even for the same message, but a tab restored
+when the page remounts does not jump back to it. With `threadId` too, the
+thread tab opens and scrolls to that message, again on each open. `open(target, { markRead: false })` makes a
+conversation tab mark nothing read, so a page such as For You can keep the
+posts beside the one it opened unread and mark that one itself; threads read
+as they do in Channels.
 
 ### Composer ownership and mention tools
 

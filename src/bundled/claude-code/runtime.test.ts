@@ -305,6 +305,21 @@ it("hands a mention to its thread's session", async () => {
   expect(published).toEqual([]);
 });
 
+it("tells a subscriber when a new conversation's first turn starts working", async () => {
+  const { runtime, deliver, claudes } = setup([], { hold: true });
+  // As a view does: each notification reads the snapshot again.
+  runtime.subscribe(() => void runtime.sessions(self));
+  expect(runtime.sessions(self)).toEqual([]);
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.prompts).toHaveLength(1);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: true }]);
+  claude?.finish();
+  await flush(10);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
+});
+
 const EFFORTS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },

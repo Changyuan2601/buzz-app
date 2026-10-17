@@ -165,6 +165,7 @@ function fixture(
   let closed = false;
   let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
+  const adopted: string[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
     // The plugin starts the app server as a step of Buzz's `codex.sh`.
     const appServer =
@@ -188,6 +189,10 @@ function fixture(
         kill: async () => catalogExit.resolve(null),
         exited: catalogExit.promise,
       };
+    }
+    if (_id === "adopt") {
+      adopted.push(value?.args?.[0] ?? "");
+      return { ...process, exited: Promise.resolve(0) };
     }
     if (_id === "workspace") {
       value?.onStdout?.("/home/test/.buzz\n");
@@ -520,6 +525,7 @@ function fixture(
       }),
     pluginDispose: () => pluginDispose(),
     spawn,
+    adopted,
     process,
     sent,
     failing,
@@ -1092,6 +1098,20 @@ it("steers a mid-turn message whose pick matches the running turn, or has none",
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.starts()).toHaveLength(1);
+});
+it("dates a binding by the latest message it took in or turn it ended", async () => {
+  let now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const f = fixture();
+  const at = () => f.runtime.conversations(pubkey)[0]?.at;
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(at()).toBe(1_000));
+  now = 2_000;
+  await f.runtime.run(f.delivery("steered"));
+  await vi.waitFor(() => expect(at()).toBe(2_000));
+  now = 3_000;
+  f.complete();
+  await vi.waitFor(() => expect(at()).toBe(3_000));
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
@@ -1904,6 +1924,45 @@ it("leaves a failed first startup unbound so the next mention can start fresh", 
   expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
     [JSON.stringify(["channel", root])]: { threadId: "thread-2" },
   });
+});
+
+it("continues a saved thread copied from the user's Codex home", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const write = f.process.write;
+  let resumes = 0;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "thread/resume" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    // Missing until Buzz copies it into its own home.
+    if (resumes++ === 0 || !f.adopted.includes("thread-1"))
+      f.emit({
+        id: wire.id,
+        error: {
+          code: -32600,
+          message: "no rollout found for thread id thread-1",
+        },
+      });
+    else
+      f.emit({
+        id: wire.id,
+        result: { thread: { id: "thread-1", cwd: "/home/test/.buzz" } },
+      });
+  });
+  await f.runtime.run(f.delivery("follow-up"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+  expect(f.adopted).toEqual(["thread-1"]);
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    2,
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
 });
 
 it.each([

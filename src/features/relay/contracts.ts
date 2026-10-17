@@ -56,6 +56,8 @@ export type Profile = Readonly<{
   name: string;
   /** The name is an identity fragment, not a name supplied by kind-0 content. */
   nameIsFallback?: true;
+  /** The kind-0 `name` (handle), when `name` above is a different display name. */
+  username?: string;
   picture?: string;
   about?: string;
   /** Self-declared NIP-05 identifier; not proof of DNS verification. */
@@ -171,6 +173,8 @@ export type ChannelWindow = Readonly<{
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
+  /** A head read is in flight for these rows; older pages wait for it. */
+  refreshing?: boolean | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;

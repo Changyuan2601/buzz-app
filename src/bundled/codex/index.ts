@@ -132,6 +132,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
       check: () => providerController.check(),
       DialogBody: ProviderDialogBody,
     },
+    sessions: {
+      list: (pubkey) => {
+        const views = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.status]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const status = views.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              ...(at !== undefined && { at }),
+              ...(status && { status }),
+            };
+          });
+      },
+      subscribe: runtime.subscribe,
+    },
     tabs: [
       {
         id: "settings",

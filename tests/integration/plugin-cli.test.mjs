@@ -132,6 +132,53 @@ test("scaffold builds through pnpm and installs a usable standalone JSX page", a
     const listed = cli("--home", directory, "plugin", "list");
     assert.match(listed.stdout, /test.page\s+enabled\s+external\s+Test page/);
     assert.match(listed.stdout, /Publisher: unsigned/);
+    const registryPath = path.join(directory, "profiles/default/registry.json");
+    const installedPlugin = async () =>
+      JSON.parse(await readFile(registryPath, "utf8")).installed["test.page"];
+    const first = await installedPlugin();
+    await writeFile(
+      path.join(source, "src/index.tsx"),
+      'export function apply(ctx: any) { ctx.pages.register({id: "main", title: "Reloaded", component: () => null}); }',
+    );
+    assert.equal(cli("plugin", "build", source).status, 0);
+    const reloaded = cli("--home", directory, "plugin", "reload", "test.page");
+    assert.equal(reloaded.status, 0, reloaded.stderr);
+    assert.match(reloaded.stdout, /Reloaded test.page/);
+    const second = await installedPlugin();
+    assert.equal(second.enabled, true);
+    assert.notEqual(second.current, first.current);
+    assert.equal(second.previous, first.current);
+    assert.equal(
+      cli("--home", directory, "plugin", "reload", "test.page").status,
+      0,
+    );
+    assert.deepEqual(await installedPlugin(), second);
+    const manifestPath = path.join(source, "dist/manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.host = { processes: [{ id: "extra", program: "echo" }] };
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const accepted = cli("--home", directory, "plugin", "reload", "test.page");
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(accepted.stdout, /Previous host access/);
+    assert.match(accepted.stdout, /Updated host access/);
+    assert.match(accepted.stdout, /extra/);
+    assert.deepEqual((await installedPlugin()).manifest.host, {
+      commands: [],
+      networkOrigins: [],
+      processes: [{ id: "extra", program: "echo", args: [] }],
+    });
+    assert.equal((await installedPlugin()).enabled, true);
+    assert.equal(
+      cli("--home", directory, "plugin", "disable", "test.page").status,
+      0,
+    );
+    delete manifest.host;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    assert.equal(
+      cli("--home", directory, "plugin", "reload", "test.page").status,
+      0,
+    );
+    assert.equal((await installedPlugin()).enabled, false);
   });
 });
 test("failed source builds preserve the installed revision", async () => {

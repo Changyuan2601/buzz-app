@@ -24,6 +24,8 @@ export type ReadFilter = Readonly<{
   consistency?: "strong";
   /** NIP-AR artifact reads: current heads only, or a `d`'s revision history. */
   artifact?: "current" | "history";
+  /** NIP-AR artifact page offset (≤ 10,000). */
+  offset?: number;
   until?: number;
   since?: number;
   "#h"?: readonly string[];

@@ -39,12 +39,15 @@ export function foldProfiles(
         (value): value is string =>
           typeof value === "string" && value.trim().length > 0,
       );
+      const handle =
+        typeof body.name === "string" ? body.name.trim() : undefined;
       const picture = avatarSource(body.picture);
       profiles.set(
         pubkey,
         Object.freeze({
           name: name ?? pubkey.slice(0, 10),
           ...(!name ? { nameIsFallback: true as const } : {}),
+          ...(handle && handle !== name?.trim() ? { username: handle } : {}),
           ...agent,
           ...(picture ? { picture } : {}),
           ...(typeof body.about === "string" && body.about.trim()

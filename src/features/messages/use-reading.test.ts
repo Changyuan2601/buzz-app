@@ -28,6 +28,7 @@ function setup({
   strict = false,
   latestMessageId = undefined as string | undefined,
   rootId = undefined as string | undefined,
+  enabled = true,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
 } = {}) {
   vi.useFakeTimers();
@@ -112,6 +113,7 @@ function setup({
       settled: position,
       latestMessageId,
       rootId,
+      enabled,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -155,6 +157,7 @@ function setup({
         settled: position,
         latestMessageId,
         rootId,
+        enabled,
       }),
     unmount: view.unmount,
   };
@@ -175,6 +178,12 @@ it("reports only fully visible settled evidence after dwell, not mounted oversca
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it("a disabled list marks nothing read, not even its visible bottom", async () => {
+  const h = setup({ enabled: false, latestMessageId: "visible" });
+  h.mutation();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(h.reading).not.toHaveBeenCalled();
 });
 it.each([
   { focused: false },

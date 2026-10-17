@@ -133,6 +133,9 @@
   font-weight: var(--type-weight-normal);
   text-align: start;
   cursor: pointer;
+  /* Like NavigationItem, this disclosure is navigation, not document text. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .sectionHeading span {
   overflow-wrap: anywhere;
@@ -212,12 +215,14 @@
 }
 .sectionHeader:is(
     :hover,
+    [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
   [data-session-row-action],
 .organizedRow:is(
     :hover,
+    [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
@@ -238,11 +243,13 @@
 }
 .organizedRow:is(
   :hover,
+  [data-context-menu-present],
   :has(:focus-visible),
   :has([aria-expanded="true"][aria-haspopup="menu"])
 ):not(:has([aria-current="page"])),
 .sectionHeader:is(
   :hover,
+  [data-context-menu-present],
   :has(:focus-visible),
   :has([aria-expanded="true"][aria-haspopup="menu"])
 ) {
@@ -322,6 +329,7 @@
 }
 .organizedRow:is(
     :hover,
+    [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
@@ -362,6 +370,7 @@
 }
 .sectionHeader:is(
     :hover,
+    [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
@@ -388,6 +397,7 @@
 @media (hover: hover) {
   .organizedRow:is(
       :hover,
+      [data-context-menu-present],
       :has(:focus-visible),
       :has([aria-expanded="true"][aria-haspopup="menu"])
     )

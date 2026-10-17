@@ -1187,3 +1187,51 @@ it.each([
     expect(screen.getByRole("tab", { name: kept })).toHaveFocus();
   },
 );
+
+it.each([
+  [true, "main"],
+  // Channels between resolved channels keeps other threads beside it.
+  [false, "side"],
+])(
+  "anyMainThread %s places another channel's thread in %s",
+  (anyMainThread, pane) => {
+    setThreadPlacementPreference("main");
+    const channels = [{ id: "alpha", name: "Alpha" }];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+    } as unknown as RelaySession;
+    const available: RegisteredPanel[] = [];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    const h = renderHook(() => {
+      const state = useChannelTabState(session, undefined, "page:fixture");
+      const workspace = useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: undefined,
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        mainPane: true,
+        anyMainThread,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    });
+    act(() => {
+      h.result.current.workspace.openLinkedThread("alpha", "r1", "r1");
+    });
+    expect(h.result.current.state.tabs.map(tabPane)).toEqual([pane]);
+  },
+);

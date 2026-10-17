@@ -24,6 +24,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     host,
     agents.relay,
     (pubkey, signal) => agents.core(pubkey, signal),
+    localStorage,
     () => agents.tools(),
   );
   const spawn = host.spawn?.bind(host);
@@ -71,6 +72,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
     summary: (agent) => {
       const { model, provider } = config(agent.config);
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
+    },
+    sessions: {
+      list: (pubkey) => {
+        const live = runtime.sessions(pubkey);
+        const busy = new Map(live.map((view) => [view.key, view.busy]));
+        const used = new Map(
+          runtime.conversations(pubkey).map(({ key, at }) => [key, at]),
+        );
+        // Open ones are listed even when saving them failed. A one-off turn
+        // joins no conversation.
+        for (const { key, at } of live) if (at !== undefined) used.set(key, at);
+        return [...used]
+          .sort(([, a], [, b]) => b - a)
+          .map(([key, at]) => {
+            const [channelId = key, root] = key.split("/");
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
+      },
+      subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [
       {

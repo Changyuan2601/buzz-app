@@ -648,6 +648,9 @@ export function createChannelStore(
     const generation = state.generation;
     const controller = new AbortController();
     state.controller = controller;
+    // Shown rows wait on this head read; a seek must not treat it as the end.
+    if (!cursor && state.snapshot.status === "ready")
+      setWindow(state, { refreshing: true });
     try {
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
@@ -716,6 +719,14 @@ export function createChannelStore(
       );
     } finally {
       if (state.controller === controller) state.controller = undefined;
+      // Aborted reads end here too; a newer head read keeps the flag.
+      if (
+        !state.controller &&
+        state.snapshot.refreshing &&
+        !disposed &&
+        windows.get(state.channelId) === state
+      )
+        setWindow(state, { refreshing: undefined });
     }
   }
   async function hydrate() {
@@ -2628,12 +2639,22 @@ export function createChannelStore(
     clearCache,
     dispose,
     /** A disconnected stream invalidates a head's freshness lease, not its content.
-     * Inactive cached heads will revalidate when demanded, without an all-roster read. */
+     * Inactive cached heads will revalidate when demanded, without an all-roster read.
+     * The session drops its queued catch-ups with the stream, so an empty window
+     * that only a queued catch-up marked loading becomes idle: the next ensure()
+     * reads it again. Running reads settle their own windows when cancelled. */
     staleHeads() {
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values())
-        setWindow(state, { freshness: "cached" });
+        setWindow(state, {
+          freshness: "cached",
+          ...(state.snapshot.status === "loading" &&
+          !state.snapshot.rows.length &&
+          !state.controller
+            ? { status: "idle" }
+            : {}),
+        });
     },
     /** Revalidate only a retained reader after establishing the stream. An unopened
      * channel needs no eager HTTP head; its normal ensure() owns that finite handoff. */
@@ -2703,11 +2724,19 @@ export function createChannelStore(
         ...[...windows.keys()].reverse(),
       ]),
     ],
-    staleHead(channelId: string) {
+    /** A catch-up head read is queued: the rows wait to be revalidated, an
+     * empty window is loading, and an earlier failure is no longer the answer.
+     * catchUp settles it again. */
+    catchUpQueued(channelId: string) {
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);
-      if (state) setWindow(state, { freshness: "cached" });
+      if (state)
+        setWindow(state, {
+          freshness: "cached",
+          error: undefined,
+          ...(state.snapshot.rows.length ? {} : { status: "loading" }),
+        });
     },
     diagnostics: () => ({
       heads: heads.stats(),

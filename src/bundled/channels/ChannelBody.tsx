@@ -14,6 +14,9 @@ export const ChannelBody = memo(function ChannelBody({
   cached,
   viewer,
   revealMessageId,
+  inlineTarget,
+  marksRead,
+  holding,
   onOpenThread,
   navigation,
   onContentReady,
@@ -26,6 +29,14 @@ export const ChannelBody = memo(function ChannelBody({
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
   revealMessageId?: string | undefined;
+  /** One exact visit to a loaded message, without a page navigation. */
+  inlineTarget?:
+    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | undefined;
+  /** False: viewing rows marks nothing read. */
+  marksRead?: boolean | undefined;
+  /** Show the loading notice instead of the list, as while a message is sought. */
+  holding?: boolean | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
@@ -87,7 +98,7 @@ export const ChannelBody = memo(function ChannelBody({
         </Button>
       </div>
     );
-  if (window.status !== "ready" && !window.rows.length)
+  if (holding || (window.status !== "ready" && !window.rows.length))
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
@@ -111,6 +122,8 @@ export const ChannelBody = memo(function ChannelBody({
       }
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
+      inlineTarget={inlineTarget}
+      marksRead={marksRead}
       navigation={navigation}
       activityLane={activityLane}
     />

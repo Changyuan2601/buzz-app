@@ -41,7 +41,12 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import { AgentSessions, ServerPool, SharedProcess } from "./sessions";
+import {
+  AgentSessions,
+  localSessions,
+  ServerPool,
+  SharedProcess,
+} from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -130,6 +135,7 @@ export class GooseRuntime {
     private readonly relay: (pubkey: string) => RelayData | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
+    private readonly storage: Storage = globalThis.localStorage,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
@@ -180,6 +186,13 @@ export class GooseRuntime {
       this.views.set(pubkey, view);
     }
     return view;
+  }
+  /** The agent's saved conversations, most recently used first. Removing an
+   * agent keeps them. */
+  conversations(pubkey: string) {
+    return localSessions(this.storage, pubkey)
+      .list()
+      .map(([key, { at }]) => ({ key, at }));
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -511,6 +524,7 @@ export class GooseRuntime {
       tools,
       process: this.goose,
       pool: this.pool,
+      store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({

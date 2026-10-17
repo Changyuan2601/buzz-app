@@ -9,13 +9,24 @@ import type { RelaySession } from "../../features/relay/session";
 import type { PanelOpening } from "../../features/panels/service";
 
 export type ConversationTab =
-  | { id: string; kind: "conversation"; channelId: string }
+  | {
+      id: string;
+      kind: "conversation";
+      channelId: string;
+      /** The message the tab opens at, revealed once per `revealRequest`. */
+      messageId?: string | undefined;
+      revealRequest?: number | undefined;
+      /** False: seeing messages here marks none read; the opener decides. */
+      markRead?: false | undefined;
+    }
   | {
       id: string;
       kind: "thread";
       channelId: string;
       messageId: string;
       replyRequest?: number | undefined;
+      /** Each new value reveals `messageId` again; set only by openings at it. */
+      revealRequest?: number | undefined;
       /** Transient visual cue when an opening reuses this tab. */
       attentionRequest?: number | undefined;
       /** Threads live in the side pane unless moved or opened into main. */
@@ -95,17 +106,14 @@ const sideSelection = (state: State) =>
     ...state.entries.map(panelTabId),
   ]);
 
-/** Opening a thread selects its existing tab or adds one in `pane`. */
-function withThread(
-  state: State,
+/** A channel's open tab for a thread: by its verified root, or until then by
+ * the id it was opened with. */
+export const threadTab = (
+  tabs: readonly ConversationTab[],
   channelId: string,
-  messageId: string,
   rootId: string,
-  intent: "reply" | "select" | undefined,
-  pane: TabPane,
-  attention = false,
-): State {
-  const existing = state.tabs.find(
+) =>
+  tabs.find(
     (tab) =>
       tab.kind === "thread" &&
       tab.channelId === channelId &&
@@ -113,6 +121,22 @@ function withThread(
         ? tab.rootId === rootId
         : tab.id === `thread:${channelId}:${rootId}`),
   );
+
+/** Reply asks for the composer; select keeps the tab's requests; reveal asks
+ * the reader to show `messageId` again. */
+export type ThreadIntent = "reply" | "select" | "reveal";
+
+/** Opening a thread selects its existing tab or adds one in `pane`. */
+function withThread(
+  state: State,
+  channelId: string,
+  messageId: string,
+  rootId: string,
+  intent: ThreadIntent | undefined,
+  pane: TabPane,
+  attention = false,
+): State {
+  const existing = threadTab(state.tabs, channelId, rootId);
   const baseId = `thread:${channelId}:${rootId}`;
   const id =
     existing?.id ??
@@ -132,9 +156,13 @@ function withThread(
     replyRequest:
       intent === "reply"
         ? (prior?.replyRequest ?? 0) + 1
-        : intent === "select"
+        : intent === "select" || intent === "reveal"
           ? prior?.replyRequest
           : undefined,
+    revealRequest:
+      intent === "reveal"
+        ? (prior?.revealRequest ?? 0) + 1
+        : prior?.revealRequest,
     // An already-open thread stays wherever it was placed.
     pane: prior ? tabPane(prior) : pane,
     rootId: prior?.rootId,
@@ -346,7 +374,7 @@ export function useChannelTabState(
       channelId: string,
       messageId: string,
       rootId: string,
-      intent?: "reply" | "select",
+      intent?: ThreadIntent,
       pane: TabPane = threadPlacementPreference(),
     ) =>
       update((state) =>

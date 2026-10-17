@@ -36,8 +36,9 @@ const STEPS: Readonly<Record<string, readonly string[]>> = {
   "app-server": ["run", "app-server"],
   install: ["install"],
   use: ["use"],
+  adopt: ["adopt"],
 };
-/** Starts `codex`, `app-server`, `install` and `use` as steps of `codex.sh`,
+/** Starts `codex`, `app-server`, `install`, `use` and `adopt` as steps of `codex.sh`,
  * which the manifest grants as `bash -c`; other processes start as declared. */
 export const withScript =
   (spawn: Spawn): Spawn =>

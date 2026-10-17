@@ -114,7 +114,12 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
-  const runtime = new GooseRuntime(host, () => relay, core);
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const runtime = new GooseRuntime(host, () => relay, core, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -226,6 +231,20 @@ describe("GooseRuntime", () => {
         ["p", alice],
       ],
     ]);
+  });
+
+  it("tells a subscriber when a new conversation's first turn starts working", async () => {
+    const { deliver, goose, runtime } = setup({ hold: true });
+    // As a view does: each notification reads the snapshot again.
+    runtime.subscribe(() => void runtime.sessions(self));
+    expect(runtime.sessions(self)).toEqual([]);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect(goose()?.turns).toHaveLength(1);
+    expect(runtime.sessions(self)).toMatchObject([{ busy: true }]);
+    goose()?.turns[0]?.finish();
+    await flush(100);
+    expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
   });
 
   it("posts a channel session's burst once, in the latest message's thread", async () => {

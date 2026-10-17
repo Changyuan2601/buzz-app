@@ -53,7 +53,7 @@ import {
 } from "react";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useMePlacement } from "../../features/sessions/personal";
-import { meSelection, meSection, meTarget } from "../me/routes";
+import { meAgent, meSelection, meSection, meTarget } from "../me/routes";
 import { subscribeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -200,6 +200,7 @@ function SessionsView({
   const placement = useMePlacement(session);
   const selected = meSelection(navigation?.target);
   const newSection = meSection(navigation?.target);
+  const newAgent = meAgent(navigation?.target);
   const pendingDraft = useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
     () =>
@@ -271,8 +272,13 @@ function SessionsView({
           focusRequest={
             navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
           }
-          key={pendingDraft ?? newSection ?? "unfiled"}
+          key={
+            pendingDraft ??
+            newSection ??
+            (newAgent ? `agent:${newAgent}` : "unfiled")
+          }
           resumeDraftKey={pendingDraft}
+          agent={newAgent}
           sectionId={
             pendingDraft?.includes(":section:")
               ? pendingDraft.split(":section:")[1]

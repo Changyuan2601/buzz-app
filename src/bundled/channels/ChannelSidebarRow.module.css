@@ -28,7 +28,9 @@
 .row + div > [data-variant="row"] {
   margin-bottom: var(--space-half);
 }
-.row:hover:not([data-selected])::before {
+.row:is(:hover, :has([data-context-menu-present])):not(
+  [data-selected]
+)::before {
   background: var(--affordance-panel-hover);
 }
 .row[data-selected]::before {

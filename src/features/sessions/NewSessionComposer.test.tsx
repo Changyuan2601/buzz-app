@@ -892,6 +892,34 @@ it("a new Me chat starts tagged with the default agent", async () => {
   );
 });
 
+it("a new Me chat for a named agent starts tagged with it, not the default", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const agent = "b".repeat(64);
+  render(
+    <NewSessionComposer
+      personal
+      agent={agent}
+      session={f.session}
+      scope="me-route-agent"
+      onStarted={started}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await waitFor(() => expect(input).toHaveTextContent("@Outside agent"));
+  expect(input).not.toHaveTextContent("@Member agent");
+  await user.type(input, "Hello");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  const [id] = started.mock.calls[0] ?? [];
+  expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
+    id,
+    expect.stringContaining("Hello"),
+    [agent],
+  );
+});
+
 it("a new Me chat needs a tagged agent to send", async () => {
   const f = setup();
   const user = userEvent.setup();

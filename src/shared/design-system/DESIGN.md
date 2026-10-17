@@ -617,6 +617,17 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
 
+Navigation labels are controls, not selectable document text. `NavigationItem`,
+tabs, and sidebar section/project disclosure headings prevent text selection,
+including when opening a context menu. Keep this behavior on the navigation
+control, not the shared context-menu trigger: messages, inline message links,
+and readable content remain selectable. Editable fields retain normal selection.
+Channel and chat sidebar rows whose context menu is visible keep their hover
+treatment through dismissal, without changing the selected destination. Selected
+rows retain their selected treatment. `ContextMenuTrigger` exposes
+`data-context-menu-present` for this visible lifetime, including the exit fade;
+features keep the row's treatment with its existing surface owner.
+
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its
 background clear and underlines on interaction. Button’s plain variant keeps the background clear
@@ -814,12 +825,15 @@ Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as
 emoji/GIF content.
-Menus and popovers use a quicker version of the form dropdown motion: 75ms entry
-and 60ms exit (half the state/fast duration tokens), a 2px offset and blur-to-sharp
-opacity fade. Movement uses
-easing-settle; opacity and filter use easing-state. The offset follows the actual
-placement side toward the trigger, including collision flips and nested menus.
-This extends the designer-requested blur exception to these anchored surfaces.
+Dropdown menus, submenus, and popovers use a quicker version of the form dropdown
+motion: 75ms entry and 60ms exit (half the state/fast duration tokens), a 2px offset
+and blur-to-sharp opacity fade. Movement uses easing-settle; opacity and filter use
+easing-state. The offset follows the actual placement side toward the trigger,
+including collision flips and nested menus. This extends the designer-requested
+blur exception to these anchored surfaces. Context menus appear immediately,
+without an entrance fade, movement, or blur; dismissal retains only the 60ms
+opacity fade. The shared menu root owns this distinction, so dropdowns opened
+inside a context-menu target and nested submenus keep their ordinary motion.
 Keyboard navigation and reduced motion remove transitions, movement, and blur. The Just
 Design Menu, Popover and ChoiceRow pages
 show these contracts and their compositions.

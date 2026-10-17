@@ -313,6 +313,23 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
 });
 
+it("saves when a session takes in a message or ends a turn, not while a long turn keeps it open", async () => {
+  vi.useFakeTimers();
+  const store = memoryStore();
+  const { pool, claudes } = sessions({ store, hold: true });
+  const at = () => store.get("c/root")?.at ?? 0;
+  const done = pool.deliver("c/root", "work", 1);
+  await vi.advanceTimersByTimeAsync(10);
+  const started = at();
+  expect(started).toBeGreaterThan(0);
+  await vi.advanceTimersByTimeAsync(IDLE_MS + 1);
+  expect(claudes()[0]?.killed).toBe(false);
+  expect(at()).toBe(started);
+  claudes()[0]?.finish();
+  await done;
+  expect(at()).toBeGreaterThan(started);
+});
+
 it("starts over when a saved session no longer loads", async () => {
   const store = memoryStore();
   store.set("c/root", { id: "lost", seen: 4, at: 1 });

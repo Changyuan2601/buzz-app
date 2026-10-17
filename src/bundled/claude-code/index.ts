@@ -124,6 +124,27 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       DialogBody: ProviderDialogBody,
     },
+    sessions: {
+      list: (pubkey) => {
+        const busy = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
+      },
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     tabs: [
       {
         id: "settings",

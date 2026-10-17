@@ -84,8 +84,11 @@ export function NewSessionComposer({
   standalone = false,
   focusRequest = 0,
   resumeDraftKey,
+  agent,
 }: {
   personal?: boolean;
+  /** Start with this agent chosen, as when search opens a new session with it. */
+  agent?: string | undefined;
   resumeDraftKey?: string | undefined;
   standalone?: boolean;
   focusRequest?: number | AbortSignal;
@@ -105,9 +108,14 @@ export function NewSessionComposer({
         ? `${namespace}:section:${sectionId}`
         : namespace);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // New chats tag their agent in the draft; an interrupted start keeps the
-  // assistant its receipt was admitted with.
-  const defaultAgent = useDefaultAgent(session, scope);
+  // New chats tag their agent in the draft: the one the route names, else the
+  // default. An interrupted start keeps the assistant its receipt was
+  // admitted with.
+  const defaultAgent = useDefaultAgent(
+    session,
+    scope,
+    personal ? agent : undefined,
+  );
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
       scope,

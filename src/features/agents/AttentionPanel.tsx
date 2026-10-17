@@ -304,7 +304,12 @@ function WatchRow({
       ? [`“${value.prompt}”`, status?.text]
       : [
           value.name && describeWatch(unnamed(value), channels),
-          value.filter && `when ${value.filter}`,
+          value.authors &&
+            `from ${plural(value.authors.length, "author")} only`,
+          value.exclude_authors &&
+            `not from ${plural(value.exclude_authors.length, "author")}`,
+          value.is_reply !== undefined &&
+            (value.is_reply ? "replies only" : "top-level messages only"),
           value.classifier &&
             (classifier === "available"
               ? "has a classifier"

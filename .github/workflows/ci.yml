@@ -174,15 +174,15 @@ jobs:
           save-if: ${{ github.event_name == 'push' }}
       - name: Build native browser fixture
         timeout-minutes: 8
-        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --target-dir target/browser-fixture
+        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture
       - name: Package same-revision native fixture
         run: |
           mkdir -p target/browser-artifact
-          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-artifact/
+          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-fixture/debug/buzzodz target/browser-artifact/
           git rev-parse HEAD > target/browser-artifact/revision
           cd target/browser-artifact
-          sha256sum fixture-bridge > SHA256SUMS
-          tar -cf ../browser-fixture.tar fixture-bridge revision SHA256SUMS
+          sha256sum fixture-bridge buzzodz > SHA256SUMS
+          tar -cf ../browser-fixture.tar fixture-bridge buzzodz revision SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: fixture-upload
         with:
@@ -239,6 +239,7 @@ jobs:
           test "$(cat revision)" = "$(git rev-parse HEAD)"
           sha256sum --check SHA256SUMS
           test -x fixture-bridge
+          test -x buzzodz
       # CI required enforces measurement success. --no-deps avoids repeating
       # measurements here; the matrix covers both engines on separate runners.
       - name: Functional journeys
@@ -373,6 +374,7 @@ jobs:
           test "$(cat revision)" = "$(git rev-parse HEAD)"
           sha256sum --check SHA256SUMS
           test -x fixture-bridge
+          test -x buzzodz
       # retries stay 0, so every failed repetition reports as unexpected.
       - name: Repeat changed journeys
         env:

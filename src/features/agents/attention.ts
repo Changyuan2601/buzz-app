@@ -1,8 +1,9 @@
 // An agent's attention configuration in the `agent-attention/v1` format: Interests,
 // event watches and timers, each one object at a slug. This module is the format
-// only (validation, the filter grammar and event matching), so the same objects can
-// later move from local storage to the relay's encrypted addressable events.
+// only (validation and event matching), so the same objects can later move from
+// local storage to the relay's encrypted addressable events.
 import type { EventData } from "../relay/events";
+import { threadReference } from "../relay/thread-reference";
 
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 
@@ -26,8 +27,13 @@ export type EventWatch = Readonly<{
   since: number;
   channels: "all" | readonly string[];
   kinds: readonly number[];
+  /** The event's author must be one of these. Not with `exclude_authors`. */
+  authors?: readonly string[];
+  /** The event's author must not be one of these. */
+  exclude_authors?: readonly string[];
   tags?: Readonly<Record<string, readonly string[]>>;
-  filter?: string;
+  /** true: replies only; false: top-level only (NIP-10 `reply` marker). */
+  is_reply?: boolean;
   classifier?: Readonly<{
     questions: Readonly<Record<string, ClassifierQuestion>>;
   }>;
@@ -54,6 +60,7 @@ const ID = /^[!-~]{1,64}$/;
 const CHANNEL =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const QUESTION = /^[a-z][a-z0-9_]{0,31}$/;
+const PUBKEY = /^[0-9a-f]{64}$/;
 const MAX_INT = 2 ** 53 - 1;
 const BODY_LIMIT = 65_535;
 /** At most this many Interests, and this many watches and timers together. */
@@ -122,7 +129,7 @@ function eventWatch(value: Record<string, unknown>) {
   fields(
     value,
     ["type", "interest_id", "enabled", "since", "channels", "kinds"],
-    ["name", "tags", "filter", "classifier"],
+    ["name", "authors", "exclude_authors", "tags", "is_reply", "classifier"],
   );
   interestId(value.interest_id);
   if (value.name !== undefined) label(value.name, "name");
@@ -166,8 +173,22 @@ function eventWatch(value: Record<string, unknown>) {
     }
     if (total > TEXT_LIMIT) fail("Tag values are longer than 16,384 bytes");
   }
-  if (value.filter !== undefined)
-    compileFilter(text(value.filter, "filter", 4_096));
+  for (const name of ["authors", "exclude_authors"] as const) {
+    const keys = value[name];
+    if (
+      keys !== undefined &&
+      (!Array.isArray(keys) ||
+        !keys.length ||
+        keys.length > 100 ||
+        !unique(keys) ||
+        keys.some((key) => typeof key !== "string" || !PUBKEY.test(key)))
+    )
+      fail(`${name} must be a list of 1 to 100 hex public keys`);
+  }
+  if (value.authors !== undefined && value.exclude_authors !== undefined)
+    fail("A watch cannot have both authors and exclude_authors");
+  if (value.is_reply !== undefined && typeof value.is_reply !== "boolean")
+    fail("is_reply must be true or false");
   if (classifier !== undefined) {
     if (!isObject(classifier)) fail("classifier must be an object");
     fields(classifier as Record<string, unknown>, ["questions"]);
@@ -247,102 +268,6 @@ export function validateObject(
   }
 }
 
-// Filter grammar: predicate := or; or := and ("||" and)*; and := atom ("&&" atom)*;
-// atom := "!" atom | "(" predicate ")" | true | false | is_reply
-//       | (author | content) "==" string
-type Predicate = (event: EventData) => boolean;
-const MAX_DEPTH = 32;
-const MAX_NODES = 256;
-export function compileFilter(source: string): Predicate {
-  let at = 0;
-  let nodes = 0;
-  const node = () => {
-    if (++nodes > MAX_NODES) fail("Filter has more than 256 parts");
-  };
-  const space = () => {
-    while (at < source.length && " \t\r\n".includes(source[at] as string)) at++;
-  };
-  const take = (token: string) => {
-    space();
-    if (!source.startsWith(token, at)) return false;
-    const end = at + token.length;
-    // Words must end at a word boundary.
-    if (/^[a-z_]+$/.test(token) && /[A-Za-z0-9_]/.test(source[end] ?? ""))
-      return false;
-    at = end;
-    return true;
-  };
-  const string = () => {
-    space();
-    if (source[at] !== '"') fail("Expected a string in filter");
-    let end = at + 1;
-    while (end < source.length && source[end] !== '"')
-      end += source[end] === "\\" ? 2 : 1;
-    try {
-      const value = JSON.parse(source.slice(at, end + 1));
-      at = end + 1;
-      return value as string;
-    } catch {
-      return fail("Invalid string in filter");
-    }
-  };
-  const atom = (depth: number): Predicate => {
-    if (depth > MAX_DEPTH) fail("Filter is nested too deeply");
-    node();
-    if (take("!")) {
-      const inner = atom(depth + 1);
-      return (event) => !inner(event);
-    }
-    if (take("(")) {
-      const inner = or(depth + 1);
-      if (!take(")")) fail("Expected ) in filter");
-      return inner;
-    }
-    if (take("true")) return () => true;
-    if (take("false")) return () => false;
-    if (take("is_reply")) return isReply;
-    for (const field of ["author", "content"] as const)
-      if (take(field)) {
-        if (!take("==")) fail("Expected == in filter");
-        const expected = string();
-        return field === "author"
-          ? (event) => event.pubkey === expected
-          : (event) => event.content === expected;
-      }
-    return fail("Unexpected token in filter");
-  };
-  const and = (depth: number): Predicate => {
-    const parts = [atom(depth)];
-    while (take("&&")) {
-      node();
-      parts.push(atom(depth));
-    }
-    return parts.length === 1
-      ? (parts[0] as Predicate)
-      : (event) => parts.every((part) => part(event));
-  };
-  const or = (depth: number): Predicate => {
-    const parts = [and(depth)];
-    while (take("||")) {
-      node();
-      parts.push(and(depth));
-    }
-    return parts.length === 1
-      ? (parts[0] as Predicate)
-      : (event) => parts.some((part) => part(event));
-  };
-  const predicate = or(1);
-  space();
-  if (at !== source.length) fail("Unexpected text at the end of the filter");
-  return predicate;
-}
-const isReply: Predicate = (event) =>
-  event.tags.some(
-    (tag) =>
-      tag[0] === "e" &&
-      (tag[3] === undefined || ["root", "reply", ""].includes(tag[3])),
-  );
-
 /** Kinds that are conversation: only these p-tag an agent into a conversation,
  * and only these start a mention run. A reaction to or deletion of the agent's
  * message is addressed (no watch sees it) but is not someone talking to it. */
@@ -371,17 +296,15 @@ export const tagsAgent = (event: EventData, agent: string) =>
 
 /** Steps 1, 2 and 4 of event watch matching. Step 3 (addressed events and the
  * agent's own events) belongs to the caller; classifiers are not run here. */
-export function watchMatches(
-  watch: EventWatch,
-  event: EventData,
-  filter?: Predicate,
-): boolean {
+export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (!watch.enabled || event.created_at < watch.since) return false;
   if (watch.channels !== "all") {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel || !watch.channels.includes(channel)) return false;
   }
   if (watch.kinds.length && !watch.kinds.includes(event.kind)) return false;
+  if (watch.authors && !watch.authors.includes(event.pubkey)) return false;
+  if (watch.exclude_authors?.includes(event.pubkey)) return false;
   for (const [key, values] of Object.entries(watch.tags ?? {}))
     if (
       !event.tags.some(
@@ -390,7 +313,10 @@ export function watchMatches(
       )
     )
       return false;
-  return filter ? filter(event) : true;
+  // The relay's NIP-10 rule: only a `reply` marker makes a reply.
+  return (
+    watch.is_reply === undefined || watch.is_reply === !!threadReference(event)
+  );
 }
 
 /** Runtime schedule state for one timer. Not config: it never leaves the runner. */
@@ -478,7 +404,9 @@ export function describeWatch(
       : only
         ? `#${only.name}`
         : plural(watch.channels.length, "channel");
-  return `${what} in ${where}${watch.filter ? ", filtered" : ""}`;
+  const filtered =
+    watch.authors || watch.exclude_authors || watch.is_reply !== undefined;
+  return `${what} in ${where}${filtered ? ", filtered" : ""}`;
 }
 
 /** The objects by role, in slug order; `orphans` serve no Interest. */

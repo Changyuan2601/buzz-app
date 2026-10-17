@@ -422,6 +422,59 @@ fn folder_reload_updates_current_revision_and_preserves_disabled_state() {
         .contains("reloaded"));
 }
 #[test]
+fn live_reload_preserves_enabled_state_and_rejects_stale_module_reads() {
+    let (_temp, manager, source) = fixture();
+    manager.install(&source).unwrap();
+    let first = manager
+        .change("enable", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
+    let next = manager
+        .reload_live("example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert!(next.enabled);
+    assert_ne!(next.revision, first.revision);
+    assert_eq!(next.previous.as_deref(), Some(first.revision.as_str()));
+    assert!(manager.module("example.page", &first.revision).is_err());
+    assert!(manager
+        .module("example.page", &next.revision)
+        .unwrap()
+        .contains("reloaded"));
+}
+
+#[test]
+fn accepting_reload_permissions_does_not_accept_a_different_publisher() {
+    let (_temp, manager, source) = fixture();
+    sign_release(&source, &SecretKey::generate().to_secret_hex()).unwrap();
+    manager.install(&source).unwrap();
+    let first = manager.change("enable", "example.page").unwrap();
+    fs::write(source.join("plugin.js"), "export const changed = true;").unwrap();
+    sign_release(&source, &SecretKey::generate().to_secret_hex()).unwrap();
+    assert!(manager
+        .reload_live("example.page")
+        .err()
+        .unwrap()
+        .contains("Publisher changed"));
+    let after = manager.catalog().unwrap();
+    let plugin = |catalog: buzzodz_plugins::Catalog| {
+        catalog
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+    };
+    assert_eq!(plugin(first).revision, plugin(after).revision);
+}
+
+#[test]
 fn folder_reload_compares_effective_output_limits() {
     for (before, after, allowed) in [
         (None, Some(4096), true),

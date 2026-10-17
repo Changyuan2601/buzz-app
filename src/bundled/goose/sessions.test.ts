@@ -10,6 +10,8 @@ import {
   AgentSessions,
   IDLE_MS,
   type Launch,
+  localSessions,
+  type SavedConversation,
   ServerPool,
   SharedProcess,
 } from "./sessions";
@@ -29,9 +31,11 @@ const setup = (
     serve,
     silent,
     onChange,
+    store,
   }: Readonly<{
     pool?: ServerPool;
     onChange?: () => void;
+    store?: Map<string, SavedConversation>;
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
@@ -65,6 +69,9 @@ const setup = (
       process,
       pool,
       ...(onChange && { onChange }),
+      ...(store && {
+        store: { set: (key: string, saved) => void store.set(key, saved) },
+      }),
       launch: async () => settings,
       choice: () => choice,
       fingerprint: () =>
@@ -350,6 +357,37 @@ describe("AgentSessions", () => {
     expect(sessions.seen("a")).toBe(0);
   });
 
+  it("saves when each conversation last used its session, after the session closes too", async () => {
+    vi.useFakeTimers();
+    const store = new Map<string, SavedConversation>();
+    const { sessions } = setup({}, false, { store });
+    await sessions.deliver("a", "one", 1);
+    const at = sessions.snapshot()[0]?.at;
+    expect(store.get("a")).toEqual({ at });
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(sessions.snapshot()).toEqual([]);
+    expect(store.get("a")).toEqual({ at });
+    // A one-off turn joins no conversation.
+    await sessions.runOnce("watch/x", () => "look");
+    expect([...store.keys()]).toEqual(["a"]);
+  });
+
+  it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
+    vi.useFakeTimers();
+    const { fake, sessions } = setup({}, true);
+    const at = () => sessions.snapshot()[0]?.at ?? 0;
+    const done = sessions.deliver("a", "one", 1);
+    await vi.advanceTimersByTimeAsync(10);
+    const started = at();
+    expect(started).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(IDLE_MS + 1);
+    expect(sessions.snapshot()).toMatchObject([{ key: "a", busy: true }]);
+    expect(at()).toBe(started);
+    fake.geese[0]?.turns[0]?.finish();
+    await done;
+    expect(at()).toBeGreaterThan(started);
+  });
+
   it("drops every agent's sessions when goose exits, and starts it again", async () => {
     const { fake, sessions, agent } = setup();
     const other = agent();
@@ -367,6 +405,40 @@ describe("AgentSessions", () => {
     });
     expect(fake.geese).toHaveLength(2);
     expect(fake.geese[1]?.opened).toHaveLength(2);
+  });
+
+  it("saves no conversation whose first message gave up before the session opened", async () => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = new Map<string, SavedConversation>();
+    const sessions = new AgentSessions({
+      spawn: fake.spawn,
+      tools,
+      process: new SharedProcess(fake.spawn, fake.serve),
+      pool: new ServerPool(),
+      store: { set: (key, saved) => void store.set(key, saved) },
+      launch: async () => {
+        await held;
+        return { workspace: "/w", systemPrompt: "" };
+      },
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const abort = new AbortController();
+    const late = sessions.deliver("a", "one", 1, { signal: abort.signal });
+    await flush(30);
+    abort.abort();
+    await expect(late).resolves.toMatchObject({ ok: false });
+    release();
+    await flush(30);
+    expect(sessions.snapshot()).toMatchObject([{ key: "a" }]);
+    expect(store.size).toBe(0);
+    await sessions.deliver("a", "two", 2);
+    expect(store.has("a")).toBe(true);
+    sessions.dispose();
   });
 
   it("reports why goose could not start", async () => {
@@ -508,7 +580,7 @@ describe("AgentSessions", () => {
       ["session-2", "three"],
     ]);
     expect(sessions.snapshot()).toEqual([
-      { key: "a", busy: false, sessionId: "session-2" },
+      { key: "a", busy: false, sessionId: "session-2", at: Date.now() },
     ]);
     // Nothing is left open once the conversation goes quiet.
     await vi.advanceTimersByTimeAsync(IDLE_MS);
@@ -692,4 +764,23 @@ describe("AgentSessions", () => {
     });
     expect(other.sessions.snapshot().map((live) => live.key)).toEqual(["a"]);
   });
+});
+
+it("keeps saved conversations per agent in storage, most recent first", () => {
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const one = localSessions(storage, "one");
+  one.set("c/root", { at: 1 });
+  one.set("dm", { at: 3 });
+  localSessions(storage, "two").set("c/root", { at: 2 });
+  expect(localSessions(storage, "one").list()).toEqual([
+    ["dm", { at: 3 }],
+    ["c/root", { at: 1 }],
+  ]);
+  expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
+  data.set("buzz.goose.sessions.v1", "not json");
+  expect(one.list()).toEqual([]);
 });

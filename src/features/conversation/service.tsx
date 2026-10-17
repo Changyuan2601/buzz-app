@@ -1,5 +1,5 @@
 // FOUNDATION: Shared conversation UI and plugin-owned tools/renderers; never another data owner.
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { EmbeddedThread, type EmbeddedThreadProps } from "./EmbeddedThread";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
@@ -24,6 +24,7 @@ import type {
   MessageRenderer,
   MessageAction,
   ContributionReader,
+  PageTabsProps,
 } from "./contracts";
 
 export type Conversation = {
@@ -47,7 +48,12 @@ export type Conversation = {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** The page's content as the first tab, beside conversations it opens;
+     * absent until a plugin provides the tab workspace, as Channels does. */
+    readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
   };
+  /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
+  registerTabs(component: ComponentType<PageTabsProps>): void;
   /** The host's date labels, so plugin text reads like the message rows. */
   format: {
     /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
@@ -106,6 +112,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly linkEntries;
   readonly actions;
   private readonly actionEntries;
+  private readonly tabEntries;
+  readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
     const attachments = createContributions<AttachmentRenderer>(ctx);
@@ -144,6 +152,34 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const tabs = createContributions<{
+      id: string;
+      component: ComponentType<PageTabsProps>;
+    }>(ctx);
+    this.tabEntries = tabs;
+    const Tabs = (props: PageTabsProps) => {
+      const Provided = tabs.snapshot()[0]?.component;
+      return Provided ? <Provided {...props} /> : null;
+    };
+    this.ui = {
+      Thread: (props: EmbeddedThreadProps) => (
+        <EmbeddedThread {...props} host={this.ctx} extensions={this} />
+      ),
+      Composer: (props: Omit<MessageComposerProps, "extensions">) => (
+        <MessageComposer {...props} extensions={this} />
+      ),
+      Message: (props: Omit<MessageRowProps, "extensions">) => (
+        <MessageRow {...props} extensions={this} />
+      ),
+      get Tabs() {
+        return tabs.snapshot().length ? Tabs : undefined;
+      },
+    };
+  }
+  registerTabs(component: ComponentType<PageTabsProps>) {
+    if (typeof component !== "function")
+      throw new Error("Page tabs need a component");
+    this.tabEntries.register(this.ctx, { id: "tabs", component });
   }
   registerMessageAction(value: MessageAction) {
     validate(value);
@@ -212,15 +248,4 @@ export class ConversationService extends Service implements Conversation {
     fullTimestamp: formatFullTimestamp,
     relativeTimestamp,
   });
-  readonly ui = {
-    Thread: (props: EmbeddedThreadProps) => (
-      <EmbeddedThread {...props} host={this.ctx} extensions={this} />
-    ),
-    Composer: (props: Omit<MessageComposerProps, "extensions">) => (
-      <MessageComposer {...props} extensions={this} />
-    ),
-    Message: (props: Omit<MessageRowProps, "extensions">) => (
-      <MessageRow {...props} extensions={this} />
-    ),
-  };
 }

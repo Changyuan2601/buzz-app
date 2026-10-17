@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
@@ -1582,6 +1583,47 @@ it("a workspace diverts a wrong-root link without replacing its confirmed reader
   expect(h.thread).toHaveBeenCalledOnce();
   expect(screen.getByRole("region", { name: "Composer" })).toBe(editor);
   expect(next.complete).not.toHaveBeenCalled();
+});
+
+it("a retained reader reveals its exact selected message, again for each new request", async () => {
+  const h = messagesHarness();
+  const reply = { ...row, id: "d".repeat(64), content: "the reply" };
+  h.snapshot.replies = [reply];
+  h.snapshot.target = reply;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: reply.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+  const revealedReply = () =>
+    vi
+      .mocked(HTMLElement.prototype.scrollIntoView)
+      .mock.contexts.some(
+        (context) => (context as HTMLElement).dataset.messageId === reply.id,
+      );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  // The same message again: the retained reader selects it and reveals anew.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await waitFor(() =>
+    expect(h.view.retarget).toHaveBeenCalledWith(
+      reply.id,
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  expect(h.thread).toHaveBeenCalledOnce();
+  // A rerender without a new request does not reveal again.
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  h.rerenderProps();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(revealedReply()).toBe(false);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

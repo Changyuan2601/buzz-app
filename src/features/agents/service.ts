@@ -22,6 +22,7 @@ import { ownerReads } from "./reads";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import { migrateWatchFilters } from "./migrate-filter";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -203,6 +204,23 @@ export type AgentTab<Config = unknown> = Readonly<{
   /** Supports separate identity and runtime settings presentations. */
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
+}>;
+/** One of an agent's conversation sessions on this device. Without `root` it
+ * is the channel's one session: a channel-scoped agent's, a DM's or a Me
+ * chat's; with it, the thread's. `at` is when it last took in a message
+ * or ended a turn, in milliseconds. `status` is the type's latest
+ * observation of it while running here, such as "Working", "Idle" or a
+ * failed turn's outcome; absent means unobserved, not idle. */
+export type AgentSession = Readonly<{
+  channelId: string;
+  root?: string;
+  at?: number;
+  status?: string;
+}>;
+/** Read-only: reading never starts, stops or changes a session. */
+export type AgentSessions = Readonly<{
+  list(pubkey: string): readonly AgentSession[];
+  subscribe(listener: () => void): () => void;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
@@ -455,6 +473,8 @@ export type AgentType<Config = unknown> = {
   provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
+  /** Each agent's sessions, for views across agents. */
+  sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
@@ -937,6 +957,7 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
+    migrateWatchFilters(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);

@@ -70,9 +70,9 @@ type Request = {
   superseded?: () => void;
   failActivity(reason: string): void;
 };
-/** `at` is when the binding last started a turn; bindings saved before it
- * existed have none. `tools` is the `addedKey` of the thread's tools, absent
- * when plugins added none. */
+/** `at` is when the binding last took in a message or ended a turn; bindings
+ * saved before it existed have none. `tools` is the `addedKey` of the
+ * thread's tools, absent when plugins added none. */
 type Saved = {
   threadId: string;
   workspace: string;
@@ -244,6 +244,11 @@ export class CodexRuntime {
     if (code !== 0 || !absoluteWorkspace(workspace))
       throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
+  }
+  /** Copies `threadId` from the user's Codex home, if it is there. */
+  private async adopt(threadId: string) {
+    const process = await this.spawn("adopt", { args: [threadId] });
+    await process.exited;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
     // A stopped agent's draining turns don't bring its sessions back.
@@ -463,6 +468,13 @@ export class CodexRuntime {
       );
     }
   }
+  /** Dates the binding now, when it takes in a message or ends a turn. */
+  private touch(request: Request, entry: Entry, key: string) {
+    const saved = entry.saved[key];
+    if (!saved) return;
+    this.save(request, entry, key, { ...saved, at: Date.now() });
+    for (const listener of this.listeners) listener();
+  }
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
@@ -589,6 +601,7 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
+          this.touch(request, entry, key);
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -1078,31 +1091,38 @@ export class CodexRuntime {
       const tools = addedKey(added);
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
-      let started: { thread: { id: string; cwd: string } };
-      try {
-        started = await rpc.request<typeof started>(
-          resuming ? "thread/resume" : "thread/start",
-          {
-            ...params,
-            ...(resuming
-              ? { threadId: existing?.threadId, excludeTurns: true }
-              : {
-                  dynamicTools: dynamicTools(added),
-                }),
-          },
-        );
-      } catch (error) {
-        if (
-          !resuming ||
-          message(error) !==
-            `no rollout found for thread id ${existing?.threadId}`
-        )
-          throw error;
-        started = await rpc.request<typeof started>("thread/start", {
+      type Started = { thread: { id: string; cwd: string } };
+      const start = () =>
+        rpc.request<Started>("thread/start", {
           ...params,
           dynamicTools: dynamicTools(added),
         });
-      }
+      const resume = (threadId: string) =>
+        rpc.request<Started>("thread/resume", {
+          ...params,
+          threadId,
+          excludeTurns: true,
+        });
+      let started: Started;
+      if (resuming) {
+        const { threadId } = existing;
+        const missing = (error: unknown) => {
+          if (message(error) !== `no rollout found for thread id ${threadId}`)
+            throw error;
+        };
+        // A thread saved before Buzz had its own Codex home is in the user's;
+        // continue a copy, or start fresh if there is none.
+        started = await resume(threadId)
+          .catch(async (error) => {
+            missing(error);
+            await this.adopt(threadId);
+            return resume(threadId);
+          })
+          .catch(async (error) => {
+            missing(error);
+            return start();
+          });
+      } else started = await start();
       active.threadId = started.thread.id;
       server.threads.set(active.threadId, agent.pubkey);
       signal.throwIfAborted();
@@ -1183,6 +1203,9 @@ export class CodexRuntime {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");
       followed.stop();
+      // A turn Codex took in has ended, however it ended.
+      if (active.turnId && !entry.abort.signal.aborted)
+        this.touch(request, entry, key);
       turnAbort.abort(new Error("The Codex turn has ended"));
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.

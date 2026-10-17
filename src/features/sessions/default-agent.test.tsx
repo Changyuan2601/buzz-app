@@ -104,3 +104,38 @@ it("waits for complete fallback and settled archive evidence, but honors an avai
   });
   expect(screen.getByLabelText("choice")).toHaveTextContent("Local");
 });
+
+it("a requested agent replaces the default, and nothing stands in for it", () => {
+  const choices = {
+    status: "ready",
+    complete: true,
+    selectable: [
+      { pubkey: "a".repeat(64), name: "First", managed: true },
+      { pubkey: "b".repeat(64), name: "Second", managed: true },
+    ],
+    archives: { status: "unavailable" },
+  };
+  const session = {
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  function Selection({ requested }: { requested: string }) {
+    return (
+      <output aria-label={requested.slice(0, 1)}>
+        {useDefaultAgent(session, "requested", requested)?.name ?? "none"}
+      </output>
+    );
+  }
+  render(
+    <>
+      <Selection requested={"b".repeat(64)} />
+      <Selection requested={"d".repeat(64)} />
+    </>,
+  );
+  expect(screen.getByLabelText("b").textContent).toBe("Second");
+  expect(screen.getByLabelText("d").textContent).toBe("none");
+});

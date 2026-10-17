@@ -475,7 +475,7 @@ export function MenuSpecimen() {
       </Example>
       <Example
         title="Context menu"
-        description="Right-click, or focus the trigger and use Shift+F10. Context actions use the same rows and surface."
+        description="Right-click, or focus the trigger and use Shift+F10. Context actions appear immediately, without entrance movement or blur, and retain a short fade on dismissal."
         code={`<ContextMenuRoot>
   <ContextMenuTrigger render={<Button>Context actions</Button>} />
   <MenuPopup>

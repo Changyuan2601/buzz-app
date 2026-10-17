@@ -131,6 +131,7 @@ function fixture() {
       refresh: async () => {},
     },
     agentActivity: { snapshot: () => activity, subscribe },
+    directMessages: { people: async () => ({ people: [] }) },
     typing: { snapshot: () => publicTyping, subscribe },
     thread: () => ({
       snapshot: () => thread,

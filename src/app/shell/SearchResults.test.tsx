@@ -12,6 +12,11 @@ import {
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
+import {
+  bindNames,
+  type IdentityNames,
+} from "../../features/identity-names/service";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto } from "../../features/relay/events";
@@ -342,7 +347,12 @@ it("shows the real read failure, retains conversation choices, and retries to an
   const owner = createRelaySession({
     ...wire.transport,
     query(filters, signal) {
-      if (filters.some((filter) => filter.search !== undefined))
+      // Message search is scripted; the People directory finds nobody.
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
         return wire.transport.query(filters, signal);
       return Promise.resolve(
         discovery.filter((event) =>
@@ -2895,6 +2905,462 @@ it.each([true, false])(
       }
       fireEvent.click(option);
       expect(open).toHaveBeenCalledExactlyOnceWith("crew", hit.id);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+function peopleSession(
+  session: ReturnType<typeof createRelaySession>["session"],
+  directory: {
+    pubkey: string;
+    name: string;
+    username?: string;
+    isAgent?: true;
+  }[] = [],
+  agents: readonly { pubkey: string; name: string; managed: boolean }[] = [],
+) {
+  const people = vi.fn(async () => ({ people: directory, hasMore: false }));
+  const open = vi.fn(async (_pubkeys: readonly string[]) => "started-dm");
+  const source = session.agentChoices;
+  const choices = { ...source.snapshot(), identities: agents, selectable: [] };
+  return {
+    people,
+    open,
+    session: {
+      ...session,
+      directMessages: {
+        ...session.directMessages,
+        available: true,
+        people,
+        open,
+      },
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof session,
+  };
+}
+
+it("keeps the directory's order for tied people, as New message does", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    park = keypair(),
+    lee = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.kinds?.includes(0))
+        ? [profile(lee, { display_name: "Kim Lee" })]
+        : [];
+    },
+  });
+  // The relay ranked Kim Park first. Kim Lee is also in the profile cache and
+  // sorts first by name; neither may move the directory's order.
+  const t = peopleSession(owner.session, [
+    { pubkey: park.pubkey, name: "Kim Park" },
+    { pubkey: lee.pubkey, name: "Kim Lee" },
+  ]);
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="kim"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () => owner.session.profiles.ensure([lee.pubkey]));
+    const group = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByRole("option")
+          .map((row) => row.textContent?.match(/Kim (Park|Lee)/)?.[0]),
+      ).toEqual(["Kim Park", "Kim Lee"]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("finds a person by username and starts a DM with them", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.kinds?.includes(0))
+        ? [profile(alice, { display_name: "Alice Chen", name: "achen" })]
+        : [];
+    },
+  });
+  const t = peopleSession(owner.session);
+  let started = (_id: string) => {};
+  t.open.mockImplementationOnce(
+    () => new Promise<string>((resolve) => (started = resolve)),
+  );
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="achen"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    // A profile already loaded elsewhere, read through the real kind-0 fold.
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () => owner.session.profiles.ensure([alice.pubkey]));
+    const row = await within(
+      await screen.findByRole("group", { name: "People" }),
+    ).findByRole("option");
+    expect(row).toHaveTextContent("Alice Chen");
+    expect(row).toHaveTextContent("@achen · Start a direct message");
+    expect(row).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(
+      await screen.findByText("Opening your conversation with Alice Chen…"),
+    ).toBeVisible();
+    // A second choice while one is opening does not start another.
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(openConversation).not.toHaveBeenCalled();
+    await act(async () => started("started-dm"));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm"),
+    );
+    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+      [alice.pubkey],
+      expect.any(AbortSignal),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("opens an existing DM from a person row and reports a failed start", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair(),
+    bob = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { display_name: "Alice Chen", name: "ally" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // Alice's cached profile names her DM; Bob is only in the directory.
+  const t = peopleSession(owner.session, [
+    { pubkey: bob.pubkey, name: "Ally Bob" },
+  ]);
+  t.open.mockRejectedValueOnce(new Error("Relay refused the DM."));
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="ally"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const group = await screen.findByRole("group", { name: "People" });
+    // The existing DM is the closer relationship, so it leads.
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByRole("option")
+          .map((row) => row.querySelector(".text-caption")?.textContent),
+      ).toEqual(["@ally · Direct message", "Start a direct message"]),
+    );
+    fireEvent.click(within(group).getByRole("option", { name: /Alice Chen/ }));
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm");
+    expect(t.open).not.toHaveBeenCalled();
+    fireEvent.click(within(group).getByRole("option", { name: /Ally Bob/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Relay refused the DM.",
+    );
+    expect(openConversation).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("lists directory people and managed agents, not agents this community cannot message", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair(),
+    carol = keypair(),
+    stray = keypair(),
+    keeper = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query() {
+      return [];
+    },
+  });
+  const t = peopleSession(
+    owner.session,
+    [
+      { pubkey: carol.pubkey, name: "Carol" },
+      { pubkey: stray.pubkey, name: "Carl Bot", isAgent: true },
+    ],
+    [{ pubkey: keeper.pubkey, name: "Caretaker", managed: true }],
+  );
+  const props = {
+    session: t.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="car" />);
+    // The managed agent is known locally before the directory answers.
+    expect(
+      within(screen.getByRole("group", { name: "Agents" })).getByRole("option"),
+    ).toHaveTextContent("Caretaker");
+    expect(t.people).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    expect(t.people).toHaveBeenCalledExactlyOnceWith(
+      "car",
+      1,
+      expect.any(AbortSignal),
+    );
+    expect(
+      within(screen.getByRole("group", { name: "People" })).getByRole("option"),
+    ).toHaveTextContent("Carol");
+    expect(screen.queryByText("Carl Bot")).toBeNull();
+    // `#` asks for a channel and an operator for messages: no people. Text
+    // longer than the directory accepts reads nothing, so shows no error.
+    for (const query of ["#car", "car in:general", `car ${"x".repeat(97)}`]) {
+      mounted.rerender(<SearchResults {...props} query={query} />);
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      expect(screen.queryByRole("group", { name: "People" })).toBeNull();
+      expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
+      expect(screen.queryByText(/search community people/)).toBeNull();
+    }
+    expect(t.people).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+it("tells uncached directory namesakes apart before a DM opens", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    first = keypair(),
+    second = keypair();
+  // The default naming policy, as the bundled plugin registers it.
+  const directory = createAgentDirectory();
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      async query() {
+        return [];
+      },
+    },
+    {
+      identityNames: {
+        bind: (source) =>
+          bindNames(source, {
+            snapshot: () => [directory],
+            subscribe: () => () => {},
+          }),
+      } as IdentityNames,
+    },
+  );
+  const t = peopleSession(owner.session, [
+    { pubkey: first.pubkey, name: "Namesake" },
+    { pubkey: second.pubkey, name: "Namesake" },
+  ]);
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="namesake"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const group = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(within(group).getAllByRole("option")).toHaveLength(2),
+    );
+    const labels = within(group)
+      .getAllByRole("option")
+      .map((row) => row.textContent);
+    expect(new Set(labels).size).toBe(2);
+    for (const key of [first.pubkey, second.pubkey])
+      expect(
+        labels.some((label) =>
+          label?.includes(`Namesake · ${npubEncode(key).slice(-4)}`),
+        ),
+      ).toBe(true);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+it.each([true, false])(
+  "sends the viewer's agents to a new session, not their DMs (Solo=%s)",
+  async (solo) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      mine = keypair(),
+      fresh = keypair(),
+      theirs = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const dm = (id: string, member: string) => [
+      metadata(relay, id, "opaque", 1700000000, [
+        ["t", "dm"],
+        ["private", ""],
+      ]),
+      roster(relay, id, [viewer.pubkey, member]),
+    ];
+    const discovery = [
+      ...dm("mine-dm", mine.pubkey),
+      ...dm("theirs-dm", theirs.pubkey),
+      profile(mine, { name: "Scout", is_agent: true }),
+      profile(theirs, { name: "Scooter", is_agent: true }),
+      profile(fresh, { name: "Scotia", is_agent: true }),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) return [];
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const source = owner.session.agentChoices;
+    const choices = {
+      ...source.snapshot(),
+      identities: [
+        { pubkey: mine.pubkey, name: "Scout", managed: true },
+        { pubkey: fresh.pubkey, name: "Scotia", managed: true },
+      ],
+      selectable: [
+        { pubkey: mine.pubkey, name: "Scout", managed: true },
+        { pubkey: fresh.pubkey, name: "Scotia", managed: true },
+      ],
+    };
+    const session = {
+      ...owner.session,
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof owner.session;
+    const openAgentSession = vi.fn();
+    const openConversation = vi.fn();
+    try {
+      const mounted = render(
+        <SearchResults
+          session={session}
+          query="sco"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          {...(solo ? { openAgentSession } : {})}
+        />,
+      );
+      const direct = within(
+        await screen.findByRole("group", { name: "Direct messages" }),
+      );
+      expect(
+        await direct.findByRole("option", { name: /Scooter/ }),
+      ).toBeVisible();
+      if (!solo) {
+        expect(
+          await direct.findByRole("option", { name: /Scout/ }),
+        ).toBeVisible();
+        // An agent without a DM still offers one, as before.
+        const agents = within(
+          await screen.findByRole("group", { name: "Agents" }),
+        );
+        expect(
+          agents.getByRole("option", { name: /Scotia/ }),
+        ).toHaveTextContent("Start a direct message");
+        expect(agents.queryByRole("option", { name: /Scout/ })).toBeNull();
+        return;
+      }
+      expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+      const agents = within(
+        await screen.findByRole("group", { name: "Agents" }),
+      );
+      const choice = agents.getByRole("option", { name: /Scout/ });
+      expect(choice).toHaveTextContent("New session");
+      // An agent with no DM yet starts a session too, not a DM.
+      expect(agents.getByRole("option", { name: /Scotia/ })).toHaveTextContent(
+        "New session",
+      );
+      expect(agents.queryByRole("option", { name: /Scooter/ })).toBeNull();
+      fireEvent.click(choice);
+      expect(openAgentSession).toHaveBeenCalledExactlyOnceWith(mine.pubkey);
+      expect(openConversation).not.toHaveBeenCalled();
+      // The DM gives way only to a New session row that shows. "cout" finds
+      // the DM by substring but not the agent, so the DM stays.
+      mounted.rerender(
+        <SearchResults
+          session={session}
+          query="cout"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          openAgentSession={openAgentSession}
+        />,
+      );
+      expect(
+        await within(
+          await screen.findByRole("group", { name: "Direct messages" }),
+        ).findByRole("option", { name: /Scout/ }),
+      ).toBeVisible();
+      expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
     } finally {
       cleanup();
       owner.dispose();

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,18 +22,44 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
     replyRequest,
+    revealSelected,
+    revealRequest,
   }: {
     active: boolean;
     replyRequest?: number;
+    revealSelected?: boolean;
+    revealRequest?: number;
   }) => (
-    <aside data-active={active} data-reply-request={replyRequest}>
+    <aside
+      data-active={active}
+      data-reply-request={replyRequest}
+      data-reveal-selected={revealSelected}
+      data-reveal-request={revealRequest}
+    >
       Thread content
     </aside>
   ),
 }));
 vi.mock("./ChannelBody", () => ({
-  ChannelBody: ({ activityLane }: { activityLane?: boolean }) => (
-    <div data-activity-lane={activityLane}>Conversation content</div>
+  ChannelBody: ({
+    activityLane,
+    holding,
+    inlineTarget,
+    marksRead,
+  }: {
+    activityLane?: boolean;
+    holding?: boolean;
+    inlineTarget?: { messageId: string };
+    marksRead?: boolean;
+  }) => (
+    <div
+      data-activity-lane={activityLane}
+      data-holding={holding}
+      data-target={inlineTarget?.messageId}
+      data-marks-read={marksRead}
+    >
+      Conversation content
+    </div>
   ),
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
@@ -276,3 +303,143 @@ it.each([false, true])(
     );
   },
 );
+
+function openingAt(rows: { id: string; threadRootId?: string }[]) {
+  const channel = { id: "beta", name: "Beta" };
+  const snapshot = { status: "ready", channels: [channel] };
+  let window = {
+    channelId: "beta",
+    status: "loading",
+    rows: [] as typeof rows,
+    hasMore: false,
+    loadingOlder: false,
+    error: undefined,
+  };
+  const listeners = new Set<() => void>();
+  const session = {
+    channels: {
+      list: () => snapshot,
+      subscribeList: () => () => {},
+      window: () => window,
+      subscribeWindow: (_: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: () => {},
+      loadOlder: () => {},
+    },
+  } as unknown as RelaySession;
+  const props = {
+    channel,
+    session,
+    scope: "opening-test",
+    active: true,
+    openLink: () => false,
+    canOpenLink: () => false,
+    openThread: () => {},
+    close: () => {},
+  };
+  return {
+    props,
+    settle() {
+      act(() => {
+        window = { ...window, status: "ready", rows };
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+it("a conversation tab opens at its message once the reader finds it", () => {
+  const c = openingAt([{ id: "post" }]);
+  const tab = {
+    id: "conversation:beta",
+    kind: "conversation" as const,
+    channelId: "beta",
+    messageId: "post",
+    revealRequest: 1,
+  };
+  render(<ConversationTab {...c.props} tab={tab} />);
+  const body = screen.getByText("Conversation content");
+  expect(body).toHaveAttribute("data-holding", "true");
+  c.settle();
+  expect(body).toHaveAttribute("data-holding", "false");
+  expect(body).toHaveAttribute("data-target", "post");
+  expect(body).toHaveAttribute("data-marks-read", "true");
+});
+
+it("a conversation tab opens a reply at its message as the thread", () => {
+  const c = openingAt([{ id: "root" }, { id: "reply", threadRootId: "root" }]);
+  render(
+    <ConversationTab
+      {...c.props}
+      tab={{
+        id: "conversation:beta",
+        kind: "conversation",
+        channelId: "beta",
+        messageId: "reply",
+        revealRequest: 1,
+      }}
+    />,
+  );
+  c.settle();
+  const thread = screen.getByText("Thread content");
+  expect(thread).toHaveAttribute("data-reveal-selected", "true");
+  expect(thread).toHaveAttribute("data-reveal-request", "1");
+  expect(screen.queryByText("Conversation content")).toBeNull();
+});
+
+it("a thread tab asks its reader to reveal for each open at a message, not on restore", () => {
+  const c = openingAt([]);
+  const tab = {
+    id: "thread:beta:root",
+    kind: "thread" as const,
+    channelId: "beta",
+    messageId: "reply",
+    revealRequest: 1,
+  };
+  const mounted = render(
+    <ConversationTab {...c.props} tab={tab} focusOnMount={false} />,
+  );
+  const thread = screen.getByText("Thread content");
+  expect(thread).toHaveAttribute("data-reveal-selected", "false");
+  expect(thread).not.toHaveAttribute("data-reveal-request");
+  mounted.rerender(
+    <ConversationTab
+      {...c.props}
+      tab={{ ...tab, revealRequest: 2 }}
+      focusOnMount={false}
+    />,
+  );
+  expect(thread).toHaveAttribute("data-reveal-selected", "true");
+  expect(thread).toHaveAttribute("data-reveal-request", "2");
+});
+
+it("markRead false reaches the reader, and a restored tab does not reveal again", () => {
+  const c = openingAt([{ id: "post" }]);
+  const tab = {
+    id: "conversation:beta",
+    kind: "conversation" as const,
+    channelId: "beta",
+    messageId: "post",
+    revealRequest: 2,
+    markRead: false as const,
+  };
+  const mounted = render(
+    <ConversationTab {...c.props} tab={tab} focusOnMount={false} />,
+  );
+  c.settle();
+  const body = screen.getByText("Conversation content");
+  expect(body).toHaveAttribute("data-marks-read", "false");
+  expect(body).not.toHaveAttribute("data-target");
+  expect(body).toHaveAttribute("data-holding", "false");
+  // A new open of the restored tab reveals its message.
+  mounted.rerender(
+    <ConversationTab
+      {...c.props}
+      tab={{ ...tab, revealRequest: 3 }}
+      focusOnMount={false}
+    />,
+  );
+  expect(body).toHaveAttribute("data-target", "post");
+});

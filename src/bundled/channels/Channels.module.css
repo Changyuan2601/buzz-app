@@ -381,6 +381,9 @@
   cursor: pointer;
   list-style: none;
   border-radius: var(--radius-control);
+  /* Like NavigationItem, this disclosure is navigation, not document text. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .channelSection summary::-webkit-details-marker {
   display: none;

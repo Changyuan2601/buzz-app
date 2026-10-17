@@ -67,15 +67,26 @@ const watchFields = {
     items: int,
     description: "Event watch: event kinds; empty matches any.",
   },
+  authors: {
+    type: "array",
+    items: str,
+    description: "Event watch: only events by these hex pubkeys.",
+  },
+  exclude_authors: {
+    type: "array",
+    items: str,
+    description:
+      "Event watch: no events by these hex pubkeys. Not with authors.",
+  },
   tags: {
     type: "object",
     additionalProperties: { type: "array", items: str },
     description: "Event watch: one-letter tag to accepted values.",
   },
-  filter: {
-    ...str,
+  is_reply: {
+    ...bool,
     description:
-      'Event watch: e.g. !(author == "HEX") && !is_reply. Also content == "TEXT", true, false.',
+      "Event watch: true for thread replies only, false for top-level only.",
   },
   classifier: {
     type: "object",
@@ -152,7 +163,14 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
         type: "array",
         items: {
           type: "string",
-          enum: ["name", "tags", "filter", "classifier"],
+          enum: [
+            "name",
+            "authors",
+            "exclude_authors",
+            "tags",
+            "is_reply",
+            "classifier",
+          ],
         },
       },
     },
@@ -430,8 +448,10 @@ const EVENT = [
   "since",
   "channels",
   "kinds",
+  "authors",
+  "exclude_authors",
   "tags",
-  "filter",
+  "is_reply",
   "classifier",
 ];
 const TIMER = [

@@ -168,11 +168,77 @@ test("context menus reuse the shared popup and action boundary", async () => {
     name: "Copy context link",
   });
   expect(screen.getByRole("menu")).toHaveAttribute("data-buzz-ui");
+  expect(screen.getByText("Context target")).toHaveAttribute(
+    "data-context-menu-present",
+  );
   await user.click(item);
   expect(action).toHaveBeenCalledTimes(1);
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
+});
+
+test("a context submenu retains ordinary menu motion classification", async () => {
+  const user = userEvent.setup();
+  render(
+    <ContextMenuRoot>
+      <ContextMenuTrigger>Context target</ContextMenuTrigger>
+      <MenuPopup aria-label="Context actions">
+        <MenuSubmenu>
+          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
+          <MenuSubmenuPopup aria-label="Sort choices">
+            <MenuItem>Recent</MenuItem>
+          </MenuSubmenuPopup>
+        </MenuSubmenu>
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  fireEvent.contextMenu(screen.getByText("Context target"));
+  const parent = await screen.findByRole("menu", { name: "Context actions" });
+  expect(parent).toHaveAttribute("data-context-menu");
+  await user.click(screen.getByRole("menuitem", { name: "Sort" }));
+  const submenu = await screen.findByRole("menu", { name: "Sort" });
+  expect(submenu).not.toHaveAttribute("data-context-menu");
+  expect(parent).toHaveAttribute("data-context-menu");
+});
+
+test("context targets do not become present when an open is canceled or controlled closed", async () => {
+  const changed = vi.fn();
+  const { unmount } = render(
+    <ContextMenuRoot
+      onOpenChange={(next, details) => {
+        changed(next);
+        details.cancel();
+      }}
+    >
+      <ContextMenuTrigger>Context target</ContextMenuTrigger>
+      <MenuPopup>
+        <MenuItem>Action</MenuItem>
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  fireEvent.contextMenu(screen.getByText("Context target"));
+  expect(changed).toHaveBeenCalledWith(true);
+  expect(screen.getByText("Context target")).not.toHaveAttribute(
+    "data-context-menu-present",
+  );
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  unmount();
+  changed.mockClear();
+  render(
+    <ContextMenuRoot open={false} onOpenChange={(next) => changed(next)}>
+      <ContextMenuTrigger>Context target</ContextMenuTrigger>
+      <MenuPopup>
+        <MenuItem>Action</MenuItem>
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  fireEvent.contextMenu(screen.getByText("Context target"));
+  expect(changed).toHaveBeenCalledExactlyOnceWith(true);
+  expect(screen.getByText("Context target")).not.toHaveAttribute(
+    "data-context-menu-present",
+  );
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
 test("rich choices retain their names and selected state while disabled choices reject activation", async () => {

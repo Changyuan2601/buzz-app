@@ -1010,6 +1010,9 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+    /* Navigation labels are controls, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
     transition:
       color var(--duration-state) var(--easing-state),
       background-color var(--duration-state) var(--easing-state);
@@ -1469,6 +1472,16 @@
   }
   :is(.buzz-menu-popup, .buzz-popover-popup):where([data-ending-style]) {
     transition-duration: calc(var(--duration-fast) / 2);
+  }
+  /* Context actions appear at the pointer immediately; retain a quiet exit. */
+  .buzz-menu-popup[data-context-menu] {
+    filter: none;
+    transform: none;
+    transition-property: opacity;
+  }
+  .buzz-menu-popup[data-context-menu]:not([data-ending-style]) {
+    opacity: 1;
+    transition: none;
   }
   html[data-keyboard-navigation] :is(.buzz-menu-popup, .buzz-popover-popup) {
     transition: none;

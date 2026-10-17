@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package in a path with spaces exposes shared message facts, host, identity names, and page navigation metadata", async () => {
+test("generated author package in a path with spaces exposes shared message facts, host, identity names, agent sessions, and page navigation metadata", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -40,7 +40,7 @@ export const manifest: PluginManifest = {
     networkOrigins: ["https://api.example.com"],
   },
 };
-export const inject = ["host", "identityNames", "pages", "relay"];
+export const inject = ["agents", "host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
   const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
@@ -56,6 +56,9 @@ export function apply(ctx: Context) {
     // @ts-expect-error The shared projection does not expose Archive policy.
     item.archived;
   }
+  for (const type of ctx.agents.types())
+    for (const session of type.sessions?.list("") ?? [])
+      void [session.channelId, session.root, session.at, session.status];
   const policy: NamingPolicy = {
     id: "alternative",
     resolve: (identities) => new Map(identities.map(({ pubkey, name }) => [pubkey, { name }])),

@@ -2461,6 +2461,7 @@ export function createRelaySession(
     if (job.state !== "pending") {
       job.state = "pending";
       job.error = undefined;
+      channels.catchUpQueued(channelId);
       catchupQueue.add(channelId);
       publishLive();
     }
@@ -2762,7 +2763,7 @@ export function createRelaySession(
           state: "pending" as "pending" | "verified" | "deferred" | "error",
           error: undefined as string | undefined,
         };
-        channels.staleHead(id);
+        channels.catchUpQueued(id);
         catchups.set(id, job);
         if (channels.retainedChannels().includes(id)) catchupQueue.add(id);
         else job.state = "deferred";

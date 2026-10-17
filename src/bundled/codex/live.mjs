@@ -39,6 +39,14 @@ let servers = 0;
 const sent = [];
 let acceptedSteers = 0;
 const nativeSpawn = async (_id, options = {}) => {
+  // This harness runs Codex in the user's own home: no thread to copy there.
+  if (_id === "adopt")
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
   if (_id === "read") {
     const child = spawn("base64", ["-i", ...(options.args ?? [])], {
       cwd: options.cwd,

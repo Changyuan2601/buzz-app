@@ -84,3 +84,10 @@ export type {
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
+
+export type {
+  Agents,
+  AgentType,
+  AgentSession,
+  AgentSessions,
+} from "../features/agents/service";
