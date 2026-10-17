@@ -339,17 +339,14 @@ export function agentConfigs(
     done(op) {
       // A move retires its local row only once its relay team is
       // established, first: if that can't be saved, the record and its
-      // handover stay. Unestablished, while its relay team exists in any
-      // state the record is the row's only link to it, so it stays: the
-      // prompt never gets both copies, and the row is never lost. With no
-      // relay team the row is the one copy, and Dismiss may drop the link.
+      // handover stay. Unestablished, the record is the row's only link to
+      // a relay team that may exist or appear later, so it is never
+      // dismissed: the prompt never gets both copies, and the row is never
+      // lost. The owner finishes it with Resubmit instead.
       if (op.local && established(op)) input.retire(op.local);
-      else if (
-        op.local &&
-        (!teams || teams.some((team) => team.id === op.teamId))
-      )
+      else if (op.local)
         throw new Error(
-          "This team's relay copy exists but this move never took it over, so its local instructions stay. Resubmit the move, or recover the team and check again.",
+          "This move never took over its relay team, so it can't be dismissed. Resubmit it to finish; if the team is archived, recover it first.",
         );
       if (op.confirmedHead) finishedAt.set(op.id, op.confirmedHead);
     },

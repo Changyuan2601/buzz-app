@@ -2294,7 +2294,9 @@ export class AgentsService extends Service implements Agents {
       instructions,
       members: [...new Set(members)],
     };
-    const synced = this.syncedTeam(id, members);
+    const synced = operation
+      ? this.operationOwner(operation, creation)
+      : this.syncedTeam(id, members);
     if (synced) {
       // The form's id: Save again from it revises that same change.
       const form = creation ?? crypto.randomUUID();
@@ -2464,6 +2466,19 @@ export class AgentsService extends Service implements Agents {
     return origins.size === 1 && only
       ? this.communityConfigs.get(only)
       : undefined;
+  }
+
+  /** The community config holding stored change `operation`, or the team
+   * it finished as. A reopened change never moves or falls through to a
+   * local write, whatever its edited members are. */
+  private operationOwner(operation: string, team: string | undefined) {
+    const configs = [...this.communityConfigs.values()];
+    const config =
+      configs.find((c) => c.teamOps().some((op) => op.id === operation)) ??
+      configs.find((c) => c.teams()?.some((t) => t.id === team));
+    if (!config)
+      throw new Error("This team's community isn't available; try again");
+    return config;
   }
 
   /** Saves which imports need an archive check, then keeps it in memory. */

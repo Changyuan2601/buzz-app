@@ -1147,3 +1147,57 @@ describe("team operations: overlapping steps", () => {
     expect(w.ops.every()).toEqual([]);
   });
 });
+
+describe("team operations: revisions during member work", () => {
+  it("publishes instructions revised during a member lookup before finishing", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const entered = gate(),
+      release = gate();
+    const find = w.channels.find.getMockImplementation();
+    w.channels.find.mockImplementation(async (family, subject) => {
+      if (family === "agent-config") {
+        entered.open();
+        await release.promise;
+      }
+      return find?.(family, subject);
+    });
+    const first = edit(w, teamId, { members: [a] });
+    await entered.promise;
+    expect(
+      w.runner.revise(first.op.id, {
+        ...team,
+        members: [a],
+        instructions: "LATEST SUBMITTED RULE",
+      }),
+    ).toBe(true);
+    const newer = w.runner.run(first.op.id);
+    release.open();
+    await Promise.all([first.done, newer]);
+    expect(JSON.parse(w.relay.head?.content ?? "{}").instructions).toBe(
+      "LATEST SUBMITTED RULE",
+    );
+  });
+  it("runs an archive once when a step overlaps its delivery", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const entered = gate(),
+      release = gate();
+    w.hooks.archive = async () => {
+      entered.open();
+      await release.promise;
+      throw new Error("timeout");
+    };
+    const first = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: team,
+    });
+    await entered.promise;
+    const next = w.runner.run(first.op.id);
+    release.open();
+    await Promise.all([first.done, next]);
+    expect(w.channels.archive).toHaveBeenCalledTimes(1);
+  });
+});

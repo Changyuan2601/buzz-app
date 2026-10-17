@@ -6025,6 +6025,7 @@ describe("Delete as a recoverable archive", () => {
     const publishing = vi.fn();
     /** While set, no team channel can be made. */
     const noTeams = { value: false };
+    const failTeamReads = { value: false };
     const addMember = vi.fn(async (id: string, pubkey: string) => {
       const found = [...channels.values()].find((c) => c.id === id);
       if (found && !found.members.includes(pubkey)) found.members.push(pubkey);
@@ -6112,14 +6113,24 @@ describe("Delete as a recoverable archive", () => {
           dispose() {},
         },
         deps: {
-          read: async (filters) =>
-            [...heads.values()].filter((event) =>
+          read: async (filters) => {
+            if (
+              failTeamReads.value &&
+              filters.some((filter) =>
+                [...channels.values()].some((c) =>
+                  (filter["#h"] ?? []).includes(c.id),
+                ),
+              )
+            )
+              throw new Error("team head unreadable");
+            return [...heads.values()].filter((event) =>
               filters.some(
                 (filter) =>
                   (filter["#d"] ?? []).includes(key(event)) ||
                   (filter.ids ?? []).includes(event.id),
               ),
-            ),
+            );
+          },
           writer: {
             sign: async (template) => signed(owner, template),
             async publish(event) {
@@ -6180,6 +6191,7 @@ describe("Delete as a recoverable archive", () => {
       channels,
       offline,
       noTeams,
+      failTeamReads,
       held,
       remoteTeam,
       publishing,
@@ -7051,6 +7063,251 @@ describe("Delete as a recoverable archive", () => {
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     return f.run.mock.calls[0]?.[0].team ?? "";
   };
+
+  it("refuses Dismiss for an unestablished move even when an old team list lacks its relay team", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const local = {
+      id: "local-stale-discovery",
+      name: "Moving",
+      instructions: "LOCAL MOVING RULE",
+      members: [alder],
+    };
+    writeTeams(storage, [local]);
+    relay.noTeams.value = true;
+    const target = await importedTeamId({
+      owner: viewer,
+      community: COMMUNITY_UUID,
+      source: "local-team",
+      sourceId: local.id,
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await vi.waitFor(() =>
+        expect(new TeamOps(storage).every()).toHaveLength(1),
+      );
+      const config = relay.opens.mock.results[0]?.value;
+      if (!config) throw new Error("no config");
+      await config.refreshTeams();
+      expect(config.teams()).toEqual([]);
+      await relay.remoteTeam(target, [alder]); // no discovery event has arrived yet
+      const [op] = new TeamOps(storage).every();
+      await f.service.teamChange(op?.id ?? "", "discard");
+      await f.service.teamChange(op?.id ?? "", "dismiss").catch(() => {});
+      await config.refreshTeams();
+      const prompt = await promptOf(f, "stale-discovery-dismiss");
+      expect(
+        count(prompt, "LOCAL MOVING RULE") + count(prompt, "TEAM RULE"),
+      ).toBe(1);
+      expect(new TeamOps(storage).every()).toHaveLength(1);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("revises a reopened change's stored record when Save removes every member, writing no local team", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    relay.noTeams.value = true;
+    const storage = memoryStorage(),
+      id = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [id]: {
+        id,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await f.service
+        .saveTeam({
+          creation: teamId,
+          operation: id,
+          name: "Revised",
+          instructions: "NEW RULE",
+          members: [],
+        })
+        .catch(() => {});
+      const localCopies = readTeams(storage);
+      expect(localCopies).toEqual([]);
+      const [op] = new TeamOps(storage).every();
+      expect(op?.intent.instructions).toBe("NEW RULE");
+      expect(op?.intent.members).toEqual([]);
+      expect(readTeams(storage)).toEqual([]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("finishes an archived unestablished move with Recover then Resubmit", async () => {
+    const { f, relay, storage, config } = await heldMove();
+    try {
+      for (const c of relay.channels.values()) c.archived = true;
+      await config.refreshTeams();
+      await stopThen(f, "resubmit");
+      const [op] = new TeamOps(storage).every();
+      expect(op?.local).toBe("local-moving");
+      expect(op?.stop).toBe("archived");
+      await f.service.recoverTeam(op?.teamId ?? "");
+      const stopped = f.service
+        .snapshot()
+        .teamChanges?.find((c) => c.kind === "move");
+      expect(stopped).toBeDefined();
+      await f.service.teamChange(stopped?.id ?? "", "resubmit");
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(readTeams(storage)).toEqual([]);
+      expect(count(await promptOf(f, "recover-move-exit"), "TEAM RULE")).toBe(
+        1,
+      );
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("finishes an unestablished move with no relay team through Resubmit", async () => {
+    const { f, relay, storage, config } = await heldMove();
+    try {
+      relay.channels.clear();
+      relay.heads.clear();
+      relay.noTeams.value = false;
+      await config.refreshTeams();
+      await stopThen(f, "resubmit");
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(readTeams(storage)).toEqual([]);
+      expect(
+        count(await promptOf(f, "missing-move-exit"), "LOCAL MOVING RULE"),
+      ).toBe(1);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("keeps an unestablished move, its source and the relay head when Resubmit's team read fails", async () => {
+    const { f, relay, storage, config } = await heldMove();
+    try {
+      const before = [...relay.heads.values()].map((h) => h.id);
+      relay.failTeamReads.value = true;
+      await config.refreshTeams();
+      expect(config.teams()?.[0]?.unreadable).toBe(true);
+      await stopThen(f, "resubmit");
+      const [op] = new TeamOps(storage).every();
+      expect(op).toMatchObject({
+        kind: "move",
+        local: "local-moving",
+        mode: "may-send",
+      });
+      expect(op?.confirmedHead).toBeUndefined();
+      expect(op?.candidate).toBeUndefined();
+      expect(readTeams(storage)[0]?.instructions).toBe("LOCAL MOVING RULE");
+      expect([...relay.heads.values()].map((h) => h.id)).toEqual(before);
+      // The same durable handover remains after reload from storage.
+      expect(new TeamOps(storage).every()[0]?.source?.kind).toBe("local-team");
+      relay.failTeamReads.value = false;
+      await f.service.teamChange(op?.id ?? "", "check");
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(readTeams(storage)).toEqual([]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("keeps a stopped archived move across a restart, with neither copy in the prompt", async () => {
+    const { f, relay, storage, config } = await heldMove();
+    let restarted: Awaited<ReturnType<typeof setup>> | undefined;
+    try {
+      for (const c of relay.channels.values()) c.archived = true;
+      await config.refreshTeams();
+      await stopThen(f, "dismiss");
+      await f.ctx.fiber.dispose();
+      restarted = await setup({ storage, identities: [here(alder)] });
+      await vi.waitFor(() =>
+        expect(restarted?.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await relay.opens.mock.results.at(-1)?.value.refreshTeams();
+      expect(new TeamOps(storage).every()).toHaveLength(1);
+      expect(readTeams(storage)[0]?.instructions).toBe("LOCAL MOVING RULE");
+      const prompt = await promptOf(restarted, "restart-archived-move");
+      expect(prompt).not.toContain("LOCAL MOVING RULE");
+      expect(prompt).not.toContain("TEAM RULE");
+    } finally {
+      if (restarted) await restarted.ctx.fiber.dispose();
+      else await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("refuses Dismiss for an unestablished move before the team list loads", async () => {
+    const relay = configRelay(async () => {
+      throw new Error("discovery unavailable");
+    });
+    communityFake.value = relay.opens;
+    relay.noTeams.value = true;
+    const storage = memoryStorage(),
+      id = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    writeTeams(storage, [
+      {
+        id: "unknown-list-local",
+        name: "Local",
+        instructions: "LOCAL MOVING RULE",
+        members: [alder],
+      },
+    ]);
+    new TeamOps(storage).write({
+      [id]: {
+        id,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "move",
+        local: "unknown-list-local",
+        source: { kind: "local-team", id: "unknown-list-local" },
+        intent: {
+          name: "Pending",
+          instructions: "LOCAL MOVING RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "reconcile-only",
+        stop: "discarded",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const config = relay.opens.mock.results[0]?.value;
+      expect(config?.teams()).toBeUndefined();
+      await expect(f.service.teamChange(id, "dismiss")).rejects.toThrow(
+        "can't be dismissed",
+      );
+      expect(new TeamOps(storage).every()).toHaveLength(1);
+      expect(readTeams(storage)[0]?.instructions).toBe("LOCAL MOVING RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
 
   it("revises a reopened pending Create's stored change after a restart, never adding a second", async () => {
     const relay = configRelay();

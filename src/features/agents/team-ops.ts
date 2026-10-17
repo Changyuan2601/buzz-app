@@ -638,14 +638,13 @@ export function teamRunner(deps: RunnerDeps) {
           (await channels.owns(pubkey, signal).catch(() => false))
         )
           wanted.push({ action: "remove", pubkey, state: "planned" });
-    // A plan holds only for the intent it was built from: a revise while
-    // this step waited ends it, and the next step plans afresh.
-    const planned = JSON.stringify(start.intent.members);
+    // A plan holds only for the whole intent it was built from: a revise
+    // while this step waited ends it, and the next step publishes and plans
+    // afresh before anything finishes.
+    const planned = JSON.stringify(start.intent);
     const current = () => {
       const now = live();
-      return now && JSON.stringify(now.intent.members) === planned
-        ? now
-        : undefined;
+      return now && JSON.stringify(now.intent) === planned ? now : undefined;
     };
     const now = current();
     if (!now) return ops.get(start.id);
