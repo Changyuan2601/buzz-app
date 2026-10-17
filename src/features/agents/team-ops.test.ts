@@ -1149,6 +1149,59 @@ describe("team operations: overlapping steps", () => {
 });
 
 describe("team operations: revisions during member work", () => {
+  it.each(["name-only", "instructions-back", "instructions-away-and-back"])(
+    "publishes and finishes %s revised during member lookup",
+    async (scenario) => {
+      const w = world();
+      const teamId = await existing(w, []);
+      const entered = gate(),
+        release = gate();
+      const find = w.channels.find.getMockImplementation();
+      w.channels.find.mockImplementation(async (family, subject) => {
+        if (family === "agent-config") {
+          entered.open();
+          await release.promise;
+        }
+        return find?.(family, subject);
+      });
+      const initial = {
+        ...team,
+        members: [a],
+        instructions:
+          scenario === "instructions-back"
+            ? "FIRST NEW RULE"
+            : team.instructions,
+      };
+      const first = edit(w, teamId, initial);
+      await entered.promise;
+      const latest = {
+        ...initial,
+        ...(scenario === "name-only"
+          ? { name: "Latest name" }
+          : { instructions: team.instructions }),
+      };
+      if (scenario === "instructions-away-and-back") {
+        expect(
+          w.runner.revise(first.op.id, {
+            ...initial,
+            instructions: "TEMP RULE",
+          }),
+        ).toBe(true);
+        void w.runner.run(first.op.id);
+      }
+      expect(w.runner.revise(first.op.id, latest)).toBe(true);
+      const next = w.runner.run(first.op.id);
+      release.open();
+      await Promise.all([first.done, next]);
+      expect(JSON.parse(w.relay.head?.content ?? "{}")).toMatchObject({
+        name: latest.name,
+        instructions: latest.instructions,
+      });
+      expect(w.ops.get(first.op.id)).toBeUndefined();
+      expect([...w.relay.roster]).toEqual([a]);
+    },
+  );
+
   it("publishes instructions revised during a member lookup before finishing", async () => {
     const w = world();
     const teamId = await existing(w, []);

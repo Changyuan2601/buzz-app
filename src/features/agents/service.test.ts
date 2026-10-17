@@ -7109,6 +7109,152 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it.each(["other-only", "spanning", "unavailable"])(
+    "keeps a reopened operation in its own community with %s edited members",
+    async (scenario) => {
+      const first = configRelay(),
+        second = configRelay();
+      first.noTeams.value = true;
+      communityFake.value = (input: CommunityConfigInput) =>
+        (input.community === "https://relay.example.test"
+          ? first
+          : second
+        ).opens(input);
+      const storage = memoryStorage(),
+        operation = crypto.randomUUID(),
+        teamId = crypto.randomUUID();
+      new TeamOps(storage).write({
+        [operation]: {
+          id: operation,
+          teamId,
+          owner: viewer,
+          community: "https://relay.example.test",
+          kind: "create",
+          base: null,
+          intent: {
+            name: "Pending",
+            instructions: "SAVED RULE",
+            members: [alder],
+          },
+          commands: [],
+          mode: "may-send",
+          seq: 1,
+        },
+      });
+      const f = await setup({
+        storage,
+        identities: [here(alder), here(birch, "wss://other.example.test")],
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(f.service.find(alder)?.configBase).toBeDefined(),
+        );
+        await vi.waitFor(() =>
+          expect(
+            f.service.snapshot().running.find((a) => a.pubkey === birch)
+              ?.configBase,
+          ).toBeDefined(),
+        );
+        await first.opens.mock.results[0]?.value.resumeTeams();
+        if (scenario === "unavailable") {
+          f.leave("https://relay.example.test");
+          await settle();
+          await expect(
+            f.service.saveTeam({
+              creation: teamId,
+              operation,
+              name: "Revised",
+              instructions: "NEW RULE",
+              members: [birch],
+            }),
+          ).rejects.toThrow("community isn't available");
+          expect(new TeamOps(storage).every()[0]?.intent.instructions).toBe(
+            "SAVED RULE",
+          );
+        } else {
+          first.noTeams.value = false;
+          await f.service.saveTeam({
+            creation: teamId,
+            operation,
+            name: "Revised",
+            instructions: "NEW RULE",
+            members: scenario === "spanning" ? [alder, birch] : [birch],
+          });
+          expect(new TeamOps(storage).every()).toEqual([]);
+          expect(
+            [...first.heads.values()].map((h) => h.content).join(),
+          ).toContain("NEW RULE");
+        }
+        expect(second.channels.size).toBe(0);
+        expect(readTeams(storage)).toEqual([]);
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it("refuses a stale reopened Create without creating another team after the operation completes", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    relay.noTeams.value = true;
+    const storage = memoryStorage(),
+      operation = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [operation]: {
+        id: operation,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const config = relay.opens.mock.results[0]?.value;
+      await config?.resumeTeams();
+      relay.noTeams.value = false;
+      await config?.resumeTeams();
+      expect(new TeamOps(storage).every()).toEqual([]);
+      // A stale form may refuse; its submitted operation has already finished.
+      const heads = [...relay.heads.values()];
+      const channelsBefore = relay.channels.size;
+      await expect(
+        f.service.saveTeam({
+          creation: teamId,
+          operation,
+          name: "Revised",
+          instructions: "NEW RULE",
+          members: [alder],
+        }),
+      ).rejects.toThrow("changed on another device");
+      expect([...relay.heads.values()]).toEqual(heads);
+      expect(readTeams(storage)).toEqual([]);
+      const remaining = new TeamOps(storage).every();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]).toMatchObject({
+        teamId,
+        mode: "reconcile-only",
+        stop: "conflict",
+      });
+      expect(relay.channels.size).toBe(channelsBefore);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("revises a reopened change's stored record when Save removes every member, writing no local team", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;

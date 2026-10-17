@@ -2170,3 +2170,72 @@ it("shows a team's unfinished marker beside its note", async () => {
     screen.getByText("Spans communities · Unfinished change"),
   ).toBeInTheDocument();
 });
+
+it("submits a reopened no-card change with its operation and creation after removing every member", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents } = setup([ada], {
+    teamChanges: [
+      {
+        id: "op-p4",
+        teamId: "team-p4",
+        kind: "create",
+        name: "Pending",
+        instructions: "SAVED RULE",
+        members: [ada.pubkey],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Pending" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const [change] = agents.saveTeam.mock.calls[0] ?? [];
+  expect(change).toMatchObject({
+    creation: "team-p4",
+    operation: "op-p4",
+    members: [],
+  });
+  expect(change).not.toHaveProperty("id");
+});
+
+it("opens an unfinished change with a card by team id, with creation but no explicit operation", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teams: [
+      { id: "team-p4", name: "Pending", instructions: "RULE", members: [] },
+    ],
+    teamChanges: [
+      {
+        id: "op-p4",
+        teamId: "team-p4",
+        kind: "edit",
+        name: "Pending",
+        instructions: "RULE",
+        members: [],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Edit: Pending" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const [change] = agents.saveTeam.mock.calls[0] ?? [];
+  expect(change).toMatchObject({ id: "team-p4", creation: expect.any(String) });
+  expect(change).not.toHaveProperty("operation");
+});
