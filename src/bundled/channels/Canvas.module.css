@@ -9,6 +9,24 @@
   min-height: 0;
   overflow: auto;
   padding: var(--space-panel-inset);
+  display: flex;
+  flex-direction: column;
+}
+/* The Markdown editor fills the pane. Below its 16 rows, the pane scrolls. */
+.body,
+.edit {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.edit[hidden] {
+  display: none;
+}
+/* A filling editor cannot be dragged smaller, so it has no resize grip. */
+.edit > textarea {
+  flex: 1 0 auto;
+  resize: none;
 }
 .footer {
   display: flex;

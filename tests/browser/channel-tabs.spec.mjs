@@ -480,9 +480,9 @@ test.describe("crowded content tabs", () => {
   });
 });
 
-// Real plugin registration through the channel menu, channel navigation and
-// tab focus need app wiring in both browsers. Save/conflict permutations
-// belong to editor tests.
+// Real plugin registration through the channel menu, channel navigation, tab
+// focus and the editor filling its pane need app wiring and layout in both
+// browsers. Save/conflict permutations belong to editor tests.
 test("Canvas opens once beside Thread and retains its channel draft", async ({
   page,
   app,
@@ -510,6 +510,19 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   const text = workspace.getByRole("textbox", { name: "Canvas Markdown" });
   await expect(canvas).toHaveAttribute("aria-selected", "true");
   await expect(text).toBeEnabled();
+  // The editor fills the pane down to the footer's inset.
+  const footer = workspace
+    .getByRole("region", { name: "Channel Canvas" })
+    .locator("footer");
+  await expect
+    .poll(async () => {
+      const [box, end] = await Promise.all([
+        text.boundingBox(),
+        footer.boundingBox(),
+      ]);
+      return Math.round(end.y - box.y - box.height);
+    })
+    .toBe(20);
   await text.fill("Channel-scoped draft");
   await thread.click();
   await expect(text).toBeHidden();
