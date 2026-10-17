@@ -21,7 +21,13 @@ const threaded = () => Promise.resolve(false);
 it("pulses in the mention's thread every three seconds until stopped", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
-  const stop = pulseTyping(publish, threaded(), mention, "channel", new Map());
+  const { stop } = pulseTyping(
+    publish,
+    threaded(),
+    mention,
+    "channel",
+    new Map(),
+  );
   await vi.advanceTimersByTimeAsync(0);
   expect(publish).toHaveBeenCalledExactlyOnceWith({
     kind: 20002,
@@ -42,7 +48,7 @@ it("pulses in the mention's thread every three seconds until stopped", async () 
 it("tags a top-level mention as its own thread's root", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
-  const stop = pulseTyping(
+  const { stop } = pulseTyping(
     publish,
     threaded(),
     { ...mention, tags: [["h", "channel"]] },
@@ -90,22 +96,73 @@ it("waits for a slow pulse, rides out a failure, and stops after three in a row"
   warn.mockRestore();
 });
 
-it("stops after half an hour of a run that never settles", async () => {
+it("stops after half an hour without activity from a run that never settles", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
-  pulseTyping(publish, threaded(), mention, "channel", new Map());
+  const pulses = new Map();
+  pulseTyping(publish, threaded(), mention, "channel", pulses);
   await vi.advanceTimersByTimeAsync(30 * 60_000);
   const sent = publish.mock.calls.length;
   await vi.advanceTimersByTimeAsync(9_000);
   expect(publish).toHaveBeenCalledTimes(sent);
   expect(vi.getTimerCount()).toBe(0);
+  expect(pulses.size).toBe(0);
+});
+
+it("keeps typing past half an hour while the run shows activity", async () => {
+  vi.useFakeTimers();
+  const publish = vi.fn(async () => {});
+  const typing = pulseTyping(
+    publish,
+    threaded(),
+    mention,
+    "channel",
+    new Map(),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  for (let minute = 0; minute < 60; minute += 20) {
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    typing.active();
+  }
+  const sent = publish.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(publish).toHaveBeenCalledTimes(sent + 3);
+  // Quiet for half an hour after its last step, it stops.
+  await vi.advanceTimersByTimeAsync(30 * 60_000);
+  const last = publish.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(publish).toHaveBeenCalledTimes(last);
+  typing.stop();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("counts a turn joining the pulse as activity", async () => {
+  vi.useFakeTimers();
+  const publish = vi.fn(async () => {});
+  const pulses = new Map();
+  pulseTyping(publish, threaded(), mention, "channel", pulses);
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  pulseTyping(
+    publish,
+    threaded(),
+    { ...mention, id: "e".repeat(64) },
+    "channel",
+    pulses,
+  );
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  const sent = publish.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(publish).toHaveBeenCalledTimes(sent + 3);
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  expect(vi.getTimerCount()).toBe(0);
+  expect(pulses.size).toBe(0);
 });
 
 it("types in the channel itself for a Me chat, once its turn knows where it answers", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
   let answer!: (topLevel: boolean) => void;
-  const stop = pulseTyping(
+  const { stop } = pulseTyping(
     publish,
     new Promise<boolean>((resolve) => {
       answer = resolve;
@@ -138,7 +195,7 @@ it("shows nothing for a turn that cannot tell where it answers, or that ended fi
     "channel",
     new Map(),
   );
-  pulseTyping(publish, threaded(), mention, "channel", new Map())();
+  pulseTyping(publish, threaded(), mention, "channel", new Map()).stop();
   await vi.advanceTimersByTimeAsync(9_000);
   expect(publish).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
@@ -166,11 +223,11 @@ it("shares one pulse among turns in a thread, until the last of them stops", asy
   await vi.advanceTimersByTimeAsync(0);
   // One for the thread both turns are in, one for the other.
   expect(publish).toHaveBeenCalledTimes(2);
-  elsewhere();
-  first();
+  elsewhere.stop();
+  first.stop();
   await vi.advanceTimersByTimeAsync(3_000);
   expect(publish).toHaveBeenCalledTimes(3);
-  second();
+  second.stop();
   await vi.advanceTimersByTimeAsync(9_000);
   expect(publish).toHaveBeenCalledTimes(3);
   expect(pulses.size).toBe(0);

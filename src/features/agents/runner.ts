@@ -57,7 +57,7 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord } from "./store";
 import { Runs, type Start } from "./agent-start";
-import { type Pulses, pulseTyping } from "./typing";
+import { type Pulses, pulseTyping, type Typing } from "./typing";
 import {
   CATCH_UP_PAGES,
   delivered,
@@ -1804,7 +1804,10 @@ export class AgentRunners {
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
         ...(named ? { named } : {}),
-        step: (tool: string, target?: string) => job.work?.step(tool, target),
+        step: (tool: string, target?: string) => {
+          working.active();
+          job.work?.step(tool, target);
+        },
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
       const { trigger } = job;
@@ -1868,7 +1871,7 @@ export class AgentRunners {
    * `workingUntil` have settled, however long that takes. A
    * mention run is shown typing in its thread meanwhile, from its first
    * `workingUntil`: a runtime that ignores the mention never shows it. Its
-   * activity stays on this device. */
+   * steps keep that typing going; its activity stays on this device. */
   private working(
     runner: Runner,
     { trigger, channelId, work }: Job,
@@ -1878,7 +1881,7 @@ export class AgentRunners {
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
-    let typing: (() => void) | undefined;
+    let typing: Typing | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
       typing = pulseTyping(
@@ -1905,7 +1908,7 @@ export class AgentRunners {
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
-      typing?.();
+      typing?.stop();
     };
     const abort = () => {
       work?.remove();
@@ -1946,6 +1949,8 @@ export class AgentRunners {
         );
       },
       release,
+      /** The run showed activity, so its typing goes on. */
+      active: () => typing?.active(),
     };
   }
 

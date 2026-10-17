@@ -990,6 +990,49 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it("keeps typing past half an hour while the turn takes steps", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let step: ((tool: string) => void) | undefined;
+  run.mockImplementationOnce(async (delivery) => {
+    step = delivery.step;
+    delivery.workingUntil(turn);
+  });
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  const pulsing = async () => {
+    const before = (await published(native, 20002)).length;
+    await vi.advanceTimersByTimeAsync(9_000);
+    return (await published(native, 20002)).length > before;
+  };
+  try {
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    step?.("Bash");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(await pulsing()).toBe(true);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(await pulsing()).toBe(false);
+  } finally {
+    finish();
+  }
+});
+
 it("shows no typing for a mention its runtime ignores", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const { service, run, emit, native } = await setup();
