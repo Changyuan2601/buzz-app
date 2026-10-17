@@ -49,12 +49,15 @@ function fixture(
   };
   configure?.(canvas);
   render(
-    <CanvasEditor
-      canvas={canvas}
-      profiles={profiles}
-      scope={scope}
-      channelId={channelId}
-    />,
+    <>
+      <button type="button">Message composer</button>
+      <CanvasEditor
+        canvas={canvas}
+        profiles={profiles}
+        scope={scope}
+        channelId={channelId}
+      />
+    </>,
   );
   return { canvas };
 }
@@ -163,41 +166,113 @@ it("keeps a restored conflict draft until explicit confirmed reload", async () =
   expect(canvas.save).not.toHaveBeenCalled();
 });
 
+it("hands a confirmed reload's focus to the editor unless it moved meanwhile", async () => {
+  for (const order of ["closed", "moved", "closing"] as const) {
+    const user = userEvent.setup();
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "My unsaved work",
+      base: "a".repeat(64),
+    });
+    let land!: (event: typeof head) => Promise<void>;
+    fixture((canvas) => {
+      canvas.read.mockResolvedValueOnce(head);
+      land = hold(canvas.read);
+    });
+    // Hold the confirmation's exit transition, which jsdom does not run.
+    let exit!: () => void;
+    const exiting = new Promise<void>((resolve) => {
+      exit = resolve;
+    });
+    if (order === "closing")
+      Object.defineProperty(Element.prototype, "getAnimations", {
+        configurable: true,
+        value(this: Element) {
+          return this.hasAttribute("data-ending-style")
+            ? [{ finished: exiting, playState: "finished" }]
+            : [];
+        },
+      });
+    try {
+      const reload = await screen.findByRole("button", {
+        name: "Reload saved Canvas",
+      });
+      await user.click(reload);
+      const confirmation = screen.getByRole("dialog", {
+        name: "Reload saved Canvas?",
+      });
+      await user.click(
+        within(confirmation).getByRole("button", {
+          name: "Discard and reload",
+        }),
+      );
+      const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+      const composer = screen.getByRole("button", {
+        name: "Message composer",
+      });
+      if (order === "closing") {
+        await act(() => land(head));
+        expect(text).toHaveValue("Saved");
+        expect(confirmation).toBeInTheDocument();
+        await act(async () => {
+          exit();
+          await exiting;
+        });
+      } else {
+        await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+        await waitFor(() => expect(reload).toHaveFocus());
+        expect(reload).toHaveAttribute("aria-busy", "true");
+        if (order === "moved") composer.focus();
+        await act(() => land(head));
+        expect(text).toHaveValue("Saved");
+      }
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(order === "moved" ? composer : text).toHaveFocus(),
+      );
+    } finally {
+      exit();
+      if (order === "closing")
+        delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+      cleanup();
+    }
+  }
+});
+
 it("retries a failed initial read without discarding the restored draft", async () => {
-  const user = userEvent.setup();
-  writeView(scope, `canvas-draft-v1:${channelId}`, {
-    content: "Unsaved",
-    base: head.id,
-  });
-  const canvas = {
-    available: true,
-    history: vi.fn<ChannelCanvas["history"]>(async () => ({
-      revisions: [head],
-      next: undefined,
-    })),
-    read: vi
-      .fn()
-      .mockRejectedValueOnce(new Error("Offline"))
-      .mockResolvedValue(head),
-    save: vi.fn(async () => head),
-  };
-  render(
-    <CanvasEditor
-      canvas={canvas}
-      profiles={profiles}
-      scope={scope}
-      channelId={channelId}
-    />,
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
-  await user.click(screen.getByRole("button", { name: "Retry loading" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled(),
-  );
-  expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
-    "Unsaved",
-  );
-  expect(canvas.save).not.toHaveBeenCalled();
+  for (const moved of [false, true]) {
+    const user = userEvent.setup();
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "Unsaved",
+      base: head.id,
+    });
+    let land!: (event: typeof head) => Promise<void>;
+    const { canvas } = fixture((canvas) => {
+      canvas.read
+        .mockRejectedValueOnce(new Error("Offline"))
+        .mockRejectedValueOnce(new Error("Still unreachable"));
+      land = hold(canvas.read);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    const retry = screen.getByRole("button", { name: "Retry loading" });
+    await user.click(retry);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Still unreachable",
+    );
+    expect(retry).toHaveFocus();
+    await user.click(retry);
+    await waitFor(() => expect(canvas.read).toHaveBeenCalledTimes(3));
+    expect(retry).toHaveFocus();
+    expect(retry).toHaveAttribute("aria-busy", "true");
+    const composer = screen.getByRole("button", { name: "Message composer" });
+    if (moved) composer.focus();
+    await act(() => land(head));
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+    expect(text).toHaveValue("Unsaved");
+    expect(moved ? composer : text).toHaveFocus();
+    expect(canvas.save).not.toHaveBeenCalled();
+    cleanup();
+  }
 });
 
 it("ignores the stale StrictMode read after the current read enables typing and saving", async () => {
@@ -273,12 +348,12 @@ it("retains the draft after a failed save and keeps editing after a successful r
   expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
 });
 
-function pendingSave(canvas: { save: ReturnType<typeof vi.fn> }) {
+function hold(operation: ReturnType<typeof vi.fn>) {
   let land!: (event: typeof head) => void;
   const pending = new Promise<typeof head>((resolve) => {
     land = resolve;
   });
-  canvas.save.mockReturnValueOnce(pending);
+  operation.mockReturnValueOnce(pending);
   // The editor awaited this promise first, so its continuation has run once
   // a later await of the same promise resumes.
   return async (event: typeof head) => {
@@ -290,7 +365,7 @@ async function saveThenClose(content: string) {
   const user = userEvent.setup();
   let land!: (event: typeof head) => Promise<void>;
   const { canvas } = fixture((canvas) => {
-    land = pendingSave(canvas);
+    land = hold(canvas.save);
   });
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
@@ -397,7 +472,7 @@ function historyFixture() {
 it("retires an unchanged draft when the editor closes before a restore lands", async () => {
   const user = userEvent.setup();
   const { canvas } = historyFixture();
-  const land = pendingSave(canvas);
+  const land = hold(canvas.save);
   await openHistory(user);
   await user.click(
     screen.getByRole("button", { name: "Restore this version" }),

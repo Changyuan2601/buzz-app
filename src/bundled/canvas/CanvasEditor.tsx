@@ -48,21 +48,25 @@ export function CanvasEditor({
     [error, setError] = useState("");
   const operation = useRef(0);
   const editor = useRef<HTMLTextAreaElement>(null);
-  // The tab host places focus when Canvas opens. Take it into the editor once
-  // loaded only if it is still there; never pull it back from elsewhere.
+  const recovery = useRef<HTMLButtonElement>(null);
+  const [recovering, setRecovering] = useState(false);
+  // The tab host places focus when Canvas opens, and a recovery button holds
+  // it while its read is pending. Take it into the editor once a read lands
+  // only if it is still there; never pull it back from elsewhere.
   const handoff = useRef<Element | null>(null);
   useEffect(() => {
     handoff.current = document.activeElement;
   }, []);
   useEffect(() => {
     const previous = handoff.current;
+    if (!previous || !loaded || busy) return;
+    handoff.current = null;
     if (
-      loaded &&
-      (previous === document.activeElement ||
-        (!previous?.isConnected && document.activeElement === document.body))
+      previous === document.activeElement ||
+      (!previous.isConnected && document.activeElement === document.body)
     )
       editor.current?.focus();
-  }, [loaded]);
+  }, [loaded, busy]);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
   useEffect(
@@ -93,7 +97,11 @@ export function CanvasEditor({
             "Canvas changed since this draft began. Your draft is kept. Copy any edits you want to keep before reloading the saved Canvas.",
           );
       } catch (reason) {
-        if (generation === operation.current) setError(String(reason));
+        if (generation === operation.current) {
+          // Focus stays on the renewed recovery button.
+          handoff.current = null;
+          setError(String(reason));
+        }
       } finally {
         if (generation === operation.current) setBusy(false);
       }
@@ -103,6 +111,11 @@ export function CanvasEditor({
   useEffect(() => {
     if (!loaded) void load();
   }, [loaded, load]);
+  const recover = (replace: boolean) => {
+    handoff.current = recovery.current;
+    setRecovering(true);
+    void load(replace).finally(() => setRecovering(false));
+  };
   const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
   const restore = async (revision: RelayEvent) => {
     const generation = ++operation.current;
@@ -165,11 +178,12 @@ export function CanvasEditor({
   const actions =
     tab === "edit" ? (
       <>
-        {error && (
+        {(error || recovering) && (
           <Button
-            disabled={busy}
+            ref={recovery}
+            loading={busy}
             onClick={() => {
-              if (!loaded) void load();
+              if (!loaded) recover(false);
               else setConfirmReload(true);
             }}
           >
@@ -261,6 +275,8 @@ export function CanvasEditor({
         onOpenChange={setConfirmReload}
         dismissOnOutsideClick
         initialFocus={cancelReload}
+        // A reload that lands before this closes has removed its button.
+        finalFocus={() => recovery.current ?? editor.current}
         title="Reload saved Canvas?"
         actions={
           <>
@@ -271,7 +287,7 @@ export function CanvasEditor({
               variant="destructive"
               onClick={() => {
                 setConfirmReload(false);
-                void load(true);
+                recover(true);
               }}
             >
               Discard and reload
