@@ -285,3 +285,36 @@ Human testing, packaged/native GUI, live relay, cross-account, no-wake and hoste
 CI acceptance remain separate. Narrow enlarged-text footer clipping/wrapping
 remains a presentation limitation; center hit testing and Tab reachability are
 not complete visual acceptance.
+
+## Start a Solo chat from a channel or message
+
+**Start Solo chat** is available in an active stream/forum channel's actions and
+in delivered messages' overflow menus. Its compact submenu offers **Private chat** or **Shared chat**; either choice opens
+the ordinary Solo draft immediately, without a confirmation dialog. No remote
+chat, membership grant or card is created until its first send. Each shortcut has
+its own scoped draft, preserving any unrelated New chat draft and project.
+
+The draft appends the existing channel/message link to the first prompt without
+an explanatory label above the composer. It does not copy a transcript, create a parent-linked session, or
+add an agent to the source. Agent selection, required tags, creation, project
+settings and first-send retry remain owned by the existing Solo composer. A source
+link grants no access: the tagged agent may report that it cannot read the source.
+
+If sharing was chosen, after the first message is confirmed the chat's existing
+Share control runs its normal fresh-roster/grant/card sequence. Channel-origin
+cards post in the channel; message-origin cards reply to that message's thread.
+The current channel audience includes agents and receives full chat participation,
+not ongoing membership synchronization. The chat stays in Solo and uses the
+existing Shared indicator. Source discussion remains separate from agent replies.
+
+A failed share stays in the existing Share dialog with its ordinary recovery,
+partial-access disclosure and Retry. Thread identity is frozen with the share
+intent and included in exact-card recovery matching. The local shortcut records
+whether sharing was attempted and its queued card ID; reopening after interruption
+requires explicit retry rather than another automatic grant sequence. Completed
+sharing clears the shortcut before optional discovery feedback. Closing a failed
+share preserves its destination and exact-card recovery; it never revokes
+already-confirmed access. The existing
+Outbox remains the durable owner of submitted writes. Cross-device composite
+resume is not added. Consumed linked drafts are retired rather than creating a
+second chat when visited through history.

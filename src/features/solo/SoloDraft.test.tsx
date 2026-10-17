@@ -14,7 +14,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
+import { linkedDraftKey, shareBackKey, type LinkedChat } from "./linked-chat";
+import { composerMarkdown } from "../messages/composer-markdown";
+import type { MentionDraft } from "../messages/mention-draft";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
@@ -1263,4 +1266,93 @@ it("resumes a new chat's interrupted upload after navigating away and back", asy
     ["a".repeat(64)],
     [notes],
   );
+});
+
+it.each([false, true])(
+  "starts a linked draft without changing an unrelated draft or granting source access (share=%s)",
+  async (share) => {
+    const t = setup();
+    const linkedId = "22222222-2222-4222-8222-222222222222";
+    const source: LinkedChat = {
+      channelId: "design",
+      channelName: "Design",
+      link: "buzz://channel/design",
+      share,
+    };
+    const draft = taggedDraft("Investigate this");
+    writeView("test", linkedDraftKey(linkedId), source);
+    writeView("test", `${linkedDraftKey(linkedId)}:new-draft`, draft);
+    writeView("test", "solo:new-draft", "Unrelated work");
+    const started = vi.fn();
+    render(
+      <SoloDraft
+        session={t.session}
+        scope="test"
+        linkedId={linkedId}
+        source={source}
+        onStarted={started}
+      />,
+    );
+    expect(t.channelWrites.create).not.toHaveBeenCalled();
+    expect(screen.queryByText("Only you and your agents")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    const id = t.channelWrites.create.mock.calls[0]?.[0];
+    expect(t.messages.send).toHaveBeenCalledWith(
+      id,
+      "@Member agent Investigate this\n\nSource: buzz://channel/design",
+      ["a".repeat(64)],
+    );
+    expect(t.channelWrites.addAgents.mock.calls).toEqual([
+      [id, ["a".repeat(64)], expect.any(Function)],
+    ]);
+    expect(readView("test", "solo:new-draft", null)).toBe("Unrelated work");
+    expect(readView("test", linkedDraftKey(linkedId), null)).toBeNull();
+    expect(readView("test", shareBackKey(id ?? ""), null)).toEqual(
+      share ? source : null,
+    );
+  },
+);
+
+it("keeps the source and exact recipients in the created chat when agent enrollment fails", async () => {
+  const t = setup();
+  t.channelWrites.addAgents.mockRejectedValueOnce(
+    new Error("Membership unavailable"),
+  );
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    channelName: "Design",
+    link: "buzz://channel/design",
+    share: true,
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  writeView(
+    "test",
+    `${linkedDraftKey(linkedId)}:new-draft`,
+    taggedDraft("Investigate this"),
+  );
+  const started = vi.fn();
+  render(
+    <SoloDraft
+      session={t.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      onStarted={started}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  const id = started.mock.calls[0]?.[0];
+  const saved = readView<MentionDraft>("test", `draft:${id}`, {
+    text: "",
+    recipients: [],
+  });
+  expect(composerMarkdown(saved)).toBe(
+    "@Member agent Investigate this\n\nSource: buzz://channel/design",
+  );
+  expect(saved.recipients.map((item) => item.pubkey)).toEqual(["a".repeat(64)]);
+  expect(t.messages.send).not.toHaveBeenCalled();
+  expect(readView("test", shareBackKey(id), null)).toBeNull();
 });

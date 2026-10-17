@@ -125,6 +125,13 @@ export function SoloShare({
   signal,
   renderTrigger,
   initialOpen = false,
+  initialDestination = "",
+  destinationThread,
+  autoShare = false,
+  initialMessageId,
+  onAttempt,
+  onLinkQueued,
+  onShared,
   onClose,
   finalFocus,
   onConvert,
@@ -134,6 +141,13 @@ export function SoloShare({
   navigator?: Navigation | undefined;
   channel: ChannelSummary;
   initialOpen?: boolean;
+  initialDestination?: string | undefined;
+  destinationThread?: string | undefined;
+  autoShare?: boolean;
+  initialMessageId?: string | undefined;
+  onAttempt?: (() => void) | undefined;
+  onLinkQueued?: ((id: string) => void) | undefined;
+  onShared?: (() => void) | undefined;
   onConverted?: (() => void) | undefined;
   /** A host whose header changes type owns conversion outside that header. */
   onConvert?: (trigger: HTMLElement | null) => void;
@@ -168,7 +182,7 @@ export function SoloShare({
   const [converting, setConverting] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [destination, setDestination] = useState("");
+  const [destination, setDestination] = useState(initialDestination);
   const [expandedChannel, setExpandedChannel] = useState("");
   const [expandedShares, setExpandedShares] = useState<string[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -485,6 +499,7 @@ export function SoloShare({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    if (autoStarted.current && !saved) setDestination("");
     setOpen(true);
   };
   const startOver = () => {
@@ -548,8 +563,17 @@ export function SoloShare({
     }
     const exact = beginSoloShare(session, channel.id, {
       destination: destination || channel.id,
+      threadRootId:
+        destination === initialDestination ? destinationThread : undefined,
       chatPeople: people.map((person) => person.pubkey),
     });
+    if (
+      !exact.messageId &&
+      initialMessageId &&
+      exact.intent.destination === initialDestination &&
+      exact.intent.threadRootId === destinationThread
+    )
+      exact.messageId = initialMessageId;
     setFrozen(exact);
     if (exact.running) {
       setError("This share is already in progress in another view.");
@@ -593,6 +617,7 @@ export function SoloShare({
       if (visible()) setProgress(text);
     };
     try {
+      onAttempt?.();
       const target = exact.intent.destination;
       if (exact.intent.chatPeople.some(knownAgent))
         throw new Error("Add agents from their own chat controls instead.");
@@ -660,8 +685,12 @@ export function SoloShare({
           controller.signal,
           (id) => {
             exact.messageId = id;
+            onLinkQueued?.(id);
           },
+          exact.intent.threadRootId,
         );
+        // Completion is recorded before optional reads or navigation can remount us.
+        onShared?.();
         // Optional discovery feedback must not turn a confirmed share into a failed operation.
         try {
           const confirmed = await session.read(
@@ -745,6 +774,20 @@ export function SoloShare({
       src={avatarMedia(profiles.get(key)?.picture, session.media)}
     />
   );
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (
+      !autoShare ||
+      autoStarted.current ||
+      !open ||
+      !visible() ||
+      rosterState !== "ready"
+    )
+      return;
+    // Existing submit rechecks access and captures its own fresh destination roster.
+    autoStarted.current = true;
+    void submit();
+  });
   const row = (key: string, selected: boolean) => (
     <div key={key} className={styles.row}>
       {identity(key)}

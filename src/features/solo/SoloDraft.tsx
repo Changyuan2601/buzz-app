@@ -1,3 +1,9 @@
+import { linkedDraftKey, shareBackKey, type LinkedChat } from "./linked-chat";
+import {
+  composerSchema,
+  readComposerDocument,
+  projectComposerDocument,
+} from "../messages/composer-document";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -87,7 +93,11 @@ export function SoloDraft({
   extensions,
   focusRequest = 0,
   agent,
+  linkedId,
+  source,
 }: {
+  linkedId?: string | undefined;
+  source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
   agent?: string | undefined;
   focusRequest?: number | AbortSignal;
@@ -97,9 +107,11 @@ export function SoloDraft({
   onStarted: (id: string) => void;
   projectId?: string | undefined;
 }) {
-  const draftKey = projectId ? `solo:project:${projectId}` : "solo";
-  // Before the composer reads it: a named agent replaces a saved draft that
-  // only tags another agent, since that tag was the earlier default.
+  const draftKey = linkedId
+    ? linkedDraftKey(linkedId)
+    : projectId
+      ? `solo:project:${projectId}`
+      : "solo";
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
@@ -170,6 +182,28 @@ export function SoloDraft({
   }, []);
   async function start(draft: MentionDraft, files: AttachmentDraft) {
     const text = composerMarkdown(draft);
+    // Keep the source in the ordinary chat draft too if setup/send is interrupted.
+    const linkedDocument = source
+      ? readComposerDocument(draft, draft.recipients)
+      : undefined;
+    const outgoingDraft =
+      linkedDocument && source
+        ? {
+            ...draft,
+            ...projectComposerDocument(
+              linkedDocument.copy(
+                linkedDocument.content
+                  .addToEnd(composerSchema.nodes.paragraph.create())
+                  .addToEnd(
+                    composerSchema.nodes.paragraph.create(
+                      null,
+                      composerSchema.text(`Source: ${source.link}`),
+                    ),
+                  ),
+              ),
+            ).draft,
+          }
+        : draft;
     if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
     setBusy(true);
@@ -237,11 +271,16 @@ export function SoloDraft({
       await session.channelWrites.refresh(channelId);
       // The chat exists. From here its own composer keeps the text, so an
       // interruption leaves an ordinary chat to send from.
-      if (replaceView(scope, `draft:${channelId}`, null, draft) === "failed")
+      if (
+        replaceView(scope, `draft:${channelId}`, null, outgoingDraft) ===
+        "failed"
+      )
         throw new Error(
           "Your message couldn’t be saved on this device. Retry to finish opening the chat.",
         );
       opened = true;
+      // Creation now hands off to an ordinary chat instead of a pending-start route.
+      if (source) writeView(scope, draftKey, null);
       // Its composer keeps the uploaded files too, until they are sent.
       const chatFiles = attachmentDraft(
         session,
@@ -268,9 +307,9 @@ export function SoloDraft({
         throw new Error(
           "This conversation is no longer in Solo. Open it in Team.",
         );
-      session.messages.send(
+      const messageId = session.messages.send(
         channelId,
-        text,
+        source ? `${text}\n\nSource: ${source.link}` : text,
         recipients,
         ...(uploaded.length ? [uploaded] : []),
       );
@@ -280,6 +319,13 @@ export function SoloDraft({
         `draft:${channelId}`,
         rememberedMentions(session, draft, recipients),
       );
+      if (source?.share) {
+        await session.channelWrites.delivered(messageId);
+        if (!writeView(scope, shareBackKey(channelId), source))
+          throw new Error(
+            "The share choice couldn’t be saved. Open Share to try again.",
+          );
+      }
       if (mounted.current) onStarted(channelId);
     } catch (reason) {
       if (!mounted.current) return;

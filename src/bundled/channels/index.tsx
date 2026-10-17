@@ -1,3 +1,4 @@
+import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
@@ -34,6 +35,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ));
   const relay = ctx.relay;
   const navigator = ctx.navigation;
+  ctx.conversation.registerMessageAction({
+    id: "start-solo-chat",
+    title: "Start Solo chat",
+    placement: "menu",
+    icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
+    matches: (message, session) =>
+      canStartLinkedChat(session, message.channelId) &&
+      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    component: ({ message, session }) => (
+      <StartLinkedChat
+        session={session}
+        navigation={navigator}
+        channelId={message.channelId}
+        message={message}
+      />
+    ),
+  });
   const panels = ctx.panels;
   const archive: ArchiveShortcut = {};
   ctx.shortcuts.register({

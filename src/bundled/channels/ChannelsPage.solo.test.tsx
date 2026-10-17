@@ -25,7 +25,8 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { writeView } from "../../shared/view-state";
+import { linkedDraftKey, shareBackKey } from "../../features/solo/linked-chat";
+import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
@@ -661,4 +662,38 @@ it("opens Chat settings from the heading and restores keyboard focus without nav
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("does not recreate a consumed linked draft on history navigation", () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  f.mount();
+  expect(
+    screen.getByText(
+      "This linked chat draft is unavailable. Start again from its source.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(readView(f.scope, linkedDraftKey(linked), null)).toBeNull();
+});
+
+it("reopens an attempted share-back without automatically sharing and keeps it when closed", async () => {
+  const f = fixture();
+  writeView(f.scope, shareBackKey(id), {
+    channelId: "design",
+    channelName: "Design",
+    link: "buzz://channel/design",
+    share: true,
+    attempted: true,
+  });
+  f.mount();
+  expect(
+    await screen.findByRole("dialog", { name: "Share chat" }),
+  ).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(readView(f.scope, shareBackKey(id), null)).toMatchObject({
+    channelId: "design",
+    attempted: true,
+  });
 });

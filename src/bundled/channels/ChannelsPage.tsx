@@ -1,3 +1,9 @@
+import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import {
+  readLinkedChat,
+  linkedDraftKey,
+} from "../../features/solo/linked-chat";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -198,6 +204,9 @@ function ChannelWorkspace({
         : undefined,
     [draftTarget],
   );
+  const linkedSource = draft?.linked
+    ? readLinkedChat(scope, linkedDraftKey(draft.linked))
+    : undefined;
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
@@ -1532,9 +1541,17 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : draft?.linked && !linkedSource ? (
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="Draft unavailable"
+              description="This linked chat draft is unavailable. Start again from its source."
+            />
           ) : draft ? (
             <SoloDraft
-              key={JSON.stringify([draft.project, draft.agent])}
+              key={JSON.stringify([draft.project, draft.agent, draft.linked])}
+              linkedId={draft.linked}
+              source={linkedSource}
               focusRequest={
                 navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
               }
@@ -1621,6 +1638,17 @@ function ChannelWorkspace({
                         )}
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          startChat={
+                            navigator &&
+                            current &&
+                            canStartLinkedChat(queries, current.id) ? (
+                              <StartLinkedChat
+                                session={queries}
+                                navigation={navigator}
+                                channelId={current.id}
+                              />
+                            ) : undefined
+                          }
                           key={`channel-actions:${currentId ?? "empty"}`}
                           channel={current}
                           session={queries}
