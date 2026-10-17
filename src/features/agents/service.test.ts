@@ -7157,6 +7157,17 @@ describe("Delete as a recoverable archive", () => {
         else relay.heads.clear();
         await config.refreshTeams();
         await stopThen(f, action);
+        if (state === "unreadable" && action === "resubmit") {
+          // This fake reads an unreadable team as empty: the resubmitted
+          // move creates it atomically, establishing it, so the relay copy
+          // is the one copy and the row retires.
+          expect(new TeamOps(storage).every()).toEqual([]);
+          expect(readTeams(storage)).toEqual([]);
+          expect(
+            [...relay.heads.values()].map((head) => head.content).join(),
+          ).toContain("LOCAL MOVING RULE");
+          return;
+        }
         expect(new TeamOps(storage).every()).toHaveLength(1);
         expect(readTeams(storage)).toEqual([
           expect.objectContaining({ instructions: "LOCAL MOVING RULE" }),
@@ -7165,6 +7176,30 @@ describe("Delete as a recoverable archive", () => {
         const prompt = await promptOf(f, `${state}-${action}-move`);
         expect(prompt).not.toContain("LOCAL MOVING RULE");
         expect(prompt).not.toContain("TEAM RULE");
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it.each(["dismiss", "resubmit"] as const)(
+    "with config sync on, gives a run one copy after an unestablished move with a readable relay team is %sed",
+    async (action) => {
+      const { f, storage } = await heldMove();
+      try {
+        expect(new TeamOps(storage).every()[0]?.confirmedHead).toBeUndefined();
+        await stopThen(f, action);
+        // Dismiss refuses and keeps the row; Resubmit's move adopts the
+        // team, establishing it, and retires the row.
+        expect(readTeams(storage)).toEqual(
+          action === "dismiss"
+            ? [expect.objectContaining({ instructions: "LOCAL MOVING RULE" })]
+            : [],
+        );
+        const prompt = await promptOf(f, `readable-${action}-move`);
+        expect(
+          count(prompt, "LOCAL MOVING RULE") + count(prompt, "TEAM RULE"),
+        ).toBe(1);
       } finally {
         await f.ctx.fiber.dispose();
       }

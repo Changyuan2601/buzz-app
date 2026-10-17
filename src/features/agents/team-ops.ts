@@ -816,20 +816,24 @@ export function teamRunner(deps: RunnerDeps) {
         throw new Error("Nothing to resubmit");
       if (unresolved(old))
         throw new Error("This change still has unconfirmed steps");
+      // An unestablished move stays a move: it keeps its local row's link
+      // and adopts the team again, so the row is never orphaned.
+      const move = old.local !== undefined && !established(old);
       const op: TeamOp = {
         id: crypto.randomUUID(),
         owner: old.owner,
         community: old.community,
         teamId: old.teamId,
-        kind: "edit",
+        kind: move ? old.kind : "edit",
         intent: old.intent,
-        base,
+        ...(move ? { local: old.local } : { base }),
+        ...(move && old.source ? { source: old.source } : {}),
         commands: [],
         mode: "may-send",
         seq: ops.nextSeq(),
         ...(old.channel ? { channel: old.channel } : {}),
       };
-      deps.done(old);
+      if (!move) deps.done(old);
       put({ [old.id]: undefined, [op.id]: op });
       return { op, done: run(op.id) };
     },
