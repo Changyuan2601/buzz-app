@@ -630,7 +630,9 @@ export function teamRunner(deps: RunnerDeps) {
     for (const pubkey of want)
       if (!roster.has(pubkey))
         wanted.push({ action: "add", pubkey, state: "planned" });
-    if (start.kind === "edit")
+    // Imports and moves only add; an edit, or a Create revised after some
+    // members joined, takes off whoever its form no longer lists.
+    if (start.kind === "edit" || start.kind === "create")
       for (const pubkey of roster)
         if (
           pubkey !== deps.owner &&

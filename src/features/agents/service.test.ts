@@ -6763,6 +6763,32 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("an archived import with a maybe-sent member add reports what needs checking, keeping its change", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      // The add's reply is lost, and the roster never shows it.
+      relay.addMember.mockResolvedValue({ status: "uncertain" } as never);
+      listsTeam(f.native, nightShift([alder]));
+      await importTeam(f.service);
+      // Deleted elsewhere before the add is confirmed.
+      const [only] = [...relay.channels.values()];
+      if (only) only.archived = true;
+      const again = await importTeam(f.service);
+      expect(again.archived).toBeUndefined();
+      expect(again.teamError).toEqual({ name: "Night Shift" });
+      expect(f.service.snapshot().teamChanges).toEqual([
+        expect.objectContaining({ kind: "import", unresolved: true }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("Create does not report unconfirmed team membership as success", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;
@@ -6956,8 +6982,11 @@ describe("Delete as a recoverable archive", () => {
       storage,
       identities: [here(alder), here(birch, "wss://other.example.test")],
     });
-    await vi.waitFor(() =>
-      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    // Ready at once when run alone; a CI flake-check rerun once took over
+    // the default 1 s on a loaded runner.
+    await vi.waitFor(
+      () => expect(f.service.find(alder)?.configBase).toBeDefined(),
+      { timeout: 5_000 },
     );
     return f;
   };
@@ -7063,6 +7092,66 @@ describe("Delete as a recoverable archive", () => {
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     return f.run.mock.calls[0]?.[0].team ?? "";
   };
+
+  /** A local team whose move can't make its channel yet: the move stays
+   * unfinished and unpublished. */
+  const stuckMove = async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const local = {
+      id: "local-stuck",
+      name: "Stuck",
+      instructions: "STUCK RULE",
+      members: [alder],
+    };
+    writeTeams(storage, [local]);
+    relay.noTeams.value = true;
+    const f = await setup({ storage, identities: [here(alder)] });
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teamChanges).toHaveLength(1),
+    );
+    const config = relay.opens.mock.results[0]?.value;
+    if (!config) throw new Error("No community config");
+    const resume = async () => {
+      relay.noTeams.value = false;
+      await config.resumeTeams();
+      expect(new TeamOps(storage).every()).toEqual([]);
+    };
+    return { f, storage, local, resume };
+  };
+
+  it("refuses editing a local team whose move is unfinished, so resuming it loses nothing", async () => {
+    const { f, storage, local, resume } = await stuckMove();
+    try {
+      await expect(
+        f.service.saveTeam({ ...local, instructions: "NEWER RULE" }),
+      ).rejects.toThrow("Unfinished changes");
+      expect(readTeams(storage)).toEqual([local]);
+      await resume();
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ instructions: "STUCK RULE" }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("refuses deleting a local team whose move is unfinished, so resuming it recreates nothing deleted", async () => {
+    const { f, storage, local, resume } = await stuckMove();
+    try {
+      await expect(f.service.removeTeam(local.id)).rejects.toThrow(
+        "Unfinished changes",
+      );
+      expect(readTeams(storage)).toEqual([local]);
+      await resume();
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ name: "Stuck" }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
 
   it("refuses Dismiss for an unestablished move even when an old team list lacks its relay team", async () => {
     const relay = configRelay();

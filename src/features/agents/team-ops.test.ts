@@ -834,6 +834,25 @@ describe("team operations: transitions", () => {
     expect(w.relay.roster.has(b)).toBe(true);
   });
 
+  it("a partly done Create revised to drop a joined member removes it", async () => {
+    const w = world({ agents: [a] });
+    const teamId = crypto.randomUUID();
+    // b has no agent channel yet: a joins, b waits.
+    const old = w.runner.start({
+      kind: "create",
+      teamId,
+      base: null,
+      intent: { ...team, members: [a, b] },
+    });
+    await old.done;
+    expect(w.relay.roster.has(a)).toBe(true);
+    w.runner.revise(old.op.id, { ...team, members: [b] });
+    w.agents.add(b);
+    expect(await w.runner.run(old.op.id)).toBeUndefined();
+    expect(w.relay.roster.has(a)).toBe(false);
+    expect(w.relay.roster.has(b)).toBe(true);
+  });
+
   it("an adopted Import sends no member command through an empty head read", async () => {
     const w = world({ agents: [a] });
     const teamId = await existing(w, []);

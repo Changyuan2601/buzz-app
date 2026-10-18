@@ -2151,6 +2151,55 @@ it("saves a reopened no-card change onto its stored operation", async () => {
   );
 });
 
+it("keeps a reopened no-card change's draft and focus when its change finishes before Save", async () => {
+  const user = userEvent.setup();
+  const teams: AgentsSnapshot["teams"][number][] = [];
+  const changes: NonNullable<AgentsSnapshot["teamChanges"]>[number][] = [
+    {
+      id: "op-1",
+      teamId: "team-new",
+      kind: "create",
+      name: "Lost",
+      instructions: "SAVED RULE",
+      members: [],
+      problem: "Waiting",
+      stopped: false,
+      unresolved: false,
+    },
+  ];
+  const { agents, show } = setup([], { teams, teamChanges: changes });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Lost" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  await user.type(name, " draft");
+  // The change finishes in the background: its team is listed instead.
+  changes.splice(0);
+  teams.push({
+    id: "team-new",
+    name: "Lost",
+    instructions: "SAVED RULE",
+    members: [],
+  });
+  act(() => show([]));
+  const kept = screen.getByRole("textbox", { name: "Name" });
+  expect(kept).toHaveValue("Lost draft");
+  expect(kept).toHaveFocus();
+  await user.type(kept, "!");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenCalledWith(
+    expect.objectContaining({
+      creation: "team-new",
+      operation: "op-1",
+      name: "Lost draft!",
+    }),
+  );
+});
+
 it("shows a team's unfinished marker beside its note", async () => {
   const user = userEvent.setup();
   setup([], {

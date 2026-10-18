@@ -69,6 +69,7 @@ import {
   type TeamOps,
   teamOpProblem,
   teamRunner,
+  unresolved,
 } from "./team-ops";
 
 /** Config sync ships off. Turning it on is a one-line change. */
@@ -722,7 +723,12 @@ export function agentConfigs(
             }).done;
       const after = await done;
       await refreshTeams().catch(() => {});
-      if (after?.stop === "archived" && !after.candidate) {
+      // A member add that may have been sent keeps the change, unfinished.
+      if (
+        after?.stop === "archived" &&
+        !after.candidate &&
+        !unresolved(after)
+      ) {
         runner.dismiss(after.id);
         return { teamId, archived: true as const, missing: [] };
       }
