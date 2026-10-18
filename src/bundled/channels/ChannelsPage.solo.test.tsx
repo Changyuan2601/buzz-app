@@ -195,6 +195,24 @@ function fixture({
     messages: { ...owner.session.messages, send },
     channelWrites: {
       ...owner.session.channelWrites,
+      available: true,
+      create: vi.fn<RelaySession["channelWrites"]["create"]>(() =>
+        "c".repeat(64),
+      ),
+      delivered: vi.fn<RelaySession["channelWrites"]["delivered"]>(
+        async () => {},
+      ),
+      refresh: vi.fn(async (channelId: string) => {
+        list = {
+          ...list,
+          channels: [...list.channels, { ...channel, id: channelId }],
+        };
+        emitList();
+      }),
+      addAgents: vi.fn<RelaySession["channelWrites"]["addAgents"]>(async () => {
+        list = { ...list, channels: [...list.channels] };
+        emitList();
+      }),
       refreshMembership: vi.fn(async () => channel),
     },
   };
@@ -695,5 +713,48 @@ it("reopens an attempted share-back without automatically sharing and keeps it w
   expect(readView(f.scope, shareBackKey(id), null)).toMatchObject({
     channelId: "design",
     attempted: true,
+  });
+});
+
+it("finishes opening a linked shared chat across roster updates while first-message confirmation is pending", async () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  writeView(f.scope, linkedDraftKey(linked), {
+    channelId: "design",
+    channelName: "Design",
+    link: "buzz://channel/design",
+    share: true,
+  });
+  let release!: () => void;
+  const confirmation = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.session.channelWrites.delivered.mockImplementation(async (messageId) => {
+    if (messageId === "d".repeat(64)) await confirmation;
+  });
+  f.mount();
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("Investigate this");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(f.session.channelWrites.delivered).toHaveBeenCalledWith(
+        "d".repeat(64),
+      ),
+    );
+    expect(screen.queryByText("Draft unavailable")).toBeNull();
+    expect(f.open).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+  const created = f.session.channelWrites.create.mock.calls[0]?.[0];
+  expect(f.open).toHaveBeenCalledWith(
+    conversationTarget(f.scope, created ?? ""),
+  );
+  expect(readView(f.scope, shareBackKey(created ?? ""), null)).toMatchObject({
+    channelId: "design",
+    share: true,
   });
 });

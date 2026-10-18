@@ -204,9 +204,15 @@ function ChannelWorkspace({
         : undefined,
     [draftTarget],
   );
-  const linkedSource = draft?.linked
-    ? readLinkedChat(scope, linkedDraftKey(draft.linked))
-    : undefined;
+  // The draft consumes its source on creation. Keep this visit's source while
+  // membership and first-send work settles; a later visit reads storage anew.
+  const linkedSource = useMemo(
+    () =>
+      !navigation?.signal.aborted && draft?.linked
+        ? readLinkedChat(scope, linkedDraftKey(draft.linked))
+        : undefined,
+    [draft?.linked, scope, navigation?.signal],
+  );
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
