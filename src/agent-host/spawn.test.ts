@@ -1,12 +1,18 @@
 // @vitest-environment node
+import { execFileSync } from "node:child_process";
 import { expect, it, vi } from "vitest";
 import { processHost } from "./spawn";
 
+/** Whether the process still runs. A killed one whose new parent has not yet
+ * reaped it (a zombie, state `Z`) has exited, though signal 0 still finds it. */
 const alive = (pid: number) => {
   try {
-    process.kill(pid, 0);
-    return true;
+    const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim();
+    return !!state && !state.startsWith("Z");
   } catch {
+    // ps exits non-zero when no such process exists.
     return false;
   }
 };
