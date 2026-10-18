@@ -1267,8 +1267,9 @@ function Teams({
   return (
     <div className="grid gap-4">
       <p className="m-0 text-body-sm text-secondary">
-        Each member is told who its teammates are, and follows the team's
-        instructions after its own.
+        Members know their teammates and can invite them into Solo chats when
+        needed. Invited teammates can read the chat’s history. Shared
+        instructions can describe who handles what.
       </p>
       <div className={cardStyles.grid}>
         {newTeam}

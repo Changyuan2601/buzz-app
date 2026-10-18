@@ -126,6 +126,52 @@ IDs do not become per-turn tags.
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 
+## Team collaboration
+
+Teams are local collaboration groups, not channel membership or permission grants.
+Agents on the same team may bring needed teammates into their current Solo chat
+without another setting. They should respect an instruction to work alone and
+invite only the teammates needed, not the whole team. Adding someone gives them
+ordinary access to the chat's existing history; the existing membership notice
+identifies who added them.
+
+The turn prompt and **teammates** tool share an Agents-owned roster, scoped to the
+calling agent's owner and community, not the community selected in the UI. Saved
+team keys are intersected with `session.agentChoices.selectable` and local identities;
+deleted, deleting, foreign-owner, other-community and known-archived candidates
+are omitted. An unavailable agent list is an error, not an empty team. Teams
+currently contain local agents only; no cross-device team sync or hosted-provider
+context delivery is added.
+
+The Agents service supplies the read-only tool beside plugin-added tools, even
+when the Agents management page is disabled. It returns exact keys, names, shared team instructions and available public profile
+descriptions (up to 300 characters). It reads only the team's exact profile keys
+on demand and uses the existing lazy archive read. Failed optional enrichment
+preserves identities. Private per-agent instructions are never included. Public
+descriptions appear only in tool results, so profile hydration does not change
+Claude/goose prompt fingerprints. Shared team instructions can describe roles
+when no public description exists; no new role field is introduced.
+
+Before delegating, the agent refreshes this roster, checks current chat members,
+adds missing teammates with the existing **members** tool, waits for relay roster
+confirmation, then uses **send** with exact notification keys. These writes remain
+signed by the agent. Owner-only/nobody invitation policies and other relay failures
+remain blockers, not permission to sign as the human. A teammate list is not
+proof of chat access, a running process, or a guaranteed reply. The ordinary
+members tool retains its existing scope; team guidance is not a new security
+boundary or a revocation of previously granted chat access.
+
+Existing tool-list lifecycle handling applies: Claude/goose replace idle sessions
+as needed; Codex starts a fresh harness thread once when this tool is introduced
+because resumed threads retain their original tools. Team edits do not change
+the tool schema; the live lookup reads current data even during an active turn.
+
+Focused coverage is in `features/agents/service.test.ts`: tool dispatch through
+the real service and app client, live team edits, exact-key descriptions, failed
+enrichment, scope retirement, deletion/archive filtering, and stable prompt text.
+`app/pages.integration.test.mjs` verifies discovery survives disabling the Agents page.
+This does not establish live model compliance or packaged desktop acceptance.
+
 ## Local agents
 
 `LocalAgents` (`src/features/agents/local.ts`) is a read-only snapshot of the

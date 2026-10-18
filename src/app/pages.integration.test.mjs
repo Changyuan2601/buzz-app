@@ -35,6 +35,28 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       ),
     );
     const firstFeedback = services.accountActions.snapshot()[0];
+    const teammateTool = services.agents
+      .tools()
+      .find((tool) => tool.name === "teammates");
+    assert.ok(teammateTool);
+    await services.plugins.change("disable", "buzz.agents");
+    assert.equal(
+      services.pages.snapshot().some((page) => page.pluginId === "buzz.agents"),
+      false,
+    );
+    assert.equal(
+      services.agents.tools().find((tool) => tool.name === "teammates"),
+      teammateTool,
+    );
+    await services.plugins.change("enable", "buzz.agents");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.agents"),
+      ),
+    );
+
     await services.plugins.change("disable", "buzz.feedback");
     assert.deepEqual(services.accountActions.snapshot(), []);
     await services.plugins.change("enable", "buzz.feedback");

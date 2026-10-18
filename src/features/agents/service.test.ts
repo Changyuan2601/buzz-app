@@ -22,8 +22,11 @@ import {
   type Delivery,
   type Trigger,
   fromOwner,
-  teamPrompt,
 } from "./service";
+import { createAgentChoices } from "./choices";
+import { createAgentLibrary } from "./library";
+import { callSessionTool } from "../../buzz-mcp/session-tools";
+import { appClient } from "../../buzz-mcp/app-client";
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
 import { memoryStorage } from "./test-fakes";
@@ -110,6 +113,21 @@ async function setup({
     jev,
     binding,
   );
+  for (const relay of [fake, second]) {
+    Object.assign(relay.session, {
+      agentChoices: createAgentChoices({
+        scope: `${relay.origin}:${viewer}`,
+        library: createAgentLibrary(undefined).queries,
+        native: {
+          snapshot: service.local,
+          subscribe: service.subscribe,
+          refresh: async () => {},
+        },
+        archives: relay.session.archives,
+        signal: new AbortController().signal,
+      }),
+    });
+  }
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
   });
@@ -187,6 +205,7 @@ async function setup({
     reconnecting: fake.reconnecting,
     recover: fake.recover,
     memories: fake.memories,
+    profiles: fake.profiles,
     archives: fake.archives,
     session: fake.session,
     history: fake.history,
@@ -916,10 +935,10 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const prompt = run.mock.calls[0]?.[0].team ?? "";
   expect(prompt).toContain('"Crew"');
-  expect(prompt).toContain(`- Echo (${npubEncode(bot)}), you`);
-  expect(prompt).toContain(`- Sib (${npubEncode(sibling)})\n`);
+  expect(prompt).toContain(`- "Echo" (${npubEncode(bot)}), you`);
+  expect(prompt).toContain(`- "Sib" (${npubEncode(sibling)})\n`);
   expect(prompt).toContain("Echo leads.");
-  expect(prompt).not.toContain("Solo");
+  expect(prompt).not.toContain('team "Solo"');
 
   await service.remove(sibling);
   await vi.waitFor(() =>
@@ -933,16 +952,256 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
   expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
 });
 
-it("leaves the team section out for an agent on no team", () => {
-  const agents = [{ pubkey: bot, name: "Echo" }];
-  expect(teamPrompt([], agents, bot)).toBe("");
-  expect(
-    teamPrompt(
-      [{ id: "t", name: "Crew", instructions: " ", members: [sibling] }],
-      agents,
-      bot,
+it("discovers exact teammates through the live tool and observes edits without a new turn", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Sib" });
+  const team = await f.service.saveTeam({
+    name: "Crew",
+    instructions: "Sib reviews design.",
+    members: [bot, sibling],
+  });
+  f.profiles.set(sibling, { name: "Sib", about: "Design reviews" });
+  // The real app client binds the tool's caller; its model cannot select an owner.
+  let finish!: () => void;
+  f.run.mockImplementationOnce(({ workingUntil }) =>
+    workingUntil(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
     ),
-  ).toBe("");
+  );
+  f.emit({
+    events: [
+      event("discover", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  try {
+    const handle = f.run.mock.calls[0]?.[0].agent;
+    if (!handle) throw new Error("The agent did not start");
+    const client = appClient(handle, {
+      cwd: "/workspace",
+      spawn: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    const discover = () =>
+      callSessionTool(client, { channel }, "teammates", {}, f.service.tools());
+    const first = JSON.parse((await discover()) as string);
+    expect(first.teams).toEqual([
+      {
+        id: team.id,
+        name: "Crew",
+        instructions: "Sib reviews design.",
+        members: [
+          { pubkey: bot, name: "Echo" },
+          { pubkey: sibling, name: "Sib", description: "Design reviews" },
+        ],
+      },
+    ]);
+    expect(f.session.profiles.ensure).toHaveBeenCalledWith(
+      [bot, sibling],
+      "foreground",
+    );
+    expect(f.native.searchProfiles).not.toHaveBeenCalled();
+    const prompt = f.run.mock.calls[0]?.[0].team ?? "";
+    expect(prompt).not.toContain("Design reviews");
+    for (const guidance of [prompt, first.guidance]) {
+      expect(guidance).toContain("their exact key and no role");
+      expect(guidance).toContain(
+        "an accepted but unconfirmed addition is not enough",
+      );
+      expect(guidance).toContain("send the assignment with audience agents");
+      expect(guidance).toContain("Respect instructions to work alone");
+    }
+    await expect(
+      callSessionTool(
+        client,
+        {},
+        "teammates",
+        { pubkey: other },
+        f.service.tools(),
+      ),
+    ).rejects.toThrow("no arguments");
+    // A different selected community must not change this agent's roster.
+    f.select(f.second.origin);
+    expect(JSON.parse((await discover()) as string).teams).toEqual(first.teams);
+    f.select("https://relay.example.test");
+    await f.service.save(sibling, {
+      name: "Reviewer",
+      config: { reply: "Private instructions" },
+    });
+    expect(
+      JSON.parse((await discover()) as string).teams[0].members[1].name,
+    ).toBe("Reviewer");
+    expect(await discover()).not.toContain("Private instructions");
+    f.archives.unknown = true;
+    vi.mocked(f.archives.ensure).mockImplementationOnce(async () => {
+      f.archives.archived.add(sibling);
+      f.archives.unknown = false;
+    });
+    expect(
+      JSON.parse((await discover()) as string).teams[0].members.map(
+        (m: { pubkey: string }) => m.pubkey,
+      ),
+    ).toEqual([bot]);
+    await f.service.removeTeam(team.id);
+    expect(JSON.parse((await discover()) as string).teams).toEqual([]);
+  } finally {
+    finish();
+  }
+});
+
+it("keeps team prompt stable as the tool hydrates public descriptions and distinguishes no team from unavailable evidence", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const team = await f.service.saveTeam({
+    name: "Crew",
+    instructions: "  ",
+    members: [bot],
+  });
+  const mention = (id: string) =>
+    f.emit({
+      events: [
+        event(id, {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+  mention("before-profile");
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  const original = f.run.mock.calls[0]?.[0].team;
+  expect(original).not.toContain("<team-instructions>");
+  vi.mocked(f.session.profiles.ensure).mockImplementationOnce(async () => {
+    f.profiles.set(bot, { name: "Echo", about: "Reviews plans" });
+  });
+  expect((await f.service.teammates(bot))[0]?.members[0]?.description).toBe(
+    "Reviews plans",
+  );
+  mention("after-profile");
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+  expect(f.run.mock.calls[1]?.[0].team).toBe(original);
+  await f.service.removeTeam(team.id);
+  mention("without-team");
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(3));
+  expect(f.run.mock.calls[2]?.[0].team).toBeUndefined();
+  f.native.list.mockRejectedValueOnce(new Error("unavailable"));
+  await f.service.refresh();
+  await expect(f.service.teammates(bot)).rejects.toThrow(
+    "agent list is unavailable",
+  );
+});
+
+it("scopes mixed-community teams without preventing edits to saved teams", async () => {
+  const identity = {
+    pubkey: bot,
+    name: "Echo",
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    deleted: false,
+  };
+  const remote = "e".repeat(64),
+    foreign = "f".repeat(64);
+  const storage = memoryStorage();
+  writeTeams(storage, [
+    {
+      id: "mixed",
+      name: "Mixed",
+      instructions: "",
+      members: [bot, sibling, remote, foreign],
+    },
+  ]);
+  const f = await setup({
+    storage,
+    identities: [
+      identity,
+      { ...identity, pubkey: sibling, name: "Deleting", deleting: true },
+      {
+        ...identity,
+        pubkey: remote,
+        name: "Other community",
+        relay: "wss://other.example.test",
+      },
+      { ...identity, pubkey: foreign, name: "Other owner", owner: other },
+    ],
+  });
+  expect((await f.service.teammates(bot))[0]?.members).toEqual([
+    { pubkey: bot, name: "Echo" },
+  ]);
+  await f.service.saveTeam({
+    id: "mixed",
+    name: "Renamed",
+    instructions: "",
+    members: [bot, sibling, remote, foreign],
+  });
+  expect(f.service.snapshot().teams[0]?.name).toBe("Renamed");
+  f.emit({
+    events: [
+      event("scope", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  const prompt = f.run.mock.calls[0]?.[0].team ?? "";
+  expect(prompt).toContain(npubEncode(bot));
+  for (const key of [sibling, remote, foreign])
+    expect(prompt).not.toContain(npubEncode(key));
+});
+
+it("preserves teammate identities when descriptions fail and fences community retirement during lookup", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const team = await f.service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [bot],
+  });
+  vi.mocked(f.session.profiles.ensure).mockRejectedValueOnce(
+    new Error("offline"),
+  );
+  expect((await f.service.teammates(bot))[0]?.members).toEqual([
+    { pubkey: bot, name: "Echo" },
+  ]);
+  let release!: () => void;
+  vi.mocked(f.session.profiles.ensure).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const lookup = f.service.teammates(bot);
+  try {
+    await f.service.removeTeam(team.id);
+  } finally {
+    release();
+  }
+  expect(await lookup).toEqual([]);
+  vi.mocked(f.session.profiles.ensure).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const retired = f.service.teammates(bot);
+  try {
+    f.connect(false);
+  } finally {
+    release();
+  }
+  await expect(retired).rejects.toThrow("community changed");
 });
 
 it("keeps handed-off activity local, and pulses typing in the thread until the turn ends", async () => {
@@ -5175,6 +5434,7 @@ it("adds plugins' tools to every session, each name once", async () => {
   // Installed plugins add tools as bundled ones do.
   plugin.agents.addTool({ ...tool, name: "notes_add" });
   expect(service.tools()).toMatchObject([
+    { name: "teammates" },
     { name: "notes_add", pluginId: "example" },
   ]);
   const bundled = (id: string) =>
@@ -5182,13 +5442,14 @@ it("adds plugins' tools to every session, each name once", async () => {
   const tasks = bundled("buzz.tasks");
   for (const bad of [
     { ...tool, name: "send" },
+    { ...tool, name: "teammates" },
     { ...tool, name: "Tasks-Create" },
     { ...tool, description: "" },
     { ...tool, inputSchema: { type: "string" } },
     { ...tool, inputSchema: { type: "object", default: 1n } },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
-  expect(service.tools()).toHaveLength(1);
+  expect(service.tools()).toHaveLength(2);
   tasks.agents.addTool(tool);
   expect(() =>
     bundled("buzz.other").agents.addTool({
@@ -5197,6 +5458,7 @@ it("adds plugins' tools to every session, each name once", async () => {
     }),
   ).toThrow(/Another plugin/);
   expect(service.tools()).toMatchObject([
+    { name: "teammates" },
     { name: "notes_add", pluginId: "example" },
     { name: "tasks_create", pluginId: "buzz.tasks" },
   ]);
@@ -5228,7 +5490,7 @@ it("reserves a tool name while its plugin is still starting", async () => {
   });
   await first;
   // Neither plugin is active yet, and still the name is taken.
-  expect(service.tools()).toEqual([]);
+  expect(service.tools()).toMatchObject([{ name: "teammates" }]);
   expect(() => owner("buzz.other").agents.addTool(tool)).toThrow(
     /Another plugin/,
   );

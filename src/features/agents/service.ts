@@ -24,7 +24,6 @@ import { ownerReads } from "./reads";
 import { migrateAgentStorage } from "./migrate-storage";
 import { migrateWatchFilters } from "./migrate-filter";
 import { Service, type Context } from "@deepseek-ai/cordis";
-import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import type { ComponentType, ReactNode } from "react";
 import type { DefinedIcon } from "../../shared/design-system/icons";
@@ -110,6 +109,12 @@ import { meChat } from "./me-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameMeChat } from "./me-chat-name";
+import {
+  TEAM_GUIDANCE,
+  teamPrompt,
+  teammatesTool,
+  type AgentTeam,
+} from "./teams";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -628,7 +633,7 @@ export type Agents = {
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
   addTool(tool: AddedTool): void;
-  /** The tools active plugins add now. A name is only ever one plugin's. */
+  /** Intrinsic agent tools plus active plugin additions. Names are unique. */
   tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
@@ -699,6 +704,9 @@ export type Agents = {
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
   saveTeam(team: TeamChange): Promise<Team>;
+  /** Current teams for a local agent in its own community. Reads optional public
+   * descriptions, never another agent's private instructions. */
+  teammates(pubkey: string): Promise<readonly AgentTeam[]>;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
 };
@@ -744,42 +752,6 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
 const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
-/** The team sections for agent `self`: each team it is on, its members that
- * still exist by name and npub, and the team's instructions. */
-export function teamPrompt(
-  teams: readonly Team[],
-  agents: readonly Pick<AgentIdentity, "pubkey" | "name">[],
-  self: string,
-) {
-  const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
-  return teams
-    .filter((team) => team.members.includes(self))
-    .map((team) => {
-      const roster = team.members.flatMap((pubkey) => {
-        const name = names.get(pubkey);
-        return name === undefined
-          ? []
-          : [
-              `- ${name} (${npubEncode(pubkey)})${pubkey === self ? ", you" : ""}`,
-            ];
-      });
-      return [
-        "<team>",
-        `You are on the team ${JSON.stringify(team.name)}. Its members, you included:`,
-        ...roster,
-        "Mention a teammate by name, with their npub, to reach them.",
-        ...(team.instructions.trim()
-          ? [
-              "<team-instructions>",
-              team.instructions.trim(),
-              "</team-instructions>",
-            ]
-          : []),
-        "</team>",
-      ].join("\n");
-    })
-    .join("\n\n");
-}
 export { fromOwner } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
@@ -1023,12 +995,16 @@ export class AgentsService extends Service implements Agents {
           ...(instructions ? { instructions } : {}),
         });
       },
-      team: (pubkey) =>
-        teamPrompt(
-          this.teamList,
-          this.identities.filter((identity) => !identity.deleted),
-          pubkey,
-        ),
+      team: (pubkey) => {
+        const agent = this.ready(pubkey);
+        const binding = agent && this.bindingOf(agent);
+        if (!binding) return "";
+        try {
+          return teamPrompt(this.teamRoster(pubkey, binding), pubkey);
+        } catch {
+          return `${TEAM_GUIDANCE}\nCurrent team evidence is unavailable; use teammates to retry before choosing a collaborator.`;
+        }
+      },
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1165,6 +1141,7 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
+      tool.name === this.teamTool.name ||
       !tool.description ||
       tool.inputSchema?.type !== "object" ||
       !serializable(tool.inputSchema) ||
@@ -1183,7 +1160,8 @@ export class AgentsService extends Service implements Agents {
       return () => this.toolNames.delete(tool.name);
     });
   }
-  tools = () => this.addedTools.snapshot();
+  private readonly teamTool = teammatesTool((pubkey) => this.teammates(pubkey));
+  tools = () => [this.teamTool, ...this.addedTools.snapshot()];
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -2008,6 +1986,67 @@ export class AgentsService extends Service implements Agents {
         : [...this.teamList, joined],
     );
     return joined;
+  }
+
+  /** One scoped projection for both turn context and on-demand discovery. */
+  private teamRoster(pubkey: string, binding: Binding): readonly AgentTeam[] {
+    if (this.state.status !== "ready")
+      throw new Error(
+        "Your agent list is unavailable. Try again once it loads.",
+      );
+    const choices = binding.session.agentChoices.snapshot();
+    if (choices.status !== "ready")
+      throw new Error("Your teammate choices are not ready. Try again.");
+    const selectable = new Set(choices.selectable.map((agent) => agent.pubkey));
+    const local = new Map(
+      this.identities
+        .filter((agent) => yours(agent, binding) && !agent.deleting)
+        .map((agent) => [agent.pubkey, agent]),
+    );
+    if (!local.has(pubkey))
+      throw new Error("This agent is no longer available.");
+    const profiles = binding.session.profiles.snapshot();
+    return this.teamList
+      .filter((team) => team.members.includes(pubkey))
+      .map((team) => ({
+        ...team,
+        members: team.members.flatMap((key) => {
+          const agent = local.get(key);
+          if (!agent || !selectable.has(key)) return [];
+          const description = profiles.get(key)?.about?.trim().slice(0, 300);
+          return [
+            {
+              pubkey: key,
+              name: agent.name,
+              ...(description ? { description } : {}),
+            },
+          ];
+        }),
+      }));
+  }
+
+  async teammates(pubkey: string): Promise<readonly AgentTeam[]> {
+    const agent = this.ready(pubkey);
+    const binding = agent && this.bindingOf(agent);
+    if (!agent || !binding || agent.deleting)
+      throw new Error("This agent's community is not connected.");
+    const { session } = binding;
+    // Exact team keys only; no relay-wide directory search or startup reads.
+    const keys = [
+      ...new Set(
+        this.teamRoster(pubkey, binding).flatMap((team) =>
+          team.members.map((member) => member.pubkey),
+        ),
+      ),
+    ];
+    await Promise.allSettled([
+      session.profiles.ensure(keys, "foreground"),
+      session.archives.ensure(),
+    ]);
+    if (this.bindingOf(agent) !== binding || binding.controller.signal.aborted)
+      throw new Error("The agent's community changed. Try again.");
+    // Team edits and deletion during the read take effect in this result.
+    return this.teamRoster(pubkey, binding);
   }
 
   async removeTeam(id: string) {

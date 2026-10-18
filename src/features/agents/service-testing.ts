@@ -1,6 +1,7 @@
 // The agents service's relay, communities and native fakes, shared by its
 // tests. `steps` records the order of cleanup steps the fakes take.
 import { vi } from "vitest";
+import type { Profile } from "../relay/contracts";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -96,7 +97,9 @@ export function fakeRelay(origin = "https://relay.example.test") {
   const history: RelayEvent[] = [];
   /** Each agent's `core` memory as the community holds it. */
   const memories = new Map<string, string>();
+  const profiles = new Map<string, Profile>();
   const session = {
+    profiles: { snapshot: () => profiles, ensure: vi.fn(async () => {}) },
     archives,
     agentMemories: {
       read: vi.fn(async (pubkey: string) => {
@@ -204,6 +207,7 @@ export function fakeRelay(origin = "https://relay.example.test") {
     listed,
     history,
     memories,
+    profiles,
     session,
     presence: session.publishAgentPresence as ReturnType<
       typeof vi.fn<RelaySession["publishAgentPresence"]>

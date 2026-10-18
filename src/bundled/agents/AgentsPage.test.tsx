@@ -266,6 +266,7 @@ function setup(
     register: vi.fn(),
     addTool: vi.fn(),
     tools: () => [],
+    teammates: async () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.
       if (!shown) return created;
