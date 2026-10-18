@@ -1,3 +1,4 @@
+import { openCommunityPicker } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -69,31 +70,30 @@ test("closing a menu keeps focus where the user moved it", async ({
   }
 });
 
-// Browser-only boundary: the right-click's mousedown focuses the rail button
-// before the contextmenu event opens the menu, so Base UI's own "previous
-// focus" is the button. jsdom moves no focus on a right-click, so only a real
-// engine shows the caret leaving the composer for the rail.
-test("dismissing a community menu opened by pointer returns focus to the interrupted composer", async ({
+// Browser-only boundary: right-click moves focus before the contextmenu event.
+// Dismissal must restore the interrupted picker row, while keyboard opening
+// returns to the row that opened the menu.
+test("dismissing a community menu restores pointer and keyboard focus within the picker", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  const composer = page.getByRole("textbox", {
-    name: "Message #Alpha",
-    exact: true,
-  });
+  const interrupted = page
+    .getByRole("dialog", { name: "Switch community" })
+    .getByRole("button", { name: "Personal space", exact: true });
   const secondary = page
-    .getByRole("navigation", { name: "Communities" })
+    .getByRole("dialog", { name: "Switch community" })
     .getByRole("button", { name: "Switch to Secondary" });
   const menu = page.getByRole("menu", { name: "Actions for Secondary" });
 
-  await composer.click();
-  await expect(composer).toBeFocused();
+  await openCommunityPicker(page);
+  await interrupted.focus();
+  await expect(interrupted).toBeFocused();
   await secondary.click({ button: "right" });
   await opened(menu);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
-  await expect(composer).toBeFocused();
+  await expect(interrupted).toBeFocused();
   await expect(secondary).not.toBeFocused();
 
   // A keyboard open came from the rail, so dismissing it returns focus there.

@@ -28,7 +28,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
-import { meChat } from "../../features/agents/me-chat";
+import { soloChat } from "../../features/agents/solo-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -257,7 +257,7 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await meChat(
+    const topLevel = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,
@@ -375,7 +375,7 @@ export class GooseRuntime {
     );
   }
 
-  /** Replies as the agent in the event's thread, or at a Me chat's top
+  /** Replies as the agent in the event's thread, or at a Solo chat's top
    * level. */
   private post(
     agent: AgentHandle,
@@ -417,7 +417,7 @@ export class GooseRuntime {
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
-    // A Me chat is one conversation, as a DM is.
+    // A Solo chat is one conversation, as a DM is.
     const key =
       topLevel || dm || entry.config.scope === "channel"
         ? channelId

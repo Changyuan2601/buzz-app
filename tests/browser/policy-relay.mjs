@@ -325,12 +325,12 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
-        if (filters.length === 2 && "#buzz-channel" in filters[0]) {
-          // A channel's project-home read: projects and repositories, one channel.
+        if (filters.length === 1 && "#buzz-channel" in filters[0]) {
+          // A channel’s listed repositories, one channel.
           const channel = filters[0]["#buzz-channel"];
           expect(channel).toEqual([expect.any(String)]);
           expect(filters).toEqual(
-            [30621, 30617].map((kind) => ({
+            [30617].map((kind) => ({
               kinds: [kind],
               "#buzz-channel": channel,
               limit: 100,

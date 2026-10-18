@@ -73,15 +73,18 @@ test("Messages default resolution returns opened to cold and warm callers withou
       JSON.stringify({
         version: 1,
         kind: "page",
-        pluginId: "buzz.projects",
-        pageId: "projects",
+        pluginId: "buzz.repos",
+        pageId: "repos",
       }),
     )}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", {
+      name: "Destination no longer available",
+      exact: true,
+    }),
   ).toBeVisible();
-  await expectPageChoice(page, "Multiplayer", 1);
+  await expectPageChoice(page, "Messages", 1);
   for (const mode of ["cold", "warm"]) {
     const result = await page.evaluate(async () => {
       const nav = window.fixtureNavigation;
@@ -102,7 +105,10 @@ test("Messages default resolution returns opened to cold and warm callers withou
     ).toBeVisible();
     await page.getByRole("button", { name: "Go back", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", {
+        name: "Destination no longer available",
+        exact: true,
+      }),
     ).toBeVisible();
   }
 });
@@ -112,9 +118,12 @@ test("native Alt arrows preserve composer editing; deliberate history shortcuts 
   app,
 }) => {
   await open(page, app);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", {
+      name: "Workflows",
+      exact: true,
+    }),
   ).toBeVisible();
   await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {

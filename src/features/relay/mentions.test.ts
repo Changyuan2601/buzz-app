@@ -17,7 +17,7 @@ const viewer = keypair(),
   honey = keypair(),
   namesake = keypair();
 const owners: ReturnType<typeof createRelaySession>[] = [];
-function setup(sessionMode = false) {
+function setup(soloMode = false) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let release: (() => void) | undefined;
   let held = false;
@@ -49,11 +49,11 @@ function setup(sessionMode = false) {
                 : [],
           );
         if (
-          sessionMode &&
+          soloMode &&
           filters.every((filter) => filter.kinds?.every((kind) => kind === 0))
         )
           return Promise.resolve(profileEvents);
-        if (sessionMode && filters.every((filter) => !!filter.ids))
+        if (soloMode && filters.every((filter) => !!filter.ids))
           return Promise.resolve(publish.mock.calls.map(([event]) => event));
         return wire.transport.query(filters, ...args);
       },
@@ -86,7 +86,7 @@ function setup(sessionMode = false) {
     currentRoster = roster(author, "c", keys, time);
     pending.respond([
       currentRoster,
-      sessionMode
+      soloMode
         ? signed(relay, {
             kind: 39000,
             content: JSON.stringify({ name: "Work" }),
@@ -94,7 +94,7 @@ function setup(sessionMode = false) {
               ["d", "c"],
               ["t", "stream"],
               ["private"],
-              ["about", "Buzz session (buzz.sessions/v1)"],
+              ["t", "buzz.solo"],
             ],
           })
         : metadata(relay, "c", "General"),
@@ -257,7 +257,7 @@ it("disposal during signing fences publication to a retired session", async () =
 });
 
 it.each([false, true])(
-  "preserves an independent caller's explicit session recipients, reply=%s",
+  "preserves an independent caller's explicit Solo chat recipients, reply=%s",
   async (reply) => {
     const h = setup(true);
     await h.members([viewer.pubkey, honey.pubkey]);

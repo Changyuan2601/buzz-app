@@ -30,8 +30,8 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/channels"),
     },
     {
-      manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
-      module: await import("../bundled/projects"),
+      manifest: { id: "buzz.repos", name: "Repositories", apiVersion: 1 },
+      module: await import("../bundled/repos"),
     },
     {
       manifest: { id: "buzz.profiles", name: "Profiles", apiVersion: 1 },

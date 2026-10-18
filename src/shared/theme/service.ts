@@ -1,8 +1,15 @@
 import {
-  BUBBLE_COLOR_KEY,
-  parseBubbleColor,
-  type BubbleColor,
-} from "./bubble-color";
+  ACCENT_KEY,
+  COLOR_LEVEL_KEY,
+  DEFAULT_ACCENT,
+  DEFAULT_COLOR_LEVEL,
+  LEGACY_BUBBLE_KEY,
+  parseAccent,
+  parseColorLevel,
+  parseLegacyBubbleColor,
+  type Accent,
+  type ColorLevel,
+} from "./accent";
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = ColorMode | "system";
@@ -32,8 +39,10 @@ export interface AppearanceSnapshot {
   readonly mode: ColorMode;
   readonly fontScale: number;
   readonly fontError: string | null;
-  readonly bubbleColor: BubbleColor;
-  readonly bubbleError: string | null;
+  readonly accent: Accent;
+  readonly accentError: string | null;
+  readonly colorLevel: ColorLevel;
+  readonly colorLevelError: string | null;
   readonly error: string | null;
 }
 
@@ -53,17 +62,22 @@ export function createAppearance(
     error: null,
     fontScale: 1,
     fontError: null,
-    bubbleColor: "neutral",
-    bubbleError: null,
+    accent: DEFAULT_ACCENT,
+    accentError: null,
+    colorLevel: DEFAULT_COLOR_LEVEL,
+    colorLevelError: null,
   };
   let disposed = false;
   const listeners = new Set<() => void>();
   const apply = () => {
     if (!host) return;
     const root = host.document.documentElement;
-    const changingMode =
-      root.dataset.colorMode && root.dataset.colorMode !== state.mode;
-    const transitionGuard = changingMode
+    const changingPalette =
+      root.dataset.colorMode &&
+      (root.dataset.colorMode !== state.mode ||
+        root.dataset.accent !== state.accent ||
+        root.dataset.colorLevel !== state.colorLevel);
+    const transitionGuard = changingPalette
       ? host.document.createElement("style")
       : undefined;
     if (transitionGuard) {
@@ -72,6 +86,8 @@ export function createAppearance(
       host.document.head.append(transitionGuard);
     }
     root.dataset.colorMode = state.mode;
+    root.dataset.accent = state.accent;
+    root.dataset.colorLevel = state.colorLevel;
     if (transitionGuard) {
       // Commit the new palette before restoring interactive transitions.
       void root.offsetHeight;
@@ -79,7 +95,6 @@ export function createAppearance(
         host.requestAnimationFrame(() => transitionGuard.remove()),
       );
     }
-    root.dataset.bubbleColor = state.bubbleColor;
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -136,20 +151,42 @@ export function createAppearance(
     }
     notify();
   };
-  const restoreBubble = () => {
+  const restoreAccent = () => {
     try {
+      const saved = host?.localStorage.getItem(ACCENT_KEY);
       state = {
         ...state,
-        bubbleColor: parseBubbleColor(
-          host?.localStorage.getItem(BUBBLE_COLOR_KEY),
-        ),
-        bubbleError: null,
+        accent:
+          saved != null
+            ? parseAccent(saved)
+            : parseLegacyBubbleColor(
+                host?.localStorage.getItem(LEGACY_BUBBLE_KEY),
+              ),
+        accentError: null,
       };
     } catch {
       state = {
         ...state,
-        bubbleError:
-          "Bubble color could not be restored. Choose a color to try saving it again.",
+        accentError:
+          "Accent color could not be restored. Choose a color to try saving it again.",
+      };
+    }
+    notify();
+  };
+  const restoreColorLevel = () => {
+    try {
+      state = {
+        ...state,
+        colorLevel: parseColorLevel(
+          host?.localStorage.getItem(COLOR_LEVEL_KEY),
+        ),
+        colorLevelError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        colorLevelError:
+          "Vibe level could not be restored. Choose a level to try saving it again.",
       };
     }
     notify();
@@ -158,7 +195,9 @@ export function createAppearance(
     if (
       event.key !== APPEARANCE_KEY &&
       event.key !== FONT_SCALE_KEY &&
-      event.key !== BUBBLE_COLOR_KEY &&
+      event.key !== ACCENT_KEY &&
+      event.key !== LEGACY_BUBBLE_KEY &&
+      event.key !== COLOR_LEVEL_KEY &&
       event.key !== null
     )
       return;
@@ -167,16 +206,31 @@ export function createAppearance(
       if (event.storageArea !== host?.localStorage) return;
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
-      if (event.key === null || event.key === BUBBLE_COLOR_KEY) restoreBubble();
+      if (
+        event.key === null ||
+        event.key === ACCENT_KEY ||
+        event.key === LEGACY_BUBBLE_KEY
+      )
+        restoreAccent();
+      if (event.key === null || event.key === COLOR_LEVEL_KEY)
+        restoreColorLevel();
     } catch {
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
-      if (event.key === null || event.key === BUBBLE_COLOR_KEY) restoreBubble();
+      if (
+        event.key === null ||
+        event.key === ACCENT_KEY ||
+        event.key === LEGACY_BUBBLE_KEY
+      )
+        restoreAccent();
+      if (event.key === null || event.key === COLOR_LEVEL_KEY)
+        restoreColorLevel();
     }
   };
   restore();
   restoreFont();
-  restoreBubble();
+  restoreAccent();
+  restoreColorLevel();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -223,18 +277,32 @@ export function createAppearance(
       state = { ...state, fontScale, fontError };
       notify();
     },
-    setBubbleColor(value: BubbleColor) {
+    setAccent(value: Accent) {
       if (disposed) return;
-      const bubbleColor = parseBubbleColor(value);
-      let bubbleError: string | null = null;
+      const accent = parseAccent(value);
+      let accentError: string | null = null;
       try {
         if (!host) throw new Error("No browser storage");
-        host.localStorage.setItem(BUBBLE_COLOR_KEY, bubbleColor);
+        host.localStorage.setItem(ACCENT_KEY, accent);
       } catch {
-        bubbleError =
-          "This bubble color is active, but could not be saved on this device. Try again.";
+        accentError =
+          "This accent color is active, but could not be saved on this device. Try again.";
       }
-      state = { ...state, bubbleColor, bubbleError };
+      state = { ...state, accent, accentError };
+      notify();
+    },
+    setColorLevel(value: ColorLevel) {
+      if (disposed) return;
+      const colorLevel = parseColorLevel(value);
+      let colorLevelError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(COLOR_LEVEL_KEY, colorLevel);
+      } catch {
+        colorLevelError =
+          "This vibe level is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, colorLevel, colorLevelError };
       notify();
     },
     dispose() {

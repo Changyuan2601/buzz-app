@@ -99,7 +99,7 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   // Remounting Channels captures the normal reading anchor in localStorage.
   // Reload gives a new session/finite head but preserves that user-owned anchor.
   await page.reload();

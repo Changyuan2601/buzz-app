@@ -3,14 +3,14 @@ import { channelIdentity } from "../relay/channel-labels";
 import {
   metadataName,
   openMetadata,
-  sessionChannelMetadata,
+  soloChannelMetadata,
 } from "../relay/discovery";
 import { ReadError, readErrorKind } from "../relay/errors";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import { foldMessages } from "../relay/fold";
 import type { RelaySession } from "../relay/session";
-import { sessionLinkMessage } from "./share";
-import { SESSION_NAMED_LABEL } from "./metadata";
+import { soloChatLinkMessage } from "../solo/share";
+import { SOLO_NAMED_LABEL } from "../solo/labels";
 import { sharedSessionIds } from "./shared-session-marker";
 
 export type SharedSessionCursor = Readonly<{
@@ -314,7 +314,7 @@ export async function listSharedSessions(
   for (const [id, shares] of groups) {
     try {
       const source = accessRecord(io, id, records);
-      if (!source || !sessionChannelMetadata(source.metadata)) continue;
+      if (!source || !soloChannelMetadata(source.metadata)) continue;
       const title = metadataName(source.metadata)?.trim() || id.slice(0, 8);
       if (
         options.query &&
@@ -427,7 +427,7 @@ export async function readSharedSession(
       "No current shared session association was confirmed within the read budget.",
     );
   const source = await access(io, sourceId);
-  if (!source || !sessionChannelMetadata(source.metadata)) throw unavailable();
+  if (!source || !soloChannelMetadata(source.metadata)) throw unavailable();
   const result = await page(
     io,
     {
@@ -454,7 +454,7 @@ export async function readSharedSession(
   if (
     !afterSource ||
     !afterDestination ||
-    !sessionChannelMetadata(afterSource.metadata)
+    !soloChannelMetadata(afterSource.metadata)
   )
     throw unavailable();
   const allowed = await authorizeAudience(
@@ -468,7 +468,7 @@ export async function readSharedSession(
       "Shared session access could not be confirmed for the current answer audience.",
     );
   const name = channelIdentity(afterSource.metadata).labels.includes(
-    SESSION_NAMED_LABEL,
+    SOLO_NAMED_LABEL,
   )
     ? metadataName(afterSource.metadata)
     : undefined;
@@ -478,7 +478,7 @@ export async function readSharedSession(
   );
   return {
     id: sourceId,
-    citation: sessionLinkMessage(sourceId, name),
+    citation: soloChatLinkMessage(sourceId, name),
     messages: messages.map((row) => ({
       id: row.id,
       author: row.authorId,

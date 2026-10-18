@@ -18,7 +18,6 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://channel/<id>`
 - `buzz://channel/<id>/<event>` (the original desktop message alias)
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
-- `buzz://project?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
 - `buzz://pr?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://issue?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
@@ -60,13 +59,14 @@ The first known viewer and community bind the intent: switching either afterward
 cannot reinterpret it. New navigation cancels it. A cold start opens the ordinary
 start page before the destination.
 
-Projects owns entity presentation and acknowledges navigation after the requested
-content is ready. Repository/project overviews, files, commit history and selected
-diffs, issue/PR details and discussion, contributors, and linked channels are real
-read-only destinations. The landing page is an explicitly partial recent-entities
-list (up to 100 announcements), not the canonical grouped NIP-MP collection.
-Project Git sections name their primary repository
-(matching identifier, otherwise the first coordinate) and link to other members.
+Repositories owns entity presentation through the link-only `buzz.repos/repos`
+page; it has no header destination or directory. Repository overviews, files,
+commit history and selected diffs, issue/PR details and discussion, contributors,
+and linked channels are read-only destinations. Old `buzz://project` links open
+“Project containers are no longer available” with guidance to use a repository,
+issue or pull request link. They do not read retired container metadata.
+The composer’s ResourcePicker discovers listed repositories bound to the current
+channel and searches their issues and pull requests directly.
 Signed entity metadata remains visible independently of linked-channel access;
 Git reads still enforce the relay's authorization. Missing entities and failed
 explicit Git sections report navigation failure, not an empty successful page.
@@ -91,7 +91,7 @@ the failure notice. Ordinary `just desktop` keeps in-app Buzz links and
 contract.
 
 For entity destinations, use `just web` with the existing authenticated development
-broker, select the owning community, and open Projects or a Buzz entity link in a
+broker, select the owning community, and open a Buzz repo, PR or issue link in a
 message. No publication is needed to browse. The broker requires Git on its PATH;
 it signs repository-root NIP-98 reads with the existing host identity. A selected
 commit must show that exact revision and its diff. Back/Forward and Copy link

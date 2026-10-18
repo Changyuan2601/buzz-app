@@ -28,11 +28,11 @@ export function ComposerSessionCards({
   return (
     <section
       aria-label="Session attachments"
-      className={styles.composerSessionCards}
+      className={styles.composerSoloCards}
     >
       {cards.map((content, index) => (
-        <div className={styles.composerSessionCard} key={content}>
-          <div className={styles.composerSessionCardContent}>
+        <div className={styles.composerSoloCard} key={content}>
+          <div className={styles.composerSoloCardContent}>
             <MessageMarkdown
               row={{
                 id: "composer-session",

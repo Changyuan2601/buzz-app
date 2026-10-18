@@ -316,12 +316,12 @@ test.describe("scoped Members history", () => {
   });
 });
 
-// Sessions have no Members surface; handwritten routes must retain the exact
+// Solo chats have no Members surface; handwritten routes must retain the exact
 // reader rather than suppressing its focus for a modal that cannot mount.
-test.describe("Members on an unsupported session destination", () => {
+test.describe("Members on an unsupported Solo chat destination", () => {
   test.use({
     exactMessages: true,
-    sessionChannels: ["alpha"],
+    soloChannels: ["alpha"],
     historyCounts: { alpha: 3, beta: 0 },
   });
   test("discards the unavailable panel while preserving message focus and history", async ({
@@ -348,7 +348,7 @@ test.describe("Members on an unsupported session destination", () => {
       exact: true,
     });
     const row = page
-      .getByRole("region", { name: "Selected session message", exact: true })
+      .getByRole("region", { name: "Selected chat message", exact: true })
       .locator(`[data-message-id="${target.messageId}"]`);
     await expect(row).toBeFocused();
     await expect(dialog).toHaveCount(0);

@@ -84,7 +84,7 @@ vi.mock("./MessageComposer", () => ({
     channelId,
     scope,
     onSend,
-    personalConversation,
+    ownSoloConversation,
     activityClickOpensPanel,
     disabled,
     placeholder,
@@ -94,7 +94,7 @@ vi.mock("./MessageComposer", () => ({
       data-root={threadRootId}
       data-channel={channelId}
       data-scope={scope}
-      data-personal={personalConversation}
+      data-own-solo={ownSoloConversation}
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
@@ -1305,31 +1305,31 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes the Me recipient, readiness and direct Activity contract through to thread composition", () => {
+it("passes the Solo recipient, readiness and direct Activity contract through to thread composition", () => {
   const h = messagesHarness();
   const view = render(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled
     />,
   );
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-personal", "true");
+  expect(composer).toHaveAttribute("data-own-solo", "true");
   expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
   view.rerender(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled={false}
     />,
   );
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-personal");
+  expect(composer).not.toHaveAttribute("data-own-solo");
   expect(composer).not.toHaveAttribute("data-direct-activity");
 });
 
@@ -1337,7 +1337,7 @@ it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
   { channelType: "stream" as const, archived: true as const, joinable: false },
-  { channelType: "session" as const, joinable: false },
+  { channelType: "solo" as const, joinable: false },
 ])(
   "replaces the reply composer for a $channelType preview (joinable: $joinable)",
   ({ joinable, ...metadata }) => {

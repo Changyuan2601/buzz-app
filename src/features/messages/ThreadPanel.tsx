@@ -49,8 +49,8 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
-  sessionConversation?: boolean | undefined;
-  personalConversation?: boolean | undefined;
+  soloConversation?: boolean | undefined;
+  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -348,8 +348,8 @@ function OwnedThreadPanel({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
-  sessionConversation,
-  personalConversation,
+  soloConversation,
+  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
@@ -408,8 +408,8 @@ function OwnedThreadPanel({
     </div>
   ) : view ? (
     <ThreadMessages
-      sessionConversation={sessionConversation}
-      personalConversation={personalConversation}
+      soloConversation={soloConversation}
+      ownSoloConversation={ownSoloConversation}
       activityClickOpensPanel={activityClickOpensPanel}
       disabled={disabled}
       extensions={extensions}
@@ -445,8 +445,8 @@ function ThreadMessages({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
-  sessionConversation,
-  personalConversation,
+  soloConversation,
+  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
@@ -461,8 +461,8 @@ function ThreadMessages({
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
-  sessionConversation?: boolean | undefined;
-  personalConversation?: boolean | undefined;
+  soloConversation?: boolean | undefined;
+  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -1508,8 +1508,8 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
-          sessionConversation={sessionConversation}
-          personalConversation={personalConversation}
+          soloConversation={soloConversation}
+          ownSoloConversation={ownSoloConversation}
           activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}

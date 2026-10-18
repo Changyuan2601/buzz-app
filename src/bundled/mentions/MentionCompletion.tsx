@@ -47,9 +47,7 @@ export function MentionCompletion({
   );
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
-  const parentAdmission =
-    !!channel &&
-    (channel.channelType !== "session" || !!channel.parentChannelId);
+  const parentAdmission = !!channel && channel.channelType !== "solo";
   // The shared budget is append-only for this query, including late teams and
   // directory people. Neither source may displace an already displayed choice.
   const shown = useRef<{ session: RelaySession; key: string; ids: string[] }>(
@@ -118,7 +116,7 @@ export function MentionCompletion({
           (members.includes(recipient.pubkey)
             ? recipient.pubkey
             : inviteAgents
-              ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+              ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
               : outsideMentionDetail(channel)),
         preview: (
           <Avatar

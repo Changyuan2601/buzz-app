@@ -30,8 +30,8 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/channels"),
     },
     {
-      manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
-      module: await import("../bundled/projects"),
+      manifest: { id: "buzz.repos", name: "Projects", apiVersion: 1 },
+      module: await import("../bundled/repos"),
     },
     {
       manifest: { id: "buzz.agents", name: "Agents", apiVersion: 1 },
@@ -66,7 +66,7 @@ const key = new Uint8Array(32).fill(6),
   origin = "https://community.example";
 const project = finalizeEvent(
   {
-    kind: 30621,
+    kind: 30617,
     created_at: 1,
     content: "",
     tags: [
@@ -137,7 +137,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   );
   services = createServices();
   const current = services;
-  const queue = [`buzz://project?owner=${viewer}&d=project`];
+  const queue = [`buzz://repo?owner=${viewer}&d=project`];
   let ping = () => {};
   stop = bindDeepLinks(current.navigationHost, current.communities, {
     take: async () => queue.splice(0),
@@ -153,6 +153,9 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     retryable: true,
   });
   await userEvent.click(
+    screen.getByRole("button", { name: /^Community switcher:/ }),
+  );
+  await userEvent.click(
     screen.getByRole("button", { name: "Switch to Fixture community" }),
   );
   expect(current.navigation.snapshot().ingress).toBe(true);
@@ -166,8 +169,8 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     entry: {
       target: {
         kind: "page",
-        pluginId: "buzz.projects",
-        route: { params: { type: "project", dtag: "project" } },
+        pluginId: "buzz.repos",
+        route: { params: { type: "repo", dtag: "project" } },
       },
     },
   });
@@ -183,7 +186,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("lists only active primary pages in the channel sidebar", async () => {
+it("lists active primary pages in their sidebar and header placements", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -215,8 +218,13 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie", "Projects", "Agents"]),
+    ).toEqual(["Inbox", "Bestie"]),
   );
+
+  expect(
+    screen.queryByRole("tab", { name: "Repository" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
 
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
@@ -229,9 +237,10 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(screen.getByRole("navigation", { name: "Pages" }))
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie", "Projects"]),
+    ).toEqual(["Inbox", "Bestie"]),
   );
 
+  expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(
@@ -243,7 +252,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
   await userEvent.keyboard("{Escape}");
 
   // Every primary page is optional; with none active the landmark goes too.
-  for (const id of ["buzz.inbox", "buzz.bestie", "buzz.projects"])
+  for (const id of ["buzz.inbox", "buzz.bestie", "buzz.repos"])
     await act(() => current.plugins.change("disable", id));
   await waitFor(() =>
     expect(
@@ -251,7 +260,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
     ).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("complementary", { name: "Channel sidebar" }),
+    screen.getByRole("complementary", { name: "Sidebar" }),
   ).toBeInTheDocument();
 });
 

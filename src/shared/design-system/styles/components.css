@@ -88,7 +88,7 @@
   }
   .buzz-button[data-variant="prominent"] {
     background: var(--affordance-prominent);
-    color: var(--text-inverse);
+    color: var(--text-on-prominent);
   }
   .buzz-button[data-variant="subtle"] {
     background: var(--interaction-fill);
@@ -624,6 +624,10 @@
     box-shadow: var(--shadow-panel);
   }
 
+  .panel[data-shape="capsule"] {
+    border-radius: var(--radius-pill);
+  }
+
   /* A joined surface keeps one outer edge; nested panels retain opaque
      fills for responsive overlays while their layout owns the separators. */
   .panel[data-joined] .panel {
@@ -739,7 +743,7 @@
 
   .buzz-tabs[data-variant="chrome"],
   .chrome-navigation {
-    background: var(--affordance-subtle);
+    background: var(--affordance-chrome);
   }
 
   .buzz-tabs[data-variant="chrome"] {
@@ -760,12 +764,12 @@
     height: 2rem;
     border-radius: var(--radius-pill);
     padding: 0 var(--space-4);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
   }
 
   /* Selection and hover occupy the same box; a selected tab does not hover. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
 
@@ -778,6 +782,40 @@
     bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Segmented filters on opaque surfaces, as used by sidebar scope. */
+  .buzz-tabs[data-variant="segmented"] {
+    display: flex;
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+    width: 100%;
+    gap: var(--space-1);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--space-8);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+  }
+  .buzz-tabs[data-variant="segmented"]
+    .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+    inset-block: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1063,12 +1101,12 @@
     height: 2rem;
     padding: 0 var(--space-4);
     border-radius: var(--radius-pill);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
     @apply text-label;
   }
   .chrome-navigation
     .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
@@ -1747,7 +1785,7 @@
     width: 0.875rem;
     height: 0.875rem;
     border-radius: var(--radius-pill);
-    background: var(--text-inverse);
+    background: var(--text-on-prominent);
     box-shadow: var(--shadow-xs);
     transform: translateX(0);
     transition: transform var(--duration-settle) var(--easing-settle);
@@ -1770,6 +1808,92 @@
   html[data-keyboard-navigation] .buzz-switch-control:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  /* A few ordered steps read as stops, not a continuous range: each step is a
+     visible dot, filled up to the choice, and the choice's name follows the
+     thumb. Track selection and thumb are standalone marks, not filled buttons;
+     use the contrasting mark role even when prominent buttons are bright. */
+  .buzz-step-slider {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    inline-size: calc(var(--space-16) * 2.5);
+    max-inline-size: 100%;
+    color: var(--text-standard);
+  }
+  .buzz-step-slider-control {
+    display: flex;
+    align-items: center;
+    block-size: var(--space-6);
+    /* Half a thumb on each side keeps the end stops' thumb inside the box. */
+    padding-inline: var(--space-2);
+    cursor: pointer;
+    touch-action: none;
+  }
+  .buzz-step-slider-track {
+    position: relative;
+    inline-size: 100%;
+    block-size: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--affordance-subtle-pressed);
+  }
+  .buzz-step-slider-indicator {
+    border-radius: var(--radius-pill);
+    background: var(--affordance-prominent-mark);
+  }
+  .buzz-step-slider-stop {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: var(--stop-position);
+    inline-size: var(--space-2);
+    block-size: var(--space-2);
+    border-radius: var(--radius-pill);
+    /* A stop is a bump in the track, never a separate gray: it shares the
+       track's color, so it follows the vibe level with it. */
+    background: var(--affordance-subtle-pressed);
+    translate: -50% -50%;
+    pointer-events: none;
+  }
+  .buzz-step-slider-stop[data-filled] {
+    background: var(--affordance-prominent-mark);
+  }
+  .buzz-step-slider-thumb {
+    inline-size: var(--space-4);
+    block-size: var(--space-4);
+    border: 2px solid var(--surface-panel);
+    border-radius: var(--radius-pill);
+    background: var(--affordance-prominent-mark);
+    box-shadow: var(--shadow-xs);
+  }
+  html[data-keyboard-navigation] .buzz-step-slider-thumb:has(:focus-visible) {
+    outline: 2px solid var(--text-standard);
+    outline-offset: 2px;
+  }
+  .buzz-step-slider-label {
+    @apply text-body-sm;
+    display: block;
+    align-self: flex-start;
+    inline-size: max-content;
+    max-inline-size: 100%;
+    /* Under its stop, held inside the slider at either end. */
+    margin-inline-start: var(--step-position);
+    translate: calc(var(--step-position) * -1) 0;
+    font-weight: var(--type-weight-medium);
+  }
+  .buzz-step-slider[data-disabled] {
+    color: var(--text-unavailable);
+  }
+  .buzz-step-slider[data-disabled] .buzz-step-slider-control {
+    cursor: not-allowed;
+  }
+  .buzz-step-slider[data-disabled]
+    :is(
+      .buzz-step-slider-indicator,
+      .buzz-step-slider-stop[data-filled],
+      .buzz-step-slider-thumb
+    ) {
+    background: var(--affordance-disabled);
   }
 
   .buzz-preference-row {

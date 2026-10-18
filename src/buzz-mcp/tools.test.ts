@@ -1043,24 +1043,6 @@ it("shows a channel's details and changes them as the channel shows", async () =
   );
 });
 
-it("changes only the name of a session", async () => {
-  const { client, state, published } = relay();
-  state[0] = event({
-    kind: 39000,
-    tags: [
-      ["d", room],
-      ["about", "Buzz session (buzz.sessions/v1)"],
-    ],
-  });
-  await expect(
-    callTool(client, { channel: room }, "channel", {
-      action: "update",
-      topic: "x",
-    }),
-  ).rejects.toThrow("Only the name of a session can be changed.");
-  expect(published).toEqual([]);
-});
-
 it("leaves, joins, archives, unarchives and deletes a channel", async () => {
   const { client, published } = relay();
   const context = { channel: room };

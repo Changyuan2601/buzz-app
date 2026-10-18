@@ -704,7 +704,7 @@ it("does not announce conversation enrichment over retained search choices", () 
   }
 });
 
-it.each(["stream", "forum", "session"] as const)(
+it.each(["stream", "forum", "solo"] as const)(
   "finds joined archived %s channels by name without putting them in Recent activity",
   async (channelType) => {
     const relay = keypair(),
@@ -717,10 +717,8 @@ it.each(["stream", "forum", "session"] as const)(
         content: "",
         tags: [
           ["d", "archive"],
-          ["t", channelType === "session" ? "stream" : channelType],
-          ...(channelType === "session"
-            ? [["private"], ["about", "Buzz session (buzz.sessions/v1)"]]
-            : []),
+          ["t", channelType === "solo" ? "stream" : channelType],
+          ...(channelType === "solo" ? [["private"], ["t", "buzz.solo"]] : []),
           ["name", "Past project"],
           ["archived", "true"],
         ],
@@ -770,7 +768,7 @@ it.each(["stream", "forum", "session"] as const)(
 it.each([
   { channelType: "stream", readOnly: true },
   { channelType: "forum", readOnly: true },
-  { channelType: "session", readOnly: true },
+  { channelType: "solo", readOnly: true },
   { channelType: "dm" },
 ] as const)(
   "does not surface archived nonmember or non-channel destinations: %j",
@@ -3241,7 +3239,7 @@ it("tells uncached directory namesakes apart before a DM opens", async () => {
   }
 });
 it.each([true, false])(
-  "sends the viewer's agents to a new session, not their DMs (Solo=%s)",
+  "sends the viewer's agents to a new chat, not their DMs (Solo=%s)",
   async (solo) => {
     const relay = keypair(),
       viewer = keypair(),
@@ -3333,16 +3331,16 @@ it.each([true, false])(
         await screen.findByRole("group", { name: "Agents" }),
       );
       const choice = agents.getByRole("option", { name: /Scout/ });
-      expect(choice).toHaveTextContent("New session");
-      // An agent with no DM yet starts a session too, not a DM.
+      expect(choice).toHaveTextContent("New chat");
+      // An agent with no DM yet starts a chat too, not a DM.
       expect(agents.getByRole("option", { name: /Scotia/ })).toHaveTextContent(
-        "New session",
+        "New chat",
       );
       expect(agents.queryByRole("option", { name: /Scooter/ })).toBeNull();
       fireEvent.click(choice);
       expect(openAgentSession).toHaveBeenCalledExactlyOnceWith(mine.pubkey);
       expect(openConversation).not.toHaveBeenCalled();
-      // The DM gives way only to a New session row that shows. "cout" finds
+      // The DM gives way only to a New chat row that shows. "cout" finds
       // the DM by substring but not the agent, so the DM stays.
       mounted.rerender(
         <SearchResults

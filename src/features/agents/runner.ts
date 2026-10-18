@@ -378,14 +378,18 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
-  /** Whether a mention in `channel` continues the agent's owner's Me chat,
+  /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
-  meChat(agent: Agent, channel: string, signal: AbortSignal): Promise<boolean>;
+  soloChat(
+    agent: Agent,
+    channel: string,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
-  /** A harness's title for the conversation a mention started; may name a Me chat. */
+  /** A harness's title for the conversation a mention started; may name a Solo chat. */
   named(agent: Agent, event: RelayEvent, title: string): void;
 };
 
@@ -1885,7 +1889,7 @@ export class AgentRunners {
         // Straight to custody, so pulses stay out of what it wrote.
         async (pulse) => this.require().publish(runner.pubkey, pulse),
         // Where its turn answers, read the same way.
-        this.host.meChat(agent, channel, runner.controller.signal),
+        this.host.soloChat(agent, channel, runner.controller.signal),
         event,
         channel,
         runner.typing,

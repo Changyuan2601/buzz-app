@@ -75,9 +75,7 @@ export function MentionPicker({
     model,
     open && !disabled && !!selectTeam,
   );
-  const parentAdmission =
-    !!channel &&
-    (channel.channelType !== "session" || !!channel.parentChannelId);
+  const parentAdmission = !!channel && channel.channelType !== "solo";
   const members =
     draftRoster?.map((person) => person.pubkey) ?? channel?.members;
   const memberKey = members?.join(":") ?? "";
@@ -222,8 +220,8 @@ export function MentionPicker({
             {!draftRoster && inviteAgents && (
               <p>
                 {parentAdmission
-                  ? "Agents you mention join this session and its parent channel when you send, with access to their history."
-                  : "Agents you mention join this session when you send, with access to its history."}
+                  ? "Agents you mention join this channel when you send, with access to its history."
+                  : "Agents you mention join this chat when you send, with access to its history."}
               </p>
             )}
             {model.directory.loading && (
@@ -317,8 +315,8 @@ export function MentionPicker({
                           <small className="text-caption text-subtle">
                             {inviteAgents
                               ? parentAdmission
-                                ? "Adds to session and parent channel when you send"
-                                : "Adds to session when you send"
+                                ? "Adds to channel when you send"
+                                : "Adds to chat when you send"
                               : outsideMentionDetail(channel)}
                           </small>
                         )}

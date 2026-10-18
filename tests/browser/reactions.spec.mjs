@@ -16,10 +16,11 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     .locator("[data-message-id]")
     .filter({ hasText: "Historic" });
   const plus = root
-    .getByRole("group", { name: "Message actions" })
+    .getByRole("group", { name: "Message actions", includeHidden: true })
     .getByRole("button", {
       name: "Add reaction",
       exact: true,
+      includeHidden: true,
     });
   // Every message exposes first-reaction controls, not just previously reacted rows.
   const rows = page.locator("[data-message-id]");
@@ -28,13 +29,13 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await row.hover();
     await expect(
       row
-        .getByRole("group", { name: "Message actions" })
+        .getByRole("group", { name: "Message actions", includeHidden: true })
         .getByRole("button", { name: "Add reaction", exact: true }),
     ).toBeVisible();
   }
   await expect(
     page
-      .getByRole("group", { name: "Message actions" })
+      .getByRole("group", { name: "Message actions", includeHidden: true })
       .getByRole("button", { name: "Add reaction", exact: true }),
   ).toHaveCount(6);
   await root.hover();
@@ -48,7 +49,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   });
   // Visibility precedes the toolbar's entrance animation settling.
   await root
-    .getByRole("group", { name: "Message actions" })
+    .getByRole("group", { name: "Message actions", includeHidden: true })
     .evaluate((bar) =>
       Promise.all(bar.getAnimations().map((animation) => animation.finished)),
     );
@@ -74,21 +75,30 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   expect(await shortcut.boundingBox()).toEqual(shortcutBox);
   expect(await neighbor.boundingBox()).toEqual(neighborBox);
 
-  const actions = root.getByRole("group", { name: "Message actions" });
-  const actionsBefore = await actions.boundingBox();
-  const plusBefore = await plus.boundingBox();
+  const actions = root.getByRole("group", {
+    name: "Message actions",
+    includeHidden: true,
+  });
+  // Visibility-hidden anchors still have geometry; Playwright's boundingBox
+  // deliberately returns null for them. Measure the real DOM box instead.
+  const bounds = (element) =>
+    element.evaluate((node) => {
+      const { x, y, width, height } = node.getBoundingClientRect();
+      return { x, y, width, height };
+    });
+  const actionsBefore = await bounds(actions);
+  const plusBefore = await bounds(plus);
   await plus.click();
   const search = page.locator('em-emoji-picker input[type="search"]');
   await expect(search).toBeVisible();
   // Mounting the portaled picker must not introduce another flex gap.
-  await expect.poll(() => actions.boundingBox()).toEqual(actionsBefore);
-  await expect.poll(() => plus.boundingBox()).toEqual(plusBefore);
+  await expect.poll(() => bounds(actions)).toEqual(actionsBefore);
+  await expect.poll(() => bounds(plus)).toEqual(plusBefore);
   await search.hover();
   await search.focus();
-  await expect(root.getByRole("group", { name: "Message actions" })).toHaveCSS(
-    "opacity",
-    "1",
-  );
+  await expect(
+    root.getByRole("group", { name: "Message actions", includeHidden: true }),
+  ).toHaveCSS("visibility", "hidden");
   const padding = await search.evaluate((input) => {
     const field = input.parentElement.getBoundingClientRect();
     const picker = input
@@ -224,7 +234,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await page.setViewportSize({ width, height: 900 });
     await root.hover();
     const box = await root
-      .getByRole("group", { name: "Message actions" })
+      .getByRole("group", { name: "Message actions", includeHidden: true })
       .boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -294,21 +304,29 @@ test("one active reaction picker preserves target and focus when switching or un
   const firstRow = rows.nth(1);
   const secondRow = rows.nth(0);
   const first = firstRow
-    .getByRole("group", { name: "Message actions" })
+    .getByRole("group", { name: "Message actions", includeHidden: true })
     .getByRole("button", {
       name: "Add reaction",
       exact: true,
+      includeHidden: true,
     });
   const second = secondRow
-    .getByRole("group", { name: "Message actions" })
+    .getByRole("group", { name: "Message actions", includeHidden: true })
     .getByRole("button", {
       name: "Add reaction",
       exact: true,
+      includeHidden: true,
     });
   const search = page.locator('em-emoji-picker input[type="search"]');
   await firstRow.hover();
   await first.click();
   await expect(search).toBeVisible();
+  // Other message toolbars yield until the current picker is dismissed.
+  await secondRow.hover();
+  await expect(second).toBeHidden();
+  await search.press("Escape");
+  await expect(search).toHaveCount(0);
+  await expect(first).toBeFocused();
   await secondRow.hover();
   await second.click();
   await expect(search).toHaveCount(1);
@@ -322,6 +340,10 @@ test("one active reaction picker preserves target and focus when switching or un
   await first.focus();
   await first.press("Enter");
   await expect(search).toBeVisible();
+  await expect(second).toBeHidden();
+  await search.press("Escape");
+  await expect(search).toHaveCount(0);
+  await expect(first).toBeFocused();
   await second.focus();
   await second.press("Enter");
   await expect(search).toHaveCount(1);

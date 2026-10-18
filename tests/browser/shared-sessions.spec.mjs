@@ -8,11 +8,11 @@ test.use({
   productionBroker: true,
   dmLabels: true,
   agentPeers: true,
-  sessionChannels: ["beta"],
+  soloChannels: ["beta"],
   channelNames: {
     beta: "Beta notifications: investigate duplicate delivery and verify channel permissions",
   },
-  sessionWriteKinds: [9, 9000, 9007],
+  channelWriteKinds: [9, 9000, 9007],
   historyCounts: { alpha: 2, beta: 2 },
 });
 
@@ -49,7 +49,7 @@ test("a confirmed share opens the durable title-first channel index", async ({
     scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
   });
   await page.getByRole("button", { name: "Share", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Share session" });
+  const dialog = page.getByRole("dialog", { name: "Share chat" });
   await dialog
     .getByRole("combobox", { name: "People or channel" })
     .fill("Alpha");

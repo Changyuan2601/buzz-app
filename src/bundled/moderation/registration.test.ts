@@ -1,6 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
-import { MEMBERSHIP_SECTION } from "../../features/communities/CommunityRailItem";
+import { MEMBERSHIP_SECTION } from "../../features/communities/CommunityPickerItem";
 import type { RelayData } from "../../features/relay/service";
 import { flush } from "../../features/relay/testing";
 import { SettingsCardsService } from "../../features/settings/service";

@@ -231,7 +231,7 @@ leaving (membership removal, Personal space fallback, session disposal, purged
 device state, a leave that keeps device state for the banned answer, the last
 community, a purge that leaves named failures, and a native device record that
 will not save, which throws before the snapshot, session, record or device state
-change). `CommunityRail.test.tsx` covers the leave flow end to end against the
+change). `CommunityPicker.test.tsx` covers the leave flow end to end against the
 broker route: confirm, publish, then remove; cancel; refusals and timeouts that
 keep the membership; the not-a-member answers (purging) and the banned answer
 (keeping device state); a device record that will not save after the relay

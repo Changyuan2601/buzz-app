@@ -51,7 +51,7 @@ it.each([
 it("recognizes bare links to known sessions and respects known ordinary channels", () => {
   expect(
     separateSessionCards(row("buzz://channel/session-id"), [
-      { id: "session-id", name: "Name", channelType: "session" },
+      { id: "session-id", name: "Name", channelType: "solo" },
     ]).cards,
   ).toHaveLength(1);
   expect(

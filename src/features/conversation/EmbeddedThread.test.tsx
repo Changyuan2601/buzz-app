@@ -52,10 +52,14 @@ vi.mock("../messages/MessageRow", () => ({
   ),
 }));
 vi.mock("../messages/MessageComposer", () => ({
-  MessageComposer: ({ sessionConversation }: MessageComposerProps) => (
+  MessageComposer: ({
+    soloConversation,
+    ownSoloConversation,
+  }: MessageComposerProps) => (
     <section
       aria-label="Composer"
-      data-session-conversation={String(!!sessionConversation)}
+      data-solo-conversation={String(!!soloConversation)}
+      data-own-solo-conversation={String(!!ownSoloConversation)}
       data-deletion={String(!!useMessageDeletion())}
     />
   ),
@@ -87,8 +91,9 @@ afterEach(() => {
 });
 
 function fixture(
-  channelType: "stream" | "session" = "stream",
+  channelType: "stream" | "solo" = "stream",
   operations: readonly OutgoingEvent[] = [],
+  creator?: string,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -135,7 +140,7 @@ function fixture(
   const viewer = "a".repeat(64);
   const channels = {
     channels: [
-      { id: "c", name: "Channel", channelType, members: [viewer] },
+      { id: "c", name: "Channel", channelType, members: [viewer], creator },
       { id: "d", name: "Other", channelType, members: [viewer] },
     ],
   };
@@ -281,16 +286,30 @@ it("a panel opened from media review replaces the viewer, and media review repla
 
 it.each([
   ["stream", "false"],
-  ["session", "true"],
+  ["solo", "true"],
 ] as const)(
-  "the %s-channel reply composer gets message management and session recipients=%s",
-  (channelType, sessionConversation) => {
+  "the %s-channel reply composer gets message management and Solo chat recipients=%s",
+  (channelType, soloConversation) => {
     render(<EmbeddedThread {...fixture(channelType).props} />);
     const composer = screen.getByLabelText("Composer");
     expect(composer).toHaveAttribute("data-deletion", "true");
     expect(composer).toHaveAttribute(
-      "data-session-conversation",
-      sessionConversation,
+      "data-solo-conversation",
+      soloConversation,
+    );
+  },
+);
+
+it.each([
+  ["the viewer's own", "true", "a".repeat(64)],
+  ["someone else's", "false", "b".repeat(64)],
+] as const)(
+  "the reply composer in %s Solo chat gets personal composition=%s",
+  (_, ownSoloConversation, creator) => {
+    render(<EmbeddedThread {...fixture("solo", [], creator).props} />);
+    expect(screen.getByLabelText("Composer")).toHaveAttribute(
+      "data-own-solo-conversation",
+      ownSoloConversation,
     );
   },
 );
@@ -305,7 +324,7 @@ it("selecting a channel supplies its readers without remounting the page below",
   const page = (channel?: {
     id: string;
     name: string;
-    channelType: "session";
+    channelType: "solo";
   }) => (
     <ConversationChannel
       session={props.session}
@@ -321,11 +340,11 @@ it("selecting a channel supplies its readers without remounting the page below",
   const view = render(page());
   const input = screen.getByLabelText("Page state");
   fireEvent.change(input, { target: { value: "kept" } });
-  view.rerender(page({ id: "c", name: "Channel", channelType: "session" }));
+  view.rerender(page({ id: "c", name: "Channel", channelType: "solo" }));
   expect(screen.getByLabelText("Page state")).toBe(input);
   expect(input).toHaveValue("kept");
   const composer = screen.getByLabelText("Composer");
-  expect(composer).toHaveAttribute("data-session-conversation", "true");
+  expect(composer).toHaveAttribute("data-solo-conversation", "true");
   expect(composer).toHaveAttribute("data-deletion", "true");
   view.rerender(page());
   expect(screen.getByLabelText("Page state")).toBe(input);

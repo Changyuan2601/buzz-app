@@ -217,13 +217,24 @@ function ActivityBubble({
   const popup = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (interactive) return;
-    const active = trigger.current?.ownerDocument.activeElement;
-    if (
-      active &&
-      (trigger.current?.contains(active) || popup.current?.contains(active))
-    )
-      props.onFocusedRemoval?.();
+    const source = popup.current;
+    const button = trigger.current;
+    const document = (source ?? button)?.ownerDocument;
+    const active = document?.activeElement;
     setExpanded(false);
+    if (active && (button?.contains(active) || source?.contains(active))) {
+      // Commit closure before handing off: its overlay currently hides the
+      // host's target. DOM observers release that target at this checkpoint.
+      // Keep the retired nodes so unmount does not erase focus ownership.
+      queueMicrotask(() => {
+        const current = document?.activeElement;
+        if (
+          current === document?.body ||
+          (current && (button?.contains(current) || source?.contains(current)))
+        )
+          props.onFocusedRemoval?.();
+      });
+    }
   }, [interactive, props.onFocusedRemoval]);
   const working = entries.some((entry) => entry.working);
   // Local work breathes until its first step ("Starting"), like the sidebar and thread.
@@ -417,17 +428,14 @@ function ActivityBubble({
                       icon={<XIcon />}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (
-                          props.message &&
+                        // Retirement owns the last popup's close and focus
+                        // handoff; keep its focused contents until that effect.
+                        if (props.message)
                           props.session.agentActivity.dismissError?.(
                             entry.agent,
                             props.channelId,
                             props.message.id,
-                          )
-                        ) {
-                          if (entries.length === 1) props.onFocusedRemoval?.();
-                          setExpanded(entries.length > 1);
-                        }
+                          );
                       }}
                     />
                   ) : undefined}

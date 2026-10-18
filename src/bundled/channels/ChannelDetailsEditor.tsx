@@ -26,7 +26,7 @@ import {
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
+import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
 import styles from "./Channels.module.css";
 
 export type ChannelDetailsAction = {

@@ -400,6 +400,10 @@ test("finishing a zero-reply summary hands focus back only when it owns focus", 
     exact: true,
   });
   for (const focusOn of ["summary", "popup", "composer"]) {
+    // Exercise immediate popup removal without depending on an exit animation.
+    await page.emulateMedia({
+      reducedMotion: focusOn === "popup" ? "reduce" : "no-preference",
+    });
     const request = app.sign({
       kind: 9,
       content: `Finish zero-reply activity: ${focusOn}`,

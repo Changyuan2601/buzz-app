@@ -49,14 +49,13 @@ export const test = base.extend({
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
-  sessionChannels: [[], { option: true }],
-  sessionWriteKinds: [null, { option: true }],
-  sessionParents: [{}, { option: true }],
+  soloChannels: [[], { option: true }],
+  channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
-  meChannels: [[], { option: true }],
-  meAgentNames: [[], { option: true }],
-  meOutsideAgentNames: [[], { option: true }],
+  ownSoloChannels: [[], { option: true }],
+  soloAgentNames: [[], { option: true }],
+  soloOutsideAgentNames: [[], { option: true }],
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
@@ -74,7 +73,7 @@ export const test = base.extend({
   inboxDm: [false, { option: true }],
   inboxDmOldAnchor: [false, { option: true }],
   inboxThreadWindow: [false, { option: true }],
-  inboxSessionAgent: [false, { option: true }],
+  inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
@@ -107,14 +106,13 @@ export const test = base.extend({
       exactMessages,
       openSearch,
       searchAuthor,
-      sessionChannels,
-      sessionWriteKinds,
-      sessionParents,
+      soloChannels,
+      channelWriteKinds,
       sidebarUnread,
       savedSidebar,
-      meChannels,
-      meAgentNames,
-      meOutsideAgentNames,
+      ownSoloChannels,
+      soloAgentNames,
+      soloOutsideAgentNames,
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
@@ -132,7 +130,7 @@ export const test = base.extend({
       inboxDm,
       inboxDmOldAnchor,
       inboxThreadWindow,
-      inboxSessionAgent,
+      inboxSoloAgent,
       tallMessages,
       membershipActivity,
       launchAnimation,
@@ -208,17 +206,19 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
-    const meAgentKeys = [];
-    const meAgents = [...meAgentNames, ...meOutsideAgentNames].map((name) => {
-      const key = generateSecretKey();
-      meAgentKeys.push(key);
-      const pubkey = getPublicKey(key);
-      servedProfiles.set(
-        pubkey,
-        sign(0, [], JSON.stringify({ name, is_agent: true }), key),
-      );
-      return { pubkey, name };
-    });
+    const soloAgentKeys = [];
+    const soloAgents = [...soloAgentNames, ...soloOutsideAgentNames].map(
+      (name) => {
+        const key = generateSecretKey();
+        soloAgentKeys.push(key);
+        const pubkey = getPublicKey(key);
+        servedProfiles.set(
+          pubkey,
+          sign(0, [], JSON.stringify({ name, is_agent: true }), key),
+        );
+        return { pubkey, name };
+      },
+    );
     const ownerAgentKey =
       lifecycleOwnerAgent || agentMessageDeletion
         ? generateSecretKey()
@@ -298,7 +298,6 @@ export const test = base.extend({
         ...dmIds,
         ...sortingIds,
         ...lifecycleRows.map((row) => row.id),
-        ...Object.values(sessionParents),
       ]),
     ];
     if (savedSidebar) {
@@ -353,9 +352,11 @@ export const test = base.extend({
         }
       }
     }
-    if (meChannels.length) {
+    if (ownSoloChannels.length) {
       if (!productionBroker)
-        throw new Error("Me placement fixtures require the production decoder");
+        throw new Error(
+          "Own Solo chat fixtures require the production decoder",
+        );
       for (const community of ["primary", "secondary"]) {
         const scope = JSON.parse(fixtureAliases)[community];
         const coordinate = `buzz-me-kit-v1:${encodeURIComponent(scope)}:groups:me`;
@@ -368,7 +369,6 @@ export const test = base.extend({
             id: "me",
             groups: [],
             assignments: {},
-            channels: meChannels,
           },
         };
         readEvents.get(community).set(
@@ -389,15 +389,12 @@ export const test = base.extend({
       }
     }
     const hiddenChannels = new Set();
-    const meDetails = new Map();
+    const soloDetails = new Map();
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
-    for (const community of ["primary", "secondary"])
-      for (const parent of Object.values(sessionParents))
-        histories.set(`${community}/${parent}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -911,8 +908,8 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
         if ("#buzz-channel" in filter) {
-          // A channel's project-home read: one kind per filter, one channel.
-          expect([[30617], [30621]]).toContainEqual(filter.kinds);
+          // A channel’s repository discovery: one kind, one channel.
+          expect(filter.kinds).toEqual([30617]);
           expect(filter).toEqual({
             kinds: filter.kinds,
             "#buzz-channel": [expect.any(String)],
@@ -921,8 +918,8 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
-      // Me read state shares id lookups with the messages a review resolves.
-      if (meChannels.length > 0 && filter.ids)
+      // Solo read state shares id lookups with the messages a review resolves.
+      if (ownSoloChannels.length > 0 && filter.ids)
         return [
           ...readEvents.get(community).values(),
           ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
@@ -971,12 +968,12 @@ export const test = base.extend({
               [
                 ["d", id],
                 ...((lifecycleRows.some((row) => row.id === id) ||
-                  meChannels.includes(id)) &&
+                  ownSoloChannels.includes(id)) &&
                 ["owner", "admin"].includes(lifecycleRole)
                   ? [["p", viewer, lifecycleRole]]
                   : []),
-                ...(meChannels.includes(id)
-                  ? meAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
+                ...(ownSoloChannels.includes(id)
+                  ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                   : []),
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                   ? [["p", ownerAgent, "owner"]]
@@ -1001,8 +998,8 @@ export const test = base.extend({
                   ? lifecycleRole
                   : "member",
               ],
-              ...(meChannels.includes(id)
-                ? meAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
+              ...(ownSoloChannels.includes(id)
+                ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                 : []),
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
@@ -1040,7 +1037,7 @@ export const test = base.extend({
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map(
             (id) =>
-              meDetails.get(`${community}/${id}`) ??
+              soloDetails.get(`${community}/${id}`) ??
               sign(
                 39000,
                 [
@@ -1065,8 +1062,8 @@ export const test = base.extend({
                   ],
                   ...(archivedIds.has(id) ? [["archived", "true"]] : []),
                   // Ordinary channels are explicitly public; do not add a public
-                  // flag to private sessions or change the separate DM fixtures.
-                  ...(!sessionChannels.includes(id) &&
+                  // flag to private Solo chats or change the separate DM fixtures.
+                  ...(!soloChannels.includes(id) &&
                   !dmIds.includes(id) &&
                   !lifecycleRows.some(
                     (row) => row.id === id && row.type === "dm",
@@ -1074,12 +1071,16 @@ export const test = base.extend({
                     ? [["public"]]
                     : []),
                   ...(dmIds.includes(id) ? [["hidden"]] : []),
-                  ...(sessionChannels.includes(id)
+                  ...(soloChannels.includes(id)
                     ? [
                         ["private"],
+                        ["t", "buzz.solo"],
+                        // The viewer's own Solo chats; any other is shared with them.
                         [
-                          "about",
-                          `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                          "P",
+                          ownSoloChannels.includes(id)
+                            ? viewer
+                            : getPublicKey(relayKey),
                         ],
                       ]
                     : []),
@@ -1156,8 +1157,8 @@ export const test = base.extend({
           kinds: [30175, 30177],
           limit: 200,
         });
-        return meAgents
-          .filter(({ name }) => meAgentNames.includes(name))
+        return soloAgents
+          .filter(({ name }) => soloAgentNames.includes(name))
           .map(({ pubkey, name }) =>
             sign(30177, [["d", pubkey]], JSON.stringify({ name }), userKey),
           );
@@ -1287,7 +1288,7 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
-                  ...((agentPeers && key !== peerKey) || inboxSessionAgent
+                  ...((agentPeers && key !== peerKey) || inboxSoloAgent
                     ? { is_agent: true }
                     : {}),
                   display_name: [
@@ -1629,7 +1630,7 @@ export const test = base.extend({
       }
       if (
         event.kind === 9002 &&
-        meChannels.includes(event.tags.find(([key]) => key === "h")?.[1])
+        ownSoloChannels.includes(event.tags.find(([key]) => key === "h")?.[1])
       ) {
         const id = event.tags.find(([key]) => key === "h")[1];
         const base = answer(community, { kinds: [39000], "#d": [id] })[0];
@@ -1655,7 +1656,7 @@ export const test = base.extend({
             tags.push([next === "open" ? "public" : "private"]);
           else if (key !== "ttl" || next) tags.push([key, next]);
         }
-        meDetails.set(
+        soloDetails.set(
           `${community}/${id}`,
           sign(39000, tags, "", relayKey, ++lifecycleTime),
         );
@@ -1745,7 +1746,7 @@ export const test = base.extend({
           "channel-stars",
           "channel-sort",
         ].includes(sidebarCoordinate) ||
-        (meChannels.length > 0 &&
+        (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
       ) {
         expect(event.tags).toContainEqual([
@@ -1832,8 +1833,10 @@ export const test = base.extend({
             : {}),
           discovery: (community) => ({
             self: getPublicKey(relayKey),
-            // Me details publications below retain label changes as well as names.
-            ...(meChannels.length ? { supported_extensions: ["nip-cl"] } : {}),
+            // Solo details publications below retain label changes as well as names.
+            ...(ownSoloChannels.length
+              ? { supported_extensions: ["nip-cl"] }
+              : {}),
             ...(readState
               ? {
                   read_state_snapshot: {
@@ -1885,22 +1888,22 @@ export const test = base.extend({
             viewer,
             relayAuthor: getPublicKey(relayKey),
             writeKinds:
-              sessionWriteKinds ??
-              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
+              channelWriteKinds ??
+              (soloChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
         }
-        if (sessionChannels.length && route === "sign") {
+        if (soloChannels.length && route === "sign") {
           expect(body.kind).toBe(9);
           return send(response, finalizeEvent(body, userKey));
         }
-        if (sessionChannels.length && route === "publish") {
+        if (soloChannels.length && route === "publish") {
           expect(verifyEvent(body)).toBe(true);
           expect(body.pubkey).toBe(viewer);
           expect(body.kind).toBe(9);
           const channel = body.tags.find(([key]) => key === "h")?.[1];
-          expect(sessionChannels).toContain(channel);
+          expect(soloChannels).toContain(channel);
           histories.get(`${community}/${channel}`).push(body);
           return send(response, { accepted: true, event_id: body.id });
         }
@@ -2095,7 +2098,7 @@ export const test = base.extend({
                     : {
                         authority: async () => ({
                           relayAuthor: getPublicKey(relayKey),
-                          ...(meChannels.length
+                          ...(ownSoloChannels.length
                             ? { channelIdentity: true }
                             : {}),
                         }),
@@ -2310,9 +2313,9 @@ export const test = base.extend({
           return event;
         },
         participants,
-        meAgents,
-        meAgentMessage(channelId, content) {
-          const agent = meAgents[0];
+        soloAgents,
+        soloAgentMessage(channelId, content) {
+          const agent = soloAgents[0];
           expect(agent).toBeTruthy();
           const history = histories.get(`primary/${channelId}`);
           expect(history).toBeTruthy();
@@ -2320,7 +2323,7 @@ export const test = base.extend({
             9,
             [["h", channelId]],
             content,
-            meAgentKeys[0],
+            soloAgentKeys[0],
             (history.at(-1)?.created_at ?? 1700000100) + 1,
           );
           history.push(event);

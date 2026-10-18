@@ -192,34 +192,81 @@
     --interaction-pressed: var(--affordance-backdrop-pressed);
     --interaction-selected: var(--affordance-backdrop-pressed);
     @apply relative flex shrink-0 items-center justify-between;
-    min-height: 3rem;
+    min-height: var(--size-topbar);
+    /* Compact headers hold the page capsule in flow; keep it inside the topbar. */
+    padding-block: var(--space-1);
     flex-wrap: wrap;
-    padding-left: var(--space-4);
-    padding-right: var(--space-2);
+    padding-inline: var(--space-panel-gap);
     gap: var(--space-2);
     /* The shell owns one continuous dot grid, including beneath this header. */
     background: transparent;
   }
-  @media (min-width: 40rem) {
-    .shell-header {
-      padding-right: var(--space-4);
-    }
-  }
-  .shell-communities {
+  .shell-history {
     @apply flex min-w-0 shrink-0 items-center justify-start;
     gap: 0;
-    padding-left: var(--space-4);
+    margin-left: var(--space-3);
+    padding-left: 0;
   }
-  .shell-communities > .navigation-item {
+  .shell-history > .navigation-item {
     flex-shrink: 1;
   }
-  .shell-header-mac .shell-communities {
+  .shell-header-mac .shell-history {
     padding-left: calc(var(--space-16) + var(--space-4));
   }
-  .shell-topbar-pages {
+  .shell-capsule {
+    flex: none;
+  }
+  .shell-capsule > .panel {
+    display: flex;
+    align-items: center;
+    width: auto;
+    height: auto;
+    padding: var(--space-1);
+  }
+
+  .shell-center-capsule {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
+  }
+  .shell-center-capsule > .panel {
+    padding: 0;
+  }
+  .shell-create-action,
+  .shell-search-action {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .shell-create-action {
+    right: calc(100% + var(--space-2));
+  }
+  .shell-search-action {
+    left: calc(100% + var(--space-2));
+  }
+  .shell-header[data-compact-pages] .shell-center-capsule {
+    position: static;
+    transform: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .shell-header[data-compact-pages]
+    :is(.shell-create-action, .shell-search-action) {
+    position: static;
+    transform: none;
+  }
+  .shell-header[data-compact-pages] .shell-center-capsule > .panel {
+    padding: var(--space-1);
+  }
+  .shell-community-switcher {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-right: var(--space-3);
+    min-width: 0;
+  }
+  .shell-topbar-pages {
     width: max-content;
     max-width: none;
   }
@@ -306,7 +353,9 @@
     min-width: 0;
   }
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1;
+    padding-inline: var(--space-panel-gap);
+    padding-bottom: var(--space-panel-gap);
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0 flex-1;
@@ -343,7 +392,8 @@
     margin-left: auto;
     gap: var(--space-2);
   }
-  .shell-header .buzz-button[data-icon-variant] {
+  .shell-header
+    .buzz-button[data-icon-variant]:not([data-icon-variant="prominent"]) {
     width: var(--size-control-sm);
     height: var(--size-control-sm);
   }
@@ -351,13 +401,15 @@
     .buzz-button[data-icon-variant="ghost"]:not(
       :hover,
       :focus-visible,
-      :active
+      :active,
+      [data-selected]
     ) {
     background: transparent;
     box-shadow: none;
   }
-  .shell-header .buzz-button[data-icon-variant] svg,
-  .shell-header .buzz-button[data-icon-variant="ghost"] img {
+  .shell-header
+    .buzz-button[data-icon-variant]:not([data-icon-variant="prominent"])
+    svg {
     width: 1rem;
     height: 1rem;
   }
@@ -366,8 +418,8 @@
       padding-left: var(--space-2);
       gap: var(--space-2);
     }
-    .shell-communities {
-      padding-left: var(--space-4);
+    .shell-history {
+      padding-left: 0;
     }
   }
   /* Keep this in sync with AppShell's matchMedia navigation owner. */

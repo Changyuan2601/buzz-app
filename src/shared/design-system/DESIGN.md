@@ -84,7 +84,7 @@ retain navigation semantics except for the wide shell topbar described in
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
-body filters and list/detail ownership; [Sessions](../../bundled/sessions/SessionsPage.tsx)
+body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
 
@@ -203,6 +203,12 @@ for a destructive menu action; its icon inherits the danger color and highlighte
 rows use the matching danger affordance. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+Native top-layer message actions and hover previews yield to interactive menus,
+pickers, and dialogs through the shared overlay-layer policy. An originating
+toolbar keeps its anchor geometry but is hidden and cannot intercept popup clicks;
+its target message remains highlighted while that toolbar's menu or picker is open.
+Hover previews inside the active popup remain available. Do not add per-menu
+suppression rules or a second overlay registry.
 For choices that must stay within a modal, pass its element to
 `Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it
 and the shared popup scrolls within the resulting available height; keep the portal.
@@ -496,10 +502,15 @@ glass remains; the flat shell does not establish a general glass contrast guaran
 
 ### Match controls to their surface
 
+Shell control groups use `Panel shape="capsule"` to share the workspace panel
+fill and shadow with rounded ends. Layout and overflow remain shell-owned.
+
+Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
+a capsule track and raised capsule selection (for example, sidebar scope).
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
-Chrome tab and route-navigation groups use a shared `affordance-subtle` capsule,
-with `affordance-subtle-hover` for an inactive item. Selection uses the pane color
+Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule,
+with `affordance-chrome-hover` for an inactive item and `text-chrome-subtle` labels. Selection uses the pane color
 in light mode and neutral 5 in dark mode, where it stays stronger than hover.
 Standalone chrome icon controls remain unfilled and use backdrop hover/pressed
 fills. No blur or glass rim is added.
@@ -1234,15 +1245,66 @@ need their own values in each mode.
 
 Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
-to remain visible on conversation surfaces in both modes. Default own message
-bubbles retain `bubble-neutral`, with standard text and link colors. The five accent
-choices—blue, green, orange, pink and lilac—pair with white ink. They retain the
-reference hue and as much chroma as sRGB permits; lightness is lowered only to
-reach the 4.5:1 WCAG floor (also meeting the Lc 60 target). Reactions and
-ThemePicker previews follow the selected bubble pair. Default send controls use
-the neutral prominent pair; accent choices use their message pair. The temporary
-return-to-message highlight uses a 20% tint of the selected bubble color mixed
-with the panel surface, including neutral, in both themes.
+to remain visible on conversation surfaces in both modes.
+
+### Accent and vibe level
+
+Two device-local choices decide color. **Accent color** picks a family:
+chartreuse (Buzz's brand color, #d7d72e, and the default), flame, magenta, iris,
+cobalt or jade. **Vibe level** decides how much of the app that family paints: Snoozin’ (neutral),
+Hummin’ (the default), Swarmin’ or Buzzin’ (full).
+
+A family is a twelve-step ramp per mode with the palette's step contract (1–2
+backgrounds, 3–5 tints, 6–8 lines, 9–10 strong fill, 11–12 text), plus the ink on
+its strong fill, a pressed fill and its link color. Roles stack on steps, never on
+literals, so every family works at every level. Each mode's ramp is authored
+for its own surfaces: the same step reads correctly in light and dark.
+
+Vibe levels switch whole **color groups** onto the accent ramp, never single
+roles, so nothing stays gray on a background that turned accent.
+
+| Group | Roles |
+| --- | --- |
+| Moments | Own messages, links |
+| Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row-subtle`, `text-row-metadata`) |
+| Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
+| Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
+| Lines | Separators, thread lines, scrollbars |
+| Secondary text | `text-subtle`, `text-metadata` |
+| Surfaces | Panes, popovers, recessed areas, received messages, chrome selection |
+| Text | Primary, navigation and unavailable text |
+
+| Vibe level | Groups on the accent |
+| --- | --- |
+| Snoozin’ | None; accent tints, lines and accent text only |
+| Hummin’ | Links, strong, rows |
+| Swarmin’ | Adds your own messages and the shell |
+| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
+
+Status colors, focus, categorical purple, shadows and media-specific roles stay
+fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
+material never follow the accent. Shared controls, menus and surrounding surfaces
+in a nested dark media scope do follow the selected vibe level, using the dark
+ramp even when the app is light. The gallery comments pane follows the app mode.
+A new role belongs to the group of the ground it sits on; do not add a role for
+one component. Row hover is its own role because rows take color before
+resting controls do. The contrast check fails when a gray role sits on an accent
+ground.
+
+When the shell is colored (Swarmin’ and Buzzin’), its dots use an accent step two
+steps from the background, never a gray mix. Chartreuse keeps its brand value as the strong fill in both modes. Controls on it
+take black ink; reading text on it, such as own messages at Buzzin’, takes the
+family's darkest olive. Send is an ordinary prominent button, never a separately
+colored one. On light surfaces its text and lines step down to olive. Status
+colors, focus and categorical purple stay independent of the accent. Dark-mode primary text stays white at Buzzin’ to preserve readability on the
+full range of floating-control states.
+
+Do not mix the accent with other colors or apply opacity to make a lighter shade;
+choose a step. A swatch that previews a family carries `data-accent` with
+`data-color-mode`. ThemePicker previews follow the selected family and vibe level
+through their `.light`/`.dark` scopes. The contrast check audits every family at
+every level in both modes.
 
 ## Density and rhythm
 
@@ -1409,10 +1471,10 @@ the timeline measures its rem-sized leading region for Virtua's pixel start marg
 Use direct, familiar language and remove words that do not help someone decide or act.
 
 - Labels describe the action or destination in the reader’s terms.
-- Name the app destinations Solo and Multiplayer, matching navigation. Use “Solo chats”
-  or “threads in Multiplayer” when context helps. Ordinary messages and message
-  settings still refer to content, not the Multiplayer destination. These labels
-  do not rename internal routes, plugin IDs or saved preference keys.
+- Name the app destination Messages, matching navigation. Its sidebar lists two
+  inventories, Solo and Team; use “Solo chats” or “Team channels” when context helps.
+  Ordinary messages and message settings still refer to content, not the destination.
+  These labels do not rename internal routes, plugin IDs or saved preference keys.
 - Empty states explain what belongs there and provide a useful next step.
 - Errors explain what happened and how to recover, beside the affected control.
 - Keep names and capitalization consistent across the flow.
@@ -1552,17 +1614,17 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
-The wide shell topbar is the deliberate exception: Solo and Multiplayer use
-`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+The wide shell topbar is the deliberate exception: global destinations use
+`Tabs variant="segmented"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
-Multiplayer represents the containing area for registered sidebar/default-placement
+Messages represents the containing area for registered sidebar/default-placement
 pages, while their sidebar selection and route remain exact. Its tab stays linked
 to the active child panel. The shell opts into Tabs' `onReselect` to return from a
-child to Multiplayer without changing ordinary active-tab behavior elsewhere. More
+child to Messages without changing ordinary active-tab behavior elsewhere. More
 pages marks that containing area with `aria-current="true"`, reserving `page` for
 an exact destination. Settings and independent header pages stay separate.
 

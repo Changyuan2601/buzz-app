@@ -4,7 +4,7 @@ import type { RelaySession } from "../relay/session";
 
 type RemovalSession = Pick<
   RelaySession,
-  "outbox" | "channels" | "workSessions" | "archives"
+  "outbox" | "channels" | "channelWrites" | "archives"
 >;
 
 /** Remove a relay-only agent from this community: archive its identity when a
@@ -155,12 +155,12 @@ export async function deleteAgentRecord(
  * read lists the agent in none of them; any refusal or unknown outcome throws
  * after every channel operation has settled. */
 export async function removeAgentFromChannels(
-  session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
+  session: Pick<RelaySession, "outbox" | "channels" | "channelWrites">,
   pubkey: string,
   signal: AbortSignal,
 ) {
   const pending = new Set([
-    ...(await session.workSessions.memberChannels(pubkey, signal)),
+    ...(await session.channelWrites.memberChannels(pubkey, signal)),
     ...session.channels
       .list()
       .channels.filter((channel) => channel.members?.includes(pubkey))
@@ -224,7 +224,7 @@ export async function removeAgentFromChannels(
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(
     [...pending].map((id) =>
-      session.workSessions.listsMember(id, pubkey, signal),
+      session.channelWrites.listsMember(id, pubkey, signal),
     ),
   );
   const remaining = listed.filter(Boolean);

@@ -20,7 +20,7 @@ export function useSidebarStartup(
   list: ChannelList,
   preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
 ) {
-  // ChannelSidebar is keyed by scope and connection generation; the hook is
+  // The primary sidebar is keyed by scope and connection generation; the hook is
   // remounted for a replacement session, while same-session remounts reuse latches.
   const [retained] = useState(() => {
     const state = startupSessions.get(session) ?? {

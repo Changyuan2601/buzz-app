@@ -177,7 +177,7 @@ test.describe("public search destination", () => {
       ).toHaveCount(0);
       await expect(
         page
-          .getByRole("complementary", { name: "Channel sidebar" })
+          .getByRole("complementary", { name: "Sidebar", exact: true })
           .getByRole("button", { name: "open", exact: true }),
       ).toHaveCount(0);
     }
@@ -285,7 +285,8 @@ test.describe("public search destination", () => {
       .toBe(true);
     await expect(composer).toHaveCount(0);
     const sidebar = page.getByRole("complementary", {
-      name: "Channel sidebar",
+      name: "Sidebar",
+      exact: true,
     });
     await expect(
       sidebar.getByRole("button", { name: "open", exact: true }),
@@ -353,7 +354,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
   app,
 }) => {
   const rail = page.getByRole("button", {
-    name: "Switch to Primary",
+    name: "Community switcher: Primary",
     exact: true,
   });
   // Hold startup membership before navigation so the channel list arrives after
@@ -381,7 +382,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
       .getByRole("option");
     const projects = dialog
       .getByRole("group", { name: "Actions" })
-      .getByRole("option", { name: "Projects", exact: true });
+      .getByRole("option", { name: "Workflows", exact: true });
     await expect(projects).toBeVisible();
     // The connected palette is mounted, but its channel list is still held.
     await expect(
@@ -410,7 +411,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
     await input.press("Enter");
     await expect(dialog).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", { name: "Workflows", exact: true }),
     ).toBeVisible();
   } finally {
     holding = false;

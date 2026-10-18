@@ -343,7 +343,9 @@ plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
 Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode and interface size rows share one Appearance group. The
+color mode, interface size, accent color and vibe level rows share one Appearance
+group. Vibe level uses `StepSlider`, the shared control for a few ordered steps:
+each step is a visible stop and its name follows the thumb. The
 System, Light, and Dark previews retain shared radio semantics, accessible names,
 and a persistent selection outline without visible captions. Their nested light/dark
 scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label

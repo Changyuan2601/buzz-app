@@ -1,4 +1,4 @@
-import type { LocalAgentSource, LocalWork } from "../agents/local-activity";
+import type { LocalAgentSource, LocalWork } from "./local-activity";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";

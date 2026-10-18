@@ -19,8 +19,8 @@ import { MessageLink, resolveLink } from "./MessageLink";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
 import { keypair, signed } from "../relay/testing";
-import { SESSION_NAMED_LABEL, sessionDescription } from "../sessions/metadata";
-import { sessionLinkMessage } from "../sessions/share";
+import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
+import { soloChatLinkMessage } from "../solo/share";
 import { MessageMarkdown } from "../messages/MessageMarkdown";
 import { ConversationPresentation } from "./ConversationPresentation";
 import { LinkThreadTabContext } from "./LinkLabelContext";
@@ -346,8 +346,8 @@ it("a signed chosen rename repaints the session card without changing authored l
     relay = keypair();
   let clock = 100,
     name = "First prompt",
-    labels: string[][] = [],
-    about = sessionDescription();
+    labels: string[][] = [["t", SOLO_LABEL]],
+    about = "";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -426,7 +426,7 @@ it("a signed chosen rename repaints the session card without changing authored l
     ).toBe(anchor);
     expect(anchor).toHaveFocus();
     expect(owner.session.channels.list().channels[0]?.labels).toContain(
-      SESSION_NAMED_LABEL,
+      SOLO_NAMED_LABEL,
     );
     expect(anchor).toHaveAttribute("data-link-label", label);
     expect(publish).not.toHaveBeenCalled();
@@ -465,7 +465,7 @@ it("shows escaped chosen names faithfully when only the sent label is available"
         id: "message",
         channelId: "channel",
         authorId: "author",
-        content: sessionLinkMessage("session", name),
+        content: soloChatLinkMessage("session", name),
         createdAt: 1,
         mentions: [],
         attachments: [],

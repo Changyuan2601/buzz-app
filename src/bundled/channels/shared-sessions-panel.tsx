@@ -9,7 +9,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import { useListedChannel } from "../../features/relay/listed-channel";
 import { FileTextIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { sessionLinkTarget } from "../sessions/SessionsPage";
+import { conversationTarget } from "../../features/channel-navigation/routes";
 import { SharedSessions } from "./SharedSessions";
 
 const targetPrefix = "buzz:shared-sessions:";
@@ -105,12 +105,7 @@ export function registerSharedSessions(ctx: Context) {
             current.session !== connection.session
           )
             return;
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            current.scope,
-            current.viewer,
-          );
-          if (destination) void ctx.navigation.open(destination);
+          void ctx.navigation.open(conversationTarget(current.scope, id));
         }}
       />
     );

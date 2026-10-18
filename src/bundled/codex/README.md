@@ -59,7 +59,7 @@ current turn finishes. Expect the marker.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
-A mention in a chat filed in the owner's Me is one conversation whatever the
+A mention in the owner's Solo chat is one conversation whatever the
 scope: the agent continues the channel's session and posts at its top level, and
 its tools refuse a reply into a thread there. A turn keeps the routing it started
 with, so a mention after the chat is shared waits for it and then threads as

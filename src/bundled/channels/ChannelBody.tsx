@@ -41,7 +41,12 @@ export const ChannelBody = memo(function ChannelBody({
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
 }) {
-  const { session: queries, channelId } = useConversation();
+  // The owner's Solo chat is a chat-style timeline that loads history on scroll.
+  const {
+    session: queries,
+    channelId,
+    ownSoloConversation: solo,
+  } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
@@ -126,6 +131,8 @@ export const ChannelBody = memo(function ChannelBody({
       marksRead={marksRead}
       navigation={navigation}
       activityLane={activityLane}
+      chatPresentation={solo}
+      historyControl={solo ? "scroll" : "button"}
     />
   );
 });

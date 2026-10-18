@@ -113,7 +113,7 @@ it("offers joined streams/forums, including private and still-confirming channel
     channel("cached", { cached: true, readOnly: true }),
     channel("readOnly", { readOnly: true }),
     channel("dm", { channelType: "dm" }),
-    channel("session", { channelType: "session" }),
+    channel("chat", { channelType: "solo" }),
     { id: "unknown", name: "unknown", members: ["viewer"] },
     channel("outside", { members: ["other"] }),
     { id: "missing", name: "missing", channelType: "stream" },

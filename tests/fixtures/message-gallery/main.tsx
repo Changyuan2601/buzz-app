@@ -10,7 +10,7 @@ import { MembershipRow } from "../../../src/features/messages/MembershipRow";
 import { Button } from "../../../src/shared/design-system/ui/Button";
 import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
 import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
-import { parseBubbleColor } from "../../../src/shared/theme/bubble-color";
+import { parseAccent, parseColorLevel } from "../../../src/shared/theme/accent";
 import referenceStyles from "../../../src/shared/InlineReference.module.css";
 import { CustomEmoji } from "../../../src/bundled/emoji/CustomEmoji";
 import { emojiMatches } from "../../../src/features/relay/emoji";
@@ -293,8 +293,11 @@ const theme =
     ? "dark"
     : "light";
 document.documentElement.dataset.colorMode = theme;
-document.documentElement.dataset.bubbleColor = parseBubbleColor(
-  new URLSearchParams(location.search).get("bubble"),
+document.documentElement.dataset.accent = parseAccent(
+  new URLSearchParams(location.search).get("accent"),
+);
+document.documentElement.dataset.colorLevel = parseColorLevel(
+  new URLSearchParams(location.search).get("level"),
 );
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing message gallery root");

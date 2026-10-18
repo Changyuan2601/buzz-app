@@ -1,12 +1,12 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
-import { createMePreferences, meGroups } from "./me-preferences";
+import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
-import type { GitRead } from "../projects/git";
-import { projectDestinations } from "../projects/destinations";
+import type { GitRead } from "../repos/git";
+import { repoDestinations } from "../repos/destinations";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
 import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
@@ -18,7 +18,7 @@ import { createPresence } from "../presence/presence";
 import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
-import { sessionMetadata } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
@@ -39,7 +39,7 @@ import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import { createProfileSearch } from "./profile-search";
-import { createWorkSessions } from "./work-sessions";
+import { createChannelWrites } from "./channel-writes";
 import { inventoryReader } from "../agents/inventory";
 import {
   isOwnerInventoryFilter,
@@ -193,8 +193,9 @@ function parseChannelCreation(
     new Set(labels).size !== labels.length
   )
     return;
+  // Solo chats start only through channel writes.
+  if (labels.includes(SOLO_LABEL)) return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
-  if (sessionMetadata(description) !== undefined) return;
   const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
   const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
   if (
@@ -317,7 +318,7 @@ export function createRelaySession(
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
                 if (!id) throw new Error("Canvas has no channel");
-                await workSessions.refreshMembership(id);
+                await channelWrites.refreshMembership(id);
                 signal.throwIfAborted();
                 validateCanvasWrite(event);
               }
@@ -826,7 +827,7 @@ export function createRelaySession(
   );
   canAccess = channels.canAccess;
   retainedChannelEvent = channels.retainedEvent;
-  const projects = projectDestinations(async (filters, signal) => {
+  const repositories = repoDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
     bound.throwIfAborted();
     const events = await requests.reader.read(filters, { signal: bound });
@@ -1197,7 +1198,7 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
-  const workSessions = createWorkSessions(
+  const channelWrites = createChannelWrites(
     writes?.outbox,
     channels.queries,
     verified,
@@ -1275,9 +1276,9 @@ export function createRelaySession(
     community: transport?.scope ?? "",
     signal: lifetime.signal,
     canWrite: (id) => !closed && channels.canParticipate(id),
-    delivered: workSessions.delivered,
+    delivered: channelWrites.delivered,
   });
-  const mePreferences = createMePreferences(
+  const soloPreferences = createSoloPreferences(
     channelKit.capability,
     lifetime.signal,
   );
@@ -1291,8 +1292,8 @@ export function createRelaySession(
           signal: lifetime.signal,
         })
       : undefined;
-  const sidebarPreferences = createSidebarPreferencesStore(
-    async (signal?: AbortSignal) => {
+  const sidebarPreferences = createSidebarPreferencesStore({
+    read: async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
       if (closed || !transport || !decode)
         throw new Error(
@@ -1310,8 +1311,8 @@ export function createRelaySession(
         combined,
       );
     },
-    !!transport?.decodeSidebarPreferences,
-    (() => {
+    available: !!transport?.decodeSidebarPreferences,
+    write: (() => {
       const write = transport?.writeSidebarAssignment;
       return write
         ? (intent, signal) =>
@@ -1325,7 +1326,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    (() => {
+    writeStar: (() => {
       const write = transport?.writeSidebarStar;
       return write
         ? (intent, signal) =>
@@ -1340,7 +1341,7 @@ export function createRelaySession(
         : undefined;
     })(),
     notify,
-    (() => {
+    writeMute: (() => {
       const write = transport?.writeSidebarMute;
       return write
         ? (intent, signal) =>
@@ -1354,7 +1355,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    (() => {
+    writeSort: (() => {
       const write = transport?.writeSidebarSort;
       return write
         ? (group, mode, sectionIds, signal) =>
@@ -1370,8 +1371,8 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    options.persistence,
-    (() => {
+    persistence: options.persistence,
+    removeSection: (() => {
       const write = transport?.removeSidebarSection;
       return write
         ? (sectionId, signal) =>
@@ -1385,8 +1386,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    false,
-    (() => {
+    writeOrder: (() => {
       const write = transport?.writeSidebarSectionOrder;
       return write
         ? (sectionIds, signal) =>
@@ -1400,15 +1400,15 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-  );
-  let meHead: string | undefined;
-  const stopMeGroups = channelKit.capability.subscribe(() => {
+  });
+  let soloHead: string | undefined;
+  const stopSoloGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
-    const nextMe = meGroups(state.entries)?.eventId;
-    if (nextMe !== meHead) {
-      meHead = nextMe;
-      void mePreferences.queries.refresh();
+    const nextSolo = soloGroups(state.entries)?.eventId;
+    if (nextSolo !== soloHead) {
+      soloHead = nextSolo;
+      void soloPreferences.queries.refresh();
     }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
@@ -1427,7 +1427,7 @@ export function createRelaySession(
           signal: lifetime.signal,
           changed: notifySetup,
           create: (id, input, active) =>
-            workSessions.createChannel(
+            channelWrites.createChannel(
               id,
               input.name,
               input.visibility,
@@ -1437,14 +1437,14 @@ export function createRelaySession(
               { labels: input.labels, system: input.system },
             ),
           delivered: (id, active) =>
-            workSessions.delivered(
+            channelWrites.delivered(
               id,
               active,
               false,
-              !!active && !workSessions.failed(id),
+              !!active && !channelWrites.failed(id),
             ),
           confirm: async (id) => {
-            await workSessions.delivered(id, undefined, false, false);
+            await channelWrites.delivered(id, undefined, false, false);
             if (
               !(
                 await verified.read(
@@ -1456,15 +1456,13 @@ export function createRelaySession(
               throw new Error("Setup is awaiting exact relay confirmation");
           },
           refresh: (id, member, input) =>
-            workSessions.refresh(id, { member, system: input.system }, false),
+            channelWrites.refresh(id, { member, system: input.system }, false),
           canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
             if (
               !canonicalDetailsName(input.name) ||
               [...canonicalDetailsName(input.name)].length > 120 ||
-              (input.description &&
-                ([...input.description].length > 1000 ||
-                  input.description.includes("Buzz session ("))) ||
+              (input.description && [...input.description].length > 1000) ||
               !["open", "private"].includes(input.visibility) ||
               (input.ttlSeconds !== undefined &&
                 (!Number.isInteger(input.ttlSeconds) ||
@@ -1474,7 +1472,7 @@ export function createRelaySession(
               throw new Error(
                 "Check the channel name, description, privacy and duration before creating it",
               );
-            if (!workSessions.available)
+            if (!channelWrites.available)
               throw new Error("Channel creation is unavailable");
             const setup = input.setup;
             if (!setup) return;
@@ -1585,7 +1583,7 @@ export function createRelaySession(
     return pendingChannelCreation;
   };
   const channelCreation = Object.freeze({
-    available: workSessions.available,
+    available: channelWrites.available,
     subscribe: (listener: () => void) => {
       const local = writes?.local.subscribe(listener);
       setupListeners.add(listener);
@@ -1655,7 +1653,7 @@ export function createRelaySession(
           signature,
           id,
           input: Object.freeze(normalized),
-          operation: workSessions.createChannel(
+          operation: channelWrites.createChannel(
             id,
             normalized.name,
             normalized.visibility,
@@ -1670,13 +1668,13 @@ export function createRelaySession(
       const pending = pendingChannelCreation;
       if (!pending) throw new Error("Channel creation could not be prepared.");
       try {
-        await workSessions.delivered(
+        await channelWrites.delivered(
           pending.operation,
           () => !lifetime.signal.aborted,
           false,
-          !workSessions.failed(pending.operation),
+          !channelWrites.failed(pending.operation),
         );
-        await workSessions.refresh(
+        await channelWrites.refresh(
           pending.id,
           { member: transport.viewer, system: pending.input.system },
           false,
@@ -1697,8 +1695,8 @@ export function createRelaySession(
         }
         return pending.id;
       } catch (error) {
-        if (workSessions.failed(pending.operation)) {
-          await workSessions.discardFailed(pending.operation);
+        if (channelWrites.failed(pending.operation)) {
+          await channelWrites.discardFailed(pending.operation);
           pendingChannelCreation = undefined;
         }
         throw error;
@@ -1753,9 +1751,9 @@ export function createRelaySession(
           () => void channelKit.capability.refresh(),
         ),
         recoverable(
-          mePreferences.placement.subscribe,
-          () => loadState(mePreferences.placement.snapshot()),
-          () => void mePreferences.placement.refresh(),
+          soloPreferences.queries.subscribe,
+          () => loadState(soloPreferences.queries.snapshot()),
+          () => void soloPreferences.queries.refresh(),
         ),
         recoverable(
           sidebarPreferences.queries.subscribe,
@@ -1847,7 +1845,7 @@ export function createRelaySession(
     channelCreation,
     channelKit: channelKit.capability,
     canvas: channelKit.canvas,
-    workSessions,
+    channelWrites,
     directMessages: createDirectMessages(
       transport,
       verified,
@@ -1873,8 +1871,7 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
-    mePreferences: mePreferences.queries,
-    mePlacement: mePreferences.placement,
+    soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */
@@ -2046,7 +2043,7 @@ export function createRelaySession(
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
-    projects,
+    repositories,
     projectGit: transport?.projectGit
       ? {
           async read(input: GitRead, signal: AbortSignal) {
@@ -2685,7 +2682,7 @@ export function createRelaySession(
         catchupQueue.clear();
         dropHintConfirmations();
         requests.invalidate();
-        projects.clearHomes();
+        repositories.clearHomes();
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -2836,7 +2833,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
-        mePreferences.clear();
+        soloPreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2849,7 +2846,7 @@ export function createRelaySession(
         unread.clear();
         inboxFeed.clear();
         requests.invalidate();
-        projects.clearHomes();
+        repositories.clearHomes();
         profiles.clear();
         emoji.clear();
         statuses.clear();
@@ -2868,11 +2865,11 @@ export function createRelaySession(
       }
     },
     dispose() {
-      stopMeGroups();
+      stopSoloGroups();
       closed = true;
       stopLiveRecovery();
       recovery?.dispose();
-      projects.clearHomes();
+      repositories.clearHomes();
       typing.dispose();
       lifetime.abort();
       activity.dispose();
@@ -2882,7 +2879,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
-      mePreferences.dispose();
+      soloPreferences.dispose();
       // Before requests.dispose(): lifecycle rereads retired shared reads
       // until its own controllers abort.
       lifecycle.dispose();

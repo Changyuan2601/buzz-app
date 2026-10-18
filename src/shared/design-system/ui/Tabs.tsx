@@ -38,7 +38,8 @@ export type TabItem<Value extends string> = {
  * Which background this control is drawn for.
  *
  * `chrome` is the glass pill that belongs on the app gradient. `panel` is an
- * underline for a plain light or dark surface.
+ * underline for a plain light or dark surface. `segmented` groups filters
+ * on an opaque surface with an inset track and a raised selection.
  *
  * **A variant rather than a second component**, because behaviour, keyboard
  * model, accessibility, props, and the Base UI tabs underneath are identical —
@@ -47,7 +48,12 @@ export type TabItem<Value extends string> = {
  *
  * `chrome` is the default because every existing call site is on the gradient.
  */
-export type TabsVariant = "chrome" | "panel" | "workspace" | "navigation";
+export type TabsVariant =
+  | "chrome"
+  | "panel"
+  | "workspace"
+  | "navigation"
+  | "segmented";
 
 export function Tabs<Value extends string>({
   value,

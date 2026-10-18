@@ -38,7 +38,7 @@ import {
 import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
 import { useChannelReference } from "./channel-reference";
 import { messageViewKey } from "../messages/view-key";
-import { sessionLinkName } from "../sessions/metadata";
+import { soloChatLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 
 const empty: readonly Contribution<LinkRenderer>[] = [];
@@ -111,8 +111,8 @@ export function MessageLink({
       const channel = session?.channels
         .list()
         .channels.find((item) => item.id === destination.channelId);
-      return channel?.channelType === "session" && !channel.cached
-        ? sessionLinkName(channel)
+      return channel?.channelType === "solo" && !channel.cached
+        ? soloChatLinkName(channel)
         : "";
     },
     () => "",
@@ -124,7 +124,7 @@ export function MessageLink({
     !destination.messageId &&
     !destination.threadRootId &&
     (sessionName ||
-      (reference.state === "found" && reference.channelType === "session") ||
+      (reference.state === "found" && reference.channelType === "solo") ||
       (reference.state !== "found" && sentSessionName))
   );
   const chipName =
@@ -135,7 +135,7 @@ export function MessageLink({
     reference.state === "found" &&
     !reference.hidden &&
     reference.channelType !== "dm" &&
-    reference.channelType !== "session"
+    reference.channelType !== "solo"
       ? reference
       : undefined;
   const withheld = reference.state === "withheld";
@@ -232,17 +232,17 @@ export function MessageLink({
     const Content = entry?.component;
     const content =
       sessionChip && destination ? (
-        <span className={styles.sessionChip}>
-          <span className={styles.sessionIcon}>
+        <span className={styles.soloChip}>
+          <span className={styles.soloIcon}>
             <FileTextIcon size={16} aria-hidden="true" />
           </span>
-          <span className={styles.sessionPrefix}>Session:</span>
-          <span className={styles.sessionName}>{chipName}</span>
+          <span className={styles.soloPrefix}>Session:</span>
+          <span className={styles.soloName}>{chipName}</span>
           {(withheld ||
             channelPrivate ||
             (reference.state === "found" && reference.private)) && (
             <LockIcon
-              className={styles.sessionLock}
+              className={styles.soloLock}
               size={12}
               aria-hidden="true"
             />
@@ -271,7 +271,7 @@ export function MessageLink({
             : undefined
         }
         data-link-label={label ?? ""}
-        data-session-link={sessionChip ? "" : undefined}
+        data-solo-link={sessionChip ? "" : undefined}
         title={
           sessionLabel
             ? withheld
@@ -283,7 +283,7 @@ export function MessageLink({
                 ? url
                 : undefined
         }
-        className={sessionChip ? styles.sessionLink : entry?.className}
+        className={sessionChip ? styles.soloLink : entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
       >
@@ -291,7 +291,7 @@ export function MessageLink({
       </a>
     ) : (
       <span
-        className={sessionChip ? styles.sessionLink : entry?.className}
+        className={sessionChip ? styles.soloLink : entry?.className}
         data-link-renderer={entry?.key}
       >
         {content}

@@ -13,7 +13,7 @@ import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import {
   keypair,
   message,
@@ -2667,25 +2667,25 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
   stop();
 });
 
-it("inbox groups a session's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
+it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");
-  h.grant("session");
+  h.grant("chat");
   h.emit([
-    metadata(h.relay, "session", "Session", 11, [
+    metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
     ]),
   ]);
   const mention = (channel: string, content: string, at: number) =>
     message(h.alice, channel, content, at, [["p", h.viewer.pubkey]]);
   const [first, second] = [
-    mention("session", "First", 20),
-    mention("session", "Second", 21),
+    mention("chat", "First", 20),
+    mention("chat", "Second", 21),
   ];
-  const root = message(h.viewer, "session", "My thread", 22);
-  const reply = message(h.alice, "session", "Reply", 23, [
+  const root = message(h.viewer, "chat", "My thread", 22);
+  const reply = message(h.alice, "chat", "Reply", 23, [
     ["e", root.id, "", "reply"],
   ]);
   h.emit([
@@ -2698,44 +2698,42 @@ it("inbox groups a session's top-level timeline into one conversation, keeping i
   ]);
   const items = h.session.unread.inbox().items;
   expect(items.filter((item) => item.channelId === "room")).toHaveLength(2);
-  const session = () =>
-    h.session.unread
-      .inbox()
-      .items.filter((item) => item.channelId === "session");
-  expect(session()).toEqual([
+  const chat = () =>
+    h.session.unread.inbox().items.filter((item) => item.channelId === "chat");
+  expect(chat()).toEqual([
     expect.objectContaining({
-      id: `session:${root.id}`,
-      target: { kind: "thread", channelId: "session", rootId: root.id },
+      id: `chat:${root.id}`,
+      target: { kind: "thread", channelId: "chat", rootId: root.id },
       messageIds: [reply.id],
     }),
     expect.objectContaining({
-      id: "session:session",
-      target: { kind: "message", channelId: "session", messageId: second.id },
+      id: "chat:chat",
+      target: { kind: "message", channelId: "chat", messageId: second.id },
       messageIds: [first.id, second.id],
       thread: false,
       unreadCount: 2,
     }),
   ]);
-  for (const step of session()[1]?.readThrough ?? [])
+  for (const step of chat()[1]?.readThrough ?? [])
     await h.session.unread.markThrough(step.target, step.messageId);
-  expect(session().map((item) => item.unreadCount)).toEqual([1, 0]);
+  expect(chat().map((item) => item.unreadCount)).toEqual([1, 0]);
 });
 
-it("inbox keeps a mentioned session root with its thread so reading the thread clears it", async () => {
+it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
-  h.grant("session");
+  h.grant("chat");
   h.emit([
-    metadata(h.relay, "session", "Session", 11, [
+    metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
     ]),
   ]);
-  const root = message(h.alice, "session", "Question", 20, [
+  const root = message(h.alice, "chat", "Question", 20, [
     ["p", h.viewer.pubkey],
   ]);
   const reply = (author: typeof h.alice, content: string, at: number) =>
-    message(author, "session", content, at, [["e", root.id, "", "reply"]]);
+    message(author, "chat", content, at, [["e", root.id, "", "reply"]]);
   h.emit([
     root,
     reply(h.viewer, "Answer", 21),
@@ -2744,8 +2742,8 @@ it("inbox keeps a mentioned session root with its thread so reading the thread c
   const items = () => h.session.unread.inbox().items;
   expect(items()).toEqual([
     expect.objectContaining({
-      id: `session:${root.id}`,
-      target: { kind: "thread", channelId: "session", rootId: root.id },
+      id: `chat:${root.id}`,
+      target: { kind: "thread", channelId: "chat", rootId: root.id },
       unreadCount: 2,
     }),
   ]);

@@ -78,8 +78,10 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
           const bounds = value.getBoundingClientRect();
           const range = document.createRange();
           range.selectNodeContents(value);
+          // Without the former community rail, 480px can fit both on one row;
+          // either way the value must not overlap its label or break apart.
           return (
-            bounds.top >= label.bottom &&
+            (bounds.top >= label.bottom || bounds.left >= label.right) &&
             bounds.right === row.getBoundingClientRect().right &&
             range.getClientRects().length === 1
           );

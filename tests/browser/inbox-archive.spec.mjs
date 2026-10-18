@@ -8,7 +8,7 @@ test.use({
   readState: true,
   inboxThreadWindow: true,
   agentPeers: true,
-  inboxSessionAgent: true,
+  inboxSoloAgent: true,
   pluginFixtures: true,
   channelIds: ["alpha", channel],
   channelNames: { [channel]: "Archive room" },

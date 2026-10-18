@@ -1,5 +1,5 @@
-import type { WorkStep } from "../agents/local-activity";
-import type { LocalWorkState } from "../agents/local-activity";
+import type { WorkStep } from "./local-activity";
+import type { LocalWorkState } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import { requestActivity, requestActivityState } from "./request-activity";
 

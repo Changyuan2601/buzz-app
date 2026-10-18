@@ -18,7 +18,6 @@ import {
   listSharedSessions,
   readSharedSession,
 } from "../features/sessions/shared-sessions";
-import { sessionMetadata } from "../features/sessions/metadata";
 import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
@@ -980,11 +979,6 @@ class Tools {
       value("about"),
       Number(value("ttl")) || undefined,
     );
-    if (
-      sessionMetadata(tag(metadata, "about")) &&
-      wanted.some(([key]) => key !== "name")
-    )
-      throw new Error("Only the name of a session can be changed.");
     await this.client.publish({
       kind: 9002,
       content: "",

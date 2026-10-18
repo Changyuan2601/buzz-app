@@ -47,21 +47,34 @@ type Snapshot = Readonly<{
 }>;
 
 /** One bounded account-preference projection per relay session, not per page. */
-export function createSidebarPreferencesStore(
-  read: (signal?: AbortSignal) => Promise<SidebarPreferences>,
-  available: boolean,
-  write?: SidebarAssignmentMutator,
-  writeStar?: SidebarStarMutator,
+export function createSidebarPreferencesStore({
+  read,
+  available,
+  write,
+  writeStar,
   notify = (listener: () => void) => listener(),
-  writeMute?: SidebarMuteMutator,
-  writeSort?: SidebarSortMutator,
-  persistence?: HeadPersistence,
-  removeSection?: SidebarSectionRemovalMutator,
-  /** Me groups have no Star coordinate; do not write Messages stars on moves. */
+  writeMute,
+  writeSort,
+  persistence,
+  removeSection,
   groupsOnly = false,
-  writeOrder?: SidebarSectionOrderMutator,
-  createSection?: SidebarSectionCreationMutator,
-) {
+  writeOrder,
+  createSection,
+}: Readonly<{
+  read: (signal?: AbortSignal) => Promise<SidebarPreferences>;
+  available: boolean;
+  write?: SidebarAssignmentMutator | undefined;
+  writeStar?: SidebarStarMutator | undefined;
+  notify?: ((listener: () => void) => void) | undefined;
+  writeMute?: SidebarMuteMutator | undefined;
+  writeSort?: SidebarSortMutator | undefined;
+  persistence?: HeadPersistence | undefined;
+  removeSection?: SidebarSectionRemovalMutator | undefined;
+  /** Solo groups have no Star coordinate; do not write Messages stars on moves. */
+  groupsOnly?: boolean | undefined;
+  writeOrder?: SidebarSectionOrderMutator | undefined;
+  createSection?: SidebarSectionCreationMutator | undefined;
+}>) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
     Object.freeze({ status: available ? "idle" : "unsupported" });

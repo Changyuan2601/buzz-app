@@ -8,7 +8,7 @@ import type { ReadFilter, RelayEvent } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "./administration";
 import {
   memberAuthority,
@@ -222,14 +222,14 @@ it("protects all owners and self even when co-owners exist", async () => {
   }
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each(["dm", "archived", "session"])("excludes %s channels", async (kind) => {
+it.each(["dm", "archived", "solo"])("excludes %s channels", async (kind) => {
   const h = harness();
   h.setEvents([
     h.record(39000, [
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "session" ? [["about", sessionDescription()]] : []),
+      ...(kind === "solo" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
@@ -783,7 +783,7 @@ it.each([
   "unknown target",
   "dm",
   "archived",
-  "session",
+  "solo",
   "role edit",
 ])("owned-agent evidence does not bypass %s restrictions", async (failure) => {
   const h = ownedAgent();
@@ -801,13 +801,13 @@ it.each([
   if (failure === "unknown actor") h.setRoles("unknown", "bot");
   if (failure === "owner target") h.setRoles("member", "owner");
   if (failure === "unknown target") h.setRoles("member", "unknown");
-  if (["dm", "archived", "session"].includes(failure))
+  if (["dm", "archived", "solo"].includes(failure))
     h.setEvents([
       h.record(39000, [
         ["d", id],
         ["t", failure === "dm" ? "dm" : "stream"],
         ...(failure === "archived" ? [["archived", "true"]] : []),
-        ...(failure === "session" ? [["about", sessionDescription()]] : []),
+        ...(failure === "solo" ? [["t", SOLO_LABEL]] : []),
       ]),
       ...h.events().slice(1),
     ]);

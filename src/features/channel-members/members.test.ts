@@ -119,7 +119,7 @@ function setup(type = "stream") {
       loseReceipt = value;
     },
     profileAdd: (active = () => true) =>
-      owner.session.workSessions.addAgents(id, [person.pubkey], active),
+      owner.session.channelWrites.addAgents(id, [person.pubkey], active),
     setSaveFailure: (value: boolean) => {
       failSave = value;
     },
@@ -276,7 +276,7 @@ it.each(["rejected", "unknown", "unconfirmed"])(
     expect(t.session.outbox?.snapshot()).toEqual([]);
     expect(t.session.memberAdditions.snapshot()).toEqual([]);
     t.removePerson();
-    await t.session.workSessions.refreshMembership(t.id);
+    await t.session.channelWrites.refreshMembership(t.id);
     expect(t.publish).toHaveBeenCalledOnce();
     if (failure !== "unconfirmed")
       t.setFail("Failed re-add", failure === "unknown");

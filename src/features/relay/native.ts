@@ -25,14 +25,14 @@ import {
   type PrivateRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
-import { communityGitRepository } from "../projects/git";
+import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
-import { projectGitHost } from "../projects/git";
+import { repoGitHost } from "../repos/git";
 
 import { PublishRejected } from "./outbox";
 
@@ -432,7 +432,7 @@ export async function connectNativeTransport(
       signal.throwIfAborted();
       return response;
     }),
-    projectGit: projectGitHost(async (read, signal) => {
+    projectGit: repoGitHost(async (read, signal) => {
       const response = await admitSignedRequest(
         origin,
         transport.viewer,

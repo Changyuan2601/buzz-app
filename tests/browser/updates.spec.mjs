@@ -26,17 +26,15 @@ async function nativeUpdater(
       window.isTauri = true;
       window.updaterCalls = [];
       window.checkResults = checkResults;
-      const plugins = ["channels", "github", "bestie", "projects"].map(
-        (name) => ({
-          manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
-          source: "bundled",
-          enabled: true,
-          revision: "bundled",
-          previous: null,
-          reloadable: false,
-          error: null,
-        }),
-      );
+      const plugins = ["channels", "github", "bestie", "repos"].map((name) => ({
+        manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
+        source: "bundled",
+        enabled: true,
+        revision: "bundled",
+        previous: null,
+        reloadable: false,
+        error: null,
+      }));
       let nextCallback = 0;
       let nextResource = 100;
       window.__TAURI_INTERNALS__ = {

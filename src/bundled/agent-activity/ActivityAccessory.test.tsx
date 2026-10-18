@@ -495,38 +495,52 @@ it("dismisses only that agent's error on this message, without changing other wo
   }
 });
 
-it("moves focus out when dismissing the last error removes the bubble", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const onFocusedRemoval = vi.fn();
-  const view = render(
-    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
-  );
-  try {
-    act(() => {
-      local
-        .begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        })
-        .finish({ ok: false, error: "Provider unavailable" });
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
+it.each([false, true])(
+  "returns focus after retiring the last error unless focus moved: %s",
+  async (moved) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const onFocusedRemoval = vi.fn();
+    const view = render(
+      <>
+        <button type="button">Other task</button>
+        <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />
+      </>,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss error from Blossom" }),
-    );
-    expect(onFocusedRemoval).toHaveBeenCalledOnce();
-    expect(screen.queryByText("Provider unavailable")).toBeNull();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
+    try {
+      act(() => {
+        local
+          .begin({
+            scope: "test",
+            channelId: "c",
+            threadRootId: root,
+            messageId: root,
+            agent: A,
+          })
+          .finish({ ok: false, error: "Provider unavailable" });
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: /View agent activity/ }),
+      );
+      const dismiss = screen.getByRole("button", {
+        name: "Dismiss error from Blossom",
+      });
+      act(() => dismiss.focus());
+      fireEvent.click(dismiss);
+      // The owned clock holds the handoff microtask after React removes the
+      // popup, so a deliberate focus move wins before that handoff runs.
+      expect(onFocusedRemoval).not.toHaveBeenCalled();
+      if (moved)
+        act(() => screen.getByRole("button", { name: "Other task" }).focus());
+      await act(async () => vi.runAllTicks());
+      expect(onFocusedRemoval).toHaveBeenCalledTimes(moved ? 0 : 1);
+      expect(screen.queryByText("Provider unavailable")).toBeNull();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 
 it("keeps an idle reply summary mounted without advertising an activity popup", () => {
   const f = fixture();

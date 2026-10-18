@@ -99,7 +99,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   const scrollBounds = await navigation.boundingBox();
   const resizeBounds = await resize.boundingBox();
   const sidebarBounds = await page
-    .getByRole("complementary", { name: "Channel sidebar", exact: true })
+    .getByRole("complementary", { name: "Sidebar", exact: true })
     .boundingBox();
   const mainBounds = await page.locator("#main-content > .panel").boundingBox();
   expect(mainBounds.x - (sidebarBounds.x + sidebarBounds.width)).toBeCloseTo(
@@ -230,7 +230,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
 });
 
 // Actual grid geometry and resize input need a browser, including the host fallback.
-for (const destination of ["Messages", "Projects", "Me"]) {
+for (const destination of ["Messages", "Workflows"]) {
   test(`${destination} main and secondary panels resize without resetting content`, async ({
     page,
     app,
@@ -296,7 +296,7 @@ for (const destination of ["Messages", "Projects", "Me"]) {
     await handle.press("Home");
     await expect
       .poll(async () => (await dock.boundingBox()).width)
-      .toBeCloseTo(destination === "Messages" ? 316 : 300, 0);
+      .toBeCloseTo(destination === "Workflows" ? 300 : 316, 0);
     await handle.press("End");
     expect(
       await dock.evaluate(
@@ -333,67 +333,65 @@ for (const destination of ["Messages", "Projects", "Me"]) {
   });
 }
 
-for (const destination of ["Messages", "Projects", "Me"]) {
-  test(`${destination} desktop panel closes immediately and reopens at its saved width`, async ({
-    page,
-    app,
-  }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(app.origin);
-    await openPage(page, destination);
-    const launch = page
-      .getByRole("button", { name: "Companion fixture", exact: true })
-      .and(page.locator("button[aria-expanded]"));
-    const close = page.getByRole("button", {
-      name: "Close Companion fixture panel",
-      exact: true,
-    });
-    const dock = page.locator("[data-panel-dock]");
-    const release = await holdPanelMotion(page);
-    try {
-      await launch.click();
-      await expect(dock).toHaveAttribute("data-motion-held", "true");
-      await expect(dock).toHaveCSS("transition-duration", "0.18s, 0.18s");
-      expect(
-        await dock.evaluate((el) =>
-          el
-            .getAnimations()
-            .some((animation) =>
-              animation.effect
-                .getKeyframes()
-                .some(
-                  (frame) =>
-                    typeof frame.transform === "string" &&
-                    new DOMMatrix(frame.transform).m41 === 12,
-                ),
-            ),
-        ),
-      ).toBe(true);
-      await release();
-      await expect(dock).toHaveCSS("transform", "none");
-      const width = await dock.evaluate((el) => getComputedStyle(el).width);
-      // The observer holds every real transition. A retained desktop exit would
-      // stay mounted here, so this proves close does not wait for its fade.
-      await close.click();
-      await expect(dock).toHaveCount(0);
-      await launch.click();
-      await expect(dock).not.toHaveAttribute("data-closing");
-      await expect(dock).toHaveCSS("width", width);
-      await release();
-      await expect(close).toBeVisible();
-      await close.click();
-      await expect(dock).toHaveCount(0);
-      await launch.press("Enter");
-      await expect(dock).toHaveCSS("transition-duration", "0s");
-      await close.press("Enter");
-      await expect(dock).toHaveCount(0);
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await launch.click();
-      await expect(dock).toHaveAttribute("data-motion-held", "true");
-      await expect(dock).toHaveCSS("transform", "none");
-      await expect(dock).toHaveCSS("transition-property", "opacity");
-    } finally {
-      await release();
-    }
+test("desktop panel closes immediately and reopens at its saved width", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const launch = page
+    .getByRole("button", { name: "Companion fixture", exact: true })
+    .and(page.locator("button[aria-expanded]"));
+  const close = page.getByRole("button", {
+    name: "Close Companion fixture panel",
+    exact: true,
   });
-}
+  const dock = page.locator("[data-panel-dock]");
+  const release = await holdPanelMotion(page);
+  try {
+    await launch.click();
+    await expect(dock).toHaveAttribute("data-motion-held", "true");
+    await expect(dock).toHaveCSS("transition-duration", "0.18s, 0.18s");
+    expect(
+      await dock.evaluate((el) =>
+        el
+          .getAnimations()
+          .some((animation) =>
+            animation.effect
+              .getKeyframes()
+              .some(
+                (frame) =>
+                  typeof frame.transform === "string" &&
+                  new DOMMatrix(frame.transform).m41 === 12,
+              ),
+          ),
+      ),
+    ).toBe(true);
+    await release();
+    await expect(dock).toHaveCSS("transform", "none");
+    const width = await dock.evaluate((el) => getComputedStyle(el).width);
+    // The observer holds every real transition. A retained desktop exit would
+    // stay mounted here, so this proves close does not wait for its fade.
+    await close.click();
+    await expect(dock).toHaveCount(0);
+    await launch.click();
+    await expect(dock).not.toHaveAttribute("data-closing");
+    await expect(dock).toHaveCSS("width", width);
+    await release();
+    await expect(close).toBeVisible();
+    await close.click();
+    await expect(dock).toHaveCount(0);
+    await launch.press("Enter");
+    await expect(dock).toHaveCSS("transition-duration", "0s");
+    await close.press("Enter");
+    await expect(dock).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await launch.click();
+    await expect(dock).toHaveAttribute("data-motion-held", "true");
+    await expect(dock).toHaveCSS("transform", "none");
+    await expect(dock).toHaveCSS("transition-property", "opacity");
+  } finally {
+    await release();
+  }
+});

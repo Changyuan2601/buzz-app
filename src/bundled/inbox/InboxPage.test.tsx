@@ -1278,7 +1278,7 @@ function fixture(
     withSenders?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
-    sessionChannel?: boolean;
+    soloChannel?: boolean;
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
   } = {},
@@ -1387,12 +1387,8 @@ function fixture(
       10,
     ),
     metadata(relayKey, "room", "Design", 10, [
-      ...(options.sessionChannel
-        ? [
-            ["t", "stream"],
-            ["private"],
-            ["about", "Buzz session (buzz.sessions/v1)"],
-          ]
+      ...(options.soloChannel
+        ? [["t", "stream"], ["private"], ["t", "buzz.solo"]]
         : [
             ["t", "stream"],
             ...(options.archivedChannel ? [["archived", "true"]] : []),
@@ -3266,9 +3262,9 @@ it("routine delayed publication does not cancel Retry for a failed mark-unread s
 });
 
 it.each([true, false])(
-  "Inbox activity replies preserve shared recipient policy (session=%s)",
-  async (sessionChannel) => {
-    const h = fixture({ withWriter: true, sessionChannel, memberAgents: 1 });
+  "Inbox activity replies preserve shared recipient policy (solo=%s)",
+  async (soloChannel) => {
+    const h = fixture({ withWriter: true, soloChannel, memberAgents: 1 });
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
@@ -3276,7 +3272,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: sessionChannel ? "Message #Design" : "Reply to thread",
+      name: soloChannel ? "Message #Design" : "Reply to thread",
     });
     fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
@@ -3299,19 +3295,19 @@ it.each([true, false])(
     const sent = h.published[0];
     if (!sent) throw Error("Missing publication");
     expect(sent.tags).toContainEqual(["h", "room"]);
-    // A session is flat: Inbox replies continue it at the top level.
-    expect(sent.tags.some(([name]) => name === "e")).toBe(!sessionChannel);
-    if (!sessionChannel)
+    // A Solo chat is flat: Inbox replies continue it at the top level.
+    expect(sent.tags.some(([name]) => name === "e")).toBe(!soloChannel);
+    if (!soloChannel)
       expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual(
-      sessionChannel ? [["p", h.agent.pubkey]] : [],
+      soloChannel ? [["p", h.agent.pubkey]] : [],
     );
   },
 );
-it("Inbox session activity with multiple agents requires an explicit recipient", async () => {
+it("Inbox Solo chat activity with multiple agents requires an explicit recipient", async () => {
   const h = fixture({
     withWriter: true,
-    sessionChannel: true,
+    soloChannel: true,
     memberAgents: 2,
   });
   render(h.view);
@@ -3330,17 +3326,17 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(
     await screen.findByText(
-      "There are multiple agents in this session. @mention who should respond.",
+      "There are multiple agents in this chat. @mention who should respond.",
     ),
   ).toBeInTheDocument();
   expect(h.published).toEqual([]);
   expect(editor).toHaveValue("Choose someone first");
 });
 
-it("Inbox keeps an open session timeline when a late reply regroups its mention", async () => {
+it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
   const h = fixture({
     withWriter: true,
-    sessionChannel: true,
+    soloChannel: true,
     memberAgents: 1,
   });
   render(h.view);

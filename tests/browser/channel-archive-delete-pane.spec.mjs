@@ -329,9 +329,46 @@ for (const action of ["archive", "delete"]) {
         await expect(restore).toBeFocused();
         expect(app.report.lifecyclePublications).toHaveLength(1);
         await restore.click();
-        await unarchive
-          .getByRole("button", { name: "Unarchive channel", exact: true })
-          .click();
+        await unarchive.evaluate(async (element) => {
+          await Promise.all(
+            element.getAnimations().map((animation) => animation.finished),
+          );
+        });
+        // Force the operation to finish before the confirmation's exit does.
+        const exitGate = await unarchive.evaluateHandle((element) => {
+          const state = { held: false, animations: [] };
+          const observer = new MutationObserver(() => {
+            if (!element.hasAttribute("data-ending-style")) return;
+            for (const animation of element.getAnimations()) {
+              animation.pause();
+              state.animations.push(animation);
+              state.held = true;
+            }
+          });
+          observer.observe(element, {
+            attributes: true,
+            attributeFilter: ["data-ending-style"],
+          });
+          return {
+            state,
+            release() {
+              observer.disconnect();
+              for (const animation of state.animations) animation.finish();
+            },
+          };
+        });
+        try {
+          await unarchive
+            .getByRole("button", { name: "Unarchive channel", exact: true })
+            .click();
+          await expect
+            .poll(() => exitGate.evaluate(({ state }) => state.held))
+            .toBe(true);
+          await expect(row).toBeVisible();
+        } finally {
+          await exitGate.evaluate((gate) => gate.release());
+          await exitGate.dispose();
+        }
         await expect(unarchive).toHaveCount(0);
         await expect(panel).toBeVisible();
         await expect(

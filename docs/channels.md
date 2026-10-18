@@ -69,7 +69,7 @@ This is not a new native login.
   `MessageComposer`, delivery presentation, styles and reading geometry. They accept
   ordinary props over the shared session; none owns a connection or outbox.
 - `features/channel-navigation` owns the persistent sidebar and its scoped UI handoff
-  for session draft rows and preparing DMs. App composes it beside independent pages;
+  for Solo drafts and preparing DMs. App composes it beside independent pages;
   sidebar actions use the normal navigation controller. It reuses session capabilities
   and existing sidebar components without another relay/cache or plugin registry.
 - `bundled/channels` owns page registration, conversation selection/navigation,
@@ -118,7 +118,7 @@ retry. Group/star writes use their separate narrow commands;
 
 Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
 Context Menu key. They extend the persistent sidebar’s existing menu after
-**New session**, separated from session entry; DM removal stays separate.
+**Move channel**; DM removal stays separate.
 Mute closes immediately and optimistically changes the next menu action, not
 unread truth or notification policy before confirmation. Failure rolls back to
 confirmed state and shows an app notification with Retry (same intent) and Dismiss.
@@ -147,8 +147,7 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
-Only a channel's select surface starts a drag, the surface its row menu wraps; its
-sessions and session draft do not.
+Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.
 Dropping into Starred stars the channel; dropping out assigns the destination
@@ -178,20 +177,19 @@ browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
 Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
-`Actions for <channel>`. **New session** comes first; additional sidebar actions
+`Actions for <channel>`. **Move channel** comes first when placement is writable; additional sidebar actions
 should extend that popup, with a separator only when another action group follows.
 `ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
 `onOpenMenu` props. It wraps the activity select surface rather than merging popup
-props onto the activity button; session disclosure and child rows stay outside.
+props onto the activity button.
 The popup and trigger are enabled only when `rowActions` supplies actual items;
-each action owns its eligibility, so Sessions availability never gates sibling
+each action owns its eligibility, so one action's availability never gates sibling
 actions. `useChannelRowMenu` owns channel id, the full rendered section key
 (`starred`, `channels`, `group:<id>`, etc.), and the keyboard anchor. It clears
 that state if the row leaves that section or loses its last action; moving back
 or restoring eligibility does not reopen the menu. For future group commands,
 derive the saved group id separately from `group:<id>` rather than conflating it
-with rendered placement. Right-clicking the separate session disclosure remains
-outside the parent menu trigger, as do child-session rows.
+with rendered placement.
 
 Sidebar create-channel dialogs stay available on other pages. Channel admission
 (creation plus verified viewer membership) is fenced to the originating relay
@@ -206,9 +204,9 @@ It never continues setup writes or retries in the background. Successful recover
 any unfinished setup for manual inspection. Closing/reopening retains the attempt;
 after session replacement, unresolved ordinary creations (including pre-upgrade
 Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
-setups do not occupy a new Create form. New-session intent uses the Channels version-1
-page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
-and Sessions availability. Only parent intent, never draft text, enters history.
+setups do not occupy a new Create form. New-chat intent uses the Channels version-1
+page route `{ kind: "solo-draft", project?, agent? }` (see [Solo](solo/README.md));
+only that intent, never draft text, enters history.
 Preparing-DM suppression captures the pre-open roster and exact member set, hiding
 only newly prepared DMs until confirmation; leaving New message or replacing the
 session clears that handoff. Timeline readers and reading leases stay in visible
@@ -353,7 +351,7 @@ The conversation header’s **Channel actions** ellipsis opens the shared, defau
 Channel Settings tab; selecting it again never closes the pane. Editing is available
 from that pane, not directly from the menu. **View canvas** is the Canvas plugin’s
 [channel menu panel](plugin-architecture.md#optional-channel-menu-panels) and opens a
-Canvas tab in the side pane. **New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+Canvas tab in the side pane. **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
@@ -374,13 +372,13 @@ preview are omitted from Channel Settings; opening details does not read Canvas.
 ## Channel lifecycle
 
 Lifecycle actions extend the persistent sidebar’s existing context popup after
-New session and the mute/read group. Lifecycle items use shared leading icons and
+Move channel and the mute/read group. Lifecycle items use shared leading icons and
 a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
-is added. Session creation, attention actions and child-session navigation keep
-their existing owners. Session-typed channels in Messages use these same permission-checked
+is added. Attention actions keep their existing owners. Solo chats in
+Messages use these same permission-checked
 actions, including the standard header menu and Channel Settings. Existing Canvas
-and organization entry points come with that shared menu; the session
+and organization entry points come with that shared menu; the Solo chat
 transcript layout, Share behavior and recipient rules do not change. Move/Star/grouping
 controls share this popup with independent eligibility; lifecycle actions do not
 change shared-menu styling.
@@ -586,9 +584,8 @@ counts appear at the trailing end of the label row only within the last 10% of
 each limit (`108/120` or `900/1,000`). Visible counters are numeric; the connected
 accessible description retains the full character-count meaning.
 Names follow the relay’s Unicode whitespace and leading-hash canonicalization
-before validation, signing and confirmation. Empty descriptions clear the value. The internal `Buzz session (` marker is
-rejected with a specific explanation only when present, not as part of length
-feedback. Command validation still rejects oversized input independently of the UI.
+before validation, signing and confirmation. Empty descriptions clear the value.
+Command validation still rejects oversized input independently of the UI.
 
 ### Create/Edit form parity
 
@@ -656,7 +653,7 @@ rewriting a saved command: retry still publishes the exact original signed event
 Editing requires fresh relay-authored metadata (`39000`), administrators (`39001`)
 and membership (`39002`) for the exact channel, plus current session participation.
 Only direct channel owners/admins may edit ordinary stream/forum channels. Cached,
-read-only, archived, DM and work-session views do not offer this editor. A local
+read-only, archived, DM and Solo chat views do not offer this editor. A local
 key, delegated agent role or community-admin status does not imply channel authority.
 Public ↔ private is supported as a draft choice, never an immediate mutation.
 In both Create and Edit, a Private toggle normally replaces the form with a confirmation
@@ -1167,7 +1164,7 @@ moves focus to the first revealed reply; deleting a focused reply returns focus 
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
-notice. Sessions remain inline.
+notice. Solo chats remain flat.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.
@@ -1341,7 +1338,7 @@ media against a pure-black canvas. Large emoji retain their artwork size with th
 larger emoji line height on every wrapped line.
 Any click on an image preview, modified or not, opens the original in-app from the
 same authenticated media source as the preview: the media review where a
-surface hosts one, and otherwise a plain fullscreen viewer (Inbox, Sessions,
+surface hosts one, and otherwise a plain fullscreen viewer (Inbox,
 drafts and previews). The preview link's own destination is that media source,
 so a middle click, drag or copied link yields the same authenticated URL.
 

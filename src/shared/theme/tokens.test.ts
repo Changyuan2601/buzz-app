@@ -1,4 +1,10 @@
-import { BUBBLE_COLORS, type BubbleColor } from "./bubble-color";
+import {
+  ACCENTS,
+  COLOR_LEVELS,
+  DEFAULT_ACCENT,
+  type Accent,
+  type ColorLevel,
+} from "./accent";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
@@ -16,7 +22,8 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 // no longer owns literal colors; a missing or cyclic alias must fail the test.
 function resolvedPalette(
   mode: "light" | "dark",
-  bubbleColor: BubbleColor = "neutral",
+  accent: Accent = DEFAULT_ACCENT,
+  level: ColorLevel | "neutral" = "neutral",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -29,8 +36,13 @@ function resolvedPalette(
   )) {
     if (!selector.includes(":root") && !selector.includes(".dark")) continue;
     if (
-      selector.includes("data-bubble-color") &&
-      !selector.includes(`data-bubble-color="${bubbleColor}"`)
+      selector.includes('data-accent="') &&
+      !selector.includes(`data-accent="${accent}"`)
+    )
+      continue;
+    if (
+      selector.includes('data-color-level="') &&
+      !selector.includes(`data-color-level="${level}"`)
     )
       continue;
     const dark =
@@ -171,7 +183,7 @@ it.each(["light", "dark"] as const)(
   "message text and links contrast with both bubble fills in %s",
   (mode) => {
     const palette = resolvedPalette(mode);
-    // Default own bubbles retain normal text and link colors.
+    // Own bubbles carry the accent's paired ink; received keep normal text.
     for (const surface of ["--surface-message", "--surface-message-own"]) {
       for (const text of surface === "--surface-message-own"
         ? ["--text-message-own", "--text-message-link-own"]
@@ -182,51 +194,54 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    // Received and neutral own fills are independent authored pairs.
+    // At the neutral level, own and received bubbles are authored grays.
     expect(palette["--surface-message"]).toBe(palette["--bubble-received"]);
     expect(palette["--surface-message-own"]).toBe(palette["--bubble-neutral"]);
-    expect(palette["--surface-message"]).not.toBe(
-      palette["--surface-message-own"],
-    );
     expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
   },
 );
 
-it.each(BUBBLE_COLORS)(
-  "%s message fill keeps text and send icons readable in both modes",
+it.each(ACCENTS)(
+  "%s message fill keeps text and send icons readable at every level",
   (color) => {
-    for (const mode of ["light", "dark"] as const) {
-      const palette = resolvedPalette(mode, color);
-      expect(palette["--text-message-own"]).toBe(
-        color === "neutral" ? palette["--text-standard"] : "#ffffff",
-      );
-      expect(palette["--text-message-link-own"]).toBe(
-        color === "neutral" ? palette["--text-link"] : "#ffffff",
-      );
-      expect(palette["--text-message-action"]).toBe(
-        color === "neutral" ? palette["--neutral-1"] : "#ffffff",
-      );
-      expect(
-        contrast(
-          palette["--text-message-link-own"],
-          palette["--surface-message-own"],
-        ),
-        `${color} links in ${mode}`,
-      ).toBeGreaterThanOrEqual(4.5);
-      expect(
-        contrast(
-          palette["--text-message-action"],
-          palette["--surface-message-action"],
-        ),
-        `${color} send icon in ${mode}`,
-      ).toBeGreaterThanOrEqual(4.5);
-      expect(
-        contrast(
-          palette["--text-message-own"],
-          palette["--surface-message-own"],
-        ),
-        `${color} in ${mode}`,
-      ).toBeGreaterThanOrEqual(4.5);
-    }
+    for (const level of COLOR_LEVELS)
+      for (const mode of ["light", "dark"] as const) {
+        const palette = resolvedPalette(mode, color, level);
+        const where = `${color}/${level}/${mode}`;
+        // Highlights come from the family's tint, never a mixed bubble color.
+        expect(palette["--surface-message-highlight"], where).toBe(
+          palette["--affordance-accent"],
+        );
+        for (const [text, fill] of [
+          ["--text-message-own", "--surface-message-own"],
+          ["--text-message-link-own", "--surface-message-own"],
+          ["--text-on-prominent", "--affordance-prominent"],
+          // Supported legacy/plugin markup must keep the same paired ink.
+          ["--on-primary", "--primary"],
+          ["--text-standard", "--surface-message"],
+        ] as const)
+          expect(
+            contrast(palette[text], palette[fill]),
+            `${text} on ${fill} in ${where}`,
+          ).toBeGreaterThanOrEqual(4.5);
+      }
   },
 );
+
+it("the default brand fill takes its darkest olive as ink, and A touch keeps own bubbles pale", () => {
+  for (const mode of ["light", "dark"] as const) {
+    const touch = resolvedPalette(mode, "chartreuse", "touch");
+    // Strong controls take the brand fill with black ink; reading text on
+    // the fill (own messages at Buzzin') uses the darkest olive.
+    expect(touch["--affordance-prominent"]).toBe("#d7d72e");
+    expect(touch["--text-on-prominent"]).toBe("#000000");
+    // Hummin' keeps your own messages neutral; Swarmin' colors them.
+    expect(touch["--surface-message-own"]).toBe(touch["--bubble-neutral"]);
+    expect(
+      resolvedPalette(mode, "chartreuse", "more")["--surface-message-own"],
+    ).toBe(touch["--accent-4"]);
+    expect(
+      resolvedPalette(mode, "chartreuse", "full")["--surface-message-own"],
+    ).toBe("#d7d72e");
+  }
+});

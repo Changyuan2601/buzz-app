@@ -375,7 +375,7 @@ for (const mode of ["light", "dark"]) {
           page.locator("[data-shell-sidebar-toggle]"),
         ).toHaveAttribute(
           "aria-label",
-          width <= 650 ? "Show navigation" : "Hide Channel sidebar",
+          width <= 650 ? "Show navigation" : "Hide sidebar",
         );
         await expect(trigger).toBeVisible();
         // Real scrolling and floating-control geometry cannot be proven in jsdom.

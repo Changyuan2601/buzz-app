@@ -230,7 +230,7 @@ browser cases split across PR4/PR5, plus PR4's new in-head focus and Escape
 focus cases and development-React StrictMode case. The joined stack runs eight
 cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
 The fixture uses per-test isolated synthetic identities/servers, preserving the
-base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
+base `channelWriteKinds`, `dmMembers`, companion and stale-stream guards.
 
 The counts above are historical PR-head counts. A later test prune removed two
 mounted cases whose assertions stronger cases already make: `InboxPage.test.tsx`

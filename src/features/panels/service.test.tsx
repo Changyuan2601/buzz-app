@@ -2,9 +2,10 @@ import { expect, it } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
-import { PanelsService } from "../panels/service";
+import { PanelsService } from "./service";
 import { ConversationService } from "../conversation/service";
 import { SettingsCardsService } from "../settings/service";
+import { ShortcutsService } from "../shortcuts/service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
 import * as channelsPlugin from "../../bundled/channels";
@@ -30,6 +31,8 @@ it("independently unloads panels without removing the page or shared data", asyn
     panels = new PanelsService(root);
   new ConversationService(root);
   new SettingsCardsService(root);
+  // Channels owns the New conversation and Archive chat shortcuts.
+  new ShortcutsService(root);
   // Channels adds teams of agents from the members dialog.
   root.provide("agents", {
     subscribe: () => () => {},

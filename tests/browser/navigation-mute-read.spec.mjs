@@ -118,9 +118,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
   // The persistent sidebar keeps retry UI and actions usable outside Messages.
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await expect(failure).toBeVisible();
   await failure.getByRole("button", { name: "Retry", exact: true }).click();
@@ -156,7 +156,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   );
   await expect(alpha).not.toHaveAttribute("aria-current", "page");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await expect
     .poll(
@@ -277,26 +277,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // dismisses. Open the next menu only after this one has closed.
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  // Disabling Me preserves the remaining attention and lifecycle
-  // actions in the same divider-free menu.
-  const toggleMe = async (enabled) => {
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Plugins", exact: true }).click();
-    const toggle = page
-      .getByRole("region", { name: "Plugins", exact: true })
-      .getByRole("switch", { name: "Enable Solo", exact: true });
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
-    await page
-      .getByRole("complementary", { name: "Settings sidebar" })
-      .getByRole("button", { name: "Back", exact: true })
-      .click();
-    await expect(beta).toBeVisible();
-  };
-  await toggleMe(false);
+  // Solo is always available; attention and lifecycle actions remain divider-free.
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
@@ -309,13 +290,6 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  await toggleMe(true);
-  // Conversation creation lives in Me and still uses the production broker.
-  await openPage(page, "Me");
-  await page.getByRole("button", { name: "New chat", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Message your agents", exact: true }),
-  ).toBeFocused();
   expect(app.report.unexpected).toEqual([]);
 });
 

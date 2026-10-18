@@ -483,15 +483,6 @@ it("only enables Save for normalized, changed, valid fields with connected error
   expect(description).toHaveValue("😀".repeat(1000));
   expect(description).toHaveAccessibleDescription("1,000 of 1,000 characters");
   expect(save).toBeEnabled();
-  fireEvent.change(description, {
-    target: { value: "Buzz session (reserved)" },
-  });
-  expect(save).toBeDisabled();
-  expect(description).toHaveAccessibleDescription(
-    'Remove "Buzz session (" from the description; that text is used by Buzz for work sessions.',
-  );
-  fireEvent.change(description, { target: { value: "😀".repeat(1000) } });
-  expect(save).toBeEnabled();
   fireEvent.change(name, { target: { value: " ## Renamed " } });
   await user.click(save);
   expect(h.save).toHaveBeenCalledWith(
@@ -1637,7 +1628,7 @@ it.each([
   { cached: true as const },
   { archived: true as const },
   { channelType: "dm" as const },
-  { channelType: "session" as const },
+  { channelType: "solo" as const },
 ])("omits inline edit actions for ineligible channels %j", (flags) => {
   const h = harness();
   render(

@@ -521,7 +521,7 @@ it("hands navigation a retained trigger instead of the disposable popup action",
 });
 
 it.each(["click", "Enter", "Space"])(
-  "Me single-agent %s opens Activity directly while hover retains its preview",
+  "Solo chat single-agent %s opens Activity directly while hover retains its preview",
   async (activation) => {
     const f = fixture(),
       user = userEvent.setup(),
@@ -560,7 +560,7 @@ it.each(["click", "Enter", "Space"])(
   },
 );
 
-it("Me multiple-agent activation keeps the chooser and unavailable Activity keeps status", async () => {
+it("Solo chat multiple-agent activation keeps the chooser and unavailable Activity keeps status", async () => {
   const f = fixture(),
     user = userEvent.setup(),
     open = vi.fn(() => true);
@@ -601,7 +601,7 @@ it("Me multiple-agent activation keeps the chooser and unavailable Activity keep
   expect(open).not.toHaveBeenCalled();
 });
 
-it("Me ArrowDown exposes retained thread navigation without opening Activity", async () => {
+it("Solo chat ArrowDown exposes retained thread navigation without opening Activity", async () => {
   const f = fixture(),
     user = userEvent.setup(),
     open = vi.fn(() => true);

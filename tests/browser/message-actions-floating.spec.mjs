@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { expectMessageActionsHidden as hidden } from "./message-actions.mjs";
 import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
 
 test.use({
@@ -14,7 +15,6 @@ const shown = (actions) =>
   expect
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
-
 // Browser-only: measured space, real top-layer hit testing, and responsive
 // placement cannot be established in a DOM emulator.
 for (const own of [true, false]) {
@@ -106,6 +106,9 @@ for (const own of [true, false]) {
     await row.getByText("Room for actions", { exact: true }).hover();
     await expect(actions).toHaveAttribute("data-placement", "above");
     await expect(actions).not.toHaveCSS("box-shadow", "none");
+    // Park the pointer first: after the resize, its narrow-pane position can
+    // land on a sidebar activity badge whose hover popover covers the row.
+    await page.mouse.move(0, 0);
     await page.setViewportSize({ width: 1000, height: 1200 });
     await page.locator("html").evaluate((node) => {
       node.style.setProperty("--buzz-text-scale", "2");
@@ -425,10 +428,8 @@ test("keyboard search covers a toolbar under the pointer and restores its action
     await expect(
       dialog.getByRole("combobox", { name: "Search Buzz" }),
     ).toBeFocused();
-    await expect
-      .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
-      .toBe(false);
-    await expect(actions).toHaveCSS("opacity", "0");
+
+    await hidden(actions);
     expect(
       await actions.evaluate(
         (bar, point) =>
@@ -449,7 +450,7 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   ).toBeVisible();
 });
 
-test("menus and pickers retain actions, but modal dialogs cover them", async ({
+test("menus and pickers retain their anchor but cover actions", async ({
   page,
   app,
 }) => {
@@ -471,6 +472,11 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   const menu = page.getByRole("menu");
   await menu.hover();
   await shown(actions);
+  await hidden(actions);
+  await expect(row.locator("[data-layout]")).toHaveAttribute(
+    "data-actions-revealed",
+    "",
+  );
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -489,10 +495,30 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   await expect(search).toBeVisible();
   await search.hover();
   await shown(actions);
+  await hidden(actions);
+  await expect(row.locator("[data-layout]")).toHaveAttribute(
+    "data-actions-revealed",
+    "",
+  );
   await page.mouse.click(composerBox.x + 20, composerBox.y + 10);
   await expect(search).toBeHidden();
   await composer.click();
   await expect(actions).toHaveCSS("opacity", "0");
+  // The plugin restores the external reaction trigger immediately on Escape;
+  // this must not race the toolbar's overlay suppression in either engine.
+  await row.hover();
+  const reaction = actions.getByRole("button", {
+    name: "Add reaction",
+    exact: true,
+  });
+  await reaction.focus();
+  await reaction.press("Enter");
+  await expect(search).toBeFocused();
+  await hidden(actions);
+  await page.keyboard.press("Escape");
+  await expect(search).toBeHidden();
+  await expect(reaction).toBeFocused();
+  await expect(actions).toBeVisible();
   // Keep the pointer on the row while invoking the dialog by keyboard.
   await row.hover();
   await trigger.focus();
@@ -505,10 +531,7 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
     exact: true,
   });
   await expect(dialog).toBeVisible();
-  await expect(actions).toHaveCSS("opacity", "0");
-  await expect
-    .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
-    .toBe(false);
+  await hidden(actions);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(trigger).toBeFocused();
   // Pointer dismissal restores focus without pinning an unhovered toolbar.
@@ -536,10 +559,92 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
     exact: true,
   });
   await expect(confirmation).toBeVisible();
-  await expect(ownActions).toHaveCSS("opacity", "0");
+  await hidden(ownActions);
   await confirmation
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+});
+
+// Browser-only: real top-layer visibility and popup interaction through the
+// actual shell and emoji plugin, including suppression under a still pointer.
+test("profile menus and composer pickers keep message hover actions out of the way", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "Background hover target");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  const actions = actionsFor(row);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const profile = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  for (const [width, mode] of [
+    [390, "light"],
+    [900, "dark"],
+    [1440, "light"],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.emulateMedia({ colorScheme: mode });
+    await settle(page);
+    await row.hover();
+    await shown(actions);
+    await profile.focus();
+    await profile.press("Enter");
+    const menu = page.locator("[data-profile-menu]");
+    const appearance = menu.getByRole("menuitem", {
+      name: "Appearance",
+      exact: true,
+    });
+    await expect(appearance).toBeVisible();
+    await hidden(actions);
+    await expect(row.locator("[data-layout]")).not.toHaveAttribute(
+      "data-actions-revealed",
+    );
+    const point = await row.boundingBox();
+    await page.mouse.move(
+      point.x + point.width / 2,
+      point.y + point.height / 2,
+    );
+    await appearance.click();
+    await expect(
+      page.getByRole("menu", { name: "Appearance", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await row.hover();
+    await shown(actions);
+    await expect(actions).toHaveCSS("pointer-events", "auto");
+
+    const emoji = page
+      .locator("form")
+      .filter({ has: composer })
+      .getByRole("button", { name: "Emoji and GIFS", exact: true });
+    await emoji.focus();
+    await emoji.press("Enter");
+    const search = page.getByRole("searchbox", { name: "Search emoji" });
+    await expect(search).toBeVisible();
+    await hidden(actions);
+    await page.mouse.move(
+      point.x + point.width / 2,
+      point.y + point.height / 2,
+    );
+    await search.fill("thumbsup");
+    await page.locator("em-emoji-picker .category button").first().click();
+    await expect(search).toBeHidden();
+    await expect(composer).toContainText("👍");
+    await composer.fill("");
+    await row.hover();
+    await shown(actions);
+    await expect(actions).toHaveCSS("pointer-events", "auto");
+  }
 });
 
 // Both speakers must leave the opposite avatar column clear at real pane widths.

@@ -80,9 +80,9 @@ it("shows only exact verified visible memberships, handles partial lists and ope
       { id: "untyped-unrelated", name: "Unrelated type", members: [viewer] },
       { id: "dm", name: "Direct", channelType: "dm", members: [person] },
       {
-        id: "session",
+        id: "chat",
         name: "Child",
-        channelType: "session",
+        channelType: "solo",
         members: [person],
       },
       { id: "archived", name: "Archived", archived: true, members: [person] },
@@ -183,9 +183,9 @@ it("keeps classified roster rows but omits unclassified conversations after meta
       },
       { id: "dm", name: "Direct", channelType: "dm", members: [person] },
       {
-        id: "session",
+        id: "chat",
         name: "Child",
-        channelType: "session",
+        channelType: "solo",
         members: [person],
       },
     ],

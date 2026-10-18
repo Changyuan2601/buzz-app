@@ -8,7 +8,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { createIdentity } from "../../src/features/identity/service";
 import { IdentitySetup } from "../../src/features/identity/IdentitySetup";
 import { createCommunities } from "../../src/features/communities/service";
-import { CommunityRail } from "../../src/features/communities/CommunityRail";
+import { CommunityPicker } from "../../src/features/communities/CommunityPicker";
 import { ProfileSettings } from "../../src/app/ProfileSettings";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
@@ -89,7 +89,7 @@ function Client() {
     <IdentitySetup identity={identity}>
       <ToastProvider>
         <main className="p-8">
-          <CommunityRail communities={communities} />
+          <CommunityPicker communities={communities} />
           <button type="button" onClick={() => setActive(!active)}>
             {active ? "Leave Profile" : "Open Profile"}
           </button>

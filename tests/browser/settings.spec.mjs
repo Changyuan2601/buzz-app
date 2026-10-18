@@ -1,3 +1,4 @@
+import { openCommunityPicker } from "./navigation.mjs";
 import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -28,7 +29,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
     page.getByRole("heading", { name: "Settings", level: 1, exact: true }),
   ).toHaveCount(1);
   await expect(
-    page.getByRole("complementary", { name: "Channel sidebar" }),
+    page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
   await expect(communityRail).toBeVisible();
 
@@ -49,7 +50,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("complementary", { name: "Channel sidebar" }),
+    page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toBeVisible();
   await expect(settingsSidebar).toHaveCount(0);
   await expect(communityRail).toBeVisible();
@@ -134,7 +135,8 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
     page.getByRole("region", { name: "Channels", exact: true }),
   ).toBeVisible();
   const channelsSidebar = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
+    exact: true,
   });
   await expect(channelsSidebar).toBeHidden();
   await showNavigation.click();
@@ -197,8 +199,11 @@ for (const action of ["Remove from this device", "Leave community"]) {
       ),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Personal space", exact: true }),
-    ).toHaveAttribute("aria-current", "true");
+      page.getByRole("button", {
+        name: "Community switcher: Personal space",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Profile", exact: true }),
     ).toBeVisible();
@@ -400,6 +405,10 @@ confirmedPresence(
       await expect(account).toBeHidden();
       await expect(avatar).toBeFocused();
       await tab(true);
+      await expect(
+        page.getByRole("button", { name: /^Community switcher:/ }),
+      ).toBeFocused();
+      await tab(true);
       await expect(button(page, "Search Buzz")).toBeFocused();
     }
     await page.setViewportSize({ width: 1280, height: 844 });
@@ -532,7 +541,7 @@ confirmedPresence(
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
       await expect(
-        page.getByRole("switch", { name: "Enable Projects" }),
+        page.getByRole("switch", { name: "Enable Workflows" }),
       ).toBeVisible();
       const settingsRegion = page.getByRole("region", {
         name: "Settings",
@@ -1025,7 +1034,9 @@ test("discarding community setup leaves the published profile unchanged", async 
     }),
   );
   await page.goto(app.origin);
-  await button(page, "Add a community").click();
+  await (await openCommunityPicker(page))
+    .getByRole("button", { name: "Join a community", exact: true })
+    .click();
   await page
     .getByRole("textbox", { name: "Relay URL", exact: true })
     .fill("wss://primary.example");

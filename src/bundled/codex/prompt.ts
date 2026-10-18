@@ -6,7 +6,7 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Config } from "./config";
 
-/** `topLevel` is an owner's Me chat: one channel conversation, posted at
+/** `topLevel` is an owner's Solo chat: one channel conversation, posted at
  * its top level. */
 export type Conversation = {
   channelId: string;

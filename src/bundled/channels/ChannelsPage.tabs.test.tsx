@@ -11,7 +11,6 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { PagesReader } from "../../features/pages/service";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
@@ -25,7 +24,7 @@ import {
 import { writeView } from "../../shared/view-state";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { sessionDescription } from "../../features/sessions/metadata";
+import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
 
@@ -56,7 +55,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function page(type: "stream" | "session" = "stream") {
+async function page(type: "stream" | "solo" = "stream") {
   const viewer = keypair(),
     authority = keypair();
   const channelId = "alpha";
@@ -67,8 +66,8 @@ async function page(type: "stream" | "session" = "stream") {
       channelId,
       "Alpha",
       undefined,
-      type === "session"
-        ? [["t", "stream"], ["private"], ["about", sessionDescription()]]
+      type === "solo"
+        ? [["t", "stream"], ["private"], ["t", SOLO_LABEL]]
         : [["t", "stream"]],
     ),
   ];
@@ -131,26 +130,13 @@ async function page(type: "stream" | "session" = "stream") {
     resolve: () => undefined,
     register() {},
   };
-  const registeredPages: ReturnType<PagesReader["snapshot"]> = [];
-  const pages: PagesReader = {
-    snapshot: () => registeredPages,
-    subscribe: () => () => {},
-  };
-  render(<ChannelsPage relay={relay} panels={panels} pages={pages} />);
+  render(<ChannelsPage relay={relay} panels={panels} />);
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
-    name: type === "session" ? "Message this session" : "Message #Alpha",
+    name: type === "solo" ? "Message your agents" : "Message #Alpha",
   });
-  const open = async () => {
-    if (type === "stream")
-      await user.click(screen.getByRole("button", { name: "Open notes" }));
-    else {
-      await user.click(screen.getByRole("button", { name: "Channel actions" }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "View channel details" }),
-      );
-    }
-  };
+  const open = () =>
+    user.click(screen.getByRole("button", { name: "Open notes" }));
   return { user, composer, open, session: owner.session };
 }
 
@@ -169,14 +155,14 @@ const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   return handled;
 };
 
-it.each(["stream", "session"] as const)(
+it.each(["stream", "solo"] as const)(
   "the real %s page closes its side tabs by shortcut, preserves typing, and handles an empty repeat",
   async (type) => {
     const h = await page(type);
     await h.open();
     expect(
       screen.getByRole("tab", {
-        name: type === "session" ? "Channel settings" : "Notes",
+        name: "Notes",
       }),
     ).toBeInTheDocument();
     h.composer.focus();
@@ -188,13 +174,13 @@ it.each(["stream", "session"] as const)(
     modal.remove();
     expect(
       screen.getByRole("tab", {
-        name: type === "session" ? "Channel settings" : "Notes",
+        name: "Notes",
       }),
     ).toBeInTheDocument();
     expect(closeTabs()).toBe(true);
     expect(
       screen.queryByRole("tab", {
-        name: type === "session" ? "Channel settings" : "Notes",
+        name: "Notes",
       }),
     ).not.toBeInTheDocument();
     expect(h.composer).toHaveFocus();
@@ -205,13 +191,13 @@ it.each(["stream", "session"] as const)(
   },
 );
 
-it.each(["stream", "session"] as const)(
+it.each(["stream", "solo"] as const)(
   "the real %s page returns focus when the menu's owning tab closes",
   async (type) => {
     const h = await page(type);
     await h.open();
     const notes = screen.getByRole("tab", {
-      name: type === "session" ? "Channel settings" : "Notes",
+      name: "Notes",
     });
     await h.user.pointer({ target: notes, keys: "[MouseRight]" });
     await h.user.click(
@@ -219,15 +205,13 @@ it.each(["stream", "session"] as const)(
     );
     expect(
       screen.queryByRole("tab", {
-        name: type === "session" ? "Channel settings" : "Notes",
+        name: "Notes",
       }),
     ).not.toBeInTheDocument();
     if (type === "stream")
       expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
     else
-      expect(
-        screen.getByRole("button", { name: "Channel actions" }),
-      ).toHaveFocus();
+      expect(screen.getByRole("region", { name: "Chat Alpha" })).toHaveFocus();
   },
 );
 

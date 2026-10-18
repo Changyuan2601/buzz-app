@@ -61,7 +61,7 @@ export type TurnInput = Readonly<{
   event: EventData;
   channel: Channel;
   scope: Scope;
-  /** An owner's Me chat: one channel conversation, posted at its top level. */
+  /** An owner's Solo chat: one channel conversation, posted at its top level. */
   topLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;

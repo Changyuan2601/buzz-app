@@ -179,7 +179,7 @@ request-owned, cancelled on disconnect and cleaned before admission is released.
 
 Picker/paste/drop share the same tab-local draft. Files must finish uploading
 before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
-unsent files. Background Send, attachment-first new sessions and UX polish are
+unsent files. Background Send, attachment-first new chats and UX polish are
 separate work. Live uploads use the development broker in dev runs and the
 native `relay_upload` path in packaged desktop builds. The native host prepares
 HEIC and supported video/voice-note inputs with fixed demuxers and bounded child

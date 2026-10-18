@@ -229,7 +229,7 @@ it("selects and saves color mode through visual radio choices", async () => {
   appearance.dispose();
 });
 
-it("selects and restores a message color, including retry after a failed save", async () => {
+it("selects and restores an accent color, including retry after a failed save", async () => {
   const appearance = createAppearance();
   render(
     <ToastProvider>
@@ -237,33 +237,54 @@ it("selects and restores a message color, including retry after a failed save", 
     </ToastProvider>,
   );
   expect(
-    screen.getAllByRole("button", { name: / message color$/ }),
+    screen.getAllByRole("button", { name: / accent color$/ }),
   ).toHaveLength(6);
   expect(
-    screen.getByRole("button", { name: "Default message color" }),
+    screen.getByRole("button", { name: "Chartreuse accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
   const save = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementationOnce(() => {
       throw new Error("denied");
     });
-  fireEvent.click(screen.getByRole("button", { name: "Blue message color" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cobalt accent color" }));
   expect(
-    screen.getByRole("button", { name: "Blue message color" }),
+    screen.getByRole("button", { name: "Cobalt accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect(document.documentElement.dataset.bubbleColor).toBe("blue");
-  // All four preview scenes (including System's two halves) follow the choice.
-  const previews = document.querySelectorAll(".buzz-theme-preview");
-  expect(previews).toHaveLength(4);
-  for (const preview of previews)
-    expect(preview).toHaveAttribute("data-bubble-color", "blue");
+  expect(document.documentElement.dataset.accent).toBe("cobalt");
+  // Each swatch previews its own family in the current mode.
+  expect(
+    screen.getByRole("button", { name: "Magenta accent color" }),
+  ).toHaveAttribute("data-color-mode", appearance.snapshot().mode);
   fireEvent.click(
-    await screen.findByRole("button", { name: "Retry saving message color" }),
+    await screen.findByRole("button", { name: "Retry saving accent color" }),
   );
-  expect(localStorage.getItem("buzz-bubble-color.v1")).toBe("blue");
+  expect(localStorage.getItem("buzz-accent.v1")).toBe("cobalt");
   save.mockRestore();
   appearance.dispose();
   const restored = createAppearance();
-  expect(restored.snapshot().bubbleColor).toBe("blue");
+  expect(restored.snapshot().accent).toBe("cobalt");
   restored.dispose();
+});
+
+it("chooses how much of the app the accent colors with a named step slider", async () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  const vibe = screen.getByRole("slider", { name: "Vibe level" });
+  expect(vibe).toHaveAttribute("aria-valuetext", "Hummin’");
+  // jsdom has no pointer capture; the keyboard is the shared control's contract.
+  act(() => vibe.focus());
+  await user.keyboard("{End}");
+  expect(vibe).toHaveAttribute("aria-valuetext", "Buzzin’");
+  expect(document.documentElement.dataset.colorLevel).toBe("full");
+  expect(localStorage.getItem("buzz-color-level.v1")).toBe("full");
+  await user.keyboard("{ArrowLeft}");
+  expect(vibe).toHaveAttribute("aria-valuetext", "Swarmin’");
+  expect(appearance.snapshot().colorLevel).toBe("more");
+  appearance.dispose();
 });

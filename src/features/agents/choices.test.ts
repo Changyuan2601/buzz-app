@@ -3,7 +3,7 @@ import { createLocalAgents } from "./local";
 import { localAgentsFixture } from "./local-testing";
 import { createAgentLibrary } from "./library";
 import { createAgentChoices, templateAgentChoices } from "./choices";
-import { sessionRecipients } from "../sessions/recipients";
+import { soloRecipients } from "../solo/recipients";
 import type { IdentityArchiveSnapshot } from "../relay/identity-archives";
 
 const viewer = "aa".repeat(32);
@@ -121,9 +121,9 @@ it.each(["loading", "failed", "partial"])(
     const state = choices.snapshot();
     const unknownLegacy = "cd".repeat(32);
     const channel = {
-      id: "session",
+      id: "chat",
       name: "Work",
-      channelType: "session" as const,
+      channelType: "solo" as const,
       members: [viewer, agent.pubkey, unknownLegacy],
     };
     const profiles = new Map([[unknownLegacy, { name: "Legacy B" }]]);
@@ -135,11 +135,11 @@ it.each(["loading", "failed", "partial"])(
       pending: false,
     });
     expect(state.templates.error).toBeUndefined();
-    expect(() =>
-      sessionRecipients(channel, profiles, state, viewer, []),
-    ).toThrow(/still loading/);
+    expect(() => soloRecipients(channel, profiles, state, viewer, [])).toThrow(
+      /still loading/,
+    );
     expect(
-      sessionRecipients(channel, profiles, state, viewer, [agent.pubkey]),
+      soloRecipients(channel, profiles, state, viewer, [agent.pubkey]),
     ).toEqual([agent.pubkey]);
     expect(
       templateAgentChoices(state, { status: "ready", channels: [] }).map(

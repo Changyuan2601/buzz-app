@@ -245,17 +245,17 @@ it("preserves archive intent when exact conversation evidence regroups and resto
   expect(h.archived(regrouped)).toBe(false);
 });
 
-it("keeps a session mention visible when an earlier archive covers only part of its merged row", () => {
+it("keeps a Solo chat mention visible when an earlier archive covers only part of its merged row", () => {
   const h = fixture();
   const row = (created: number): InboxItem => {
-    const event = message(h.alice, "session", `Mention ${created}`, created, [
+    const event = message(h.alice, "chat", `Mention ${created}`, created, [
       ["p", h.viewer.pubkey],
     ]);
     return {
       ...h.item,
-      id: `session:${event.id}`,
-      channelId: "session",
-      target: { kind: "message", channelId: "session", messageId: event.id },
+      id: `chat:${event.id}`,
+      channelId: "chat",
+      target: { kind: "message", channelId: "chat", messageId: event.id },
       messageId: event.id,
       latestMessageId: event.id,
       messageIds: [event.id],
@@ -268,7 +268,7 @@ it("keeps a session mention visible when an earlier archive covers only part of 
   expect(h.archived(kept)).toBe(false);
   const merged: InboxItem = {
     ...archived,
-    id: "session:session",
+    id: "chat:chat",
     messageIds: [...kept.messageIds, ...archived.messageIds],
     messages: [...kept.messages, ...archived.messages],
   };

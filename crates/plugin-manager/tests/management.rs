@@ -979,9 +979,8 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
     for id in [
         "buzz.identity-naming",
         "buzz.terminal",
-        "buzz.sessions",
         "buzz.inbox",
-        "buzz.projects",
+        "buzz.repos",
         "buzz.emoji",
         "buzz.mentions",
         "buzz.voice-notes",
@@ -1115,7 +1114,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
     assert!(catalog
         .plugins
         .iter()
-        .any(|plugin| plugin.manifest.id == "buzz.me"));
+        .any(|plugin| plugin.manifest.id == "buzz.inbox"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(id, "buzz.bestie" | "buzz.todos");

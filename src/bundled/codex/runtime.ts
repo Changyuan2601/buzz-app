@@ -497,7 +497,7 @@ export class CodexRuntime {
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
-    const topLevel = await reads.meChat(
+    const topLevel = await reads.soloChat(
       agent.owner,
       channelId,
       delivery.signal,

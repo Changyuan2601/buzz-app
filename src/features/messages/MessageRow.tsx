@@ -824,7 +824,7 @@ function MessageRowContent({
               {sessionCards.length > 0 && (
                 <div
                   className={styles.messageAttachments}
-                  data-session-cards
+                  data-solo-cards
                   data-message-action-anchor
                 >
                   {sessionCards.map((card) => (

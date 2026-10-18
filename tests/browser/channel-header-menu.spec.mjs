@@ -469,9 +469,6 @@ test.describe("sidebar actions in the header", () => {
     await expect(trigger).toBeFocused();
     await trigger.click();
     await expect(menu).toBeFocused();
-    await expect(
-      menu.getByRole("menuitem", { name: "New session", exact: true }),
-    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(trigger).toBeFocused();
     expect(app.report.unexpected).toEqual([]);

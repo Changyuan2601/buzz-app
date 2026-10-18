@@ -35,8 +35,8 @@
   display: flex;
   flex-direction: column;
 }
-.sessionConversation {
-  container: session-conversation / inline-size;
+.soloConversation {
+  container: solo-conversation / inline-size;
 }
 .sidebar {
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
@@ -58,33 +58,25 @@
   /* An open pane shares the selected tab fill, rather than a held press. */
   --interaction-pressed: var(--affordance-subtle);
 }
-.sidebarBrand {
-  height: var(--space-6);
+.sidebarFilter {
+  flex: 0 0 auto;
+  padding: var(--space-3) 0 0;
+  min-width: 0;
+}
+.sidebarBody {
   display: flex;
-  align-items: flex-start;
-  padding-block-start: var(--space-1);
-  padding-inline-start: var(--space-1h);
-}
-.sidebarBrandMark {
-  width: var(--space-5);
-  height: calc(var(--space-5) * 0.75);
-  background: currentColor;
-  mask: url("/buzz-mark.svg") center / contain no-repeat;
-  transform: translateX(1px);
-}
-/* Berd's square mark (black, with eye and beak cutouts, from berd-oss). */
-.sidebarBrandMark[data-mark="berd"] {
-  /* A solid square reads heavier than Buzz's open mark; match its height. */
-  width: calc(var(--space-5) * 0.75);
-  height: calc(var(--space-5) * 0.75);
-  mask-image: url("/berd-mark.svg");
-  transform: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .destinations {
   display: flex;
   flex-direction: column;
   gap: var(--space-half);
   margin-bottom: var(--space-3);
+}
+.sidebarFilter > .destinations {
+  margin-bottom: calc(var(--space-3) + var(--space-2));
 }
 /* Scope compact navigation to this sidebar; top-bar destinations keep their sizing. */
 .sidebar [data-variant="row"] {
@@ -104,12 +96,14 @@
   background: var(--affordance-panel-hover);
 }
 @media (hover: hover) and (pointer: fine) {
-  .sidebar [data-icon-variant]:hover:not([data-disabled]) {
+  .sidebar [data-icon-variant="ghost"]:hover:not([data-disabled]) {
     background: var(--affordance-panel-hover);
   }
 }
 .sidebar
-  [data-icon-variant]:is(:active, [aria-expanded="true"]):not([data-disabled]) {
+  [data-icon-variant="ghost"]:is(:active, [aria-expanded="true"]):not(
+    [data-disabled]
+  ) {
   background: var(--affordance-panel-hover);
 }
 .sidebar [data-variant="row"][data-inset] {
@@ -158,26 +152,21 @@
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
-/* The brand and top destinations share the channel list's row geometry, so a
-   sidebar that does not use the channel list (Me) places them identically. */
+/* Global destinations share the channel list's row geometry. */
 .channelList,
-.sidebarTop {
+.sidebarFilter {
   --channel-row-fill-start: var(--space-1);
   --channel-row-fill-end: calc(var(--space-1) + 6px);
 }
-.sidebarTop {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  padding-block-start: var(--sidebar-padding);
+.sidebarFilter {
   /* No scrollbar frame extension here, so the end fill omits its 6px. */
   --channel-row-fill-end: var(--space-1);
 }
 /* Shorten every painted row symmetrically while preserving icon, label, trailing
    control, and scrollbar positions. Wrapped channel rows paint on the wrapper;
-   direct destination/session rows paint on the navigation item itself. */
+   direct destination and Solo chat rows paint on the navigation item itself. */
 .channelList [data-variant="row"],
-.sidebarTop [data-variant="row"] {
+.sidebarFilter [data-variant="row"] {
   width: calc(
     100% -
     var(--channel-row-fill-start) -
@@ -188,7 +177,7 @@
     calc(var(--space-1) + var(--space-half) - var(--channel-row-fill-start));
 }
 .channelList [data-variant="row"][data-inset],
-.sidebarTop [data-variant="row"][data-inset] {
+.sidebarFilter [data-variant="row"][data-inset] {
   padding-inline-start: calc(
     var(--space-2) +
     var(--space-6) -
@@ -297,8 +286,8 @@
   width: var(--space-4);
   height: var(--space-4);
   border-radius: var(--radius-pill);
-  background: var(--affordance-prominent);
-  box-shadow: 0 0 0 2px var(--affordance-prominent);
+  background: var(--affordance-prominent-mark);
+  box-shadow: 0 0 0 2px var(--affordance-prominent-mark);
 }
 .unreadDmAvatar + .unreadDmAvatar {
   margin-inline-start: calc(-1 * var(--space-1h));
@@ -366,18 +355,19 @@
 .sectionHeader {
   position: relative;
 }
-.sectionHeader > :where(details) > summary {
+.sectionHeader > :where(details) > summary,
+.sidebarSectionHeading {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-height: var(--size-control-sm);
   padding: var(--space-half) calc((2 * var(--size-control-sm)) + var(--space-2))
     var(--space-half) var(--space-2);
-  color: var(--text-subtle);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
-  font-weight: var(--type-weight-normal);
+  color: var(--text-metadata);
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-weight: var(--text-label-sm--font-weight);
   cursor: pointer;
   list-style: none;
   border-radius: var(--radius-control);
@@ -408,17 +398,17 @@
   margin-inline-end: var(--space-1);
 }
 .sectionChevron {
+  opacity: 0;
   display: inline-grid;
-  width: var(--space-6);
+  width: var(--space-4);
   height: var(--space-6);
-  flex: 0 0 var(--space-6);
+  flex: 0 0 var(--space-4);
   place-items: center;
   color: var(--text-subtle);
   transition: transform 160ms ease-out;
 }
 .sectionHeader details:not([open]) .sectionChevron {
   transform: rotate(-90deg);
-  opacity: 1;
 }
 .sectionActions {
   position: absolute;
@@ -449,7 +439,7 @@
 .untitledSectionContent {
   padding-inline-end: calc(var(--space-8) + var(--space-1));
 }
-.sectionActions:focus-within,
+html[data-keyboard-navigation] .sectionActions:focus-within,
 .sectionHeader:hover :is(.sectionActions, .sectionChevron),
 .channelSection[data-menu-open] :is(.sectionActions, .sectionChevron),
 html[data-keyboard-navigation]
@@ -688,7 +678,7 @@ html[data-keyboard-navigation]
   height: 4.5rem;
   border-radius: var(--radius-pill);
   background: var(--affordance-prominent);
-  color: var(--text-inverse);
+  color: var(--text-on-prominent);
 }
 .settingsDetails {
   border: 1px solid var(--border-standard);
@@ -816,7 +806,7 @@ html[data-keyboard-navigation]
   width: 0.375rem;
   height: 0.375rem;
   border-radius: 50%;
-  background: var(--affordance-prominent);
+  background: var(--affordance-prominent-mark);
 }
 .threadActivityDot {
   cursor: help;
@@ -1012,4 +1002,11 @@ html[data-keyboard-navigation]
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Hovered and selected rows take the row's paired ink, so navigation text
+   follows the fill instead of staying gray on an accent row. */
+.sidebar [data-variant="row"]:is(:hover, [data-selected]),
+.sidebar :is(:hover, [data-selected]) > * > [data-variant="row"] {
+  color: var(--text-row);
 }

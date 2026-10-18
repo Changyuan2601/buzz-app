@@ -313,9 +313,9 @@ it("launches the exact menu contribution and removes it when unavailable", async
 });
 
 it.each([true, false])(
-  "legacy sessions use verified lifecycle permissions (owner=%s)",
+  "Solo chats use verified lifecycle permissions (owner=%s)",
   async (owner) => {
-    const h = harness({ ...channel, channelType: "session", private: true });
+    const h = harness({ ...channel, channelType: "solo", private: true });
     h.lifecycleLoad.mockResolvedValue({
       channelId: "alpha",
       channelType: "stream",

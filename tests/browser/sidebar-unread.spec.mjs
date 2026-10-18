@@ -1,3 +1,4 @@
+import { selectCommunity } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test as base, expect } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
@@ -16,7 +17,7 @@ test.use({
   historyCounts: { alpha: 20, beta: 20 },
 });
 const sidebar = (page) =>
-  page.getByRole("complementary", { name: "Channel sidebar", exact: true });
+  page.getByRole("complementary", { name: "Sidebar", exact: true });
 const list = (page) =>
   page.getByRole("navigation", { name: "Subscribed channels" });
 const cue = (page, edge) =>
@@ -37,7 +38,7 @@ const removeDm = async (page, id) => {
   await dm.click({ button: "right" });
   const menu = page.getByRole("menu", { name: /Actions for / });
   const remove = menu.getByRole("menuitem", {
-    name: "Remove from Multiplayer",
+    name: "Remove from Team",
     exact: true,
   });
   await expect(remove).toBeVisible();
@@ -472,9 +473,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
   try {
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
-    await page
-      .getByRole("button", { name: "Switch to Secondary", exact: true })
-      .click();
+    await selectCommunity(page, "Secondary");
     await expect(
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
@@ -488,7 +487,10 @@ test("session changes discard the previous sidebar targets and manual unread sti
       .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
-    const panel = page.getByRole("complementary", { name: "Channel sidebar" });
+    const panel = page.getByRole("complementary", {
+      name: "Sidebar",
+      exact: true,
+    });
     await expect(panel).toHaveAttribute("aria-busy", "true");
     // A new session reveals its roster after the bounded startup wait even if
     // preferences are still blocked. Scrolling the empty loading view is a no-op.
@@ -524,7 +526,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
   }
 });
 
-test("priority dots stay aligned and use semantic primary color in both modes", async ({
+test("priority dots stay aligned and use the prominent mark color in both modes", async ({
   page,
   app,
 }, info) => {
@@ -574,7 +576,9 @@ test("priority dots stay aligned and use semantic primary color in both modes", 
     const primary = await page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
       const probe = document.createElement("span");
-      probe.style.backgroundColor = root.getPropertyValue("--primary");
+      probe.style.backgroundColor = root.getPropertyValue(
+        "--affordance-prominent-mark",
+      );
       document.body.append(probe);
       const color = getComputedStyle(probe).backgroundColor;
       probe.remove();
@@ -643,7 +647,7 @@ test.describe("DM preview wiring", () => {
         return edge === "above" ? ids.reverse() : ids;
       }, edge);
       await expect(pill).toHaveAccessibleName(
-        `${expected.length} unread conversations ${edge}`,
+        `${expected.length} unread conversation${expected.length === 1 ? "" : "s"} ${edge}`,
       );
       const previews = pill.locator("[data-unread-dm]");
       await expect

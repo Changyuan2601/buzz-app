@@ -136,7 +136,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -146,7 +146,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await row.click();
   await row.click({ button: "right" });
@@ -447,12 +447,12 @@ test("pending toast in narrow navigation preserves visible recovery after uncert
   expect(app.report.unexpected).toEqual([]);
 });
 
-// Browser-only: recover an archived session after leaving its URL via the real
-// search -> header -> Settings route. The empty session has no message fallback.
-test.describe("legacy sessions", () => {
-  test.use({ sessionChannels: ["11111111-1111-4111-8111-111111111111"] });
+// Browser-only: recover an archived Solo chat after leaving its URL via the real
+// search -> header -> Settings route. The empty Solo chat has no message fallback.
+test.describe("Solo chat lifecycle", () => {
+  test.use({ soloChannels: ["11111111-1111-4111-8111-111111111111"] });
 
-  test("sidebar and header manage a session and recover it through name search", async ({
+  test("sidebar and header manage a Solo chat and recover it through name search", async ({
     page,
     app,
   }) => {
@@ -462,7 +462,7 @@ test.describe("legacy sessions", () => {
       .getByRole("button", { name: "Lifecycle channel", exact: true });
     await row.click();
     const composer = page.getByRole("textbox", {
-      name: "Message this session",
+      name: "Message your agents",
     });
     await expect(composer).toBeVisible();
     await expect(
@@ -486,7 +486,7 @@ test.describe("legacy sessions", () => {
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
 
     const header = page.getByRole("button", {
-      name: "Channel actions",
+      name: "Chat actions",
       exact: true,
     });
     await header.click();
@@ -501,7 +501,10 @@ test.describe("legacy sessions", () => {
       .click();
     await expect(archive).toHaveCount(0);
     await expect(row).toHaveCount(0);
-    await expect(page).toHaveURL(url);
+    // Archiving an open Solo conversation now hands off to a new Solo draft.
+    await expect(page).not.toHaveURL(url);
+    // The retained address must still support archived-history recovery.
+    await page.goto(url);
     await expect(composer).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Share", exact: true }),
@@ -532,12 +535,12 @@ test.describe("legacy sessions", () => {
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await expect(composer).toBeDisabled();
-    await openChannelDetails(page);
+    await header.click();
     await expect(
       page.getByRole("button", { name: "View members" }),
     ).toHaveCount(0);
     await page
-      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .getByRole("menuitem", { name: "Unarchive channel", exact: true })
       .click();
     const restore = page.getByRole("dialog", {
       name: "Unarchive channel: Lifecycle channel",
@@ -552,8 +555,9 @@ test.describe("legacy sessions", () => {
       page.getByRole("button", { name: "Share", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
+    await header.click();
     await page
-      .getByRole("button", { name: "Delete channel", exact: true })
+      .getByRole("menuitem", { name: "Delete channel", exact: true })
       .click();
     await deletion
       .getByRole("button", { name: "Delete channel", exact: true })

@@ -133,7 +133,7 @@ export type ChannelTimelineProps = {
   continuityKey?: string | undefined;
   window: ChannelWindow;
   launchPending?: boolean | undefined;
-  /** Sessions page history on scroll; retain an explicit button for errors. */
+  /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;

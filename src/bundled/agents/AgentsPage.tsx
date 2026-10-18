@@ -41,7 +41,7 @@ import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
   useDefaultAgent,
-} from "../../features/sessions/default-agent";
+} from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";

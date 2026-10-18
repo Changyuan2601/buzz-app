@@ -12,8 +12,8 @@ import {
   sharedSessionTags,
   sessionReferenceIds,
 } from "./shared-session-marker";
-import { sessionLinkMessage } from "./share";
-import { sessionDescription } from "./metadata";
+import { soloChatLinkMessage } from "../solo/share";
+import { SOLO_LABEL } from "../solo/labels";
 
 const key = new Uint8Array(32).fill(1);
 const event = (kind: number, tags: string[][], content = "", created_at = 10) =>
@@ -21,7 +21,7 @@ const event = (kind: number, tags: string[][], content = "", created_at = 10) =>
 const authority = event(0, []).pubkey;
 const viewer = "2".repeat(64);
 const other = "3".repeat(64);
-const link = sessionLinkMessage("source");
+const link = soloChatLinkMessage("source");
 const share = (time = 10, extra: string[][] = []) =>
   event(
     9,
@@ -50,7 +50,7 @@ function fixture() {
         [isPublic ? "public" : "private"],
         ["t", "stream"],
         ["name", title],
-        ...(id !== "destination" ? [["about", sessionDescription()]] : []),
+        ...(id !== "destination" ? [["t", SOLO_LABEL]] : []),
       ]),
       event(39002, [["d", id], ...members.map((m) => ["p", m])]),
     );
@@ -107,7 +107,7 @@ describe("explicit shared session markers", () => {
       "source",
     ]);
     expect(sharedSessionIds(share(), "removed")).toEqual([]);
-    expect(sharedSessionIds(share(), sessionLinkMessage("different"))).toEqual(
+    expect(sharedSessionIds(share(), soloChatLinkMessage("different"))).toEqual(
       [],
     );
     expect(() => sharedSessionTags(link, ["different"])).toThrow(/match/);
@@ -157,9 +157,9 @@ describe("historical session cards", () => {
       expect(
         sharedSessionIds(event(9, [["h", "destination"]], content)),
       ).toEqual([]);
-    expect(sharedSessionIds(legacy(), sessionLinkMessage("different"))).toEqual(
-      [],
-    );
+    expect(
+      sharedSessionIds(legacy(), soloChatLinkMessage("different")),
+    ).toEqual([]);
     expect(
       sharedSessionIds(event(9, [["h", "destination"]], "No card"), link),
     ).toEqual([]);
@@ -591,7 +591,7 @@ it("stops between multi-session share messages before the authority row cap", as
   const f = fixture();
   for (let n = 0; n < 20; n++) {
     const ids = Array.from({ length: 32 }, (_, i) => `source-${n}-${i}`);
-    const content = ids.map((id) => sessionLinkMessage(id)).join("\n\n");
+    const content = ids.map((id) => soloChatLinkMessage(id)).join("\n\n");
     f.add(
       event(
         9,
@@ -615,7 +615,7 @@ it("stops between multi-session share messages before the authority row cap", as
 it("bounds historical card associations without trapping older valid shares", async () => {
   const f = fixture();
   const oversized = Array.from({ length: 510 }, (_, i) =>
-    sessionLinkMessage(`old-${i}`),
+    soloChatLinkMessage(`old-${i}`),
   ).join("\n\n");
   f.add(event(9, [["h", "destination"]], oversized, 20), share(10));
   const first = await listSharedSessions(f.reader, "destination");
@@ -666,7 +666,7 @@ it("withholds agent output without current server audience support", async () =>
   ).rejects.toThrow(/updated server support/);
 });
 
-it("requires canonical session identity for a private stream source", async () => {
+it("requires the Solo label for a private stream source", async () => {
   const f = fixture();
   const query = f.query.getMockImplementation();
   if (!query) throw new Error("Missing fixture query");
@@ -676,7 +676,7 @@ it("requires canonical session identity for a private stream source", async () =
       record.tags.some(([k, v]) => k === "d" && v === "source")
         ? event(
             39000,
-            record.tags.filter(([k]) => k !== "about"),
+            record.tags.filter(([k, v]) => k !== "t" || v !== SOLO_LABEL),
             record.content,
           )
         : record,
@@ -742,11 +742,11 @@ it.each([false, true])(
         9,
         [["h", destination]],
         ["general", ordinary, revoked]
-          .map((id) => sessionLinkMessage(id))
+          .map((id) => soloChatLinkMessage(id))
           .join("\n\n"),
         30,
       ),
-      event(9, [["h", destination]], sessionLinkMessage(source), 20),
+      event(9, [["h", destination]], soloChatLinkMessage(source), 20),
     );
     const audienceAuthority = vi.fn(
       async (dest: string, sources: readonly string[]) => {

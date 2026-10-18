@@ -136,9 +136,6 @@ test("thread buttons show observed unread independently, clear only after readin
   await alpha.click({ button: "right" });
   const actions = page.getByRole("menu", { name: "Actions for Alpha" });
   await expect(actions).toBeVisible();
-  await expect(
-    actions.getByRole("menuitem", { name: "New session" }),
-  ).toHaveCount(0);
   // Leave the hover trigger while the context menu still owns focus. Otherwise
   // its delayed hover close can overlap the later keyboard-open assertion.
   await page.mouse.move(0, 0);

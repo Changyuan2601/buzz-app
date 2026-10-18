@@ -313,7 +313,8 @@ test.describe("scaled history", () => {
       ),
     ).toBe(112);
     const sidebar = page.getByRole("complementary", {
-      name: "Channel sidebar",
+      name: "Sidebar",
+      exact: true,
     });
     const handle = page.getByRole("separator", {
       name: "Resize sidebar",

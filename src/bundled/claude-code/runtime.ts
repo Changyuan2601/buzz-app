@@ -132,7 +132,7 @@ export class ClaudeRuntime {
     string,
     ReturnType<AgentSessions["snapshot"]>
   >();
-  /** Me chats whose title was already offered to the host this app run. */
+  /** Solo chats whose title was already offered to the host this app run. */
   private readonly titled = new Set<string>();
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
@@ -362,8 +362,11 @@ export class ClaudeRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     const topLevel =
-      (await this.reads(agent.pubkey)?.meChat(agent.owner, channel, signal)) ??
-      false;
+      (await this.reads(agent.pubkey)?.soloChat(
+        agent.owner,
+        channel,
+        signal,
+      )) ?? false;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
@@ -445,7 +448,7 @@ export class ClaudeRuntime {
       void this.offerTitle(done, agent.pubkey, key, settings.workspace, named);
   }
 
-  /** After a Me chat's turn, offers the host the title Claude Code generated
+  /** After a Solo chat's turn, offers the host the title Claude Code generated
    * for its session, once. The host decides whether the chat takes it. */
   private async offerTitle(
     done: Promise<Settled>,
@@ -542,7 +545,7 @@ export class ClaudeRuntime {
       );
   }
 
-  /** The conversation the event's turn goes to: a Me chat or DM is one
+  /** The conversation the event's turn goes to: a Solo chat or DM is one
    * conversation, as is a channel for an agent with channel scope. */
   private async key(
     entry: Entry,

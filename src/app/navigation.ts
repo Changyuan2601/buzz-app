@@ -330,7 +330,7 @@ export function useAppNavigation(
       // selected, authorized destination; never reconnect an unrelated community.
       if (
         (pageKey === channelsKey ||
-          pageKey === "buzz.projects/projects" ||
+          pageKey === "buzz.repos/repos" ||
           pageKey === "buzz.agents/agents" ||
           settings) &&
         !state.ingress &&

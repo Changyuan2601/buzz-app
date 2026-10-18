@@ -16,7 +16,7 @@ import {
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayWriter } from "../../features/relay/transport";
 import { createRelayProfiler } from "../../features/relay/profiling";
-import { sessionLinkMessage } from "../../features/sessions/share";
+import { soloChatLinkMessage } from "../../features/solo/share";
 import { OutboxStatus } from "./OutboxStatus";
 
 afterEach(cleanup);
@@ -88,7 +88,7 @@ it("preserves generic retry for legacy unguarded invitations", () => {
 
 // The recovery page deliberately has no source inventory or encoder: deleted
 // agents and teams must not be needed to finish an already journaled delivery.
-it.each(["agent", "team", "session"] as const)(
+it.each(["agent", "team", "solo"] as const)(
   "retries and acknowledges a restored %s share without its deleted source",
   async (kind) => {
     const viewer = keypair();
@@ -120,19 +120,19 @@ it.each(["agent", "team", "session"] as const)(
         {
           kind: 9,
           content:
-            kind === "session"
-              ? sessionLinkMessage("deleted-source")
+            kind === "solo"
+              ? soloChatLinkMessage("deleted-source")
               : "Snapshot attachment",
           tags: [["h", "dm"]],
         },
         {
           key:
-            kind === "session"
-              ? "session-share-link:deleted-source:dm"
+            kind === "solo"
+              ? "solo-share-link:deleted-source:dm"
               : // Shares queued by the removed snapshot dialog.
                 `snapshot-share:${kind}:deleted-source`,
           value:
-            kind === "session"
+            kind === "solo"
               ? "1"
               : JSON.stringify({
                   people: [{ pubkey: "b".repeat(64), name: "Recipient" }],

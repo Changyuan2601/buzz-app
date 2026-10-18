@@ -509,8 +509,8 @@ it.each([
       }),
     );
     const transport = await connectNativeTransport(community);
-    const owner = createSidebarPreferencesStore(
-      async () => {
+    const owner = createSidebarPreferencesStore({
+      read: async () => {
         const data = await transport.decodeSidebarPreferences?.(
           [...records.values()],
           signal,
@@ -518,10 +518,10 @@ it.each([
         if (!data) throw new Error("Sidebar decode unavailable");
         return data;
       },
-      true,
-      transport.writeSidebarAssignment,
-      transport.writeSidebarStar,
-    );
+      available: true,
+      write: transport.writeSidebarAssignment,
+      writeStar: transport.writeSidebarStar,
+    });
     try {
       const preferences = owner.queries;
       await preferences.ensure();

@@ -167,8 +167,7 @@ test.describe("last visible channel", () => {
     expect(
       await page.evaluate(
         () =>
-          document.activeElement?.closest('[aria-label="Channel sidebar"]') !==
-          null,
+          document.activeElement?.closest('[aria-label="Sidebar"]') !== null,
       ),
     ).toBe(true);
     await page.reload();

@@ -767,15 +767,15 @@ test.describe("DM exact opening outside the head", () => {
   });
 });
 
-// Session policy must survive bundled Inbox -> shared thread composer -> broker
+// Solo chat policy must survive bundled Inbox -> shared thread composer -> broker
 // publication, including the inferred exact recipient and signed roster preflight.
-test.describe("Inbox session reply admission", () => {
+test.describe("Inbox Solo chat reply admission", () => {
   test.use({
-    sessionChannels: ["alpha"],
+    soloChannels: ["alpha"],
     agentPeers: true,
-    inboxSessionAgent: true,
+    inboxSoloAgent: true,
   });
-  test("plain session reply notifies the sole member agent through the shared composer", async ({
+  test("plain Solo chat reply notifies the sole member agent through the shared composer", async ({
     page,
     app,
   }) => {
@@ -794,7 +794,7 @@ test.describe("Inbox session reply admission", () => {
     const root = app.histories
       .get("primary/alpha")
       .find((event) => event.content === "Thread root 1");
-    if (!root) throw new Error("Missing session root fixture");
+    if (!root) throw new Error("Missing Solo chat root fixture");
     const roster = app
       .startupCache()
       .discovery.find(
@@ -802,12 +802,12 @@ test.describe("Inbox session reply admission", () => {
           event.kind === 39002 &&
           event.tags.some(([name, value]) => name === "d" && value === "alpha"),
       );
-    if (!roster) throw new Error("Missing verified session roster");
+    if (!roster) throw new Error("Missing verified Solo chat roster");
     const agents = roster.tags
       .filter(([name, key]) => name === "p" && key !== app.viewer)
       .map(([, key]) => key);
     expect(agents).toHaveLength(1);
-    await editor.fill("Inbox session reply without a typed mention");
+    await editor.fill("Inbox Solo chat reply without a typed mention");
     await detail.getByRole("button", { name: "Send message" }).click();
     await expect
       .poll(() =>
@@ -817,7 +817,7 @@ test.describe("Inbox session reply admission", () => {
     const sent = app.report.publications.find(
       ({ event }) => event?.kind === 9,
     )?.event;
-    if (!sent) throw new Error("Missing signed session reply");
+    if (!sent) throw new Error("Missing signed Solo chat reply");
     expect(sent.tags).toContainEqual(["h", "alpha"]);
     expect(sent.tags).toContainEqual(["e", root.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual([

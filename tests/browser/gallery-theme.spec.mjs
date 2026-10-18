@@ -3,6 +3,21 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
 
+// Resolve on the app root, independently of the gallery subtree: a stale or
+// incorrectly scoped gallery palette must not supply its own expected colors.
+async function hostColor(page, role) {
+  return page.evaluate((role) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${role})`;
+    document.documentElement.append(probe);
+    try {
+      return getComputedStyle(probe).color;
+    } finally {
+      probe.remove();
+    }
+  }, role);
+}
+
 // Browser boundary: real thread-to-gallery wiring, computed CSS, and host
 // appearance updates across windows while the gallery and draft stay mounted.
 test("an open image gallery follows host appearance while retaining its dark stage", async ({
@@ -79,17 +94,17 @@ test("an open image gallery follows host appearance while retaining its dark sta
       );
       await expect(comments).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgb(255, 255, 255)" : "rgb(26, 26, 26)",
+        await hostColor(page, "--surface-panel"),
       );
-      await expect(
-        comments.getByText("Gallery comment", { exact: true }),
-      ).toHaveCSS(
+      // The viewer's own comment takes its accent-paired message ink.
+      const comment = comments.getByText("Gallery comment", { exact: true });
+      await expect(comment).toHaveCSS(
         "color",
-        mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
+        await hostColor(page, "--text-message-own"),
       );
       await expect(composer).toHaveCSS(
         "color",
-        mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
+        await hostColor(page, "--text-standard"),
       );
       await expect(dialog.locator("[data-review-stage]")).toHaveCSS(
         "background-color",
@@ -137,6 +152,15 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(
       thread.getByRole("link", { name: "Open image attachment", exact: true }),
     ).toBeFocused();
+    // The app can go fully colorful without tinting the media canvas. Shared
+    // controls and surrounding surfaces remain themed; only media roles stay fixed.
+    const vibe = other.getByRole("slider", { name: "Vibe level" });
+    await vibe.focus();
+    await vibe.press("End");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-level",
+      "full",
+    );
     await chooseColorMode(other, "Dark");
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-mode",
@@ -146,7 +170,11 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await thread
       .getByRole("link", { name: "Open image attachment", exact: true })
       .press("Enter");
-    await expect(comments).toHaveCSS("background-color", "rgb(26, 26, 26)");
+    // Buzzin’ themes the comments pane but the image stage remains pure black.
+    await expect(comments).toHaveCSS(
+      "background-color",
+      await hostColor(page, "--surface-panel"),
+    );
     await expect(dialog.locator("[data-review-stage]")).toHaveCSS(
       "background-color",
       "rgb(0, 0, 0)",
@@ -173,8 +201,14 @@ test("an open image gallery follows host appearance while retaining its dark sta
       "data-color-mode",
       "light",
     );
-    await expect(comments).toHaveCSS("background-color", "rgb(255, 255, 255)");
-    await expect(composer).toHaveCSS("color", "rgb(15, 15, 15)");
+    await expect(comments).toHaveCSS(
+      "background-color",
+      await hostColor(page, "--surface-panel"),
+    );
+    await expect(composer).toHaveCSS(
+      "color",
+      await hostColor(page, "--text-standard"),
+    );
     await expect(composer).toBeVisible();
     await expect(
       dialog.getByRole("heading", { name: "Image", exact: true }),

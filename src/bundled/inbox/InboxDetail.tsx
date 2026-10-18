@@ -99,7 +99,7 @@ export function InboxDetail({
   // keep the reader this visit opened with.
   const flat =
     item.target.kind === "channel" ||
-    (channel?.channelType === "session" && !item.thread);
+    (channel?.channelType === "solo" && !item.thread);
   const [timeline, setTimeline] = useState<boolean>();
   if (available && timeline === undefined) setTimeline(flat);
   useEffect(() => {

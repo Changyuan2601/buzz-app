@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import {
   ToastNotice,
   useToastNotification,
@@ -61,6 +61,7 @@ export function ChannelLifecycleDialog({
   completed,
   onSubmit,
   failed,
+  finalFocus,
 }: {
   channelId: string;
   channelName: string;
@@ -69,6 +70,7 @@ export function ChannelLifecycleDialog({
   close(): void;
   completed(): void;
   onSubmit?(): void;
+  finalFocus?: DialogProps["finalFocus"];
   failed?(title: string, message: string): void;
 }) {
   const callbacks = useRef({ completed, failed });
@@ -129,7 +131,7 @@ export function ChannelLifecycleDialog({
         dismissOnOutsideClick
         initialFocus={confirms ? confirm : cancel}
         // Cancellation remains sidebar-owned; submission returns to the trigger.
-        {...(!busy && !error && { finalFocus: false })}
+        finalFocus={busy || error ? finalFocus : false}
         onOpenChange={(open) => {
           if (!open) close();
         }}

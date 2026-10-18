@@ -5426,7 +5426,7 @@ it("projects accepted queued work and keeps working past handover until the plug
 it("shows a request whose run failed before handing anything over as failed, with why", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
-  f.run.mockRejectedValueOnce(new Error("Couldn't read your Me chats"));
+  f.run.mockRejectedValueOnce(new Error("Couldn't read your Solo chats"));
   f.emit({
     events: [
       event("1", {
@@ -5441,7 +5441,7 @@ it("shows a request whose run failed before handing anything over as failed, wit
     await vi.waitFor(() =>
       expect(f.activity.reader.work()[0]).toMatchObject({
         state: "error",
-        error: "Couldn't read your Me chats",
+        error: "Couldn't read your Solo chats",
       }),
     );
   } finally {

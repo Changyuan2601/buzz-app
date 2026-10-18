@@ -7,7 +7,7 @@ import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
-import { entityTarget } from "../projects/routes";
+import { entityTarget } from "../repos/routes";
 import type { Navigation, OpenFailure, OpenResult } from "./controller";
 import { parseOpenTarget, type OpenTarget } from "./targets";
 
@@ -48,6 +48,19 @@ export function deepLinkStep(
   if (!link) return { fail: "invalid-target" };
   try {
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
+    if (link.format === "removed")
+      return {
+        open: {
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.repos",
+          pageId: "repos",
+          scope: {
+            viewer: client.viewer,
+            communityOrigin: communityDestination(client.selected).url,
+          },
+        },
+      };
     if (link.format === "entity")
       return {
         open: entityTarget(link.route, {

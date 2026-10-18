@@ -12,7 +12,7 @@ import {
   scriptedTransport,
 } from "./testing";
 
-it("clears retained project homes on live recovery, cache clearing, and disposal", async () => {
+it("clears retained repository homes on live recovery, cache clearing, and disposal", async () => {
   const relay = keypair(),
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -25,13 +25,13 @@ it("clears retained project homes on live recovery, cache clearing, and disposal
     },
   });
   const seed = async () => {
-    const pending = owner.session.projects.home(
-      "project-channel",
+    const pending = owner.session.repositories.home(
+      "repo-channel",
       new AbortController().signal,
     );
     wire.next().respond([]);
     await pending;
-    expect(owner.session.projects.peekHome("project-channel")).toEqual({
+    expect(owner.session.repositories.peekHome("repo-channel")).toEqual({
       status: "none",
     });
   };
@@ -39,15 +39,15 @@ it("clears retained project homes on live recovery, cache clearing, and disposal
     await seed();
     live.state({ status: "connected", routes: [] });
     live.state({ status: "retrying", routes: [] });
-    expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+    expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
     await seed();
     await owner.clearCache();
-    expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+    expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
     await seed();
   } finally {
     owner.dispose();
   }
-  expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+  expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
 });
 
 it("establishing a large roster reads only retained windows, not every channel head", async () => {

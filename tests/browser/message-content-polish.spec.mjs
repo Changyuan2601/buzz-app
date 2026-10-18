@@ -1,5 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
-import { BUBBLE_COLORS } from "../../src/shared/theme/bubble-color.ts";
+import { ACCENTS } from "../../src/shared/theme/accent.ts";
 import { apcaContrast, wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 const specimen = (page, id) => page.locator(`[aria-labelledby="label-${id}"]`);
@@ -72,9 +72,9 @@ for (const theme of ["light", "dark"]) {
       spoiler.getByRole("link", { name: "release notes", exact: true }),
     ).toBeVisible();
 
-    for (const color of BUBBLE_COLORS) {
+    for (const color of ACCENTS) {
       await page.locator("html").evaluate((element, color) => {
-        element.dataset.bubbleColor = color;
+        element.dataset.accent = color;
       }, color);
       await page.mouse.move(0, 0);
       const bubble = own.locator("[data-message-action-anchor][data-own]");
@@ -95,10 +95,10 @@ for (const theme of ["light", "dark"]) {
       await expectReadable(
         spoiler.getByRole("link", { name: "release notes", exact: true }),
       );
-      if (color === "neutral") {
+      if (color === "chartreuse") {
         await page.mouse.move(0, 0);
         await own.screenshot({
-          path: info.outputPath(`neutral-message-${theme}.png`),
+          path: info.outputPath(`chartreuse-message-${theme}.png`),
         });
       }
       await expectReadable(

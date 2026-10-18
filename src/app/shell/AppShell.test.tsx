@@ -53,7 +53,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   function Sidebar({ children }: { children: ReactNode }) {
     renders();
     return (
-      <aside aria-label="Channel sidebar" className="shell-sidebar">
+      <aside aria-label="Sidebar" className="shell-sidebar">
         {children}
       </aside>
     );
@@ -67,6 +67,15 @@ it("hides and shows the channel sidebar without re-rendering its content", async
       pluginId: "buzz.channels",
       revision: "1",
       title: "Channels",
+      component: () => null,
+      primary: true,
+    },
+    {
+      id: "inbox",
+      key: "buzz.inbox/inbox",
+      pluginId: "buzz.inbox",
+      revision: "1",
+      title: "Inbox",
       component: () => null,
       primary: true,
     },
@@ -91,19 +100,18 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   );
   const { rerender } = render(shell("buzz.channels/channels"));
   const content = screen.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
   });
   const navigation = document.getElementById("shell-navigation");
   const rendered = renders.mock.calls.length;
-  const row = () =>
-    within(content).getByRole("button", { name: "Multiplayer" });
-  expect(row()).toHaveAttribute("aria-current", "page");
+  const row = () => within(content).getByRole("button", { name: "Inbox" });
+  expect(row()).not.toHaveAttribute("aria-current");
 
   for (const [label, hidden] of [
-    ["Hide Channel sidebar", "true"],
-    ["Show Channel sidebar", "false"],
-    ["Hide Channel sidebar", "true"],
-    ["Show Channel sidebar", "false"],
+    ["Hide sidebar", "true"],
+    ["Show sidebar", "false"],
+    ["Hide sidebar", "true"],
+    ["Show sidebar", "false"],
   ] as const) {
     await userEvent.click(screen.getByRole("button", { name: label }));
     expect(navigation).toHaveAttribute("aria-hidden", hidden);
@@ -112,9 +120,9 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(renders).toHaveBeenCalledTimes(rendered);
 
   // A selection change still reaches the page rows the sidebar renders.
-  rerender(shell("buzz.agents/agents"));
+  rerender(shell("buzz.inbox/inbox"));
   expect(renders.mock.calls.length).toBeGreaterThan(rendered);
-  expect(row()).not.toHaveAttribute("aria-current");
+  expect(row()).toHaveAttribute("aria-current", "page");
 });
 
 it("lets a plugin page hide and show the shell sidebar", async () => {
@@ -241,15 +249,11 @@ it("keeps built-in sidebar controls available before page contributions load", (
       </AppShell>
     </ToastProvider>
   );
-  const { rerender } = render(shell("buzz.channels/channels"));
-  expect(
-    screen.getByRole("button", { name: "Hide Channel sidebar" }),
-  ).toHaveAttribute("aria-expanded", "true");
-
-  rerender(shell("buzz.me/me"));
-  expect(
-    screen.getByRole("button", { name: "Hide Solo sidebar" }),
-  ).toHaveAttribute("aria-expanded", "true");
+  render(shell("buzz.channels/channels"));
+  expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
 });
 
 it("shows a primary plugin page's declared icon beside its nav label", () => {
@@ -428,17 +432,17 @@ it("routes compact header pages through the labelled overflow with main focus ha
       <AppShell
         pages={[
           {
-            id: "me",
-            key: "buzz.me/me",
-            pluginId: "buzz.me",
+            id: "notes",
+            key: "example/notes",
+            pluginId: "example",
             revision: "one",
-            title: "Me",
+            title: "Notes",
             primary: true,
             placement: "topbar",
             component: () => null,
           },
         ]}
-        selected="buzz.me/me"
+        selected="example/notes"
         navigationAttempt=""
         onSelect={onSelect}
         tone="default"
@@ -455,10 +459,10 @@ it("routes compact header pages through the labelled overflow with main focus ha
   ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "More pages" }));
   const nav = await screen.findByRole("navigation", { name: "Header pages" });
-  const me = within(nav).getByRole("button", { name: "Me" });
-  expect(me).toHaveAttribute("aria-current", "page");
-  await userEvent.click(me);
-  expect(onSelect).toHaveBeenCalledWith("buzz.me/me");
+  const notes = within(nav).getByRole("button", { name: "Notes" });
+  expect(notes).toHaveAttribute("aria-current", "page");
+  await userEvent.click(notes);
+  expect(onSelect).toHaveBeenCalledWith("example/notes");
   expect(document.getElementById("main-content")).toHaveFocus();
 });
 
@@ -510,11 +514,11 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
   }
 });
 
-it("uses chrome tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
+it("uses segmented tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
   const current = createServices();
   services = current;
   const onSelect = vi.fn();
-  const pages: RegisteredPage[] = ["Me", "Messages"].map((title) => ({
+  const pages: RegisteredPage[] = ["Notes", "Messages"].map((title) => ({
     id: title,
     key: `example/${title}`,
     pluginId: "example",
@@ -543,34 +547,34 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
   );
   const { rerender } = render(shell("example/Messages"));
   const tabs = screen.getByRole("tablist", { name: "Topbar pages" });
-  expect(tabs.parentElement).toHaveAttribute("data-variant", "chrome");
+  expect(tabs.parentElement).toHaveAttribute("data-variant", "segmented");
   const messages = within(tabs).getByRole("tab", {
     name: /Messages\s*3 unread/,
   });
-  const me = within(tabs).getByRole("tab", { name: /Me\s*3 unread/ });
+  const notes = within(tabs).getByRole("tab", { name: /Notes\s*3 unread/ });
   expect(messages).toHaveAttribute("aria-selected", "true");
   expect(
     screen.getByRole("tabpanel", { name: /Messages\s*3 unread/ }),
   ).toHaveAttribute("id", messages.getAttribute("aria-controls"));
   messages.focus();
   await userEvent.keyboard("{ArrowLeft}");
-  expect(me).toHaveFocus();
+  expect(notes).toHaveFocus();
   expect(onSelect).not.toHaveBeenCalled();
   await userEvent.keyboard("{Enter}");
-  expect(onSelect).toHaveBeenCalledWith("example/Me", { focus: "preserve" });
-  rerender(shell("example/Me"));
-  expect(me).toHaveFocus();
-  expect(me).toHaveAttribute("aria-selected", "true");
+  expect(onSelect).toHaveBeenCalledWith("example/Notes", { focus: "preserve" });
+  rerender(shell("example/Notes"));
+  expect(notes).toHaveFocus();
+  expect(notes).toHaveAttribute("aria-selected", "true");
   expect(
-    screen.getByRole("tabpanel", { name: /Me\s*3 unread/ }),
-  ).toHaveAttribute("id", me.getAttribute("aria-controls"));
+    screen.getByRole("tabpanel", { name: /Notes\s*3 unread/ }),
+  ).toHaveAttribute("id", notes.getAttribute("aria-controls"));
   rerender(shell("settings"));
   expect(within(tabs).getAllByRole("tab", { selected: false })).toHaveLength(2);
   expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
   rerender(
     shell(
-      "example/Me",
-      pages.filter((page) => page.id !== "Me"),
+      "example/Notes",
+      pages.filter((page) => page.id !== "Notes"),
     ),
   );
   expect(within(tabs).getAllByRole("tab", { selected: false })).toHaveLength(1);
@@ -578,7 +582,7 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
   try {
     rerender(
       shell(
-        "example/Me",
+        "example/Notes",
         pages.map((page) => ({
           ...page,
           badge: () => {
@@ -587,14 +591,14 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
         })),
       ),
     );
-    expect(within(tabs).getByRole("tab", { name: "Me" })).toBeEnabled();
+    expect(within(tabs).getByRole("tab", { name: "Notes" })).toBeEnabled();
   } finally {
     error.mockRestore();
   }
 });
 
 it.each([false, true])(
-  "keeps Messages selected for a child without losing exact navigation (compact: %s)",
+  "keeps Inbox in Messages and preserves sidebar visibility across pages (compact: %s)",
   async (compact) => {
     vi.stubGlobal("matchMedia", (media: string) => ({
       media,
@@ -606,9 +610,14 @@ it.each([false, true])(
     services = current;
     const onSelect = vi.fn();
     const entries: RegisteredPage[] = [
-      { key: "buzz.me/me", title: "Me", placement: "topbar" },
       { key: "buzz.channels/channels", title: "Channels", placement: "topbar" },
       { key: "buzz.inbox/inbox", title: "Inbox", placement: "sidebar" },
+      { key: "buzz.bestie/bestie", title: "Bestie", placement: "sidebar" },
+      {
+        key: "fixture.projects/projects",
+        title: "Projects",
+        placement: "sidebar",
+      },
       { key: "example/top", title: "Top", placement: "topbar" },
       { key: "example/tool", title: "Tool", placement: "toolbar" },
     ].map((entry) => ({
@@ -637,49 +646,64 @@ it.each([false, true])(
       </ToastProvider>
     );
     const { rerender } = render(shell("buzz.inbox/inbox"));
-    if (compact)
-      await userEvent.click(
-        screen.getByRole("button", { name: "Show navigation" }),
+    expect(
+      within(screen.getByRole("banner")).getByRole("navigation", {
+        name: "Communities",
+      }),
+    ).toBeVisible();
+    if (!compact)
+      expect(screen.getByRole("button", { name: "Inbox" })).toHaveAttribute(
+        "aria-current",
+        "page",
       );
-    const inbox = within(
-      screen.getByRole("navigation", { name: "Pages" }),
-    ).getByRole("button", { name: "Inbox" });
-    expect(inbox).toHaveAttribute("aria-current", "page");
     if (compact)
       await userEvent.click(screen.getByRole("button", { name: "More pages" }));
     const nav = screen.getByRole("navigation", {
       name: compact ? "Header pages" : "Topbar pages",
     });
-    const role = compact ? "button" : "tab";
-    const messages = within(nav).getByRole(role, { name: "Multiplayer" });
+    const messages = within(nav).getByRole(compact ? "button" : "tab", {
+      name: "Messages",
+    });
+    expect(messages).toHaveAttribute(
+      compact ? "aria-current" : "aria-selected",
+      "true",
+    );
+    const top = within(nav).getByRole(compact ? "button" : "tab", {
+      name: "Top",
+    });
+    if (compact) expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+    await userEvent.click(top);
+    expect(onSelect).toHaveBeenCalledWith(
+      "example/top",
+      ...(compact ? [] : [{ focus: "preserve" }]),
+    );
     if (compact) {
-      expect(messages).toHaveAttribute("aria-current", "true");
-      expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
-      await userEvent.click(messages);
-      expect(onSelect).toHaveBeenCalledExactlyOnceWith(
-        "buzz.channels/channels",
-      );
       expect(document.getElementById("main-content")).toHaveFocus();
       return;
     }
-    expect(messages).toHaveAttribute("aria-selected", "true");
-    const panel = screen.getByRole("tabpanel", { name: "Multiplayer" });
-    expect(panel).toHaveAttribute("id", messages.getAttribute("aria-controls"));
-    expect(panel).toHaveAttribute("aria-labelledby", messages.id);
-    expect(panel).toHaveTextContent("Child content");
-    await userEvent.click(messages);
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith("buzz.channels/channels", {
-      focus: "preserve",
-    });
-    expect(messages).toHaveFocus();
-    onSelect.mockClear();
-    rerender(shell("buzz.channels/channels"));
-    await userEvent.click(messages);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(top).toHaveFocus();
+    expect(
+      within(nav).queryByRole("tab", { name: "Bestie" }),
+    ).not.toBeInTheDocument();
+    rerender(shell("fixture.projects/projects"));
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
+      "false",
+    );
+    rerender(shell("buzz.bestie/bestie"));
+    expect(screen.getByRole("button", { name: "Bestie" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
+      "false",
+    );
     rerender(shell("example/top"));
-    expect(within(nav).getByRole("tab", { name: "Top" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
+    expect(top).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Top" })).toHaveTextContent(
+      "Child content",
     );
     rerender(shell("example/tool"));
     expect(
@@ -689,15 +713,33 @@ it.each([false, true])(
       "aria-current",
       "page",
     );
-    rerender(shell("buzz.me/me"));
-    expect(within(nav).getByRole("tab", { name: "Me" })).toHaveAttribute(
-      "aria-selected",
+    rerender(shell("buzz.inbox/inbox"));
+    expect(messages).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
+    const panel = screen.getByRole("tabpanel", { name: "Messages" });
+    expect(panel).toHaveAttribute("id", messages.getAttribute("aria-controls"));
+    expect(panel).toHaveAttribute("aria-labelledby", messages.id);
+    expect(panel).toHaveTextContent("Child content");
+    await userEvent.click(messages);
+    expect(onSelect).toHaveBeenLastCalledWith("buzz.channels/channels", {
+      focus: "preserve",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    rerender(shell("fixture.projects/projects"));
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
       "true",
     );
+    rerender(shell("buzz.inbox/inbox"));
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeVisible();
     rerender(shell("settings"));
     expect(
       within(nav).queryByRole("tab", { selected: true }),
     ).not.toBeInTheDocument();
+    onSelect.mockClear();
+    rerender(shell("buzz.channels/channels"));
+    await userEvent.click(messages);
+    expect(onSelect).not.toHaveBeenCalled();
     rerender(
       shell(
         "buzz.inbox/inbox",

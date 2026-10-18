@@ -176,13 +176,7 @@ createRoot(root).render(
             session={first}
             working={false}
             selected={undefined}
-            collapsed
-            onToggle={() => {}}
-            draft={false}
-            draftSelected={false}
-            sessions={[]}
             onSelect={() => {}}
-            onNewSession={() => {}}
             onOpenThread={() => {}}
           />
         </section>

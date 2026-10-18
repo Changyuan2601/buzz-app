@@ -347,7 +347,7 @@ it.each([
     });
   },
 );
-it("uses connected description validation without confusing the reserved marker with length", async () => {
+it("caps the description at 1,000 characters", async () => {
   const user = userEvent.setup();
   render(
     <CreateChannelDialog
@@ -359,13 +359,6 @@ it("uses connected description validation without confusing the reserved marker 
   );
   await user.type(screen.getByRole("textbox", { name: "Name" }), "notes");
   const description = screen.getByRole("textbox", { name: "Description" });
-  fireEvent.change(description, {
-    target: { value: "Buzz session (reserved)" },
-  });
-  expect(description).toHaveAccessibleDescription(
-    /that text is used by Buzz for work sessions/,
-  );
-  expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
   fireEvent.change(description, { target: { value: "x".repeat(1001) } });
   expect(description).toHaveValue("x".repeat(1000));
   expect(description).toHaveAccessibleDescription("1,000 of 1,000 characters");

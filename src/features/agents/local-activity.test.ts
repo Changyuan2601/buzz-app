@@ -5,10 +5,10 @@ import {
   localWorkLabel,
   stepText,
 } from "./local-activity";
-import { createAgentActivity } from "../agents/activity";
+import { createAgentActivity } from "./activity";
 import { messageActivity } from "../../bundled/agent-activity/message-activity";
 import { workingAgents } from "../../bundled/channels/working-agents";
-import { threadWorkingAgents } from "../agents/thread-working";
+import { threadWorkingAgents } from "./thread-working";
 
 const scope = "https://relay.test:viewer",
   agent = "a".repeat(64),

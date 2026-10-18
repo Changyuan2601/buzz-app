@@ -95,7 +95,7 @@ function fixture() {
       {(next) => {
         open = next;
         openers.add(next);
-        return <p>Session list</p>;
+        return <p>Chat list</p>;
       }}
     </PageTabs>,
   );
@@ -127,11 +127,11 @@ const side = () => {
 it("keeps the page in view, opening threads in the side pane", () => {
   setThreadPlacementPreference("main");
   const page = fixture();
-  expect(screen.getByText("Session list")).toBeVisible();
+  expect(screen.getByText("Chat list")).toBeVisible();
   expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard"]);
   expect(side()).toEqual(["Root text"]);
-  expect(screen.getByText("Session list")).toBeVisible();
+  expect(screen.getByText("Chat list")).toBeVisible();
   expect(screen.getByText("thread in alpha")).toBeVisible();
 });
 

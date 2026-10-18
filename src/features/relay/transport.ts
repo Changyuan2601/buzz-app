@@ -15,9 +15,9 @@ import type { PrivateRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import {
   communityGitRepository,
-  projectGitHost,
-  type ProjectGit,
-} from "../projects/git";
+  repoGitHost,
+  type RepoGit,
+} from "../repos/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import {
@@ -84,7 +84,7 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
-  readonly projectGit?: ProjectGit;
+  readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
   /** Session-scoped owner proof, not an arbitrary signing capability. */
   readonly authorizeAgentLog?: (
@@ -640,7 +640,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.projectGit === true
       ? {
-          projectGit: projectGitHost((body, signal) =>
+          projectGit: repoGitHost((body, signal) =>
             fetch(`${endpoint}/project-git`, {
               method: "POST",
               credentials: "same-origin",

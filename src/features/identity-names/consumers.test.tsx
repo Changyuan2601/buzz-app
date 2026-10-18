@@ -26,7 +26,6 @@ import type { PresenceStatus } from "../presence/presence";
 import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
 import { SearchResults } from "../../app/shell/SearchResults";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
-import { AgentChoice } from "../sessions/AgentChoice";
 import { MessageRow } from "../messages/MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import { TypingIndicator } from "../messages/TypingIndicator";
@@ -449,13 +448,4 @@ it("scopes search DM labels and message authors to their own conversation", asyn
       name: /hello.*Larry · rcaj, Larry · 04hu · Larry · rcaj/,
     }),
   ).toBeVisible();
-});
-it("keeps a unique selectable agent plain despite a cached namesake", async () => {
-  const f = fixture();
-  const change = vi.fn();
-  render(<AgentChoice session={f.session} value={a} onChange={change} />);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Change agent: Larry" }));
-  await user.click(await screen.findByRole("button", { name: "Larry" }));
-  expect(change).toHaveBeenCalledWith(a);
 });

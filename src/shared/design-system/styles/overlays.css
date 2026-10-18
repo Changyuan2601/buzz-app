@@ -288,7 +288,7 @@
     border-radius: calc((1lh + 2 * var(--space-1)) / 2);
     padding: var(--space-1) var(--space-2);
     background: var(--affordance-prominent);
-    color: var(--text-inverse);
+    color: var(--text-on-prominent);
     box-shadow: var(--shadow-sm);
     overflow-wrap: anywhere;
     opacity: 1;

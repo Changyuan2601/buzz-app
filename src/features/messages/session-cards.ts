@@ -69,7 +69,7 @@ export function separateSessionCards(
     const channel = channels.find((channel) => channel.id === target.channelId);
     if (
       channel
-        ? channel.channelType !== "session"
+        ? channel.channelType !== "solo"
         : !/^Session(?::| ·)\s+/.test(label ?? "")
     )
       return false;

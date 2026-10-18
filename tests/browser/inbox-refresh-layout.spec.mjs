@@ -13,7 +13,7 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-for (const width of [1280, 390, 320]) {
+for (const width of [1280, 280]) {
   test(`Inbox refresh status preserves layout at ${width}px`, async ({
     page,
     app,
@@ -92,7 +92,8 @@ for (const width of [1280, 390, 320]) {
         overflow: "hidden",
         textOverflow: "ellipsis",
       });
-      if (width === 320)
+      // The pane width that truncated beside the former 48px community rail.
+      if (width === 280)
         expect(textStyle.scrollWidth).toBeGreaterThan(textStyle.width);
       const during = await geometry();
       measurements.push({ width, before, during, textStyle });

@@ -9,7 +9,7 @@ import { AgentsService, type AgentCommunities } from "./service";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { memoryStorage } from "./test-fakes";
 import type { AgentsNative } from "./native";
-import { threadWorkingAgents } from "../agents/thread-working";
+import { threadWorkingAgents } from "./thread-working";
 import { messageActivity } from "../../bundled/agent-activity/message-activity";
 import { workingAgents } from "../../bundled/channels/working-agents";
 

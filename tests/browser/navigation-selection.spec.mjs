@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { newChat, openPage } from "./navigation.mjs";
 import { virtuaIdle } from "./timeline.mjs";
 import { holdMenuExit, opened } from "./menu-motion.mjs";
 
@@ -8,8 +8,8 @@ test.use({
   productionBroker: true,
   channelIds: ["alpha", "beta", chatId],
   channelNames: { [chatId]: "Solo conversation" },
-  sessionChannels: [chatId],
-  meChannels: [chatId],
+  soloChannels: [chatId],
+  ownSoloChannels: [chatId],
   historyCounts: { alpha: 1, beta: 0, [chatId]: 0 },
 });
 
@@ -101,11 +101,11 @@ test("navigation menus do not highlight labels while message text and editors re
   await composer.press("Backspace");
   await expect(composer).toHaveText("");
 
-  await openPage(page, "Me");
+  await newChat(page);
   const conversations = page.getByRole("navigation", {
     name: "Solo conversations",
   });
-  const chat = conversations.locator(`[data-me-channel-id="${chatId}"]`);
+  const chat = conversations.locator(`[data-solo-channel-id="${chatId}"]`);
   const chatLabel = chat.getByText("Solo conversation", { exact: true });
   await expectNoSelection(page, chatLabel);
   await chatLabel.click({
@@ -152,11 +152,11 @@ test("context menus appear immediately and retain their source highlight through
   const exit = await holdMenuExit(page);
   try {
     for (const surface of ["channel", "chat"]) {
-      if (surface === "chat") await openPage(page, "Me");
+      if (surface === "chat") await newChat(page);
       const source =
         surface === "channel"
           ? page.locator('[data-channel-id="beta"]')
-          : page.locator(`[data-me-channel-id="${chatId}"]`);
+          : page.locator(`[data-solo-channel-id="${chatId}"]`);
       const name = surface === "channel" ? "Beta" : "Solo conversation";
       const menu = page.getByRole("menu", {
         name: `Actions for ${name}`,
@@ -165,14 +165,11 @@ test("context menus appear immediately and retain their source highlight through
       const frame = source.locator(
         surface === "channel"
           ? "xpath=ancestor::*[@data-channel-sidebar-row]"
-          : "xpath=ancestor::*[@data-session-menu-id]",
+          : "xpath=ancestor::*[@data-solo-menu-id]",
       );
       const background = () =>
         frame.evaluate(
-          (element, channel) =>
-            getComputedStyle(element, channel ? "::before" : null)
-              .backgroundColor,
-          surface === "channel",
+          (element) => getComputedStyle(element, "::before").backgroundColor,
         );
       await source.hover();
       await expect.poll(background).not.toBe("rgba(0, 0, 0, 0)");

@@ -91,7 +91,7 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
-  /** Open a new Solo session with one of the viewer's agents. Without it,
+  /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
@@ -114,7 +114,7 @@ export function SearchResults({
             (!channel.readOnly &&
               (channel.channelType === "stream" ||
                 channel.channelType === "forum" ||
-                channel.channelType === "session"))) &&
+                channel.channelType === "solo"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),
@@ -286,8 +286,8 @@ export function SearchResults({
     peopleActive,
   );
   useMentionArchives(session, showAuthorPicker || peopleActive);
-  // The viewer's own agents open a new session, not a direct message: the
-  // same agents the new-session composer accepts. Their earlier sessions
+  // The viewer's own agents open a new chat, not a direct message: the
+  // same agents the new-chat composer accepts. Their earlier chats
   // still show as conversations.
   const sessionSearch = !!openAgentSession && peopleActive;
   const ownAgents = useAgentChoices(session, sessionSearch, sessionSearch);
@@ -611,7 +611,7 @@ export function SearchResults({
     ),
     channelRank,
   );
-  // A DM with one of the viewer's own agents gives way to its "New session"
+  // A DM with one of the viewer's own agents gives way to its "New chat"
   // row, but only when that row shows; the DM stays in the sidebar. Removing
   // DM-listed people below only lifts the rest, so a row shown here still
   // shows in the Agents group.
@@ -682,8 +682,8 @@ export function SearchResults({
           ? "Public channel · not joined"
           : channel.channelType === "dm"
             ? "Direct message"
-            : channel.channelType === "session"
-              ? "Session"
+            : channel.channelType === "solo"
+              ? "Chat"
               : "Conversation",
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
@@ -769,7 +769,7 @@ export function SearchResults({
       detail: [
         person.username && `@${person.username}`,
         newSession
-          ? "New session"
+          ? "New chat"
           : dm
             ? "Direct message"
             : "Start a direct message",

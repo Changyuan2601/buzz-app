@@ -96,10 +96,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect.poll(order).toEqual(alphaOrder);
   await page.unroute("**/sidebar-sort");
   // Error ownership is session-scoped, not coupled to the dismissed menu/page.
-  await page
-    .getByRole("button", { name: "Agents", exact: true })
-    .first()
-    .click();
+  await page.getByRole("tab", { name: "Agents", exact: true }).first().click();
   await expect(sidebar).toBeVisible();
   await expect(error).toBeVisible();
   async function confirmedSort(action) {
@@ -393,9 +390,12 @@ test.describe("cold sidebar presentation", () => {
     try {
       await page.goto(app.origin);
       await decoding;
-      await expect(sidebar.getByRole("status")).toHaveText(
-        "Loading your sidebar…",
-      );
+      // Solo history shares this scrollport and reports its own loading.
+      await expect(
+        sidebar
+          .getByRole("status")
+          .filter({ hasText: "Loading your sidebar…" }),
+      ).toBeVisible();
       await expect(sidebar.locator("[data-channel-id]")).toHaveCount(0);
       await expect(
         page.getByRole("textbox", { name: "Message #Alpha", exact: true }),

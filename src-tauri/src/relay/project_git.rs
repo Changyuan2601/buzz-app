@@ -52,7 +52,7 @@ fn git_hash(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Mirrors `parseGitRead` in `src/features/projects/git.ts`.
+/// Mirrors `parseGitRead` in `src/features/repos/git.ts`.
 fn parse_read(read: GitRead) -> Result<GitRead> {
     let dtag = read.dtag.as_bytes();
     let valid = hex_key(&read.owner.to_ascii_lowercase())

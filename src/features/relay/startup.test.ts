@@ -800,16 +800,13 @@ describe("device-local startup", () => {
     const fresh = deferred<typeof preferences>();
     const sort = vi.fn(),
       mute = vi.fn();
-    const store = createSidebarPreferencesStore(
-      () => fresh.promise,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      mute,
-      sort,
-      disk(),
-    );
+    const store = createSidebarPreferencesStore({
+      read: () => fresh.promise,
+      available: true,
+      writeMute: mute,
+      writeSort: sort,
+      persistence: disk(),
+    });
     try {
       await store.ready;
       expect(store.queries.snapshot()).toMatchObject({

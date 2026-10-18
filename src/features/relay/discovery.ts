@@ -1,5 +1,5 @@
 import { channelTtl, channelVisibility } from "./channel-details-protocol";
-import { sessionMetadata } from "../sessions/metadata";
+import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -12,12 +12,12 @@ export function metadataName(event: RelayEvent): string | undefined {
   return tag(event, "name") || undefined;
 }
 
-/** The canonical session identity, independent of membership or presentation labels. */
-export function sessionChannelMetadata(event: RelayEvent): boolean {
+/** A Solo chat: a private stream carrying the Solo label. Never access. */
+export function soloChannelMetadata(event: RelayEvent): boolean {
   return (
     tag(event, "t") === "stream" &&
     event.tags.some(([name]) => name === "private") &&
-    sessionMetadata(tag(event, "about")) !== undefined
+    soloLabels(channelIdentity(event).labels)
   );
 }
 
@@ -200,9 +200,9 @@ export class DiscoveryState {
     const event = this.metadata.get(id);
     return !!event && event.tags.some(([name]) => name === "private");
   }
-  isSession(id: string): boolean {
+  isSolo(id: string): boolean {
     const event = this.metadata.get(id);
-    return !!event && sessionChannelMetadata(event);
+    return !!event && soloChannelMetadata(event);
   }
   get(id: string): ChannelSummary | undefined {
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
@@ -210,8 +210,8 @@ export class DiscoveryState {
     // The relay tags a system roster too, so a roster that arrives before its
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
-    const type = this.isSession(id)
-      ? "session"
+    const type = this.isSolo(id)
+      ? "solo"
       : event
         ? tag(event, "t")
         : roster && hasTag(roster, "t", "system")
@@ -222,10 +222,9 @@ export class DiscoveryState {
       type === "forum" ||
       type === "dm" ||
       type === "system" ||
-      (type === "session" && this.isSession(id))
+      (type === "solo" && this.isSolo(id))
         ? type
         : undefined;
-    const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
     return {
@@ -238,9 +237,7 @@ export class DiscoveryState {
       ...(event
         ? {
             visibility: channelVisibility(event),
-            ...(channelType !== "session"
-              ? { description: tag(event, "about") ?? "" }
-              : {}),
+            description: tag(event, "about") ?? "",
           }
         : {}),
       members: Object.freeze(
@@ -257,15 +254,8 @@ export class DiscoveryState {
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(channelType ? { channelType } : {}),
-      ...(channelType === "session" && event
-        ? {
-            updatedAt: event.created_at,
-            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-              parentId ?? "",
-            )
-              ? { parentChannelId: parentId }
-              : {}),
-          }
+      ...(channelType === "solo" && event
+        ? { updatedAt: event.created_at }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),

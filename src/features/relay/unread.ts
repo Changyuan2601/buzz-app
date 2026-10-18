@@ -916,7 +916,7 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const session = channel.channelType === "session";
+        const session = channel.channelType === "solo";
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return entry.event.pubkey !== viewer && !!category(entry, dm);

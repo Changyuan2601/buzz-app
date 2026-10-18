@@ -145,7 +145,7 @@ test.describe("public channel preview", () => {
     ).toBeVisible();
     await expect(
       page
-        .getByRole("complementary", { name: "Channel sidebar" })
+        .getByRole("complementary", { name: "Sidebar", exact: true })
         .getByRole("button", { name: "open", exact: true }),
     ).toHaveCount(0);
   });

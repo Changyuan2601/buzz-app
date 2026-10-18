@@ -218,7 +218,7 @@ test("section labels fade on overflow and recover when widened", async ({
   );
   await open(page, app);
   const sidebar = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
     exact: true,
   });
   const row = sidebar.locator('[data-channel-id="beta"]');

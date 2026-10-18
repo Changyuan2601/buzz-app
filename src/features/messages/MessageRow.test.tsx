@@ -2260,7 +2260,7 @@ it.each(["", "Please review this.\n\n"])(
         name: "Open Session: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
-      expect(card.closest("[data-session-cards]")).not.toBeNull();
+      expect(card.closest("[data-solo-cards]")).not.toBeNull();
       expect(card.closest("[class*=messageBubble]")).toBeNull();
       if (caption) {
         if (!bubble) throw new Error("Caption bubble missing");

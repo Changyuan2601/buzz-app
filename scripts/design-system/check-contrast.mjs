@@ -62,7 +62,11 @@ const ACCEPTED_AWAY_PAIRS = new Set([
 const acceptedAwayMeasurements = new Map();
 
 /** Roles measured at the meta target rather than the body target. */
-const META_ROLES = new Set(["--text-tertiary", "--text-metadata"]);
+const META_ROLES = new Set([
+  "--text-tertiary",
+  "--text-metadata",
+  "--text-row-metadata",
+]);
 
 /**
  * Neutral surfaces any text may sit on.
@@ -132,6 +136,15 @@ const PAIRS = [
     "--bg-app",
   ]),
   ["--text-standard", "--affordance-popover-selected"],
+  ...["--affordance-chrome", "--affordance-chrome-hover"].flatMap((fill) => [
+    ["--text-chrome-subtle", fill],
+    ["--text-standard", fill],
+  ]),
+  ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
+    ["--text-row", fill],
+    ["--text-row-subtle", fill],
+    ["--text-row-metadata", fill],
+  ]),
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -145,15 +158,13 @@ const PAIRS = [
     `--affordance-${state}`,
   ]),
   ...["prominent", "prominent-hover", "prominent-pressed"].map((state) => [
-    "--text-inverse",
+    "--text-on-prominent",
     `--affordance-${state}`,
   ]),
   ...["danger", "danger-hover", "danger-pressed"].map((state) => [
     "--text-danger",
     `--affordance-${state}`,
   ]),
-  ["--text-on-accent", "--purple-9"],
-  ["--text-on-accent", "--purple-10"],
   // `bg-neutral-11` with `text-neutral-1` — the inverse pair, written as steps
   // now that the roles are gone. Still measured as a pair, because the text
   // follows the fill: move the fill and this has to be re-measured.
@@ -175,6 +186,8 @@ const BOUNDARY_SURFACES = [
   "--surface-popover",
 ];
 const BOUNDARY_ROLES = [
+  // Dots and insertion lines in the prominent color stand alone on a surface.
+  "--affordance-prominent-mark",
   "--border-danger",
   "--border-warning",
   "--status-online",
@@ -198,27 +211,45 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
+const DEFAULT_ACCENT = "chartreuse";
+/** Exceptions are approved against the neutral role layer. */
+const BASELINE_LEVEL = "neutral";
 
 /**
  * Collects declarations per mode, honouring source order so a later block wins
  * exactly as the cascade would. `.dark` inherits `:root` and overrides it, so
  * dark is light-then-dark rather than dark alone.
  */
-function declarationsByMode() {
+function declarationsByMode(
+  source = css,
+  accent = DEFAULT_ACCENT,
+  level = BASELINE_LEVEL,
+) {
   const light = new Map();
   const dark = new Map();
-  // Split on top-level selector blocks and track which we are inside.
-  const blocks = css.matchAll(/(:root|\.dark)\s*\{([^}]*)\}/g);
-  for (const [, selector, body] of blocks) {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Top-level mode owners in cascade order, plus the selected accent family
+  // and color level. The neutral level is the role layer without overrides.
+  for (const [, selector, body] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const owner = selector.trim().split(/,\s*/).at(-1);
+    if (
+      owner !== ":root" &&
+      owner !== ".dark" &&
+      !/\[data-(?:accent|color-level)="/.test(selector)
+    )
+      continue;
+    const family = /\[data-accent="([a-z]+)"\]/.exec(selector)?.[1];
+    if (family && family !== accent) continue;
+    const blockLevels = [
+      ...selector.matchAll(/\[data-color-level="([a-z]+)"\]/g),
+    ].map((match) => match[1]);
+    if (blockLevels.length && !blockLevels.includes(level)) continue;
+    // Dark starts from the light value and is overridden by dark owners.
+    const isDark =
+      owner.endsWith(".dark") || selector.includes('[data-color-mode="dark"]');
     for (const [, name, value] of body.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
-      const v = value.trim();
-      if (selector === ":root") {
-        light.set(name, v);
-        // Dark starts from the light value and is overridden below.
-        dark.set(name, v);
-      } else {
-        dark.set(name, v);
-      }
+      if (!isDark) light.set(name, value.trim());
+      dark.set(name, value.trim());
     }
   }
   return { light, dark };
@@ -234,7 +265,6 @@ function resolve(map, name, depth = 0) {
   return /^#[0-9a-fA-F]{3,6}$/.test(value) ? value : null;
 }
 
-const modes = declarationsByMode();
 const failures = [];
 const boundaryFailures = [];
 const skipped = [];
@@ -245,7 +275,13 @@ const skipped = [];
  */
 const claimedExceptions = new Set();
 
-for (const [mode, map] of Object.entries(modes)) {
+/**
+ * The Away badge is approved below 3:1 on the neutral surfaces listed above.
+ * On a color level it may sit on accent surfaces instead; it is accepted
+ * there only when it is no fainter than the faintest approved neutral pair.
+ */
+const levelAwayMeasurements = new Map();
+function audit(mode, map, baseline) {
   const check = (textRole, surfaceRole) => {
     const text = resolve(map, textRole);
     const surface = resolve(map, surfaceRole);
@@ -293,6 +329,21 @@ for (const [mode, map] of Object.entries(modes)) {
       `${mode}: --border-floating-control on --surface-popover — ${floatingBoundary === null ? "unresolved color" : `${floatingBoundary.toFixed(3)}:1`}, needs 3:1`,
     );
   }
+  // A step slider's selected track meets the unfilled track, and its thumb
+  // sits on both the track and panel. These are standalone marks, not button
+  // fills with paired ink; keyboard focus is not their resting boundary.
+  for (const surfaceRole of [
+    "--affordance-subtle-pressed",
+    "--surface-panel",
+  ]) {
+    const mark = resolve(map, "--affordance-prominent-mark");
+    const surface = resolve(map, surfaceRole);
+    const ratio = mark && surface ? wcagRatio(mark, surface) : null;
+    if (ratio === null || ratio < 3)
+      boundaryFailures.push(
+        `${mode}: step-slider --affordance-prominent-mark on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+      );
+  }
   for (const role of BOUNDARY_ROLES) {
     const surfaces =
       role.startsWith("--status-avatar-") || role === "--status-away"
@@ -317,6 +368,16 @@ for (const [mode, map] of Object.entries(modes)) {
         acceptedAwayMeasurements.set(pair, ratio);
         continue;
       }
+      if (
+        !baseline &&
+        role === "--status-away" &&
+        ratio !== null &&
+        ratio < 3 &&
+        ratio >= approvedAwayFloor
+      ) {
+        levelAwayMeasurements.set(pair, ratio);
+        continue;
+      }
       if (ratio === null || ratio < 3) {
         boundaryFailures.push(
           `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
@@ -325,6 +386,208 @@ for (const [mode, map] of Object.entries(modes)) {
     }
   }
 }
+
+for (const [mode, map] of Object.entries(declarationsByMode()))
+  audit(mode, map, true);
+const approvedAwayFloor = Math.min(...acceptedAwayMeasurements.values());
+const LEVELS = [
+  ...new Set(
+    [...css.matchAll(/\[data-color-level="([a-z]+)"\]/g)].map((m) => m[1]),
+  ),
+];
+
+// Every accent family must work, not only the default. Each family's text,
+// ink and lines are measured where they appear; an unresolved value fails
+// rather than silently falling outside the opaque-color audit.
+const accentFamilies = [
+  ...new Set(
+    [...css.matchAll(/\[data-accent="([a-z]+)"\]/g)].map((match) => match[1]),
+  ),
+];
+const ACCENT_PAIRS = [
+  ...["", "-hover", "-pressed"].map((state) => [
+    "--text-on-accent",
+    `--affordance-accent-prominent${state}`,
+  ]),
+  ["--text-message-own", "--surface-message-own"],
+  ["--text-message-link-own", "--surface-message-own"],
+  ...["", "-hover", "-pressed"].map((state) => [
+    "--text-on-prominent",
+    `--affordance-prominent${state}`,
+  ]),
+  ...[...SURFACES, "--affordance-accent", "--affordance-accent-hover"].map(
+    (surface) => ["--text-accent", surface],
+  ),
+  ...["--affordance-accent", "--affordance-accent-hover"].map((surface) => [
+    "--text-standard",
+    surface,
+  ]),
+];
+for (const family of accentFamilies) {
+  for (const level of [BASELINE_LEVEL, ...LEVELS]) {
+    if (level !== BASELINE_LEVEL || family !== DEFAULT_ACCENT)
+      for (const [mode, map] of Object.entries(
+        declarationsByMode(css, family, level),
+      ))
+        audit(`${family}/${level}/${mode}`, map, false);
+    for (const [mode, map] of Object.entries(
+      declarationsByMode(css, family, level),
+    )) {
+      for (const [textRole, surfaceRole] of ACCENT_PAIRS) {
+        const text = resolve(map, textRole);
+        const surface = resolve(map, surfaceRole);
+        if (!text || !surface) {
+          boundaryFailures.push(
+            `${family}/${level}/${mode}: unresolved accent pair ${textRole} on ${surfaceRole}`,
+          );
+          continue;
+        }
+        const lc = Math.abs(apcaContrast(text, surface));
+        const wcag = wcagRatio(text, surface);
+        if (lc < TARGET_BODY || wcag < 4.5)
+          failures.push({
+            mode: `${family}/${level}/${mode}`,
+            textRole,
+            text,
+            surfaceRole,
+            surface,
+            lc,
+            target: TARGET_BODY,
+            wcag,
+          });
+      }
+      for (const surfaceRole of BOUNDARY_SURFACES) {
+        const border = resolve(map, "--border-accent");
+        const surface = resolve(map, surfaceRole);
+        const ratio = border && surface ? wcagRatio(border, surface) : null;
+        if (ratio === null || ratio < 3)
+          boundaryFailures.push(
+            `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+          );
+      }
+    }
+  }
+}
+
+// Gray never sits on an accent ground. A role that stays gray while the
+// background beneath it turned accent is a missing color group, not a style
+// to patch locally. Near-black and near-white ink are not gray.
+function oklch(hex) {
+  const [r, g, b] = [1, 3, 5]
+    .map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  return {
+    lightness: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    chroma: Math.hypot(a, bb),
+  };
+}
+const isAccent = (hex) => oklch(hex).chroma >= 0.02;
+const isGray = (hex) => {
+  const { lightness, chroma } = oklch(hex);
+  return chroma < 0.02 && lightness > 0.25 && lightness < 0.9;
+};
+const on = (foregrounds, grounds) =>
+  grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
+const GROUNDED = [
+  ...on(
+    [
+      "--text-standard",
+      "--text-row",
+      "--text-row-subtle",
+      "--text-row-metadata",
+    ],
+    [
+      "--affordance-row-hover",
+      "--affordance-panel-hover",
+      "--affordance-navigation-quiet",
+      "--affordance-selected",
+    ],
+  ),
+  ...on(
+    ["--text-standard"],
+    [
+      "--affordance-floating-hover",
+      "--affordance-popover-selected",
+      "--affordance-floating-selected",
+    ],
+  ),
+  ...on(
+    [
+      "--text-standard",
+      "--text-subtle",
+      "--text-metadata",
+      "--border-prominent",
+      "--border-floating-control",
+    ],
+    [
+      "--affordance-subtle",
+      "--affordance-subtle-hover",
+      "--affordance-subtle-pressed",
+      "--affordance-floating-control",
+      "--affordance-floating-control-hover",
+    ],
+  ),
+  ...on(
+    // Only ink-strength icons and the chrome capsule sit directly on the shell.
+    ["--text-standard", "--texture-dots-color", "--affordance-chrome"],
+    ["--bg-app"],
+  ),
+  ...on(
+    ["--text-standard", "--text-chrome-subtle"],
+    [
+      "--affordance-chrome",
+      "--affordance-chrome-hover",
+      "--bg-chrome-selected",
+    ],
+  ),
+  ...on(
+    [
+      "--text-standard",
+      "--text-subtle",
+      "--text-metadata",
+      "--text-navigation",
+      "--text-unavailable",
+      "--border-standard",
+      "--border-prominent",
+      "--border-message-thread",
+      "--scrollbar-thumb",
+    ],
+    [
+      "--surface-base",
+      "--surface-panel",
+      "--surface-popover",
+      "--surface-inset",
+      "--surface-message",
+    ],
+  ),
+  ...on(
+    ["--text-message-own", "--text-message-link-own"],
+    ["--surface-message-own"],
+  ),
+];
+const grayOnAccent = [];
+for (const family of accentFamilies)
+  for (const level of [BASELINE_LEVEL, ...LEVELS])
+    for (const [mode, map] of Object.entries(
+      declarationsByMode(css, family, level),
+    ))
+      for (const [fgRole, groundRole] of GROUNDED) {
+        const fg = resolve(map, fgRole);
+        const ground = resolve(map, groundRole);
+        if (fg && ground && isAccent(ground) && isGray(fg))
+          grayOnAccent.push(
+            `${family}/${level}/${mode}: ${fgRole} ${fg} is gray on ${groundRole} ${ground}`,
+          );
+      }
+if (grayOnAccent.length)
+  boundaryFailures.push(
+    `Gray on an accent ground — move the role into the color group of its ground:\n    ${grayOnAccent.join("\n    ")}`,
+  );
 
 // Guard the maths itself: if these drift, every verdict above is wrong.
 const REFERENCE = [
@@ -350,6 +613,12 @@ if (skipped.length > 0) {
 for (const [pair, ratio] of acceptedAwayMeasurements) {
   console.log(
     `  (accepted Away contrast) ${pair}: ${ratio.toFixed(3)}:1 < 3:1 — approved unoutlined badge, not a contrast pass`,
+  );
+}
+if (levelAwayMeasurements.size) {
+  const faintest = Math.min(...levelAwayMeasurements.values());
+  console.log(
+    `  (Away at color levels) ${levelAwayMeasurements.size} pairs below 3:1 on accent surfaces, none fainter than the approved neutral floor (${faintest.toFixed(3)}:1 ≥ ${approvedAwayFloor.toFixed(3)}:1)`,
   );
 }
 const staleAwayPairs = [...ACCEPTED_AWAY_PAIRS].filter(

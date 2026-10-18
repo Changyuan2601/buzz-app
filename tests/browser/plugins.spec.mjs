@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { newChat, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { connect } from "node:net";
 import { once } from "node:events";
@@ -150,12 +150,12 @@ test("companion remains usable while Channels connection is pending", async ({
 
 // The page promises companion placement even before a conversation exists.
 // Real shell placement and plugin disposal cannot be established by a hook test.
-test("Me places companion plugins in its new-conversation state and removes disabled cards", async ({
+test("A new Solo chat places companion plugins in its draft state and removes disabled cards", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Me");
+  await newChat(page);
   await expect(
     page.getByRole("heading", { name: "New chat", exact: true }),
   ).toBeVisible();
@@ -169,7 +169,7 @@ test("Me places companion plugins in its new-conversation state and removes disa
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
-  await openPage(page, "Me");
+  await newChat(page);
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(button(page, "Notes")).toHaveCount(0);
 });

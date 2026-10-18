@@ -886,7 +886,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: grid;
   place-items: center;
   background: var(--affordance-prominent);
-  color: var(--text-inverse);
+  color: var(--text-on-prominent);
   opacity: 0;
 }
 .mentionRecipients
@@ -1614,13 +1614,13 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   vertical-align: middle;
   accent-color: var(--affordance-prominent);
 }
-.text a:not([data-session-link]) {
+.text a:not([data-solo-link]) {
   color: var(--text-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.text a:not([data-session-link]):hover {
+.text a:not([data-solo-link]):hover {
   text-decoration-thickness: 2px;
 }
 .imageAlt {
@@ -2666,7 +2666,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
-.messageBubble .text :is(a, [data-mention-kind]):not([data-session-link]) {
+.messageBubble .text :is(a, [data-mention-kind]):not([data-solo-link]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2706,7 +2706,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   max-width: 100%;
   margin-block: 0;
 }
-.messageAttachments[data-session-cards] + .messageBubble {
+.messageAttachments[data-solo-cards] + .messageBubble {
   margin-top: var(--space-half);
 }
 .messageAttachments .imageUnavailable {
@@ -3138,7 +3138,7 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSessionCards {
+.composerSoloCards {
   container-type: inline-size;
   container-name: message-row;
   display: flex;
@@ -3146,13 +3146,13 @@ html[data-keyboard-navigation]
   gap: var(--space-2);
   min-width: 0;
 }
-.composerSessionCard {
+.composerSoloCard {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSessionCardContent {
+.composerSoloCardContent {
   min-width: 0;
   max-width: calc(100% - var(--size-control));
 }

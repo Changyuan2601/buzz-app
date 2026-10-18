@@ -1,4 +1,4 @@
-import { localActivity, localWorkLabel } from "../agents/local-activity";
+import { localActivity, localWorkLabel } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { activityTranscript, type ToolItem } from "./activity-transcript";

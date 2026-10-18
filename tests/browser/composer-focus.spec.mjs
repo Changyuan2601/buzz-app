@@ -169,7 +169,7 @@ test.describe("text field focus appearance", () => {
   test.use({
     historyCounts: { alpha: 1, beta: 0 },
     productionBroker: false,
-    sessionWriteKinds: [9, 9000, 9007],
+    channelWriteKinds: [9, 9000, 9007],
   });
 
   for (const mode of ["light", "dark"]) {

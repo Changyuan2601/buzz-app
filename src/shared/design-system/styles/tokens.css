@@ -288,16 +288,8 @@
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
   --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
-  /* Reference hues kept in OKLCH, with lightness lowered only to meet 4.5:1
-     for white ink. Chroma is preserved up to the sRGB gamut boundary. */
-  --bubble-ink: #ffffff;
   --bubble-neutral: #e9e9ea;
   --bubble-received: #f3f3f4;
-  --bubble-blue: #0077db;
-  --bubble-green: #008934;
-  --bubble-orange: #c95100;
-  --bubble-pink: #d33785;
-  --bubble-lilac: #a94ad8;
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
   --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
   --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
@@ -425,11 +417,6 @@
   --neutral-quiet-hover: #2e2e2e;
   --bubble-neutral: #2e2e2e;
   --bubble-received: #292929;
-  --bubble-blue: #0077db;
-  --bubble-green: #008934;
-  --bubble-orange: #c95100;
-  --bubble-pink: #d33785;
-  --bubble-lilac: #a94ad8;
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -547,13 +534,9 @@
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --surface-message: var(--bubble-received);
+  --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
-  --surface-message-own: var(--bubble-neutral);
-  --surface-message-action: var(--neutral-12);
-  --surface-message-action-hover: var(--neutral-11);
-  --surface-message-action-pressed: var(--neutral-action-pressed);
-  --text-message-action: var(--neutral-1);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-standard-text);
@@ -574,7 +557,6 @@
   --status-offline: var(--neutral-8);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
-  --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
@@ -592,11 +574,27 @@
   --affordance-prominent: var(--neutral-12);
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
+  /* Ink on a prominent fill, and a prominent mark standing alone on a
+     surface (dots, insertion lines), which must stay visible by itself. */
+  --text-on-prominent: var(--text-inverse);
+  --affordance-prominent-mark: var(--affordance-prominent);
   --affordance-subtle: var(--neutral-2);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
   --affordance-backdrop-hover: var(--backdrop-hover-fill);
   --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
   --affordance-subtle-pressed: var(--neutral-4);
+  /* Rows: hover and the ink on hovered or selected rows. Distinct from quiet
+     control fills, so rows can take color before controls do. */
+  --affordance-row-hover: var(--affordance-subtle);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  /* Primary navigation text on a hovered or selected row. */
+  --text-row: var(--text-navigation);
+  /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
+     They belong to the shell's color group, not to quiet controls. */
+  --affordance-chrome: var(--affordance-subtle);
+  --affordance-chrome-hover: var(--affordance-subtle-hover);
+  --text-chrome-subtle: var(--text-subtle);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-panel-hover: var(--neutral-2);
   --affordance-floating-hover: var(--neutral-2);
@@ -613,23 +611,14 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
-  --affordance-accent: var(--purple-3);
-  --affordance-accent-hover: var(--purple-4);
-  --affordance-accent-prominent: var(--purple-9);
-  --affordance-accent-prominent-hover: var(--purple-10);
-  --border-accent: var(--purple-8);
 }
 
 :root[data-color-mode="dark"],
 .dark {
   --surface-message: var(--bubble-received);
+  --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
-  --surface-message-own: var(--bubble-neutral);
-  --surface-message-action: var(--neutral-12);
-  --surface-message-action-hover: var(--neutral-11);
-  --surface-message-action-pressed: var(--neutral-action-pressed);
-  --text-message-action: var(--neutral-1);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
@@ -657,7 +646,6 @@
   --status-offline: var(--neutral-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
-  --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
@@ -675,11 +663,25 @@
   --affordance-prominent: var(--neutral-12);
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
+  /* Ink on a prominent fill, and a prominent mark standing alone on a
+     surface (dots, insertion lines), which must stay visible by itself. */
+  --text-on-prominent: var(--text-inverse);
+  --affordance-prominent-mark: var(--affordance-prominent);
   --affordance-subtle: var(--neutral-4);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
   --affordance-backdrop-hover: var(--backdrop-hover-fill);
   --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
   --affordance-subtle-pressed: var(--neutral-5);
+  --affordance-row-hover: var(--affordance-subtle);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  /* Primary navigation text on a hovered or selected row. */
+  --text-row: var(--text-navigation);
+  /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
+     They belong to the shell's color group, not to quiet controls. */
+  --affordance-chrome: var(--affordance-subtle);
+  --affordance-chrome-hover: var(--affordance-subtle-hover);
+  --text-chrome-subtle: var(--text-subtle);
   --affordance-panel-hover: var(--neutral-4);
   --affordance-floating-hover: var(--neutral-5);
   --affordance-popover-selected: var(--neutral-6);
@@ -695,11 +697,6 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
-  --affordance-accent: var(--purple-3);
-  --affordance-accent-hover: var(--purple-4);
-  --affordance-accent-prominent: var(--purple-9);
-  --affordance-accent-prominent-hover: var(--purple-10);
-  --border-accent: var(--purple-8);
 }
 
 /* ============================================================
@@ -822,8 +819,6 @@
   --easing-enter: var(--ease-enter);
   --easing-settle: var(--ease-settle);
 
-  --text-on-accent: #ffffff;
-
   /* `text-on-inverse` was `var(--neutral-1)` in both modes and went with
      `bg-inverse`; its two call sites pair `bg-neutral-11` with
      `text-neutral-1` directly. It is listed here rather than silently
@@ -884,19 +879,495 @@
 }
 
 /* ============================================================
+   ACCENT
+   One device-local choice picks an accent family; a second picks
+   how much of the app it colors. A family is a twelve-step ramp per
+   mode, with the same step contract as the palette above (1-2 app
+   and subtle backgrounds, 3-5 tints, 6-8 lines, 9-10 strong fill,
+   11-12 text), plus the ink for controls on its strong fill (contrast),
+   the ink for reading text on it, a pressed fill and its link color. The same step number works in both modes
+   because each mode's ramp is authored for its own surfaces.
+
+   Mode owners below bind --accent-1...12 to the half matching them,
+   so opposite-mode previews and media portals stay correct. Roles
+   then stack on those steps. Swatches that preview a family carry
+   data-color-mode, never borrow an already-resolved role.
+
+   Chartreuse is Buzz's brand color and the default. Its strong fill
+   is the brand value (#d7d72e) in both modes and takes black ink; text
+   on chartreuse surfaces and messages uses the darkest olive step.
+   Its light-mode text steps down to olive, because the brand value
+   cannot be read on white.
+   ============================================================ */
+
+[data-accent="chartreuse"],
+:root {
+  --accent-1-light: #fefdf4;
+  --accent-2-light: #fbfbeb;
+  --accent-3-light: #f5f4da;
+  --accent-4-light: #efeec8;
+  --accent-5-light: #e8e6b4;
+  --accent-6-light: #e0dd9f;
+  --accent-7-light: #d4d086;
+  --accent-8-light: #c4bf68;
+  --accent-9-light: #d7d72e;
+  --accent-10-light: #cccc1e;
+  --accent-11-light: #575602;
+  --accent-12-light: #303005;
+  --accent-contrast-light: #000000;
+  --accent-ink-light: #303005;
+  --accent-pressed-light: #c3c315;
+  --accent-link-light: #575602;
+  --accent-link-hover-light: #f5f4da;
+  --accent-1-dark: #10100a;
+  --accent-2-dark: #17170c;
+  --accent-3-dark: #23230b;
+  --accent-4-dark: #2d2d08;
+  --accent-5-dark: #383802;
+  --accent-6-dark: #464601;
+  --accent-7-dark: #575602;
+  --accent-8-dark: #6e6e01;
+  --accent-9-dark: #d7d72e;
+  --accent-10-dark: #cccc1e;
+  --accent-11-dark: #e6e76a;
+  --accent-12-dark: #f4f7c0;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #303005;
+  --accent-pressed-dark: #c3c315;
+  --accent-link-dark: #e6e76a;
+  --accent-link-hover-dark: #23230b;
+}
+:root[data-accent="flame"],
+[data-accent="flame"] {
+  --accent-1-light: #fefcfc;
+  --accent-2-light: #fff8f6;
+  --accent-3-light: #ffeeea;
+  --accent-4-light: #ffe4de;
+  --accent-5-light: #fedad0;
+  --accent-6-light: #ffccbf;
+  --accent-7-light: #feb9a7;
+  --accent-8-light: #fe9d85;
+  --accent-9-light: #d93a0c;
+  --accent-10-light: #c93202;
+  --accent-11-light: #a4351a;
+  --accent-12-light: #4f1b0f;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #b92d01;
+  --accent-link-light: #a4351a;
+  --accent-link-hover-light: #ffeeea;
+  --accent-1-dark: #140e0c;
+  --accent-2-dark: #1d1311;
+  --accent-3-dark: #301c16;
+  --accent-4-dark: #40221b;
+  --accent-5-dark: #502920;
+  --accent-6-dark: #633327;
+  --accent-7-dark: #7c3f30;
+  --accent-8-dark: #9f4e3a;
+  --accent-9-dark: #d93a0c;
+  --accent-10-dark: #c93202;
+  --accent-11-dark: #ffaf9a;
+  --accent-12-dark: #ffebe6;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #b92d01;
+  --accent-link-dark: #ffaf9a;
+  --accent-link-hover-dark: #301c16;
+}
+:root[data-accent="magenta"],
+[data-accent="magenta"] {
+  --accent-1-light: #fefcfd;
+  --accent-2-light: #fef7fa;
+  --accent-3-light: #feedf3;
+  --accent-4-light: #ffe3ec;
+  --accent-5-light: #ffd6e4;
+  --accent-6-light: #ffc7db;
+  --accent-7-light: #ffb2cf;
+  --accent-8-light: #fe94be;
+  --accent-9-light: #cc1f7a;
+  --accent-10-light: #bf0570;
+  --accent-11-light: #a32e65;
+  --accent-12-light: #4d172f;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #af0465;
+  --accent-link-light: #a32e65;
+  --accent-link-hover-light: #feedf3;
+  --accent-1-dark: #130e10;
+  --accent-2-dark: #1d1316;
+  --accent-3-dark: #301a22;
+  --accent-4-dark: #3f202c;
+  --accent-5-dark: #4f2637;
+  --accent-6-dark: #622f44;
+  --accent-7-dark: #7a3a55;
+  --accent-8-dark: #9d486c;
+  --accent-9-dark: #cc1f7a;
+  --accent-10-dark: #bf0570;
+  --accent-11-dark: #ffaaca;
+  --accent-12-dark: #feeaf1;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #af0465;
+  --accent-link-dark: #ffaaca;
+  --accent-link-hover-dark: #301a22;
+}
+:root[data-accent="iris"],
+[data-accent="iris"] {
+  --accent-1-light: #fcfdfe;
+  --accent-2-light: #f9f9ff;
+  --accent-3-light: #f1f1fe;
+  --accent-4-light: #e8e9fe;
+  --accent-5-light: #dfe0ff;
+  --accent-6-light: #d4d5fe;
+  --accent-7-light: #c6c6ff;
+  --accent-8-light: #b2b1ff;
+  --accent-9-light: #6c4ef0;
+  --accent-10-light: #6342e4;
+  --accent-11-light: #5b4bbe;
+  --accent-12-light: #2a2459;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #5a34d7;
+  --accent-link-light: #5b4bbe;
+  --accent-link-hover-light: #f1f1fe;
+  --accent-1-dark: #0f0f14;
+  --accent-2-dark: #15151e;
+  --accent-3-dark: #1f1f34;
+  --accent-4-dark: #282746;
+  --accent-5-dark: #323057;
+  --accent-6-dark: #3e3b6c;
+  --accent-7-dark: #4d4988;
+  --accent-8-dark: #625caf;
+  --accent-9-dark: #6c4ef0;
+  --accent-10-dark: #6342e4;
+  --accent-11-dark: #bdbcff;
+  --accent-12-dark: #eeeffe;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #5a34d7;
+  --accent-link-dark: #bdbcff;
+  --accent-link-hover-dark: #1f1f34;
+}
+:root[data-accent="cobalt"],
+[data-accent="cobalt"] {
+  --accent-1-light: #fcfdfe;
+  --accent-2-light: #f7f9fe;
+  --accent-3-light: #edf2ff;
+  --accent-4-light: #e2ebff;
+  --accent-5-light: #d7e3ff;
+  --accent-6-light: #c9d9fe;
+  --accent-7-light: #b6ccfe;
+  --accent-8-light: #9cb9fe;
+  --accent-9-light: #2b4fe0;
+  --accent-10-light: #2343d4;
+  --accent-11-light: #3556be;
+  --accent-12-light: #192a5a;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #1c36c8;
+  --accent-link-light: #3556be;
+  --accent-link-hover-light: #edf2ff;
+  --accent-1-dark: #0d0f14;
+  --accent-2-dark: #12161e;
+  --accent-3-dark: #192134;
+  --accent-4-dark: #1f2a46;
+  --accent-5-dark: #263458;
+  --accent-6-dark: #2f406d;
+  --accent-7-dark: #3a4f89;
+  --accent-8-dark: #4864b0;
+  --accent-9-dark: #2b4fe0;
+  --accent-10-dark: #2343d4;
+  --accent-11-dark: #aac3fe;
+  --accent-12-dark: #eaf0ff;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #1c36c8;
+  --accent-link-dark: #aac3fe;
+  --accent-link-hover-dark: #192134;
+}
+:root[data-accent="jade"],
+[data-accent="jade"] {
+  --accent-1-light: #f9fefc;
+  --accent-2-light: #f2fcf8;
+  --accent-3-light: #e2f9f0;
+  --accent-4-light: #d3f4e7;
+  --accent-5-light: #c4eede;
+  --accent-6-light: #b4e6d3;
+  --accent-7-light: #9edbc5;
+  --accent-8-light: #81cdb2;
+  --accent-9-light: #0b8467;
+  --accent-10-light: #06795e;
+  --accent-11-light: #226a55;
+  --accent-12-light: #15352a;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #026d54;
+  --accent-link-light: #226a55;
+  --accent-link-hover-light: #e2f9f0;
+  --accent-1-dark: #0d100f;
+  --accent-2-dark: #121715;
+  --accent-3-dark: #192520;
+  --accent-4-dark: #1e3029;
+  --accent-5-dark: #243b33;
+  --accent-6-dark: #2d493f;
+  --accent-7-dark: #375b4f;
+  --accent-8-dark: #447464;
+  --accent-9-dark: #0b8467;
+  --accent-10-dark: #06795e;
+  --accent-11-dark: #90d1ba;
+  --accent-12-dark: #e2f6ee;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #026d54;
+  --accent-link-dark: #90d1ba;
+  --accent-link-hover-dark: #192520;
+}
+
+/* Mode owners bind the ramp, then the accent roles every level uses. */
+[data-accent][data-color-mode="light"],
+.light,
+:root {
+  --accent-1: var(--accent-1-light);
+  --accent-2: var(--accent-2-light);
+  --accent-3: var(--accent-3-light);
+  --accent-4: var(--accent-4-light);
+  --accent-5: var(--accent-5-light);
+  --accent-6: var(--accent-6-light);
+  --accent-7: var(--accent-7-light);
+  --accent-8: var(--accent-8-light);
+  --accent-9: var(--accent-9-light);
+  --accent-10: var(--accent-10-light);
+  --accent-11: var(--accent-11-light);
+  --accent-12: var(--accent-12-light);
+  --accent-contrast: var(--accent-contrast-light);
+  --accent-ink: var(--accent-ink-light);
+  --accent-pressed: var(--accent-pressed-light);
+  --accent-link: var(--accent-link-light);
+  --accent-link-hover: var(--accent-link-hover-light);
+  --text-accent: var(--accent-11);
+  --border-accent: var(--accent-11);
+  --affordance-accent: var(--accent-3);
+  --affordance-accent-hover: var(--accent-4);
+  --surface-message-highlight: var(--accent-3);
+  --affordance-accent-prominent: var(--accent-9);
+  --affordance-accent-prominent-hover: var(--accent-10);
+  --affordance-accent-prominent-pressed: var(--accent-pressed);
+  --text-on-accent: var(--accent-contrast);
+}
+:root[data-color-mode="dark"],
+[data-accent][data-color-mode="dark"],
+.dark {
+  --accent-1: var(--accent-1-dark);
+  --accent-2: var(--accent-2-dark);
+  --accent-3: var(--accent-3-dark);
+  --accent-4: var(--accent-4-dark);
+  --accent-5: var(--accent-5-dark);
+  --accent-6: var(--accent-6-dark);
+  --accent-7: var(--accent-7-dark);
+  --accent-8: var(--accent-8-dark);
+  --accent-9: var(--accent-9-dark);
+  --accent-10: var(--accent-10-dark);
+  --accent-11: var(--accent-11-dark);
+  --accent-12: var(--accent-12-dark);
+  --accent-contrast: var(--accent-contrast-dark);
+  --accent-ink: var(--accent-ink-dark);
+  --accent-pressed: var(--accent-pressed-dark);
+  --accent-link: var(--accent-link-dark);
+  --accent-link-hover: var(--accent-link-hover-dark);
+  --text-accent: var(--accent-11);
+  --border-accent: var(--accent-11);
+  --affordance-accent: var(--accent-3);
+  --affordance-accent-hover: var(--accent-4);
+  --surface-message-highlight: var(--accent-3);
+  --affordance-accent-prominent: var(--accent-9);
+  --affordance-accent-prominent-hover: var(--accent-10);
+  --affordance-accent-prominent-pressed: var(--accent-pressed);
+  --text-on-accent: var(--accent-contrast);
+}
+
+/* Vibe levels switch whole color groups onto the accent ramp. Snoozin’ is the
+   neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’
+   adds your own messages and the shell (background, dots and chrome on it). Buzzin’ also colors quiet controls, the shell and its
+   dots, lines, surfaces and text. Shared groups are declared
+   once; level-only blocks contain intentional differences. */
+/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
+:root[data-color-level="touch"],
+[data-color-level="touch"] .light,
+:root[data-color-level="more"],
+[data-color-level="more"] .light,
+:root[data-color-level="full"],
+[data-color-level="full"] .light {
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
+  --affordance-prominent: var(--accent-9);
+  --affordance-prominent-hover: var(--accent-10);
+  --affordance-prominent-pressed: var(--accent-pressed);
+  --text-on-prominent: var(--accent-contrast);
+  --affordance-prominent-mark: var(--accent-11);
+  --affordance-navigation-quiet: var(--accent-2);
+  --affordance-selected: var(--accent-5);
+  --affordance-floating-hover: var(--accent-3);
+  --affordance-popover-selected: var(--accent-3);
+  --affordance-floating-selected: var(--accent-4);
+  --text-row-subtle: var(--accent-11);
+  --text-row-metadata: var(--accent-11);
+  --text-row: var(--accent-12);
+}
+
+/* Buzzin’: quiet controls, shell, lines and supporting text. Light. */
+:root[data-color-level="full"],
+[data-color-level="full"] .light {
+  --border-prominent: var(--accent-11);
+  --border-floating-control: var(--accent-11);
+  --border-message-thread: var(--accent-6);
+  --scrollbar-thumb: var(--accent-8);
+  --text-subtle: var(--accent-11);
+  --text-metadata: var(--accent-11);
+}
+
+/* Hummin’ and Swarmin’: quiet row hover. Light. */
+:root[data-color-level="touch"],
+[data-color-level="touch"] .light,
+:root[data-color-level="more"],
+[data-color-level="more"] .light {
+  --affordance-row-hover: var(--accent-2);
+  --affordance-panel-hover: var(--accent-2);
+}
+
+/* Swarmin’: your own messages take the accent too. Light. */
+:root[data-color-level="more"],
+[data-color-level="more"] .light {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+}
+
+/* Swarmin’ and Buzzin’: the app shell, its dots and the chrome on it. Light. */
+:root[data-color-level="more"],
+[data-color-level="more"] .light,
+:root[data-color-level="full"],
+[data-color-level="full"] .light {
+  --bg-app: var(--accent-4);
+  --texture-dots-color: var(--accent-6);
+  --affordance-chrome: var(--accent-3);
+  --affordance-chrome-hover: var(--accent-4);
+  --text-chrome-subtle: var(--accent-11);
+  --bg-chrome-selected: var(--accent-1);
+}
+
+/* Full-only changes. Light. */
+:root[data-color-level="full"],
+[data-color-level="full"] .light {
+  --surface-message-own: var(--accent-9);
+  --text-message-own: var(--accent-ink);
+  --text-message-link-own: var(--accent-ink);
+  --affordance-row-hover: var(--accent-3);
+  --affordance-panel-hover: var(--accent-3);
+  --affordance-subtle: var(--accent-3);
+  --affordance-subtle-hover: var(--accent-4);
+  --affordance-subtle-pressed: var(--accent-6);
+  --affordance-floating-control: var(--accent-3);
+  --affordance-floating-control-hover: var(--accent-4);
+  --affordance-floating-control-pressed: var(--accent-6);
+  --border-standard: var(--accent-6);
+  --surface-base: var(--accent-2);
+  --surface-panel: var(--accent-1);
+  --surface-popover: var(--accent-1);
+  --surface-inset: var(--accent-2);
+  --surface-message: var(--accent-3);
+  --text-standard: var(--accent-12);
+  --text-navigation: var(--accent-11);
+  --text-navigation-unread: var(--accent-12);
+  --text-unavailable: var(--accent-8);
+}
+
+/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Dark. */
+:root[data-color-level="touch"][data-color-mode="dark"],
+[data-color-level="touch"] .dark,
+:root[data-color-level="more"][data-color-mode="dark"],
+[data-color-level="more"] .dark,
+:root[data-color-level="full"][data-color-mode="dark"],
+[data-color-level="full"] .dark {
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
+  --affordance-prominent: var(--accent-9);
+  --affordance-prominent-hover: var(--accent-10);
+  --affordance-prominent-pressed: var(--accent-pressed);
+  --text-on-prominent: var(--accent-contrast);
+  --affordance-prominent-mark: var(--accent-11);
+  --affordance-row-hover: var(--accent-3);
+  --affordance-navigation-quiet: var(--accent-3);
+  --affordance-panel-hover: var(--accent-3);
+  --affordance-selected: var(--accent-4);
+  --affordance-floating-hover: var(--accent-4);
+  --affordance-popover-selected: var(--accent-4);
+  --affordance-floating-selected: var(--accent-5);
+  --text-row-subtle: var(--accent-11);
+  --text-row-metadata: var(--accent-11);
+  --text-row: var(--accent-12);
+}
+
+/* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
+:root[data-color-level="full"][data-color-mode="dark"],
+[data-color-level="full"] .dark {
+  --affordance-subtle: var(--accent-3);
+  --affordance-subtle-hover: var(--accent-4);
+  --affordance-subtle-pressed: var(--accent-5);
+  --affordance-floating-control: var(--accent-4);
+  --affordance-floating-control-hover: var(--accent-5);
+  --affordance-floating-control-pressed: var(--accent-6);
+  --border-prominent: var(--accent-8);
+  --border-floating-control: var(--accent-11);
+  --border-standard: var(--accent-5);
+  --border-message-thread: var(--accent-6);
+  --scrollbar-thumb: var(--accent-8);
+  --text-subtle: var(--accent-11);
+  --text-metadata: var(--accent-11);
+}
+
+/* Swarmin’: your own messages take the accent too. Dark. */
+:root[data-color-level="more"][data-color-mode="dark"],
+[data-color-level="more"] .dark {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+}
+
+/* Swarmin’ and Buzzin’: the app shell, its dots and the chrome on it. Dark. */
+:root[data-color-level="more"][data-color-mode="dark"],
+[data-color-level="more"] .dark,
+:root[data-color-level="full"][data-color-mode="dark"],
+[data-color-level="full"] .dark {
+  --bg-app: var(--accent-2);
+  --texture-dots-color: var(--accent-4);
+  --affordance-chrome: var(--accent-3);
+  --affordance-chrome-hover: var(--accent-4);
+  --text-chrome-subtle: var(--accent-11);
+  --bg-chrome-selected: var(--accent-4);
+}
+
+/* Full-only changes. Dark. */
+:root[data-color-level="full"][data-color-mode="dark"],
+[data-color-level="full"] .dark {
+  --surface-message-own: var(--accent-9);
+  --text-message-own: var(--accent-ink);
+  --text-message-link-own: var(--accent-ink);
+  --surface-base: var(--accent-1);
+  --surface-panel: var(--accent-2);
+  --surface-popover: var(--accent-3);
+  --surface-inset: var(--accent-1);
+  --surface-message: var(--accent-3);
+  --text-standard: var(--neutral-12);
+  --text-navigation: var(--accent-11);
+  --text-navigation-unread: var(--neutral-12);
+  --text-unavailable: var(--accent-8);
+}
+
+/* ============================================================
    LAYER 3 — TAILWIND REGISTRATION
    `--color-*: initial` deletes Tailwind's default palette, so
    `text-gray-500` does not exist. Only the roles above do.
    ============================================================ */
-
-:root,
-[data-bubble-color] {
-  --surface-message-highlight: color-mix(
-    in srgb,
-    var(--surface-message-own) 20%,
-    var(--surface-panel)
-  );
-}
 
 @theme inline {
   --color-*: initial;
@@ -904,7 +1375,6 @@
   --text-color-link: var(--text-link);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
-  --text-color-message-action: var(--text-message-action);
   --text-color-navigation: var(--text-navigation);
   --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
@@ -937,10 +1407,18 @@
   --color-affordance-prominent: var(--affordance-prominent);
   --color-affordance-prominent-hover: var(--affordance-prominent-hover);
   --color-affordance-prominent-pressed: var(--affordance-prominent-pressed);
+  --color-affordance-prominent-mark: var(--affordance-prominent-mark);
   --color-affordance-subtle: var(--affordance-subtle);
   --color-affordance-subtle-hover: var(--affordance-subtle-hover);
   --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
   --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
+  --color-affordance-row-hover: var(--affordance-row-hover);
+  --text-color-row-subtle: var(--text-row-subtle);
+  --text-color-row-metadata: var(--text-row-metadata);
+  --text-color-row: var(--text-row);
+  --color-affordance-chrome: var(--affordance-chrome);
+  --color-affordance-chrome-hover: var(--affordance-chrome-hover);
+  --text-color-chrome-subtle: var(--text-chrome-subtle);
   --color-affordance-panel-hover: var(--affordance-panel-hover);
   --color-affordance-floating-hover: var(--affordance-floating-hover);
   --color-affordance-popover-selected: var(--affordance-popover-selected);
@@ -1107,6 +1585,7 @@
   --text-color-tertiary: var(--text-tertiary);
   --text-color-disabled: var(--text-disabled);
   --text-color-on-accent: var(--text-on-accent);
+  --text-color-on-prominent: var(--text-on-prominent);
 
   /* Borders register in their OWN namespace for the same reason — this is where
      the collision was found first. Text and borders shared the emphasis names,
@@ -1133,107 +1612,4 @@
   --spacing-section-gap: var(--space-section-gap);
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
-}
-
-/* Device-local message colors; scopes also paint the settings swatches. */
-
-:root[data-bubble-color="neutral"],
-[data-bubble-color="neutral"] {
-  --surface-message-own: var(--bubble-neutral);
-  --text-message-own: var(--text-standard);
-  --text-message-link-own: var(--text-link);
-  --surface-message-action: var(--neutral-12);
-  --surface-message-action-hover: var(--neutral-11);
-  --surface-message-action-pressed: var(--neutral-action-pressed);
-  --text-message-action: var(--neutral-1);
-}
-:root[data-bubble-color="blue"],
-[data-bubble-color="blue"] {
-  --surface-message-own: var(--bubble-blue);
-  --text-message-own: var(--bubble-ink);
-  --text-message-link-own: var(--bubble-ink);
-  --surface-message-action: var(--surface-message-own);
-  --surface-message-action-hover: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 10%
-  );
-  --surface-message-action-pressed: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 20%
-  );
-  --text-message-action: var(--bubble-ink);
-}
-:root[data-bubble-color="green"],
-[data-bubble-color="green"] {
-  --surface-message-own: var(--bubble-green);
-  --text-message-own: var(--bubble-ink);
-  --text-message-link-own: var(--bubble-ink);
-  --surface-message-action: var(--surface-message-own);
-  --surface-message-action-hover: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 10%
-  );
-  --surface-message-action-pressed: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 20%
-  );
-  --text-message-action: var(--bubble-ink);
-}
-:root[data-bubble-color="orange"],
-[data-bubble-color="orange"] {
-  --surface-message-own: var(--bubble-orange);
-  --text-message-own: var(--bubble-ink);
-  --text-message-link-own: var(--bubble-ink);
-  --surface-message-action: var(--surface-message-own);
-  --surface-message-action-hover: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 10%
-  );
-  --surface-message-action-pressed: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 20%
-  );
-  --text-message-action: var(--bubble-ink);
-}
-:root[data-bubble-color="pink"],
-[data-bubble-color="pink"] {
-  --surface-message-own: var(--bubble-pink);
-  --text-message-own: var(--bubble-ink);
-  --text-message-link-own: var(--bubble-ink);
-  --surface-message-action: var(--surface-message-own);
-  --surface-message-action-hover: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 10%
-  );
-  --surface-message-action-pressed: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 20%
-  );
-  --text-message-action: var(--bubble-ink);
-}
-:root[data-bubble-color="lilac"],
-[data-bubble-color="lilac"] {
-  --surface-message-own: var(--bubble-lilac);
-  --text-message-own: var(--bubble-ink);
-  --text-message-link-own: var(--bubble-ink);
-  --surface-message-action: var(--surface-message-own);
-  --surface-message-action-hover: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 10%
-  );
-  --surface-message-action-pressed: color-mix(
-    in oklch,
-    var(--surface-message-own),
-    black 20%
-  );
-  --text-message-action: var(--bubble-ink);
 }

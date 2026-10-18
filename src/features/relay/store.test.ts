@@ -305,65 +305,7 @@ describe("channel store", () => {
   });
 });
 
-it("keeps session replies in the main timeline and observes parent changes", async () => {
-  const { store, queries, next } = setup();
-  const parent = "11111111-1111-4111-8111-111111111111";
-  const sessionMetadata = (time: number, moved = false) =>
-    signed(relay, {
-      kind: 39000,
-      content: "",
-      created_at: time,
-      tags: [
-        ["d", "work"],
-        ["name", "Work topic"],
-        ["t", "stream"],
-        ["private"],
-        [
-          "about",
-          `Buzz session (buzz.sessions/v1)${moved ? `\nparent:${parent}` : ""}`,
-        ],
-      ],
-    });
-  queries.ensureList();
-  next().respond([roster(relay, "work", [viewer.pubkey]), sessionMetadata(10)]);
-  await flush();
-  expect(queries.list().channels[0]).toMatchObject({
-    channelType: "session",
-    name: "Work topic",
-  });
-  queries.ensure("work");
-  const request = next();
-  expect(request.filters[0]).not.toHaveProperty("top_level");
-  const root = message(viewer, "work", "Prompt", 20);
-  const reply = message(alice, "work", "Reply", 21, [
-    ["e", root.id, "", "root"],
-    ["e", root.id, "", "reply"],
-  ]);
-  request.respond([root, reply]);
-  await flush();
-  next().respond([]); // Load message overlays before exposing the conversation.
-  await flush();
-  expect(queries.window("work").rows.map((row) => row.content)).toEqual([
-    "Prompt",
-    "Reply",
-  ]);
-  // Drain profile lookup, then refresh the same roster with only a parent change.
-  next().respond([]);
-  await flush();
-  queries.refreshList?.();
-  next().respond([
-    roster(relay, "work", [viewer.pubkey]),
-    sessionMetadata(30, true),
-  ]);
-  await flush();
-  expect(queries.list().channels[0]).toMatchObject({
-    parentChannelId: parent,
-    updatedAt: 30,
-  });
-  store.dispose();
-});
-
-it("opens an ordinary private session with existing agent replies in its main timeline", async () => {
+it("opens an ordinary private Solo chat with existing agent replies in its main timeline", async () => {
   const { store, queries, next } = setup();
   queries.ensureList();
   next().respond([
@@ -376,7 +318,7 @@ it("opens an ordinary private session with existing agent replies in its main ti
         ["name", "Work"],
         ["t", "stream"],
         ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
+        ["t", "buzz.solo"],
       ],
     }),
     profile(alice, { name: "Alice" }),
@@ -416,7 +358,7 @@ it("opens an ordinary private session with existing agent replies in its main ti
   store.dispose();
 });
 
-it("projects explicit visibility and replaces description-only changes without exposing session metadata", async () => {
+it("projects explicit visibility and replaces description-only changes", async () => {
   const { store, queries, next } = setup();
   try {
     queries.ensureList();
@@ -448,18 +390,6 @@ it("projects explicit visibility and replaces description-only changes without e
         visibility: "public",
       });
     }
-    queries.refreshList?.();
-    next().respond([
-      roster(relay, "work", [viewer.pubkey]),
-      metadata(relay, "work", "Work", 1_700_000_010, [
-        ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
-        ["t", "stream"],
-      ]),
-    ]);
-    await flush();
-    expect(queries.list().channels[0]?.description).toBeUndefined();
-    expect(queries.list().channels[0]?.channelType).toBe("session");
   } finally {
     store.dispose();
   }
@@ -794,50 +724,3 @@ it("does not commit a roster read that lands after the list stopped being ready"
     test.store.dispose();
   }
 });
-
-it.each([false, true])(
-  "recognizes renamed sessions from the exact legacy marker (personal=%s)",
-  async (personal) => {
-    const { store, queries, next } = setup();
-    try {
-      queries.ensureList();
-      const event = (name: string, time: number) =>
-        signed(relay, {
-          kind: 39000,
-          created_at: time,
-          content: "",
-          tags: [
-            ["d", "work"],
-            ["name", name],
-            ["t", "stream"],
-            ["private"],
-            [
-              "about",
-              `Buzz session (buzz.sessions/v1)${personal ? "\npersonal" : ""}`,
-            ],
-          ],
-        });
-      next().respond([
-        roster(relay, "work", [viewer.pubkey]),
-        event("First prompt", 10),
-      ]);
-      await flush();
-      expect(queries.list().channels[0]).toMatchObject({
-        name: "First prompt",
-        channelType: "session",
-      });
-      queries.refreshList?.();
-      next().respond([
-        roster(relay, "work", [viewer.pubkey]),
-        event("Named", 20),
-      ]);
-      await flush();
-      expect(queries.list().channels[0]).toMatchObject({
-        name: "Named",
-        channelType: "session",
-      });
-    } finally {
-      store.dispose();
-    }
-  },
-);

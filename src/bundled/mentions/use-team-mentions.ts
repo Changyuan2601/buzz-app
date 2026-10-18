@@ -131,7 +131,7 @@ export function useTeamMentions(
           : channel?.channelType === "dm"
             ? `${outside} not in DM · Will not be notified`
             : inviteAgents
-              ? `Adds ${outside} to session${channel && (channel.channelType !== "session" || channel.parentChannelId) ? " and parent channel" : ""} when you send`
+              ? `Adds ${outside} to ${channel && channel.channelType !== "solo" ? "channel" : "chat"} when you send`
               : `${outside} not in channel · Choose whether to add when you send`;
         return {
           id: `team:${value.id}`,

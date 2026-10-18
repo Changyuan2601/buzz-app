@@ -12,10 +12,7 @@ import { MessageManagementStatus } from "../../features/messages/MessageManageme
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
-import {
-  SessionColumn,
-  SessionHeading,
-} from "../../features/sessions/SessionPresentation";
+import { SoloColumn, SoloTitle } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
@@ -61,7 +58,7 @@ export function ConversationTab({
   const reply = tab.kind === "thread" ? tab.replyRequest : undefined;
   const restoredReply = useRef(focusOnMount ? undefined : reply);
   if (reply !== restoredReply.current) restoredReply.current = undefined;
-  const sessionConversation = channel.channelType === "session";
+  const soloConversation = channel.channelType === "solo";
   // Likewise a saved reveal belongs to the opening that asked for it.
   const restoredReveal = useRef(focusOnMount ? undefined : tab.revealRequest);
   if (tab.revealRequest !== restoredReveal.current)
@@ -113,7 +110,7 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
-        {sessionConversation && <SessionHeading channel={channel} />}
+        {soloConversation && <SoloTitle channel={channel} />}
         {tab.kind === "thread" ? (
           <ConversationThread
             active={active}
@@ -140,7 +137,7 @@ export function ConversationTab({
             close={close}
           />
         ) : (
-          <SessionColumn enabled={sessionConversation}>
+          <SoloColumn enabled={soloConversation}>
             <ChannelBody
               viewer={session.viewer}
               cached={!!channel.cached}
@@ -160,11 +157,8 @@ export function ConversationTab({
               }
               marksRead={opening?.markRead !== false}
             />
-            <ConversationComposer
-              label={sessionConversation ? "Message this session" : undefined}
-              onSend={setSent}
-            />
-          </SessionColumn>
+            <ConversationComposer onSend={setSent} />
+          </SoloColumn>
         )}
       </section>
     </ConversationChannel>

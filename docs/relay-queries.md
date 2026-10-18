@@ -90,7 +90,7 @@ establishment, without starting an automatic recovery pass or bypassing cooldown
 Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
 eligible. The details editor and member-administration capability use writer-backed
 state for their shared load/preflight/confirmation reads; the member dialog's
-separate display-roster load remains replica-eligible. Work-session membership
+separate display-roster load remains replica-eligible. Channel-write membership
 preflights (including session sends and canvas saves) also use the writer, so a
 just-added member does not fail the next operation.
 Template setup also confirms exact Canvas/member events and selected Canvas heads

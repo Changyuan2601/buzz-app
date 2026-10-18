@@ -10,14 +10,14 @@ export function archivedMention(session: RelaySession, pubkey: string) {
 
 /**
  * Whether a destination can name people outside it from the community
- * directory. A session cannot: its mentions admit agents through the session
+ * directory. A Solo chat cannot: its mentions admit agents through the Solo chat
  * choice policy. This follows the channel type, not composer props, because
- * some session composers (media comments, edits) do not carry session mode.
+ * some Solo chat composers (media comments, edits) do not carry Solo mode.
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
 ) {
-  return !!channel && channel.channelType !== "session";
+  return !!channel && channel.channelType !== "solo";
 }
 
 /**
