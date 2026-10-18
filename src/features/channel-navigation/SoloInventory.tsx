@@ -5,7 +5,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { conversationTarget, soloDraftTarget } from "./routes";
+import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
@@ -57,6 +57,12 @@ export function SoloInventory({
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
+  const draft =
+    target.kind === "page" &&
+    target.pluginId === "buzz.channels" &&
+    target.pageId === "channels"
+      ? soloDraft(target.route?.params)
+      : undefined;
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
@@ -172,6 +178,28 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         navigator={navigator}
+        draft={
+          draft
+            ? {
+                projectId: draft.project,
+                content: (
+                  <NavigationItem
+                    label="New chat"
+                    selected
+                    icon={
+                      <span
+                        className={styles.conversationIcon}
+                        aria-hidden="true"
+                      >
+                        <ChatCircleIcon size={16} />
+                      </span>
+                    }
+                    onClick={() => void navigator.open(target)}
+                  />
+                ),
+              }
+            : undefined
+        }
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}

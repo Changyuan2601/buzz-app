@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
-import { conversationTarget } from "./routes";
+import { writeView } from "../../shared/view-state";
+import { conversationTarget, soloDraftTarget } from "./routes";
 
 import {
   fixture,
@@ -146,5 +147,36 @@ it.each([
     );
     f.clearUnread();
     expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
+  },
+);
+
+it.each(["new", "linked", "agent"])(
+  "shows and selects the ordinary New chat draft row for %s",
+  async (route) => {
+    const f = fixture();
+    writeView(scope, "solo:collapsed-projects", [""]);
+    const target = soloDraftTarget(
+      scope,
+      route === "agent"
+        ? { agent }
+        : route === "linked"
+          ? { linked: "33333333-3333-4333-8333-333333333333" }
+          : {},
+    );
+    act(() => f.navigate(target));
+    const draft = await screen.findByRole("button", { name: "New chat" });
+    expect(draft).toHaveAttribute("aria-current", "page");
+    expect(draft).toHaveAttribute("data-selected", "true");
+    expect(screen.getByRole("button", { name: /^Other/ })).not.toHaveAttribute(
+      "aria-current",
+    );
+    await userEvent.click(draft);
+    expect(f.open).toHaveBeenLastCalledWith(target);
+    act(() => f.navigate(conversationTarget(scope, id)));
+    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Planning/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   },
 );

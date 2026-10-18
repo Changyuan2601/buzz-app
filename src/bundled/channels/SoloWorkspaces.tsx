@@ -61,7 +61,9 @@ export function SoloWorkspaces({
   onNew,
   onConverted,
   visit,
+  draft,
 }: {
+  draft?: { projectId?: string | undefined; content: ReactNode } | undefined;
   onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
@@ -131,6 +133,20 @@ export function SoloWorkspaces({
   const groups = snapshot.data?.sections ?? [];
   const assigned = snapshot.data?.assignments ?? {};
   const ids = new Set(groups.map((group) => group.id));
+  const draftProject = draft
+    ? ids.has(draft.projectId ?? "")
+      ? (draft.projectId ?? "")
+      : ""
+    : undefined;
+  useEffect(() => {
+    if (draftProject === undefined) return;
+    setCollapsed((current) => {
+      if (!current.includes(draftProject)) return current;
+      const next = current.filter((id) => id !== draftProject);
+      writeView(scope, collapsedKey, next);
+      return next;
+    });
+  }, [draftProject, scope]);
   const projects = [
     ...groups.map((group) => ({
       ...group,
@@ -237,7 +253,10 @@ export function SoloWorkspaces({
         }}
       >
         {projects
-          .filter((project) => project.id || project.rows.length)
+          .filter(
+            (project) =>
+              project.id || project.rows.length || draftProject === project.id,
+          )
           .map((project) => (
             <DropProject
               projectKey={DROP + project.id}
@@ -315,6 +334,17 @@ export function SoloWorkspaces({
                 </Collapsible.Trigger>
               </ChatActionsMenu>
               <Collapsible.Panel className={styles.projectPanel}>
+                {draftProject === project.id && draft && (
+                  <ChatActionsMenu
+                    id="new-chat-draft"
+                    title="New chat"
+                    className={styles.organizedRow}
+                    content={null}
+                    enabled={false}
+                  >
+                    <div>{draft.content}</div>
+                  </ChatActionsMenu>
+                )}
                 {project.rows.map((item) => {
                   const channel = channels.channels.find(
                     (channel) => channel.id === item.id,
