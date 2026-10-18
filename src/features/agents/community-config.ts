@@ -23,6 +23,7 @@ import {
   configSupport,
   createConfigChannels,
   importedTeamId,
+  teamSubject,
 } from "./config-channels";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -391,17 +392,37 @@ export function agentConfigs(
     return team;
   };
   /** Refuses `intent` for team `id` while its Create is unfinished when it
-   * drops a member on the team's roster today, or one whose add may have
-   * been sent: a Create removes nobody. */
-  const refuseDroppingJoined = (id: string, intent: TeamIntent) => {
-    const create = runner
-      .records()
-      .find((op) => op.kind === "create" && op.teamId === id);
-    if (!create) return;
-    if (!teams) throw new Error("This team can't be read right now; try again");
-    const joined = teams.find((t) => t.id === id)?.members ?? [];
-    const sent = create.commands.flatMap((c) =>
-      c.action === "add" && c.state === "maybe-sent" && c.pubkey
+   * drops a member on the team's roster, freshly read for this Save, or one
+   * whose add was or may have been sent: a Create removes nobody. Returns
+   * that Create. */
+  const refuseDroppingJoined = async (id: string, intent: TeamIntent) => {
+    const create = () =>
+      runner.records().find((op) => op.kind === "create" && op.teamId === id);
+    const before = create();
+    if (!before) return undefined;
+    const unreadable = new Error(
+      "This team can't be read right now; try again",
+    );
+    const found = await channels
+      .find("team-config", await teamSubject(id), signal)
+      .catch(() => {
+        throw unreadable;
+      });
+    // Its channel was created yet isn't found, or has no roster: no proof.
+    if (found ? !found.members : before.channel) throw unreadable;
+    const joined: string[] = [];
+    for (const pubkey of found?.members ?? [])
+      if (
+        pubkey !== owner &&
+        (await channels.owns(pubkey, signal).catch(() => true))
+      )
+        joined.push(pubkey);
+    // Read after the roster, so an add sent meanwhile still counts.
+    const now = create();
+    const sent = (now?.commands ?? []).flatMap((c) =>
+      c.action === "add" &&
+      (c.state === "maybe-sent" || c.state === "confirmed") &&
+      c.pubkey
         ? [c.pubkey]
         : [],
     );
@@ -409,6 +430,7 @@ export function agentConfigs(
       throw new Error(
         "A member joined or may have joined this new team; remove them after the team is created",
       );
+    return now;
   };
   const importId = (source: "old-buzz-team" | "local-team", sourceId: string) =>
     importedTeamId({
@@ -765,8 +787,8 @@ export function agentConfigs(
     },
     /** Creates the team the open form `form` stands for, at that id: Save
      * again from the same form revises that one change, never a second. */
-    createTeam(team: TeamIntent, form: string, operation?: string) {
-      refuseDroppingJoined(form, team);
+    async createTeam(team: TeamIntent, form: string, operation?: string) {
+      await refuseDroppingJoined(form, team);
       // A reopened change that finished here saves as an edit of its head:
       // this form's latest finished submission, else the reopened one.
       const done =
@@ -807,7 +829,7 @@ export function agentConfigs(
       );
     },
     /** Edits synced team `id` from the head `base` its form opened. */
-    editTeam(
+    async editTeam(
       id: string,
       change: TeamIntent,
       base: string | undefined,
@@ -815,17 +837,24 @@ export function agentConfigs(
     ) {
       const team = ownTeam(id);
       if (team.archived) throw new Error("No such team");
-      refuseDroppingJoined(id, change);
+      const create = await refuseDroppingJoined(id, change);
       if (team.unreadable)
         throw new Error("This team can't be read right now; try again");
+      // While its Create is unfinished, the Save revises that Create: a
+      // separate Edit would leave its older intent to replay.
       return finished(
-        submitted(form, change, {
-          kind: "edit",
-          teamId: id,
-          channel: team.channel,
-          intent: change,
-          base: base ?? team.head ?? null,
-        }),
+        submitted(
+          form,
+          change,
+          {
+            kind: "edit",
+            teamId: id,
+            channel: team.channel,
+            intent: change,
+            base: base ?? team.head ?? null,
+          },
+          create?.id,
+        ),
       );
     },
     /** Saves each synced side the edit changed as its next revision of

@@ -6063,7 +6063,12 @@ describe("Delete as a recoverable archive", () => {
             ...[...channels].map(([label, channel]) => ({ ...channel, label })),
           ]),
           addMember,
-          removeMember: vi.fn(async () => ({ status: "confirmed" as const })),
+          removeMember: vi.fn(async (id: string, pubkey: string) => {
+            const found = [...channels.values()].find((c) => c.id === id);
+            if (found)
+              found.members = found.members.filter((p) => p !== pubkey);
+            return { status: "confirmed" as const };
+          }),
           owns: vi.fn(async () => true),
           archive: vi.fn(async (id: string) => archiveChannel(id, true)),
           unarchive: vi.fn(async (id: string) => archiveChannel(id, false)),
@@ -6586,6 +6591,170 @@ describe("Delete as a recoverable archive", () => {
     return { f, relay, add, team, op };
   };
 
+  it("an unfinished Create drops an unfinished Create drop a never-joined member", async () => {
+    const { f, relay, team, op } = await partialCreate();
+    try {
+      expect(
+        [...relay.channels.values()].find((c) => c.family === "team-config")
+          ?.members,
+      ).not.toContain(birch);
+      await expect(
+        f.service.saveTeam({ ...team, operation: op.id, members: [alder] }),
+      ).resolves.toMatchObject({ id: team.creation, members: [alder] });
+      expect(new TeamOps(f.storage).every()).toEqual([]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("a card Save during an unfinished Create revises it, so B isn't added back", async () => {
+    const { f, relay, team, add } = await partialCreate();
+    try {
+      const roster = () =>
+        [...relay.channels.values()].find((c) => c.family === "team-config")
+          ?.members ?? [];
+      expect(roster()).not.toContain(birch);
+      await expect(
+        f.service.saveTeam({
+          ...team,
+          id: team.creation,
+          creation: crypto.randomUUID(),
+          members: [alder],
+        }),
+      ).resolves.toMatchObject({ members: [alder] });
+      // The Save revised the Create to {A}, which finished it; nothing is
+      // left to add B back once B can join.
+      relay.addMember.mockImplementation(add);
+      for (const left of new TeamOps(f.storage).every())
+        await f.service.teamChange(left.id, "check");
+      expect(new TeamOps(f.storage).every()).toEqual([]);
+      expect(roster()).not.toContain(birch);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("an unfinished Create refuses dropping a joined member when its roster can't be read", async () => {
+    let failed = false;
+    const relay = configRelay(async () => {
+      if (failed) throw new Error("Roster unavailable");
+      return [];
+    });
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder), here(birch)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const config = relay.opens.mock.results[0]?.value;
+      if (!config) throw new Error("Missing config");
+      await config.refreshTeams();
+      expect(config.teams()).toEqual([]);
+      const add = relay.addMember.getMockImplementation();
+      if (!add) throw new Error("Missing add");
+      relay.addMember.mockImplementation(async (id, pubkey) =>
+        pubkey === birch
+          ? ({ status: "refused", error: "Try later" } as never)
+          : add(id, pubkey),
+      );
+      failed = true;
+      const team = {
+        creation: crypto.randomUUID(),
+        name: "Partial",
+        instructions: "RULE",
+        members: [alder, birch],
+      };
+      await expect(f.service.saveTeam(team)).rejects.toThrow();
+      const op = new TeamOps(f.storage).every()[0];
+      if (!op) throw new Error("Missing Create");
+      expect(
+        [...relay.channels.values()].find((c) => c.family === "team-config")
+          ?.members,
+      ).toContain(alder);
+      await f.service.teamChange(op.id, "check");
+      expect(
+        new TeamOps(f.storage)
+          .every()[0]
+          ?.commands.some((c) => c.pubkey === alder),
+      ).toBe(false);
+      // The last discovery was the empty list before A joined; refresh still fails.
+      expect(config.teams()).toEqual([]);
+      relay.addMember.mockImplementation(add);
+      await expect(
+        f.service.saveTeam({ ...team, operation: op.id, members: [birch] }),
+      ).rejects.toThrow("joined or may have joined");
+      // A created channel that can't be found now proves no roster.
+      relay.channels.clear();
+      await expect(
+        f.service.saveTeam({ ...team, operation: op.id, members: [birch] }),
+      ).rejects.toThrow("can't be read");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("an unfinished Create's refusal survives restart and Dismiss releases it", async () => {
+    const { f, relay, team, op } = await partialCreate();
+    const storage = f.storage;
+    await f.ctx.fiber.dispose();
+    const again = await setup({
+      storage,
+      identities: [here(alder), here(birch)],
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(again.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await relay.opens.mock.results.at(-1)?.value.resumeTeams();
+      const card = {
+        id: team.creation,
+        creation: crypto.randomUUID(),
+        name: "Partial",
+        instructions: "RULE",
+        members: [birch],
+      };
+      await expect(again.service.saveTeam(card)).rejects.toThrow(
+        "remove them after the team is created",
+      );
+      await again.service.teamChange(op.id, "discard");
+      const stopped = again.service
+        .snapshot()
+        .teamChanges?.find((c) => c.id === op.id);
+      expect(stopped).toMatchObject({ stopped: true, unresolved: false });
+      await expect(again.service.saveTeam(card)).rejects.toThrow(
+        "remove them after the team is created",
+      );
+      await again.service.teamChange(op.id, "dismiss");
+      relay.addMember.mockImplementation(async (id, pubkey) => {
+        const channel = [...relay.channels.values()].find((c) => c.id === id);
+        if (channel && !channel.members.includes(pubkey))
+          channel.members.push(pubkey);
+        return { status: "confirmed" as const };
+      });
+      await expect(again.service.saveTeam(card)).resolves.toMatchObject({
+        members: [birch],
+      });
+    } finally {
+      await again.ctx.fiber.dispose();
+    }
+  });
+
+  it("an unfinished Create refuses dropping a maybe-sent member", async () => {
+    const { f, relay, team, op } = await partialCreate();
+    try {
+      relay.addMember.mockResolvedValue({ status: "uncertain" } as never);
+      await f.service.teamChange(op.id, "check");
+      expect(new TeamOps(f.storage).every()[0]?.commands).toContainEqual(
+        expect.objectContaining({ pubkey: birch, state: "maybe-sent" }),
+      );
+      await expect(
+        f.service.saveTeam({ ...team, operation: op.id, members: [alder] }),
+      ).rejects.toThrow("joined or may have joined");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("an unfinished Create still refuses dropping its joined member after Check again", async () => {
     const { f, team, op } = await partialCreate();
     try {
@@ -6621,6 +6790,10 @@ describe("Delete as a recoverable archive", () => {
           members: [birch],
         }),
       ).resolves.toMatchObject({ members: [birch] });
+      expect(
+        [...relay.channels.values()].find((c) => c.family === "team-config")
+          ?.members,
+      ).not.toContain(alder);
       expect(new TeamOps(f.storage).every()).toEqual([]);
     } finally {
       await f.ctx.fiber.dispose();
