@@ -4328,9 +4328,9 @@ it("wakes a kind 9 watch added since for nothing older, though an overlapping wa
 });
 
 it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.useFakeTimers();
+  let release = () => {};
   try {
-    let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -4350,7 +4350,7 @@ it("catches up no faster than its Interest's lane takes turns, so none is droppe
       attentionEnabled: true,
       attention: { ...chat, "watch/channel": null },
     });
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
     vi.setSystemTime((now + 1_000) * 1000);
     // Ten turns of 64: one runs, and its lane keeps eight waiting.
     for (let i = 0; i < 640; i++) history.push(posted(`m${i}`, now + 1 + i));
@@ -4360,16 +4360,20 @@ it("catches up no faster than its Interest's lane takes turns, so none is droppe
       Object.values(readCheckpoints(storage)).map(
         ({ through, after }) => after?.created_at ?? through,
       )[0] ?? 0;
-    await vi.waitFor(() =>
-      expect(progress()).toBeGreaterThanOrEqual(now + 576),
-    );
+    // Catch-up retries once per second when the Interest lane is full.
+    // Control that clock, including a retry while the first turn stays held.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(progress()).toBe(now + 576);
+    expect(caught).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(progress()).toBe(now + 576);
     expect(caught).toHaveLength(1);
     release();
-    await vi.waitFor(() => expect(caught).toHaveLength(10), {
-      timeout: 5_000,
-    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(caught).toHaveLength(10);
     expect(caught).toEqual(Array<number>(10).fill(64));
   } finally {
+    release();
     vi.useRealTimers();
   }
 });
