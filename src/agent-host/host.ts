@@ -368,12 +368,13 @@ export function host(options: HostOptions): () => Promise<void> {
       },
     },
     activity,
-    // As in its reads: only the owner's connection sees Solo chats, so a
-    // mention's turn, and its typing, keep the thread.
-    soloChat: async () => false,
+    // Typing goes where the turn answers, read the same way.
+    soloChat: (agent, channel, signal) =>
+      reads.soloChat(agent.owner, channel, signal),
     remembered: (agent, slug, body) => coreMemory.wrote(agent, slug, body),
     finished: (agent) => void coreMemory.refresh(agent),
-    // Only the owner's connection sees Solo chats, so there is none to name.
+    // Naming a Solo chat is the owner's signed write; this host holds only
+    // the agent's key, so it leaves the name as it is.
     named: () => {},
   });
   function agentView() {

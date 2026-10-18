@@ -3,6 +3,7 @@
 // what the agent may see.
 import type { BuzzClient, Filter } from "../buzz-mcp/client";
 import type { AgentReads, ChannelFacts } from "../features/agents/reads";
+import { soloChannelMetadata } from "../features/relay/discovery";
 import {
   type EventData,
   eventsDto,
@@ -12,7 +13,7 @@ import {
 
 const tagOf = (event: EventData, name: string) =>
   event.tags.find((tag) => tag[0] === name)?.[1];
-const newest = (events: readonly EventData[], kind: number) =>
+const newest = <T extends EventData>(events: readonly T[], kind: number) =>
   events
     .filter((event) => event.kind === kind)
     .sort((a, b) => b.created_at - a.created_at)[0];
@@ -151,9 +152,20 @@ export function agentReads(
       entries: (await abortable(client.memories(slug), signal)).entries,
       partial: true,
     }),
-    // Solo chats are the owner's own filing, which only the owner's connection
-    // reads; as the agent, a mention keeps its thread, as in the app when the
-    // owner is not the one signed in.
-    soloChat: async () => false,
+    // The channel's Solo label decides, as for every member and agent
+    // (docs/solo/README.md). Read fresh for each turn, so a chat converted
+    // to a channel goes back to threads.
+    async soloChat(_owner: string, id: string, signal: AbortSignal) {
+      const metadata = newest(
+        eventsDto([
+          ...(await abortable(
+            client.query([{ kinds: [39000], "#d": [id], limit: 1 }]),
+            signal,
+          )),
+        ]),
+        39000,
+      );
+      return !!metadata && soloChannelMetadata(metadata);
+    },
   });
 }

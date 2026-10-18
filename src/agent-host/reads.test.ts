@@ -105,3 +105,30 @@ it("does not trust a workflow message signed by another key", async () => {
     ),
   ).toBe(false);
 });
+
+it("answers a Solo chat at top level from its label, and threads it again once converted", async () => {
+  const f = setup();
+  const metadata = (tags: string[][]) =>
+    signed(f.relay, {
+      kind: 39000,
+      content: "",
+      tags: [["d", "chat"], ["t", "stream"], ["private"], ...tags],
+    });
+  const signal = new AbortController().signal;
+  const reads = agentReads(f.client, RELAY, async () => f.relay.pubkey);
+  const solo = () => reads.soloChat(f.owner.pubkey, "chat", signal);
+
+  f.query.mockResolvedValueOnce([metadata([["t", "buzz.solo"]])]);
+  expect(await solo()).toBe(true);
+  expect(f.query).toHaveBeenLastCalledWith([
+    { kinds: [39000], "#d": ["chat"], limit: 1 },
+  ]);
+  // Converted to a channel: the label is gone, so mentions keep their threads.
+  f.query.mockResolvedValueOnce([metadata([])]);
+  expect(await solo()).toBe(false);
+  // An unknown channel is not Solo; a failed read fails rather than guess.
+  f.query.mockResolvedValueOnce([]);
+  expect(await solo()).toBe(false);
+  f.query.mockRejectedValueOnce(new Error("offline"));
+  await expect(solo()).rejects.toThrow("offline");
+});
