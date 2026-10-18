@@ -746,7 +746,8 @@ export function agentConfigs(
     /** Creates the team the open form `form` stands for, at that id: Save
      * again from the same form revises that one change, never a second. */
     createTeam(team: TeamIntent, form: string, operation?: string) {
-      const done = finishedAt.get(forms.get(form) ?? "");
+      // A reopened change that finished here saves as an edit of its head.
+      const done = finishedAt.get(operation ?? forms.get(form) ?? "");
       if (done) return this.editTeam(form, team, done, form).then(() => form);
       return finished(
         submitted(

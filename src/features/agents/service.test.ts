@@ -6195,6 +6195,7 @@ describe("Delete as a recoverable archive", () => {
       held,
       remoteTeam,
       publishing,
+      owner,
     };
   }
   const mentionAlder = (f: Awaited<ReturnType<typeof setup>>, id: string) =>
@@ -6662,9 +6663,9 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
-  it("an unpublished local migration does not prevent editing or deleting the local team", async () => {
+  it("an unfinished move refuses editing or deleting its local team while its community is away, and resumes it intact", async () => {
     const relay = configRelay();
-    relay.offline.value = true;
+    relay.noTeams.value = true;
     communityFake.value = relay.opens;
     const storage = memoryStorage();
     const local = {
@@ -6687,9 +6688,31 @@ describe("Delete as a recoverable archive", () => {
       await settle();
       await expect(
         f.service.saveTeam({ ...local, name: "Changed" }),
-      ).resolves.toMatchObject({ id: local.id, name: "Changed" });
-      await expect(f.service.removeTeam(local.id)).resolves.toBeUndefined();
-      expect(readTeams(storage)).toEqual([]);
+      ).rejects.toThrow("Unfinished changes");
+      await expect(f.service.removeTeam(local.id)).rejects.toThrow(
+        "Unfinished changes",
+      );
+      expect(readTeams(storage)).toEqual([local]);
+      relay.noTeams.value = false;
+      communityFake.value = relay.opens;
+      f.reconnecting();
+      f.connect(true);
+      await vi.waitFor(() => expect(relay.opens).toHaveBeenCalledTimes(2));
+      const config = relay.opens.mock.results[1]?.value;
+      if (!config) throw new Error("Missing reconnected config");
+      await config.attach([
+        {
+          pubkey: alder,
+          name: "Alder",
+          type: "example/echo",
+          config: { reply: "ok" },
+        },
+      ]);
+      await config.resumeTeams();
+      await settle();
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ name: "Local", instructions: "RULE" }),
+      ]);
     } finally {
       await f.ctx.fiber.dispose();
     }
@@ -6982,8 +7005,8 @@ describe("Delete as a recoverable archive", () => {
       storage,
       identities: [here(alder), here(birch, "wss://other.example.test")],
     });
-    // Ready at once when run alone; a CI flake-check rerun once took over
-    // the default 1 s on a loaded runner.
+    // Ready at once locally, but one CI rerun passed the default 1 s for an
+    // unknown reason: extra time tolerates a slow run, not a known cause.
     await vi.waitFor(
       () => expect(f.service.find(alder)?.configBase).toBeDefined(),
       { timeout: 5_000 },
@@ -7282,6 +7305,62 @@ describe("Delete as a recoverable archive", () => {
     },
   );
 
+  it("saves a reopened Create whose change finished here as an edit of its team", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    relay.noTeams.value = true;
+    const storage = memoryStorage(),
+      operation = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [operation]: {
+        id: operation,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const config = relay.opens.mock.results[0]?.value;
+      await config?.resumeTeams();
+      relay.noTeams.value = false;
+      await config?.resumeTeams();
+      expect(new TeamOps(storage).every()).toEqual([]);
+      // Its own change finished here: Save edits that team, on its head.
+      const channelsBefore = relay.channels.size;
+      await expect(
+        f.service.saveTeam({
+          creation: teamId,
+          operation,
+          name: "Revised",
+          instructions: "NEW RULE",
+          members: [alder],
+        }),
+      ).resolves.toMatchObject({ id: teamId, instructions: "NEW RULE" });
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(relay.channels.size).toBe(channelsBefore);
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ id: teamId, instructions: "NEW RULE" }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("refuses a stale reopened Create without creating another team after the operation completes", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;
@@ -7317,8 +7396,28 @@ describe("Delete as a recoverable archive", () => {
       relay.noTeams.value = false;
       await config?.resumeTeams();
       expect(new TeamOps(storage).every()).toEqual([]);
-      // A stale form may refuse; its submitted operation has already finished.
-      const heads = [...relay.heads.values()];
+      // Another device edits the team after this one's change finished.
+      const [created] = [...relay.heads.values()].filter((event) =>
+        event.tags.some(([name, value]) => name === "team" && value === teamId),
+      );
+      if (!created) throw new Error("Missing created head");
+      const remote = await signed(relay.owner, {
+        kind: created.kind,
+        created_at: created.created_at + 1,
+        content: JSON.stringify({
+          ...JSON.parse(created.content),
+          instructions: "REMOTE RULE",
+        }),
+        tags: [
+          ...created.tags.filter(([name]) => name !== "op" && name !== "prev"),
+          ["op", "update"],
+          ["prev", created.id],
+        ],
+      });
+      relay.heads.set(
+        [...relay.heads].find(([, event]) => event === created)?.[0] ?? "",
+        remote,
+      );
       const channelsBefore = relay.channels.size;
       await expect(
         f.service.saveTeam({
@@ -7329,15 +7428,11 @@ describe("Delete as a recoverable archive", () => {
           members: [alder],
         }),
       ).rejects.toThrow("changed on another device");
-      expect([...relay.heads.values()]).toEqual(heads);
+      expect([...relay.heads.values()]).toContain(remote);
       expect(readTeams(storage)).toEqual([]);
-      const remaining = new TeamOps(storage).every();
-      expect(remaining).toHaveLength(1);
-      expect(remaining[0]).toMatchObject({
-        teamId,
-        mode: "reconcile-only",
-        stop: "conflict",
-      });
+      expect(new TeamOps(storage).every()).toEqual([
+        expect.objectContaining({ teamId, stop: "conflict" }),
+      ]);
       expect(relay.channels.size).toBe(channelsBefore);
     } finally {
       await f.ctx.fiber.dispose();

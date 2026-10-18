@@ -834,8 +834,9 @@ describe("team operations: transitions", () => {
     expect(w.relay.roster.has(b)).toBe(true);
   });
 
-  it("a partly done Create revised to drop a joined member removes it", async () => {
-    const w = world({ agents: [a] });
+  it("a partly done Create refuses a revision dropping a joined member, keeping everyone", async () => {
+    const c = keypair().pubkey;
+    const w = world({ agents: [a, c] });
     const teamId = crypto.randomUUID();
     // b has no agent channel yet: a joins, b waits.
     const old = w.runner.start({
@@ -846,11 +847,34 @@ describe("team operations: transitions", () => {
     });
     await old.done;
     expect(w.relay.roster.has(a)).toBe(true);
-    w.runner.revise(old.op.id, { ...team, members: [b] });
+    // Another device adds a same-owner member meanwhile.
+    w.relay.roster.add(c);
+    expect(() => w.runner.revise(old.op.id, { ...team, members: [b] })).toThrow(
+      "remove them after the team is created",
+    );
     w.agents.add(b);
     expect(await w.runner.run(old.op.id)).toBeUndefined();
-    expect(w.relay.roster.has(a)).toBe(false);
+    expect(w.relay.roster.has(a)).toBe(true);
     expect(w.relay.roster.has(b)).toBe(true);
+    expect(w.relay.roster.has(c)).toBe(true);
+    expect(w.channels.removeMember).not.toHaveBeenCalled();
+  });
+
+  it("a partly done Create revised to drop a member not yet joined never adds it", async () => {
+    const w = world({ agents: [a] });
+    const teamId = crypto.randomUUID();
+    const old = w.runner.start({
+      kind: "create",
+      teamId,
+      base: null,
+      intent: { ...team, members: [a, b] },
+    });
+    await old.done;
+    expect(w.runner.revise(old.op.id, { ...team, members: [a] })).toBe(true);
+    w.agents.add(b);
+    expect(await w.runner.run(old.op.id)).toBeUndefined();
+    expect(w.relay.roster.has(a)).toBe(true);
+    expect(w.relay.roster.has(b)).toBe(false);
   });
 
   it("an adopted Import sends no member command through an empty head read", async () => {

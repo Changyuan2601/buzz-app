@@ -630,9 +630,7 @@ export function teamRunner(deps: RunnerDeps) {
     for (const pubkey of want)
       if (!roster.has(pubkey))
         wanted.push({ action: "add", pubkey, state: "planned" });
-    // Imports and moves only add; an edit, or a Create revised after some
-    // members joined, takes off whoever its form no longer lists.
-    if (start.kind === "edit" || start.kind === "create")
+    if (start.kind === "edit")
       for (const pubkey of roster)
         if (
           pubkey !== deps.owner &&
@@ -791,6 +789,22 @@ export function teamRunner(deps: RunnerDeps) {
     revise(id: string, intent: TeamIntent) {
       const op = ops.get(id);
       if (op?.mode !== "may-send") return false;
+      // An unfinished Create removes nobody: a member it may have added
+      // comes off by an edit once the team exists.
+      if (
+        op.kind === "create" &&
+        op.commands.some(
+          (c) =>
+            c.action === "add" &&
+            c.state !== "planned" &&
+            c.state !== "refused" &&
+            !!c.pubkey &&
+            !intent.members.includes(c.pubkey),
+        )
+      )
+        throw new Error(
+          "A member already joined this new team; remove them after the team is created",
+        );
       put({ [id]: { ...op, intent } });
       return true;
     },

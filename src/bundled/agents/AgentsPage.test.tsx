@@ -2190,6 +2190,13 @@ it("keeps a reopened no-card change's draft and focus when its change finishes b
   expect(kept).toHaveValue("Lost draft");
   expect(kept).toHaveFocus();
   await user.type(kept, "!");
+  // Save edits the finished team in place.
+  agents.saveTeam.mockImplementationOnce(async (change: TeamChange) => {
+    const team = { ...teams[0], ...change, id: "team-new" };
+    teams.splice(0, 1, team);
+    show([]);
+    return team;
+  });
   await user.click(screen.getByRole("button", { name: "Create team" }));
   expect(agents.saveTeam).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -2198,6 +2205,13 @@ it("keeps a reopened no-card change's draft and focus when its change finishes b
       name: "Lost draft!",
     }),
   );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Name" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByText("Lost draft!")).toBeInTheDocument();
 });
 
 it("shows a team's unfinished marker beside its note", async () => {

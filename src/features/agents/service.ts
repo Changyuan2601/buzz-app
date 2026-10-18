@@ -2451,13 +2451,9 @@ export class AgentsService extends Service implements Agents {
   }
   /** Refuses to change local team `id` while its move onto the relay is
    * unfinished: resuming the move would undo the edit or bring the team
-   * back. */
+   * back. Its saved record counts while its community is away too. */
   private refuseMoving(id: string) {
-    if (
-      [...this.communityConfigs.values()].some((config) =>
-        config.teamOps().some((op) => op.local === id),
-      )
-    )
+    if (this.configJournals.ops.every().some((op) => op.local === id))
       throw new Error(
         "This team is moving to the relay; finish its move under Unfinished changes first",
       );
