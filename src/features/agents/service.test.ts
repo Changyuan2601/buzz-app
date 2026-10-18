@@ -6031,6 +6031,15 @@ describe("Delete as a recoverable archive", () => {
       if (found && !found.members.includes(pubkey)) found.members.push(pubkey);
       return { status: "confirmed" as const };
     });
+    const find = vi.fn(async (family: string, subject: string) =>
+      family === "agent-config"
+        ? { id: "9b353519-f4fe-4757-aef4-bec6cc0ae54c", archived: false }
+        : (() => {
+            const c = channels.get(subject);
+            return c && { ...c, members: [...c.members] };
+          })(),
+    );
+    const owns = vi.fn(async (_pubkey: string) => true);
     const key = (event: RelayEvent) =>
       event.tags.find(([name]) => name === "d")?.[1] ?? "";
     const opens = vi.fn((input: CommunityConfigInput) =>
@@ -6053,11 +6062,7 @@ describe("Delete as a recoverable archive", () => {
             channels.set(subject, made);
             return made;
           }),
-          find: vi.fn(async (family: string, subject: string) =>
-            family === "agent-config"
-              ? { id: "9b353519-f4fe-4757-aef4-bec6cc0ae54c", archived: false }
-              : channels.get(subject),
-          ),
+          find,
           teams: vi.fn(async () => [
             ...(await teams()),
             ...[...channels].map(([label, channel]) => ({ ...channel, label })),
@@ -6069,7 +6074,7 @@ describe("Delete as a recoverable archive", () => {
               found.members = found.members.filter((p) => p !== pubkey);
             return { status: "confirmed" as const };
           }),
-          owns: vi.fn(async () => true),
+          owns,
           archive: vi.fn(async (id: string) => archiveChannel(id, true)),
           unarchive: vi.fn(async (id: string) => archiveChannel(id, false)),
           archived: vi.fn(
@@ -6191,6 +6196,8 @@ describe("Delete as a recoverable archive", () => {
     };
     return {
       opens,
+      find,
+      owns,
       heads,
       addMember,
       channels,
@@ -6591,7 +6598,86 @@ describe("Delete as a recoverable archive", () => {
     return { f, relay, add, team, op };
   };
 
-  it("an unfinished Create drops an unfinished Create drop a never-joined member", async () => {
+  it.each([1, 2])(
+    "a Save during %s Check again runs can't leave out a member they add",
+    async (checks) => {
+      const cedar = "e".repeat(64);
+      const relay = configRelay();
+      communityFake.value = relay.opens;
+      const f = await setup({
+        identities: [here(alder), here(birch), here(cedar)],
+      });
+      let release = () => {};
+      const gate = new Promise<void>((r) => (release = r));
+      let enter = () => {};
+      const entered = new Promise<void>((r) => (enter = r));
+      let saving: Promise<unknown> | undefined;
+      try {
+        await vi.waitFor(() =>
+          expect(f.service.find(alder)?.configBase).toBeDefined(),
+        );
+        const add = relay.addMember.getMockImplementation();
+        if (!add) throw new Error("Missing member fake");
+        relay.addMember.mockImplementation(async (id, pubkey) =>
+          pubkey === alder
+            ? add(id, pubkey)
+            : ({ status: "refused", error: "Try later" } as never),
+        );
+        const team = {
+          creation: crypto.randomUUID(),
+          name: "Partial",
+          instructions: "RULE",
+          members: [alder, birch, cedar],
+        };
+        await expect(f.service.saveTeam(team)).rejects.toThrow();
+        const op = new TeamOps(f.storage).every()[0];
+        if (!op) throw new Error("Missing Create");
+        relay.owns.mockImplementationOnce(async () => {
+          enter();
+          await gate;
+          return true;
+        });
+        saving = f.service.saveTeam({
+          ...team,
+          operation: op.id,
+          members: [alder, cedar],
+        });
+        const outcome = saving.then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        );
+        await entered;
+        relay.addMember.mockImplementation(async (id, pubkey) =>
+          pubkey === cedar
+            ? ({ status: "refused", error: "Try later" } as never)
+            : add(id, pubkey),
+        );
+        // Check again queues behind the held Save, or, without serialization,
+        // adds B and (on the second run) replans B's confirmed command away.
+        let checking = Promise.resolve();
+        for (let i = 0; i < checks; i++)
+          checking = checking
+            .then(() => f.service.teamChange(op.id, "check"))
+            .catch(() => {});
+        await Promise.race([checking, new Promise((r) => setTimeout(r, 200))]);
+        relay.addMember.mockImplementation(add);
+        release();
+        const result = await outcome;
+        await checking;
+        const roster = [...relay.channels.values()].find(
+          (c) => c.family === "team-config",
+        )?.members;
+        // Never both: Save reports success and B, whom it left out, is joined.
+        expect(!("error" in result) && roster?.includes(birch)).toBe(false);
+      } finally {
+        release();
+        await saving?.catch(() => {});
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it("an unfinished Create drops a never-joined member", async () => {
     const { f, relay, team, op } = await partialCreate();
     try {
       expect(

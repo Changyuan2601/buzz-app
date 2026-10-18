@@ -784,6 +784,10 @@ export function teamRunner(deps: RunnerDeps) {
     resume: () =>
       Promise.all(mine().map((op) => run(op.id).catch(() => undefined))),
     records: mine,
+    /** Runs `work` as one step on team `teamId`, after its earlier steps
+     * settle and before any later one. */
+    exclusive: <T>(teamId: string, work: () => Promise<T>) =>
+      queue(teamId, work),
     /** A newer submission to a record that may still send: it waits behind
      * any held revision, never replacing its bytes. */
     revise(id: string, intent: TeamIntent) {

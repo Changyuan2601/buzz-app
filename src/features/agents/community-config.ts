@@ -432,6 +432,23 @@ export function agentConfigs(
       );
     return now;
   };
+  /** Accepts a Save of `intent` for team `id` through `accept`. While its
+   * Create is unfinished, the roster check and the acceptance run as one step
+   * on the team's queue: no earlier add is still in flight, and no step of
+   * the older intent dispatches or replans between them. `accept` must not
+   * await the team's steps, which queue behind it. */
+  async function accepted<T>(
+    id: string,
+    intent: TeamIntent,
+    accept: (create: TeamOp | undefined) => T,
+  ): Promise<T> {
+    const unfinished = () =>
+      runner.records().some((op) => op.kind === "create" && op.teamId === id);
+    if (!unfinished()) return accept(undefined);
+    return runner.exclusive(id, async () =>
+      accept(await refuseDroppingJoined(id, intent)),
+    );
+  }
   const importId = (source: "old-buzz-team" | "local-team", sourceId: string) =>
     importedTeamId({
       owner,
@@ -788,21 +805,25 @@ export function agentConfigs(
     /** Creates the team the open form `form` stands for, at that id: Save
      * again from the same form revises that one change, never a second. */
     async createTeam(team: TeamIntent, form: string, operation?: string) {
-      await refuseDroppingJoined(form, team);
-      // A reopened change that finished here saves as an edit of its head:
-      // this form's latest finished submission, else the reopened one.
-      const done =
-        finishedAt.get(forms.get(form) ?? "") ??
-        finishedAt.get(operation ?? "");
-      if (done) return this.editTeam(form, team, done, form).then(() => form);
-      return finished(
-        submitted(
-          form,
-          team,
-          { kind: "create", teamId: form, intent: team, base: null },
-          operation,
-        ),
-      ).then(() => form);
+      const saved = await accepted(form, team, () => {
+        // A reopened change that finished here saves as an edit of its head:
+        // this form's latest finished submission, else the reopened one.
+        const head =
+          finishedAt.get(forms.get(form) ?? "") ??
+          finishedAt.get(operation ?? "");
+        if (head) return { head };
+        return {
+          done: submitted(
+            form,
+            team,
+            { kind: "create", teamId: form, intent: team, base: null },
+            operation,
+          ),
+        };
+      });
+      if ("head" in saved)
+        return this.editTeam(form, team, saved.head, form).then(() => form);
+      return finished(saved.done).then(() => form);
     },
     /** Deletes synced team `id` by archiving its config channel. */
     archiveTeam(id: string) {
@@ -837,25 +858,27 @@ export function agentConfigs(
     ) {
       const team = ownTeam(id);
       if (team.archived) throw new Error("No such team");
-      const create = await refuseDroppingJoined(id, change);
-      if (team.unreadable)
-        throw new Error("This team can't be read right now; try again");
-      // While its Create is unfinished, the Save revises that Create: a
-      // separate Edit would leave its older intent to replay.
-      return finished(
-        submitted(
-          form,
-          change,
-          {
-            kind: "edit",
-            teamId: id,
-            channel: team.channel,
-            intent: change,
-            base: base ?? team.head ?? null,
-          },
-          create?.id,
-        ),
-      );
+      const { done } = await accepted(id, change, (create) => {
+        if (team.unreadable)
+          throw new Error("This team can't be read right now; try again");
+        // While its Create is unfinished, the Save revises that Create: a
+        // separate Edit would leave its older intent to replay.
+        return {
+          done: submitted(
+            form,
+            change,
+            {
+              kind: "edit",
+              teamId: id,
+              channel: team.channel,
+              intent: change,
+              base: base ?? team.head ?? null,
+            },
+            create?.id,
+          ),
+        };
+      });
+      return finished(done);
     },
     /** Saves each synced side the edit changed as its next revision of
      * `base`, the head its editor opened (the stored head where absent). The
