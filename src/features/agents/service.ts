@@ -2453,10 +2453,17 @@ export class AgentsService extends Service implements Agents {
    * unfinished: resuming the move would undo the edit or bring the team
    * back. Its saved record counts while its community is away too. */
   private refuseMoving(id: string) {
-    if (this.configJournals.ops.every().some((op) => op.local === id))
-      throw new Error(
-        "This team is moving to the relay; finish its move under Unfinished changes first",
-      );
+    const move = this.configJournals.ops.every().find((op) => op.local === id);
+    if (!move) return;
+    // Unfinished changes lists a move only while its community is here.
+    const here = [...this.communityConfigs.values()].some((config) =>
+      config.teamOps().some((op) => op.id === move.id),
+    );
+    throw new Error(
+      here
+        ? "This team is moving to the relay; finish its move under Unfinished changes first"
+        : "This team is moving to the relay; reconnect to its community to finish the move first",
+    );
   }
   /** The community config that holds team `id`, or for a new team the one
    * every member is in. Undefined: the team is local. */

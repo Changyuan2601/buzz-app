@@ -2197,7 +2197,14 @@ it("keeps a reopened no-card change's draft and focus when its change finishes b
     show([]);
     return team;
   });
-  await user.click(screen.getByRole("button", { name: "Create team" }));
+  // Its change finished: the form now edits that team, draft intact.
+  expect(
+    screen.getByRole("heading", { name: "Edit team" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Create team" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(agents.saveTeam).toHaveBeenCalledWith(
     expect.objectContaining({
       creation: "team-new",

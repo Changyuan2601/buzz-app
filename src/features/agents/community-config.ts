@@ -390,6 +390,26 @@ export function agentConfigs(
     if (!team) throw new Error("No such team");
     return team;
   };
+  /** Refuses `intent` for team `id` while its Create is unfinished when it
+   * drops a member on the team's roster today, or one whose add may have
+   * been sent: a Create removes nobody. */
+  const refuseDroppingJoined = (id: string, intent: TeamIntent) => {
+    const create = runner
+      .records()
+      .find((op) => op.kind === "create" && op.teamId === id);
+    if (!create) return;
+    if (!teams) throw new Error("This team can't be read right now; try again");
+    const joined = teams.find((t) => t.id === id)?.members ?? [];
+    const sent = create.commands.flatMap((c) =>
+      c.action === "add" && c.state === "maybe-sent" && c.pubkey
+        ? [c.pubkey]
+        : [],
+    );
+    if ([...joined, ...sent].some((p) => !intent.members.includes(p)))
+      throw new Error(
+        "A member joined or may have joined this new team; remove them after the team is created",
+      );
+  };
   const importId = (source: "old-buzz-team" | "local-team", sourceId: string) =>
     importedTeamId({
       owner,
@@ -746,8 +766,12 @@ export function agentConfigs(
     /** Creates the team the open form `form` stands for, at that id: Save
      * again from the same form revises that one change, never a second. */
     createTeam(team: TeamIntent, form: string, operation?: string) {
-      // A reopened change that finished here saves as an edit of its head.
-      const done = finishedAt.get(operation ?? forms.get(form) ?? "");
+      refuseDroppingJoined(form, team);
+      // A reopened change that finished here saves as an edit of its head:
+      // this form's latest finished submission, else the reopened one.
+      const done =
+        finishedAt.get(forms.get(form) ?? "") ??
+        finishedAt.get(operation ?? "");
       if (done) return this.editTeam(form, team, done, form).then(() => form);
       return finished(
         submitted(
@@ -791,6 +815,7 @@ export function agentConfigs(
     ) {
       const team = ownTeam(id);
       if (team.archived) throw new Error("No such team");
+      refuseDroppingJoined(id, change);
       if (team.unreadable)
         throw new Error("This team can't be read right now; try again");
       return finished(

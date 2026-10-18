@@ -834,7 +834,7 @@ describe("team operations: transitions", () => {
     expect(w.relay.roster.has(b)).toBe(true);
   });
 
-  it("a partly done Create refuses a revision dropping a joined member, keeping everyone", async () => {
+  it("a partly done Create revised to drop a joined member removes nobody", async () => {
     const c = keypair().pubkey;
     const w = world({ agents: [a, c] });
     const teamId = crypto.randomUUID();
@@ -849,9 +849,7 @@ describe("team operations: transitions", () => {
     expect(w.relay.roster.has(a)).toBe(true);
     // Another device adds a same-owner member meanwhile.
     w.relay.roster.add(c);
-    expect(() => w.runner.revise(old.op.id, { ...team, members: [b] })).toThrow(
-      "remove them after the team is created",
-    );
+    w.runner.revise(old.op.id, { ...team, members: [b] });
     w.agents.add(b);
     expect(await w.runner.run(old.op.id)).toBeUndefined();
     expect(w.relay.roster.has(a)).toBe(true);

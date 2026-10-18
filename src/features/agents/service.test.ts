@@ -6510,6 +6510,123 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("the discovered card refuses dropping a joined member of its unfinished Create", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder), here(birch)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const add = relay.addMember.getMockImplementation();
+      if (!add) throw new Error("Missing member fake");
+      relay.addMember.mockImplementation(async (id, pubkey) =>
+        pubkey === birch
+          ? ({ status: "refused", error: "Try later" } as never)
+          : add(id, pubkey),
+      );
+      const creation = crypto.randomUUID();
+      await expect(
+        f.service.saveTeam({
+          creation,
+          name: "Partial",
+          instructions: "RULE",
+          members: [alder, birch],
+        }),
+      ).rejects.toThrow();
+      expect(new TeamOps(f.storage).every()).toEqual([
+        expect.objectContaining({ kind: "create" }),
+      ]);
+      expect(f.service.snapshot().teams).toContainEqual(
+        expect.objectContaining({ id: creation }),
+      );
+      // The retry could now succeed; dropping A must still be refused before any edit starts.
+      relay.addMember.mockImplementation(add);
+      // TeamEditor opened from that card sends id and a fresh form id, not operation.
+      await expect(
+        f.service.saveTeam({
+          id: creation,
+          creation: crypto.randomUUID(),
+          name: "Partial",
+          instructions: "RULE",
+          members: [birch],
+        }),
+      ).rejects.toThrow("remove them after the team is created");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  /** A Create of alder and birch whose birch add is refused: alder joins,
+   * the Create stays unfinished. Returns the member fake to restore. */
+  const partialCreate = async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder), here(birch)] });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    const add = relay.addMember.getMockImplementation();
+    if (!add) throw new Error("Missing member fake");
+    relay.addMember.mockImplementation(async (id, pubkey) =>
+      pubkey === birch
+        ? ({ status: "refused", error: "Try later" } as never)
+        : add(id, pubkey),
+    );
+    const creation = crypto.randomUUID();
+    const team = {
+      creation,
+      name: "Partial",
+      instructions: "RULE",
+      members: [alder, birch],
+    };
+    await expect(f.service.saveTeam(team)).rejects.toThrow();
+    const [op] = new TeamOps(f.storage).every();
+    if (op?.kind !== "create") throw new Error("Missing unfinished Create");
+    return { f, relay, add, team, op };
+  };
+
+  it("an unfinished Create still refuses dropping its joined member after Check again", async () => {
+    const { f, team, op } = await partialCreate();
+    try {
+      // birch is still refused, so Check again leaves the Create unfinished.
+      await f.service.teamChange(op.id, "check").catch(() => {});
+      expect(new TeamOps(f.storage).every()).toEqual([
+        expect.objectContaining({ id: op.id }),
+      ]);
+      await expect(
+        f.service.saveTeam({ ...team, operation: op.id, members: [birch] }),
+      ).rejects.toThrow("remove them after the team is created");
+      expect(new TeamOps(f.storage).every()[0]?.intent.members).toEqual([
+        alder,
+        birch,
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("once its Create finishes, the card's edit drops a member", async () => {
+    const { f, relay, add, team } = await partialCreate();
+    try {
+      relay.addMember.mockImplementation(add);
+      await f.service.saveTeam(team);
+      expect(new TeamOps(f.storage).every()).toEqual([]);
+      await expect(
+        f.service.saveTeam({
+          id: team.creation,
+          creation: crypto.randomUUID(),
+          name: "Partial",
+          instructions: "RULE",
+          members: [birch],
+        }),
+      ).resolves.toMatchObject({ members: [birch] });
+      expect(new TeamOps(f.storage).every()).toEqual([]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("retry of a partial Create keeps its team id", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;
@@ -6688,9 +6805,61 @@ describe("Delete as a recoverable archive", () => {
       await settle();
       await expect(
         f.service.saveTeam({ ...local, name: "Changed" }),
-      ).rejects.toThrow("Unfinished changes");
+      ).rejects.toThrow("reconnect to its community");
       await expect(f.service.removeTeam(local.id)).rejects.toThrow(
-        "Unfinished changes",
+        "reconnect to its community",
+      );
+      expect(readTeams(storage)).toEqual([local]);
+      relay.noTeams.value = false;
+      communityFake.value = relay.opens;
+      f.reconnecting();
+      f.connect(true);
+      await vi.waitFor(() => expect(relay.opens).toHaveBeenCalledTimes(2));
+      const config = relay.opens.mock.results[1]?.value;
+      if (!config) throw new Error("Missing reconnected config");
+      await config.attach([
+        {
+          pubkey: alder,
+          name: "Alder",
+          type: "example/echo",
+          config: { reply: "ok" },
+        },
+      ]);
+      await config.resumeTeams();
+      await settle();
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ name: "Local", instructions: "RULE" }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("offline Delete alone is refused and reconnect preserves the original team", async () => {
+    const relay = configRelay();
+    relay.noTeams.value = true;
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const local = {
+      id: "local-before-sync",
+      name: "Local",
+      instructions: "RULE",
+      members: [alder],
+    };
+    writeTeams(storage, [local]);
+    const f = await setup({ identities: [here(alder)], storage });
+    try {
+      await vi.waitFor(() =>
+        expect(new TeamOps(storage).every()).toHaveLength(1),
+      );
+      const [migration] = new TeamOps(storage).every();
+      expect(migration?.teamId).not.toBe(local.id);
+      communityFake.value = null;
+      f.reconnecting();
+      f.connect(true);
+      await settle();
+      await expect(f.service.removeTeam(local.id)).rejects.toThrow(
+        "reconnect to its community",
       );
       expect(readTeams(storage)).toEqual([local]);
       relay.noTeams.value = false;
@@ -7358,6 +7527,136 @@ describe("Delete as a recoverable archive", () => {
       ]);
     } finally {
       await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("saves a reopened Create again after its own edit finished under Check again", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage(),
+      operation = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [operation]: {
+        id: operation,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder), here(birch)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await relay.opens.mock.results[0]?.value.resumeTeams();
+      expect(new TeamOps(storage).every()).toEqual([]);
+      const add = relay.addMember.getMockImplementation();
+      if (!add) throw new Error("Missing member fake");
+      relay.addMember.mockImplementation(async (id, pubkey) =>
+        pubkey === birch
+          ? ({ status: "refused", error: "Try later" } as never)
+          : add(id, pubkey),
+      );
+      const form = {
+        creation: teamId,
+        operation,
+        name: "Pending",
+        members: [alder, birch],
+      };
+      // The editor's first Save edits the team, but birch's add waits.
+      await expect(
+        f.service.saveTeam({ ...form, instructions: "EDIT RULE" }),
+      ).rejects.toThrow();
+      const [edit] = new TeamOps(storage).every();
+      if (edit?.kind !== "edit") throw new Error("Missing unfinished edit");
+      relay.addMember.mockImplementation(add);
+      await f.service.teamChange(edit.id, "check");
+      expect(new TeamOps(storage).every()).toEqual([]);
+      // Its next Save builds on that edit's head, not the Create's.
+      await expect(
+        f.service.saveTeam({ ...form, instructions: "LATEST RULE" }),
+      ).resolves.toMatchObject({ id: teamId, instructions: "LATEST RULE" });
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ id: teamId, instructions: "LATEST RULE" }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("completion before restart refuses a stale operation safely and keeps its submitted draft", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const operation = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [operation]: {
+        id: operation,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const first = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(first.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await relay.opens.mock.results[0]?.value.resumeTeams();
+      expect(new TeamOps(storage).every()).toEqual([]);
+    } finally {
+      await first.ctx.fiber.dispose();
+    }
+    const heads = [...relay.heads.values()],
+      channelsBefore = relay.channels.size;
+    const again = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(again.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await expect(
+        again.service.saveTeam({
+          creation: teamId,
+          operation,
+          name: "Revised",
+          instructions: "NEW RULE",
+          members: [alder],
+        }),
+      ).rejects.toThrow("changed on another device");
+      expect([...relay.heads.values()]).toEqual(heads);
+      expect(relay.channels.size).toBe(channelsBefore);
+      expect(new TeamOps(storage).every()).toEqual([
+        expect.objectContaining({
+          teamId,
+          stop: "conflict",
+          intent: expect.objectContaining({ instructions: "NEW RULE" }),
+        }),
+      ]);
+    } finally {
+      await again.ctx.fiber.dispose();
     }
   });
 
