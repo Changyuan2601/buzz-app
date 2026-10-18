@@ -1,0 +1,277 @@
+// Pull request watches for agents: what one GitHub read says about a pull
+// request, and whether that is worth waking the agent that asked. Code decides,
+// not a model: CI finishing on the head commit, or new feedback from someone
+// other than the signed-in account, which is also the account agents use.
+//
+// The wake is sent as the owner, whom agents trust, so it carries no text
+// anyone else wrote: no comment bodies, only who, where and a link. The agent
+// reads the feedback itself.
+
+/** What a watched pull request looked like at one read. */
+export type PullSnapshot = Readonly<{
+  state: "OPEN" | "MERGED" | "CLOSED";
+  /** The signed-in GitHub account, whose own comments wake nobody. */
+  viewer: string;
+  head: string;
+  /** Whether every check on the head is done, and none is still expected. */
+  settled: boolean;
+  /** The head's failed checks, by name. */
+  failed: readonly string[];
+  feedback: readonly Feedback[];
+}>;
+export type Feedback = Readonly<{
+  id: string;
+  author: string;
+  /** A review's state, or where an inline comment is. */
+  where?: string | undefined;
+  url: string;
+}>;
+
+export type Watch = Readonly<{
+  agent: string;
+  url: string;
+  /** Where the agent asked, so it wakes in that conversation. */
+  channel: string;
+  root?: string | undefined;
+  /** Feedback ids already handled; absent until the first read. */
+  seen?: readonly string[] | undefined;
+  /** The head commit and result the agent was last told, `sha:passed`. */
+  reported?: string | undefined;
+  /** New feedback not yet sent, while more may follow. */
+  pending?: readonly Feedback[] | undefined;
+  /** When feedback last arrived, in ms. */
+  arrived?: number | undefined;
+  wakes: number;
+  /** Polls in a row that could not read the pull request or wake the agent. */
+  failures?: number | undefined;
+}>;
+
+/** New feedback waits this long for more, so a review is one wake. */
+export const QUIET_MS = 90_000;
+/** A watch ends after waking its agent this many times. */
+export const WAKE_LIMIT = 20;
+/** Feedback ids kept beyond those a read returns. */
+const SEEN_SPARE = 200;
+const LISTED = 10;
+
+export type Step = Readonly<{
+  watch: Watch;
+  /** What to tell the agent, when there is something. */
+  wake?: string | undefined;
+  /** Why the watch is over, when it is. */
+  ended?: "merged" | "closed" | "limit" | undefined;
+}>;
+
+/** The watch after `snapshot` at `now`, and what to tell its agent. */
+export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
+  if (snapshot.state !== "OPEN")
+    return {
+      watch,
+      ended: snapshot.state === "MERGED" ? "merged" : "closed",
+    };
+  const ids = snapshot.feedback.map((item) => item.id);
+  // The first read only learns what was already there.
+  const seen = new Set(watch.seen ?? ids);
+  const arrived = snapshot.feedback.filter(
+    (item) => !seen.has(item.id) && item.author !== snapshot.viewer,
+  );
+  const pending = [...(watch.pending ?? []), ...arrived];
+  const next: Watch = {
+    ...watch,
+    // What this read returned, then the newest of the rest.
+    seen: [
+      ...ids,
+      ...[...seen].filter((id) => !ids.includes(id)).slice(-SEEN_SPARE),
+    ],
+    pending,
+    arrived: arrived.length ? now : watch.arrived,
+  };
+  // A failed head that turns green after a rerun is news too.
+  const result = `${snapshot.head}:${snapshot.failed.length ? "failed" : "passed"}`;
+  const ci = snapshot.settled && result !== watch.reported;
+  const quiet = pending.length > 0 && now - (next.arrived ?? now) >= QUIET_MS;
+  if (!ci && !quiet) return { watch: next };
+  const wakes = watch.wakes + 1;
+  return {
+    watch: {
+      ...next,
+      pending: [],
+      arrived: undefined,
+      reported: ci ? result : watch.reported,
+      wakes,
+    },
+    wake: wakeText(watch.url, snapshot, ci, pending),
+    ...(wakes >= WAKE_LIMIT ? { ended: "limit" as const } : {}),
+  };
+}
+
+const listed = (lines: string[], items: readonly string[]) => {
+  for (const item of items.slice(0, LISTED)) lines.push(`- ${item}`);
+  if (items.length > LISTED) lines.push(`- and ${items.length - LISTED} more`);
+};
+
+function wakeText(
+  url: string,
+  snapshot: PullSnapshot,
+  ci: boolean,
+  feedback: readonly Feedback[],
+) {
+  const lines: string[] = [];
+  if (ci) {
+    const sha = snapshot.head.slice(0, 9);
+    if (snapshot.failed.length) {
+      lines.push(`CI failed on ${sha} for ${url}:`);
+      listed(
+        lines,
+        snapshot.failed.map((name) => name.slice(0, 80)),
+      );
+    } else lines.push(`CI passed on ${sha} for ${url}.`);
+  }
+  if (feedback.length) {
+    if (lines.length) lines.push("");
+    lines.push(
+      `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, to read with gh:`,
+    );
+    listed(
+      lines,
+      feedback.map(
+        (item) =>
+          `${item.author}${item.where ? ` (${item.where})` : ""}: ${item.url}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** owner/name#number from a pull request URL, or undefined. */
+export function pullOf(url: string) {
+  const match =
+    /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#].*)?$/i.exec(
+      url.trim(),
+    );
+  if (!match) return undefined;
+  const [, owner, name, number] = (match as unknown as string[]).map((part) =>
+    part.toLowerCase(),
+  ) as [string, string, string, string];
+  return {
+    owner,
+    name,
+    number: Number(number),
+    url: `https://github.com/${owner}/${name}/pull/${number}`,
+  };
+}
+
+const QUERY = `query($owner:String!,$name:String!,$number:Int!){
+viewer{login}
+repository(owner:$owner,name:$name){pullRequest(number:$number){
+state headRefOid
+commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
+__typename
+... on CheckRun{name status conclusion}
+... on StatusContext{context state}}}}}}}
+reviews(last:50){nodes{databaseId author{login} state body url}}
+comments(last:50){nodes{databaseId author{login} url}}
+reviewThreads(last:50){nodes{comments(last:20){nodes{databaseId author{login} path line url}}}}
+}}}`;
+
+/** The `gh api graphql --input -` request body that reads `pull`. */
+export function pullRequest(pull: NonNullable<ReturnType<typeof pullOf>>) {
+  return JSON.stringify({
+    query: QUERY,
+    variables: { owner: pull.owner, name: pull.name, number: pull.number },
+  });
+}
+
+type Node = Record<string, unknown>;
+const nodes = (value: unknown): Node[] =>
+  Array.isArray((value as { nodes?: unknown })?.nodes)
+    ? ((value as { nodes: unknown[] }).nodes.filter(
+        (node) => node && typeof node === "object",
+      ) as Node[])
+    : [];
+const str = (value: unknown) => (typeof value === "string" ? value : "");
+const login = (node: Node) =>
+  str((node.author as { login?: unknown } | null)?.login) || "ghost";
+const FAILED = new Set([
+  "FAILURE",
+  "ERROR",
+  "TIMED_OUT",
+  "CANCELLED",
+  "ACTION_REQUIRED",
+  "STARTUP_FAILURE",
+  "STALE",
+]);
+
+/** The snapshot in a `pullRequest` response, or undefined when it has none. */
+export function parsePull(output: string): PullSnapshot | undefined {
+  let data: Node;
+  try {
+    data = (JSON.parse(output) as { data?: Node }).data ?? {};
+  } catch {
+    return undefined;
+  }
+  const pull = (data.repository as Node | null)?.pullRequest as
+    | Node
+    | null
+    | undefined;
+  const state = str(pull?.state);
+  const head = str(pull?.headRefOid);
+  if (!pull || !["OPEN", "MERGED", "CLOSED"].includes(state) || !head)
+    return undefined;
+  const commit = nodes(pull.commits)[0]?.commit as Node | undefined;
+  const rollup = commit?.statusCheckRollup as Node | null | undefined;
+  const contexts = nodes(rollup?.contexts);
+  const checks = contexts.map((node) =>
+    node.__typename === "StatusContext"
+      ? {
+          name: str(node.context),
+          done: !["PENDING", "EXPECTED"].includes(str(node.state)),
+          failed: FAILED.has(str(node.state)),
+        }
+      : {
+          name: str(node.name),
+          done: node.status === "COMPLETED",
+          failed: FAILED.has(str(node.conclusion)),
+        },
+  );
+  const settled =
+    checks.length > 0 &&
+    checks.every((check) => check.done) &&
+    // More than one page of checks, or ones still expected, are not all here.
+    (rollup?.contexts as { totalCount?: unknown } | undefined)?.totalCount ===
+      contexts.length &&
+    !["PENDING", "EXPECTED"].includes(str(rollup?.state));
+  const feedback: Feedback[] = [
+    // A review's inline comments are listed with their threads; an empty
+    // COMMENTED review is only their wrapper.
+    ...nodes(pull.reviews)
+      .filter((node) => str(node.body).trim() || node.state !== "COMMENTED")
+      .map((node) => ({
+        id: `review/${String(node.databaseId)}`,
+        author: login(node),
+        where: `review, ${str(node.state).toLowerCase().replace(/_/g, " ")}`,
+        url: str(node.url),
+      })),
+    ...nodes(pull.comments).map((node) => ({
+      id: `comment/${String(node.databaseId)}`,
+      author: login(node),
+      url: str(node.url),
+    })),
+    ...nodes(pull.reviewThreads).flatMap((thread) =>
+      nodes(thread.comments).map((node) => ({
+        id: `inline/${String(node.databaseId)}`,
+        author: login(node),
+        where: `${str(node.path)}${typeof node.line === "number" ? `:${node.line}` : ""}`,
+        url: str(node.url),
+      })),
+    ),
+  ];
+  return {
+    state: state as PullSnapshot["state"],
+    viewer: str((data.viewer as Node | null)?.login),
+    head,
+    settled,
+    failed: checks.filter((check) => check.failed).map((check) => check.name),
+    feedback,
+  };
+}

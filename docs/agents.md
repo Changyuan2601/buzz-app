@@ -58,6 +58,20 @@ their sessions when replaced, but a Codex agent starts a new thread and loses it
 context. That happens once when a plugin with tools ships, and again whenever a
 tool's name, description or schema changes, so edit those deliberately.
 
+On desktop the GitHub plugin adds `watch_pr`, so an agent can wait on a pull
+request without a model checking it. An agent calls it with a pull request URL.
+While the app is open the plugin reads the pull request through the signed-in
+`gh` CLI once a minute. It wakes the agent when CI settles on the head commit,
+once per commit and result, or when new feedback from anyone but the `gh`
+account has been quiet for 90 seconds. The wake is one message from the owner,
+mentioning the agent, in the conversation where it called the tool, so every
+agent type answers it as a mention. That message lists failed check names and
+each comment's author, place and link, never text others wrote, because agents
+trust their owner's words. The agent reads the feedback with `gh`. A watch is
+saved on the device. It ends when the pull request merges or closes, after 20
+wakes, after 30 failed polls in a row, or when the agent calls it with
+`stop: true`.
+
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each

@@ -26,6 +26,7 @@ import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 import { GitHubConversation } from "./GitHubConversation";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
+import { watchPulls } from "./watcher";
 
 export const inject = ["panels"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -35,6 +36,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     matches: (target) => !!parseGitHubReference(target),
     component: GitHubPanel,
   });
+  // Agents can watch pull requests where the app runs them.
+  ctx.inject(["agents", "host"], watchPulls);
 };
 const labels = {
   repository: "Repository",
