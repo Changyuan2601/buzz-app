@@ -358,3 +358,46 @@ it("asks a stream it lost for what it missed, though other streams heard on", as
   expect(since("channels:0")).toBe(start + 270);
   feed.stop();
 });
+
+it("goes on hearing its other channels when the relay refuses a batch it can no longer read, and asks again once back in", () => {
+  const { feed, socket, pubkey, statuses, heard, sign, roster } = loggedIn();
+  for (let index = 0; index <= CHANNEL_BATCH; index++)
+    socket.receive(["EVENT", "rosters", roster(`c${index}`, [pubkey])]);
+  socket.receive(["EOSE", latest(socket, "metadata:0")]);
+  socket.receive(["EOSE", latest(socket, "metadata:1")]);
+  expect(statuses.at(-1)).toBe(true);
+  // Removed from the second batch's only channel: the relay closes it.
+  socket.receive([
+    "CLOSED",
+    latest(socket, "channels:1"),
+    "restricted: channel access revoked",
+  ]);
+  socket.receive([
+    "CLOSED",
+    latest(socket, "metadata:1"),
+    "restricted: channel access revoked",
+  ]);
+  expect(statuses.at(-1)).toBe(true);
+  // A mention in the first batch is given on as it comes.
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:0"),
+    sign(
+      9,
+      [
+        ["h", "c0"],
+        ["p", pubkey],
+      ],
+      "still here",
+      150,
+    ),
+  ]);
+  expect(heard).toEqual(["still here:false"]);
+  // Added back: its batch is asked for again, and the feed waits for it.
+  const before = asked(socket).length;
+  socket.receive(["EVENT", "rosters", roster(`c${CHANNEL_BATCH}`, [pubkey])]);
+  expect(asked(socket).slice(before)).toEqual(["channels:1", "metadata:1"]);
+  socket.receive(["CLOSED", latest(socket, "channels:1"), "error: busy"]);
+  expect(statuses.at(-1)).toBe(false);
+  feed.stop();
+});

@@ -205,11 +205,18 @@ export class AgentFeed {
       send(["REQ", id, asked]);
     };
     // Live while the relay keeps the mentions, rosters and every channel
-    // batch's subscription.
+    // batch's subscription it allows. The relay drops a channel the agent
+    // left from a batch's subscription, and refuses the batch only once the
+    // agent can read none of its channels: that batch has nothing to hear,
+    // so the others go on without it.
     const status = () =>
       this.setLive(
         all()
-          .filter((key) => !key.startsWith("metadata:"))
+          .filter(
+            (key) =>
+              !key.startsWith("metadata:") &&
+              !(key.startsWith("channels:") && denied.has(key)),
+          )
           .every(isOpen),
       );
     /** Opens each subscription that is not open, refused or waiting to be
@@ -346,7 +353,22 @@ export class AgentFeed {
               ),
             ],
           });
-        if (!this.channels.has(id)) {
+        if (this.channels.has(id)) {
+          // Back in a channel of a batch the relay refused: ask for it again.
+          const index = Math.floor(this.order.indexOf(id) / CHANNEL_BATCH);
+          const key = `channels:${index}`;
+          if (
+            subscribed &&
+            denied.has(key) &&
+            this.rosters.get(id)?.members.includes(this.options.pubkey)
+          ) {
+            for (const each of [key, `metadata:${index}`]) {
+              denied.delete(each);
+              ask(each);
+            }
+            status();
+          }
+        } else {
           this.channels.add(id);
           this.order.push(id);
           this.loading.set(id, []);
