@@ -52,6 +52,8 @@ export function fakeHarness(
     exitCode?: number;
     /** Turns stay open until finished. */
     hold?: boolean;
+    /** `session/new` is answered only once this settles. */
+    opening?: Promise<void>;
     /** Kill asks it to stop, and it never exits. */
     holdExit?: boolean;
     /** Prompts from the `from`th (0-based, default 0) are answered with
@@ -168,7 +170,9 @@ export function fakeHarness(
             const sessionId = `session-${++sessions}`;
             const [buzz] = (params.mcpServers ?? []) as { url: string }[];
             if (buzz) declared.set(sessionId, buzz.url);
-            send({ id, result: { sessionId } });
+            const opened = () => send({ id, result: { sessionId } });
+            if (options.opening) void options.opening.then(opened);
+            else opened();
           } else if (method === "session/prompt") {
             const sessionId = String(params.sessionId);
             const text = (params.prompt as { text: string }[])
