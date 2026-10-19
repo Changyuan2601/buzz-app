@@ -16,6 +16,10 @@ const KEY_STATUS: Record<AgentsSnapshot["classifierKey"], string> = {
     "TypeSafe did not accept your key. Replace it to keep using TypeSafe.",
 };
 
+/** What any provider receives. The host says it once, for every provider. */
+const DISCLOSURE =
+  "Your decisions provider receives the message text that plugins send it, including from private channels.";
+
 /** Sets or removes the TypeSafe key that decisions use.
  * The key goes straight to native storage and is never shown again. */
 export function DecisionsSettings({
@@ -58,7 +62,11 @@ export function DecisionsSettings({
   };
   return (
     <section aria-labelledby="decisions-settings-title">
-      <Header id="decisions-settings-title" title="Decisions API" />
+      <Header
+        id="decisions-settings-title"
+        title="Decisions API"
+        subtitle={DISCLOSURE}
+      />
       {!desktop ? (
         <p role="status" className="mt-4 text-body-sm text-secondary">
           Open the Buzz desktop app to set up decisions.
@@ -76,14 +84,6 @@ export function DecisionsSettings({
               {apple
                 ? "The key is kept in this Mac's Keychain, where only Buzz can read it."
                 : "The key is kept in this device's credential store. Other programs you run, agent shells included, can read it there."}
-            </p>
-            <p className="text-body-sm text-secondary">
-              Each decision is sent to TypeSafe (api.typesafe.ai). For each
-              event an agent's classified watch matches, Buzz sends the whole
-              event, with its text and tags; the author's display name and
-              whether they are the agent's owner; the channel name; the first
-              600 characters of the message it replies to; and who it mentions.
-              This includes events in private channels.
             </p>
             <form
               className="flex w-full flex-col items-start gap-3"

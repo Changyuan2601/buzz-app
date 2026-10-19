@@ -133,11 +133,11 @@ it.each([
   },
 );
 
-it("says what is sent to TypeSafe before the key is saved", () => {
+it("says once, in the header, that the provider receives message text", () => {
   render(<DecisionsSettings agents={fake()} active={() => true} />);
-  const disclosure = screen.getByText(/sent to TypeSafe \(api\.typesafe\.ai\)/);
+  const disclosure = screen.getByText(/provider receives the message text/);
   expect(disclosure).toHaveTextContent("private channels");
-  expect(disclosure).toHaveTextContent("first 600 characters");
+  expect(disclosure).not.toHaveTextContent("TypeSafe");
   expect(
     disclosure.compareDocumentPosition(
       screen.getByLabelText("TypeSafe API key"),
