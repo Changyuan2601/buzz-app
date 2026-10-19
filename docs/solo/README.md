@@ -46,8 +46,8 @@ behavior on the label, so a rename touches copy only.
 - **Label only:** a private channel without `buzz.solo` is an ordinary Team
   channel, whatever its `about` text. The retired
   `Buzz session (buzz.sessions/v1)` marker is read only to ignore saved create
-  receipts from old session starts, so they never lock the Create channel
-  dialog. There is no migration,
+  receipts signed before #1273, so old session starts never lock the Create
+  channel dialog. There is no migration,
   membership revocation or transcript copy for channels created before the
   label.
 - Projects are existing Solo projects, and Chats are ordinary private channels. New

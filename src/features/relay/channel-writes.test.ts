@@ -280,6 +280,48 @@ it.each([
   },
 );
 
+it("restores a later ordinary channel that uses the retired session text", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const ordinary = signed(viewer, {
+    // Signed after #1273, when ordinary channels may use any description.
+    created_at: 1_792_400_000,
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["name", "Session notes"],
+      ["visibility", "open"],
+      ["channel_type", "stream"],
+      ["about", "Buzz session (buzz.sessions/v1)"],
+    ],
+  });
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: { kinds: [9007], sign: vi.fn(), publish: vi.fn() },
+    },
+    {
+      outboxStorage: {
+        load: () => [{ event: ordinary, signed: ordinary, delivery: "seen" }],
+        save: () => {},
+      },
+    },
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(owner.session.channelCreation.snapshot()).toEqual({
+        name: "Session notes",
+        visibility: "open",
+        description: "Buzz session (buzz.sessions/v1)",
+      }),
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([false, true])(
   "retains a seen channel creation while creator membership is unconfirmed (channel kit: %s)",
   async (kit) => {
