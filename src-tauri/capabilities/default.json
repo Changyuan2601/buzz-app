@@ -123,6 +123,7 @@
     "allow-jev-classify",
     "allow-app-agent-state-load",
     "allow-app-agent-state-set",
+    "allow-decide",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

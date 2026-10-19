@@ -65,6 +65,16 @@ export type {
 } from "../features/relay/read-state";
 
 export type {
+  Decisions,
+  DecisionBackend,
+  DecisionQuestion,
+  DecisionRequest,
+  DecisionAnswer,
+  DecisionFailure,
+  DecisionResult,
+} from "../features/decisions/service";
+
+export type {
   Navigation,
   NavigationSnapshot,
   OpenResult,

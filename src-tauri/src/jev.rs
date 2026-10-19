@@ -86,7 +86,7 @@ impl JevHost {
     }
     /// The saved key, or `None` when there is none. A Keychain that cannot be
     /// read is an error, not a missing key.
-    async fn key(&self) -> Result<Option<Zeroizing<String>>, String> {
+    pub(crate) async fn key(&self) -> Result<Option<Zeroizing<String>>, String> {
         let mut key = self.key.lock().await;
         if key.is_none() {
             // The store can block on a consent dialog; a caller's deadline
@@ -99,7 +99,7 @@ impl JevHost {
         }
         Ok(key.as_ref().and_then(|k| k.clone()))
     }
-    async fn forget(&self) {
+    pub(crate) async fn forget(&self) {
         *self.key.lock().await = None;
     }
     pub(crate) async fn configured(&self) -> Result<bool, String> {

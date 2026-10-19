@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_state;
 mod app_agents;
+mod decisions;
 mod deep_links;
 mod dock;
 mod huddle_window;
@@ -569,6 +570,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classify,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
+        decisions::decide,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -769,6 +771,7 @@ pub fn run() {
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
+        .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())

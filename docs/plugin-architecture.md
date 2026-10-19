@@ -1373,6 +1373,62 @@ media response. Native microphone permissions were exercised in the staging app.
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
 
+## Decisions
+
+The host composes one `DecisionsService` in `app/services.ts`. Plugins, bundled
+or external, declare `inject = ["decisions"]` and call `ctx.decisions.decide`
+to ask typed questions about a piece of text. One provider answers every
+question in one call:
+
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export async function apply(ctx: Context) {
+  const result = await ctx.decisions.decide({
+    state: "The build is broken on main.",
+    questions: {
+      urgent: { type: "yes_no", instructions: "It needs attention now." },
+      topic: {
+        type: "choice",
+        instructions: "What is it about?",
+        options: { build: "CI or builds", other: "Anything else" },
+      },
+      severity: { type: "score", instructions: "How severe?", levels: ["low", "medium", "high"] },
+    },
+    timeoutMs: 5_000,
+  });
+  if (result.outcome === "answered") {
+    const urgent = result.answers.urgent; // { type: "yes_no", probability }
+  }
+}
+```
+
+A request has 1 to 32 questions, keyed by an answer name of at most 64
+characters. `choice` takes 2 to 255 options (value -> when to pick it); `score`
+takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
+a `choice` answer is the picked value with its confidence; a `score` answer is
+where it falls on the 0-based scale (it can be fractional), with a confidence.
+Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+
+`decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
+this build has no decision provider (`unavailable`), the chosen provider has no
+saved key (`missing_credentials`), the provider refused the key
+(`unauthorized`), the questions are malformed (`invalid_request`), the request
+is over 128 KiB (`input_limit`), or the call times out, fails, or returns
+answers that do not fit the questions. A failed call is not retried and never
+falls back to another provider.
+
+The user chooses the provider in Settings. `ctx.decisions.backend()` names it:
+
+| Provider | Credentials |
+|----------|-------------|
+| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+
+Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
+limits and the answer checks, so a plugin sees the same answers whichever
+provider runs. Plugins cannot choose the provider. `state` and every question go
+to the provider, so send only what the decision needs.
+
 ## In-app keyboard shortcuts
 
 The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare
