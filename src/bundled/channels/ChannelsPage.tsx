@@ -616,6 +616,8 @@ function ChannelWorkspace({
         signal={navigation?.signal ?? new AbortController().signal}
         receipt={welcomeChat}
         onSaved={() => setComposerFocus((value) => value + 1)}
+        onSend={(id) => current && setSent({ channelId: current.id, id })}
+        openProfile={(target) => canOpenLink(target) && openLink(target)}
       />
     ) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
@@ -1416,7 +1418,9 @@ function ChannelWorkspace({
             }
             onOpenThread={solo ? undefined : openThread}
             revealMessageId={
-              sent?.channelId === current.id ? sent.id : welcomeChat?.replyId
+              sent?.channelId === current.id
+                ? sent.id
+                : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
             }
             beforeMessages={
               welcomeControls ? (
@@ -1426,6 +1430,9 @@ function ChannelWorkspace({
               ) : undefined
             }
             afterMessages={welcomeControls}
+            afterMessageId={
+              welcomeControls ? welcomeChat?.greetingId : undefined
+            }
           />
         ) : (
           <div

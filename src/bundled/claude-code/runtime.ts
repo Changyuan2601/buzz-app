@@ -1,4 +1,8 @@
-import type { ConversationStart } from "../../features/agents/conversation-start";
+import { withWelcomeGuidance } from "../../features/agents/onboarding";
+import {
+  conversationStartPrompt,
+  type ConversationStart,
+} from "../../features/agents/conversation-start";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -37,7 +41,6 @@ import {
 import { readProject } from "../../features/agent-harness/project";
 import {
   CONTEXT_LIMIT,
-  conversationStartPrompt,
   type Scope,
   steerPrompt,
   systemPrompt,
@@ -344,6 +347,7 @@ export class ClaudeRuntime {
     superseded,
     interruptible,
     named,
+    guidance,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -380,19 +384,22 @@ export class ClaudeRuntime {
     const prompt = async (fresh: boolean) =>
       this.review(
         entry,
-        turnPrompt({
-          ...(await this.turn(
-            entry,
-            agent.pubkey,
-            event,
-            channel,
-            key,
-            topLevel,
-            fresh,
-          )),
-          agent: agent.pubkey,
-          label: "@mention",
-        }),
+        withWelcomeGuidance(
+          turnPrompt({
+            ...(await this.turn(
+              entry,
+              agent.pubkey,
+              event,
+              channel,
+              key,
+              topLevel,
+              fresh,
+            )),
+            agent: agent.pubkey,
+            label: "@mention",
+          }),
+          guidance,
+        ),
       );
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather

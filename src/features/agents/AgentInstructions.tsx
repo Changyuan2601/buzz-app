@@ -1,3 +1,4 @@
+import { InstructionProposal } from "./InstructionProposal";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
@@ -17,15 +18,22 @@ export function AgentInstructions({
   creation?: boolean;
 }) {
   return (
-    <Field label="Instructions" description={description} optional={creation}>
-      <Textarea
-        appearance="outlined"
-        rows={8}
+    <div className="grid gap-3">
+      <InstructionProposal
         value={value}
         disabled={disabled}
-        placeholder={EXAMPLE}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={onChange}
       />
-    </Field>
+      <Field label="Instructions" description={description} optional={creation}>
+        <Textarea
+          appearance="outlined"
+          rows={8}
+          value={value}
+          disabled={disabled}
+          placeholder={EXAMPLE}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
+    </div>
   );
 }

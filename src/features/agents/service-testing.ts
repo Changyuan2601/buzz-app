@@ -5,6 +5,7 @@ import type { ReadFilter, RelayEvent } from "../relay/events";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import { keypair } from "../relay/testing";
 import type {
   AgentEventTemplate,
   AgentIdentity,
@@ -14,7 +15,8 @@ import type {
 import type { AgentCommunities } from "./service";
 
 export const steps: string[] = [];
-export const viewer = "a".repeat(64);
+export const viewerKeys = keypair();
+export const viewer = viewerKeys.pubkey;
 export const other = "b".repeat(64);
 export const bot = "c".repeat(64);
 export const sibling = "d".repeat(64);

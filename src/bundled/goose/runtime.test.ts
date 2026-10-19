@@ -4,6 +4,7 @@ import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
+import { WELCOME_PROMPT } from "../../features/agents/conversation-start";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -83,19 +84,20 @@ function setup(
     refresh: async () => {},
     dispose: () => {},
   };
+  const channels = [
+    {
+      id: channel,
+      name: "general",
+      channelType: options.solo?.has(channel) ? "solo" : "stream",
+      members: [] as string[],
+    },
+  ];
   const session = {
     read,
     agentMemories: { open: vi.fn(() => memories) },
     channels: {
       list: () => ({
-        channels: [
-          {
-            id: channel,
-            name: "general",
-            channelType: options.solo?.has(channel) ? "solo" : "stream",
-            members: [],
-          },
-        ],
+        channels,
       }),
     },
     names: { resolve: (pubkey: string) => (pubkey === alice ? "Alice" : "") },
@@ -167,13 +169,14 @@ function setup(
   return {
     agent,
     core,
+    runtime,
+    channels,
     deliver,
     runOnce,
     fake,
     goose,
     published,
     read,
-    runtime,
     memoryOpen: session.agentMemories.open,
   };
 }
@@ -580,4 +583,85 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await shared.deliver(message("1", "@Gander hi"));
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});
+
+it("starts Goose Welcome with app input, real agent send and a continuing Solo session", async () => {
+  const f = setup({ solo: new Set([channel]), hold: true });
+  f.channels[0]?.members.push(alice, self);
+  const controller = new AbortController();
+  try {
+    const started = f.runtime.startConversation({
+      agent: f.agent as unknown as Delivery["agent"],
+      config: DEFAULT_CONFIG,
+      channelId: channel,
+      prompt: WELCOME_PROMPT,
+      signal: controller.signal,
+      check: () => controller.signal.throwIfAborted(),
+    });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    const turn = process?.turns[0];
+    expect(turn?.text).toContain("<app-conversation-start>");
+    expect(turn?.text).not.toContain("<buzz-event");
+    expect(f.published).toEqual([]);
+    await process?.mcp(turn?.sessionId ?? "", "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Connected", final: true },
+    });
+    turn?.finish();
+    expect(await started).toMatchObject({ ok: true });
+    expect(f.published).toEqual([
+      { kind: 9, content: "Connected", tags: [["h", channel]] },
+    ]);
+    const next = message("1", "Tell me about Buzz");
+    await f.deliver(next, {
+      guidance: "Use the maintained Buzz quick guide.",
+    });
+    await vi.waitFor(() => expect(process?.turns).toHaveLength(2));
+    expect(process?.turns[1]?.sessionId).toBe(turn?.sessionId);
+    expect(process?.turns[1]?.text).toContain("Tell me about Buzz");
+    expect(process?.turns[1]?.text).toContain(
+      "<buzz-app-guidance>\nUse the maintained Buzz quick guide.",
+    );
+    expect(process?.turns[1]?.text).toContain("<buzz-event");
+    const propose = vi.fn();
+    Object.assign(f.agent, { proposeInstructions: propose });
+    const result = await process?.mcp(turn?.sessionId ?? "", "tools/call", {
+      name: "propose_instructions",
+      arguments: { text: "Be concise." },
+    });
+    expect(result?.result).toMatchObject({
+      content: [
+        { type: "text", text: expect.stringContaining("Nothing was saved") },
+      ],
+    });
+    expect(propose).toHaveBeenCalledWith("Be concise.", channel);
+    process?.turns[1]?.finish();
+  } finally {
+    controller.abort();
+    f.runtime.dispose();
+  }
+});
+
+it("does not publish a Goose fallback after Welcome is cancelled", async () => {
+  const f = setup({ solo: new Set([channel]), hold: true });
+  f.channels[0]?.members.push(alice, self);
+  const controller = new AbortController();
+  try {
+    const started = f.runtime.startConversation({
+      agent: f.agent as unknown as Delivery["agent"],
+      config: DEFAULT_CONFIG,
+      channelId: channel,
+      prompt: WELCOME_PROMPT,
+      signal: controller.signal,
+      check: () => controller.signal.throwIfAborted(),
+    });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    controller.abort();
+    expect(await started).toMatchObject({ ok: false });
+    expect(f.published).toEqual([]);
+    expect(f.goose()?.closed).toContain("session-1");
+  } finally {
+    f.runtime.dispose();
+  }
 });

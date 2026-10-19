@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
+import { WelcomeNextSteps } from "./WelcomeNextSteps";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { SoloWelcome, WelcomeControls } from "./SoloWelcome";
 import { AgentsContext } from "../../features/agents/react";
-import { saveWelcome, readWelcome } from "../../features/sessions/welcome";
+import {
+  readWelcome,
+  saveWelcome,
+  useWelcomeReceipt,
+} from "../../features/sessions/welcome";
 import { readDefaultAgent } from "../../features/solo/default-agent";
 import type {
   Agents,
@@ -71,7 +76,7 @@ function fixture(suggestNames?: RegisteredAgentType["suggestNames"]) {
   return { agents, session, types };
 }
 
-it("shows registered providers as honest placeholders without invoking their setup or creation", async () => {
+it("offers only the providers that can finish Welcome, in the provider's own setup words", async () => {
   const f = fixture();
   const health = { readiness: "ready" as const };
   const check = vi.fn();
@@ -87,12 +92,18 @@ it("shows registered providers as honest placeholders without invoking their set
   const { startConversation: _start, ...placeholder } = claude;
   const placeholderCheck = vi.fn();
   f.types.push(
-    ...["Codex", "Goose", "Builderlab"].map((title) => ({
-      ...placeholder,
+    ...["Codex", "Goose"].map((title) => ({
+      ...claude,
       key: `test/${title.toLowerCase()}`,
       title,
-      provider: { ...provider, check: placeholderCheck },
+      provider,
     })),
+    {
+      ...placeholder,
+      key: "test/builderlab",
+      title: "Builderlab",
+      provider: { ...provider, check: placeholderCheck },
+    },
   );
   render(
     <AgentsContext.Provider value={f.agents}>
@@ -132,7 +143,18 @@ it("shows registered providers as honest placeholders without invoking their set
     screen.queryByText("Connect your AI provider to start chatting"),
   ).toBeNull();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(screen.getAllByRole("button", { name: "Continue" })).toHaveLength(3);
+  for (const title of ["Codex", "Goose"]) {
+    expect(
+      screen.getByRole("button", { name: `Configure ${title}` }),
+    ).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: `Configure ${title}` }),
+    );
+    expect(await screen.findByRole("dialog", { name: title })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  }
   expect(
     screen.getByRole("heading", { name: "Connect your AI provider" }),
   ).toBeVisible();
@@ -144,14 +166,95 @@ it("shows registered providers as honest placeholders without invoking their set
   ).toHaveTextContent("Claude setup");
   await userEvent.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  for (const title of ["Codex", "Goose", "Builderlab"]) {
-    const button = screen.getByRole("button", { name: `Connect ${title}` });
-    expect(button).toBeDisabled();
-    await userEvent.click(button);
+  // A type that cannot deliver the introduction is not offered here at all,
+  // and onboarding neither checks nor advertises its setup.
+  for (const title of ["Builderlab"]) {
+    expect(screen.queryByText(title)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: `Connect ${title}` }),
+    ).toBeNull();
   }
+  expect(
+    screen.getByText("Builderlab agents can be added in Agents later."),
+  ).toBeVisible();
   expect(placeholderCheck).not.toHaveBeenCalled();
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(check).toHaveBeenCalled();
   expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+
+it("hands an unready provider its own recovery action instead of creating anything", async () => {
+  const f = fixture();
+  const claude = f.types[0];
+  if (!claude) throw new Error("Missing Claude fixture");
+  const listeners = new Set<() => void>();
+  let health = {
+    readiness: "attention" as const,
+    attentionLabel: "Install Claude Code",
+    blocking: false,
+  };
+  const attentionAction = vi.fn(() => {
+    health = { ...health, blocking: true };
+    for (const listener of listeners) listener();
+  });
+  f.types[0] = {
+    ...claude,
+    provider: {
+      snapshot: () => health,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      check: vi.fn(),
+      attentionAction,
+      DialogBody: () => <p>Claude setup</p>,
+    },
+  };
+  render(
+    <AgentsContext.Provider value={f.agents}>
+      <SoloWelcome
+        session={f.session}
+        scope="scope"
+        signal={new AbortController().signal}
+        onCreated={() => {}}
+      />
+    </AgentsContext.Provider>,
+  );
+  expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Install Claude Code" }),
+  );
+  expect(attentionAction).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // Running setup reports itself and stops offering the same action again.
+  expect(await screen.findByText("Setting up…")).toBeVisible();
+  const progress = screen.getByRole("button", { name: "Show Claude setup" });
+  await userEvent.click(progress);
+  expect(
+    await screen.findByRole("dialog", { name: "Claude" }),
+  ).toHaveTextContent("Claude setup");
+  expect(attentionAction).toHaveBeenCalledTimes(1);
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+
+it("states a real next step when no provider can finish Welcome", () => {
+  const f = fixture();
+  f.types.length = 0;
+  render(
+    <AgentsContext.Provider value={f.agents}>
+      <SoloWelcome
+        session={f.session}
+        scope="scope"
+        signal={new AbortController().signal}
+        onCreated={() => {}}
+      />
+    </AgentsContext.Provider>,
+  );
+  expect(
+    screen.getByText(
+      "No AI provider on this device can set up your agent yet. Turn on an agent plugin in Settings → Plugins to continue.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
 });
 
 it("starts once across StrictMode/reopen and saves the actual agent name before confirming the default", async () => {
@@ -383,4 +486,198 @@ it("reconciles a top-level introduction behind a newer threaded reply without st
     expect(readWelcome("scope")?.replyId).toBe("e".repeat(64)),
   );
   expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+
+it("greets only after confirmed identity/default save, shows the next actions after a real reply, and never repeats on reopen", async () => {
+  const f = fixture();
+  const observed = {
+    ...receipt,
+    kickoff: "observed" as const,
+    replyId: "c".repeat(64),
+  };
+  saveWelcome("scope", observed);
+  let resolveGreeting!: (value: { id: string }) => void;
+  const greeting = new Promise<{ id: string }>((resolve) => {
+    resolveGreeting = resolve;
+  });
+  vi.mocked(f.agents.welcome).mockImplementation(
+    async (_agent, _channel, _signal, phase) => {
+      expect(phase).toBe("saved");
+      expect(f.agents.find(agentKey)?.name).toBe("Ada");
+      expect(readDefaultAgent("scope")).toBe(agentKey);
+      expect(readWelcome("scope")).toMatchObject({
+        complete: true,
+        greeting: "attempted",
+      });
+      return greeting as ReturnType<Agents["welcome"]>;
+    },
+  );
+  function Harness() {
+    const { receipt: current } = useWelcomeReceipt("scope");
+    return (
+      current && (
+        <WelcomeControls
+          {...f}
+          scope="scope"
+          signal={signal}
+          receipt={current}
+          onSaved={() => {}}
+        />
+      )
+    );
+  }
+  const signal = new AbortController().signal;
+  const view = render(
+    <StrictMode>
+      <Harness />
+    </StrictMode>,
+  );
+  try {
+    expect(f.agents.welcome).not.toHaveBeenCalled();
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Ada");
+    await userEvent.click(screen.getByRole("button", { name: /Looks good/ }));
+    await waitFor(() => expect(f.agents.welcome).toHaveBeenCalledOnce());
+    expect(screen.getByText("Your agent is saying hello…")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
+    resolveGreeting({ id: "d".repeat(64) });
+    expect(
+      await screen.findByRole("region", { name: "Get started" }),
+    ).toBeVisible();
+    for (const name of [
+      "Tell me about Buzz",
+      "Tell me about this community",
+      "Finish setting up this agent",
+    ])
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    expect(readWelcome("scope")?.greetingId).toBe("d".repeat(64));
+    view.unmount();
+    render(<Harness />);
+    expect(screen.getByRole("region", { name: "Get started" })).toBeVisible();
+    expect(f.agents.welcome).toHaveBeenCalledOnce();
+  } finally {
+    resolveGreeting({ id: "d".repeat(64) });
+  }
+});
+
+it("reconciles an uncertain saved greeting by its exact marker without mistaking the initial welcome or posting twice", async () => {
+  const f = fixture();
+  const attempted = {
+    ...receipt,
+    complete: true,
+    kickoffAt: 100,
+    greeting: "attempted" as const,
+    greetingAt: 100,
+  };
+  saveWelcome("scope", attempted);
+  vi.mocked(f.session.read).mockResolvedValue([
+    {
+      id: "b".repeat(64),
+      kind: 9,
+      pubkey: agentKey,
+      content: "Initial welcome",
+      created_at: 100,
+      tags: [["h", channelId]],
+    },
+    {
+      id: "d".repeat(64),
+      kind: 9,
+      pubkey: agentKey,
+      content: "Saved greeting",
+      created_at: 100,
+      tags: [
+        ["h", channelId],
+        ["client-id", `welcome-saved:${channelId}`],
+      ],
+    },
+  ]);
+  render(
+    <WelcomeNextSteps
+      {...f}
+      scope="scope"
+      receipt={attempted}
+      signal={new AbortController().signal}
+    />,
+  );
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Check and retry greeting" }),
+  );
+  await waitFor(() =>
+    expect(readWelcome("scope")?.greetingId).toBe("d".repeat(64)),
+  );
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+
+it("keeps the completed identity when greeting fails and leaves an explicit retry", async () => {
+  const f = fixture();
+  const saved = { ...receipt, complete: true, greeting: "pending" as const };
+  saveWelcome("scope", saved);
+  vi.mocked(f.agents.welcome).mockRejectedValueOnce(
+    new Error("Provider unavailable"),
+  );
+  render(
+    <WelcomeNextSteps
+      {...f}
+      scope="scope"
+      receipt={saved}
+      signal={new AbortController().signal}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Provider unavailable",
+  );
+  expect(readWelcome("scope")).toMatchObject({
+    complete: true,
+    greeting: "attempted",
+  });
+  expect(
+    screen.getByRole("button", { name: "Check and retry greeting" }),
+  ).toBeEnabled();
+  expect(f.agents.save).not.toHaveBeenCalled();
+});
+
+it("does not use an ordinary agent reply as saved-greeting evidence", async () => {
+  const f = fixture();
+  const attempted = {
+    ...receipt,
+    complete: true,
+    greeting: "attempted" as const,
+    greetingAt: 100,
+  };
+  saveWelcome("scope", attempted);
+  vi.mocked(f.session.read).mockResolvedValue([
+    {
+      id: "c".repeat(64),
+      kind: 9,
+      pubkey: agentKey,
+      content: "Initial welcome",
+      created_at: 100,
+      tags: [["h", channelId]],
+    },
+  ]);
+  vi.mocked(f.agents.welcome).mockRejectedValueOnce(
+    new Error("Hosting unavailable"),
+  );
+  render(
+    <WelcomeNextSteps
+      {...f}
+      scope="scope"
+      receipt={attempted}
+      signal={new AbortController().signal}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Check and retry greeting" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Hosting unavailable",
+  );
+  expect(f.agents.welcome).toHaveBeenCalledWith(
+    agentKey,
+    channelId,
+    expect.any(AbortSignal),
+    "saved",
+  );
+  expect(readWelcome("scope")?.greetingId).toBeUndefined();
+  expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
 });

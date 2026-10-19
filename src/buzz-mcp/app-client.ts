@@ -45,6 +45,14 @@ export function appClient(
     pubkey: agent.pubkey,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
+    ...(agent.proposeInstructions
+      ? {
+          proposeInstructions: (text: string, channelId: string) => {
+            check();
+            agent.proposeInstructions?.(text, channelId);
+          },
+        }
+      : {}),
     attention: agent.attention,
     ...(authority && authorityCommunity
       ? {

@@ -1,4 +1,19 @@
-import { WELCOME_PROMPT, type ConversationStarter } from "./conversation-start";
+import { InstructionSuggestions } from "./instruction-suggestions";
+import {
+  welcomeActionGuidance,
+  welcomeActionOf,
+  welcomeActions,
+  type WelcomeAction,
+  type InstructionProposal,
+} from "./onboarding";
+import { readWelcome } from "../sessions/welcome";
+import { readDefaultAgent } from "../solo/default-agent";
+import {
+  savedWelcomeClientId,
+  savedWelcomePrompt,
+  WELCOME_PROMPT,
+  type ConversationStarter,
+} from "./conversation-start";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -316,6 +331,8 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
+  /** Only offers a reviewable draft after the owner requests guided customization. */
+  proposeInstructions?(text: string, channelId: string): void;
 }>;
 /** What an agent reads and writes of its attention. Every read is current,
  * so a long run sees the owner's switch and the classifier's state change. */
@@ -424,6 +441,8 @@ export type Delivery<Config = unknown> = Readonly<{
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
+  /** App guidance for this actual message, separate from the owner's prose. */
+  guidance?: string;
   /** Keeps the run counted as working after `run` returns, until `done`
    * settles, for a type that hands its work off and returns early. */
   workingUntil(done: PromiseLike<unknown>): void;
@@ -755,7 +774,18 @@ export type Agents = {
     pubkey: string,
     channelId: string,
     signal: AbortSignal,
+    phase?: "connected" | "saved",
   ): Promise<RelayEvent>;
+  /** Sends the selected visible wording as an ordinary owner message. */
+  welcomeAction(
+    pubkey: string,
+    channelId: string,
+    action: WelcomeAction,
+    signal: AbortSignal,
+  ): Promise<string>;
+  instructionProposal(pubkey: string): InstructionProposal | undefined;
+  subscribeInstructionProposals(listener: () => void): () => void;
+  dismissInstructionProposal(pubkey: string, id: string): void;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -990,6 +1020,23 @@ export class AgentsService extends Service implements Agents {
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
+  private readonly instructionSuggestions = new InstructionSuggestions();
+  subscribeInstructionProposals = (listener: () => void) =>
+    this.instructionSuggestions.subscribe(listener);
+  instructionProposal = (pubkey: string) => {
+    const agent = this.find(pubkey);
+    const binding = agent && this.bindingOf(agent);
+    return binding && agent?.owner === binding.viewer
+      ? this.instructionSuggestions.snapshot(`${binding.scope}:${pubkey}`)
+      : undefined;
+  };
+  dismissInstructionProposal(pubkey: string, id: string) {
+    const agent = this.find(pubkey);
+    const binding = agent && this.bindingOf(agent);
+    if (binding)
+      this.instructionSuggestions.dismiss(`${binding.scope}:${pubkey}`, id);
+  }
+
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1165,6 +1212,10 @@ export class AgentsService extends Service implements Agents {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session);
       },
+      welcomeGuidance: (agent, event, channel) =>
+        this.welcomeGuidance(agent, event, channel),
+      proposeInstructions: (pubkey, text, channel) =>
+        this.proposeInstructions(pubkey, text, channel),
       classifier: () => this.classifier(),
       jev: () => this.jev,
       jevStatus: () => this.jevStatus,
@@ -1470,7 +1521,12 @@ export class AgentsService extends Service implements Agents {
       null
     );
   }
-  async welcome(pubkey: string, channelId: string, signal: AbortSignal) {
+  async welcome(
+    pubkey: string,
+    channelId: string,
+    signal: AbortSignal,
+    phase: "connected" | "saved" = "connected",
+  ) {
     const binding = this.selectedBinding();
     const agent = this.ready(pubkey);
     const type =
@@ -1483,8 +1539,27 @@ export class AgentsService extends Service implements Agents {
       type.provider?.snapshot().readiness !== "ready"
     )
       throw new Error("This agent cannot start Welcome in this community.");
+    const savedSetup = () => {
+      const receipt = readWelcome(
+        relayPartition(binding.origin, binding.viewer),
+      );
+      if (
+        !receipt?.complete ||
+        receipt.agent !== pubkey ||
+        receipt.channelId !== channelId ||
+        receipt.type !== agent.type ||
+        receipt.greeting !== "attempted" ||
+        receipt.greetingId ||
+        !agent.name.trim() ||
+        agent.name.trim().toLocaleLowerCase() === "welcome"
+      )
+        throw new Error(
+          "Save this Welcome agent before asking for its greeting.",
+        );
+    };
     const check = () => {
       signal.throwIfAborted();
+      if (phase === "saved") savedSetup();
       binding.controller.signal.throwIfAborted();
       if (
         this.selectedBinding() !== binding ||
@@ -1514,9 +1589,134 @@ export class AgentsService extends Service implements Agents {
     return this.runners.startConversation(
       pubkey,
       channelId,
-      WELCOME_PROMPT,
+      phase === "saved"
+        ? savedWelcomePrompt(
+            agent.name,
+            this.snapshot().agents.filter(
+              (item) => item.owner === binding.viewer,
+            ).length === 1,
+            readDefaultAgent(relayPartition(binding.origin, binding.viewer)) ===
+              pubkey,
+          )
+        : WELCOME_PROMPT,
       AbortSignal.any([signal, binding.controller.signal]),
       check,
+      phase === "saved" ? savedWelcomeClientId(channelId) : undefined,
+    );
+  }
+  async welcomeAction(
+    pubkey: string,
+    channelId: string,
+    action: WelcomeAction,
+    signal: AbortSignal,
+  ) {
+    const binding = this.selectedBinding();
+    await binding.session.channelWrites.refresh(channelId, { member: pubkey });
+    signal.throwIfAborted();
+    const agent = this.ready(pubkey);
+    const label = welcomeActions.find(([key]) => key === action)?.[1];
+    if (
+      !agent ||
+      !label ||
+      this.selectedBinding() !== binding ||
+      !this.welcomeContext(agent, channelId)
+    )
+      throw new Error("Reopen your Welcome chat before choosing an action.");
+    return binding.session.messages.send(channelId, label, [pubkey]);
+  }
+  private welcomeContext(agent: Agent, channelId: string) {
+    const binding = this.bindingOf(agent);
+    if (!binding || binding.viewer !== agent.owner) return;
+    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    const channel = binding.session.channels
+      .list()
+      .channels.find((row) => row.id === channelId);
+    if (
+      !receipt?.complete ||
+      !receipt.greetingId ||
+      receipt.agent !== agent.pubkey ||
+      receipt.type !== agent.type ||
+      receipt.channelId !== channelId ||
+      !ownSolo(channel, binding.viewer) ||
+      !channel?.private ||
+      channel.cached ||
+      channel.archived ||
+      channel.readOnly ||
+      channel.parentChannelId ||
+      channel.members?.length !== 2 ||
+      !channel.members.includes(agent.pubkey) ||
+      !channel.members.includes(binding.viewer)
+    )
+      return;
+    return binding;
+  }
+  private welcomeGuidance(agent: Agent, event: RelayEvent, channelId: string) {
+    if (
+      event.kind !== 9 ||
+      event.pubkey !== agent.owner ||
+      event.tags.some(([key]) => key === "e")
+    )
+      return;
+    const action = welcomeActionOf(event.content);
+    if (!action) return;
+    const binding = this.welcomeContext(agent, channelId);
+    if (!binding) return;
+    if (action === "customize")
+      this.instructionSuggestions.allow(`${binding.scope}:${agent.pubkey}`, {
+        type: agent.type,
+        basedOn: this.instructionsOf(agent),
+        channelId,
+      });
+    return welcomeActionGuidance(action, this.instructionsOf(agent));
+  }
+  private instructionsOf(agent: Agent) {
+    const config = agent.config as { instructions?: unknown } | undefined;
+    return typeof config?.instructions === "string" ? config.instructions : "";
+  }
+  private proposeInstructions(pubkey: string, text: string, channelId: string) {
+    const agent = this.ready(pubkey);
+    const binding = agent && this.bindingOf(agent);
+    if (
+      !agent ||
+      !binding ||
+      this.selectedBinding() !== binding ||
+      agent.owner !== binding.viewer
+    )
+      throw new Error(
+        "This agent's community is unavailable for customization.",
+      );
+    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    if (
+      !receipt?.complete ||
+      receipt.agent !== pubkey ||
+      receipt.channelId !== channelId
+    )
+      throw new Error(
+        "Choose guided customization again from this agent's Welcome card.",
+      );
+    const channel = binding.session.channels
+      .list()
+      .channels.find((item) => item.id === channelId);
+    if (
+      !ownSolo(channel, binding.viewer) ||
+      channel?.private !== true ||
+      channel.cached ||
+      channel.parentChannelId ||
+      channel.archived ||
+      channel.readOnly ||
+      channel.members?.length !== 2 ||
+      !channel.members.includes(pubkey) ||
+      !channel.members.includes(binding.viewer)
+    )
+      throw new Error(
+        "Guided customization needs your private Solo chat with this agent.",
+      );
+    this.instructionSuggestions.propose(
+      `${binding.scope}:${pubkey}`,
+      text,
+      channelId,
+      agent.type,
+      this.instructionsOf(agent),
     );
   }
 
@@ -2741,6 +2941,8 @@ export class AgentsService extends Service implements Agents {
     entry?.stop();
     entry?.binding?.stopLive();
     entry?.binding?.controller.abort();
+    if (entry?.binding)
+      this.instructionSuggestions.clearScope(entry.binding.scope);
   }
   private bind(origin: string) {
     const entry = this.bound.get(origin);
@@ -2764,6 +2966,8 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.session !== live?.session ||
       entry.binding?.scope !== live?.scope;
     if (changed) {
+      if (entry.binding)
+        this.instructionSuggestions.clearScope(entry.binding.scope);
       entry.binding?.stopLive();
       entry.binding?.controller.abort();
       this.listings.delete(origin);
@@ -2808,6 +3012,10 @@ export class AgentsService extends Service implements Agents {
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
+      if (!now && session.viewer)
+        this.instructionSuggestions.clearScope(
+          relayPartition(origin, session.viewer),
+        );
       if (now !== connected) {
         // Catch-up reads what this connect may have missed, up to now.
         connection.epoch += now ? 1 : 0;

@@ -31,6 +31,10 @@ import { setDefaultAgent } from "../../features/solo/default-agent";
 import { followupDraft } from "../../features/messages/mention-draft";
 import { ProviderDialog } from "../agents/ProviderDialog";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../../features/conversation/ContributionBoundary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -39,6 +43,7 @@ import { Select } from "../../shared/design-system/ui/Select";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { WelcomeNextSteps } from "./WelcomeNextSteps";
 import { WelcomeIntro, WelcomeComposer } from "./WelcomeIntro";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import {
@@ -51,6 +56,7 @@ import {
   GearIcon,
   PencilSimpleIcon,
   ArrowsClockwiseIcon,
+  CircleNotchIcon,
 } from "../../shared/design-system/icons";
 import soloStyles from "../../features/solo/Solo.module.css";
 import styles from "./SoloWelcome.module.css";
@@ -109,9 +115,15 @@ function WelcomeSetup({
   onCreated(id: string): void;
 }) {
   const { types, snapshot } = useAgents(agents);
+  // Only a type that can deliver the app-authored introduction can finish
+  // Welcome. The rest stay out of onboarding rather than offering dead
+  // controls; they remain available in Agents.
   const eligible = types.filter(
     (type) => type.startConversation && type.provider,
   );
+  const later = types
+    .filter((entry) => !eligible.includes(entry))
+    .map((entry) => entry.title);
 
   const { receipt, error: storedError } = useWelcomeReceipt(scope);
   const [busy, setBusy] = useState(false);
@@ -156,36 +168,35 @@ function WelcomeSetup({
       </div>
       {!eligible.length && (
         <p className={styles.cardNotice} role="status">
-          Enable Claude in Settings to try this welcome demo.
+          No AI provider on this device can set up your agent yet. Turn on an
+          agent plugin in Settings → Plugins to continue.
         </p>
       )}
       <div className={styles.providerChoices}>
-        {[
-          ...eligible,
-          ...types.filter((entry) => !eligible.includes(entry)),
-        ].map((entry) => {
+        {eligible.map((entry) => {
+          const provider = entry.provider;
+          if (!provider) return null;
           const Icon = entry.icon;
-          return eligible.includes(entry) ? (
-            <ReadyProvider
-              key={entry.key}
-              type={entry}
-              busy={busy}
-              disabled={!!receipt && receipt.type !== entry.key}
-              resume={!!receipt}
-              onContinue={() => void start(entry)}
-            />
-          ) : (
-            <PreferenceRow
-              key={entry.key}
-              icon={Icon ? <Icon size={24} /> : undefined}
-              title={entry.title}
-              subtitle="Not available in this demo"
-              trailing={
-                <Button disabled aria-label={`Connect ${entry.title}`}>
-                  Connect
-                </Button>
+          return (
+            <ContributionBoundary
+              key={contributionKey(entry)}
+              fallback={
+                <PreferenceRow
+                  icon={Icon ? <Icon size={24} /> : undefined}
+                  title={entry.title}
+                  subtitle="Its setup controls are unavailable."
+                />
               }
-            />
+            >
+              <ReadyProvider
+                type={entry}
+                provider={provider}
+                busy={busy}
+                disabled={!!receipt && receipt.type !== entry.key}
+                resume={!!receipt}
+                onContinue={() => void start(entry)}
+              />
+            </ContributionBoundary>
           );
         })}
       </div>
@@ -236,34 +247,41 @@ function WelcomeSetup({
           {snapshot.error}
         </p>
       )}
+      {!!later.length && (
+        <p className={`${styles.cardNotice} text-body-sm text-subtle`}>
+          {`${new Intl.ListFormat(undefined, { type: "conjunction" }).format(later)} agents can be added in Agents later.`}
+        </p>
+      )}
     </div>
   );
 }
 
 function ReadyProvider({
   type,
+  provider,
   busy,
   disabled,
   resume,
   onContinue,
 }: {
   type: RegisteredAgentType;
+  provider: NonNullable<RegisteredAgentType["provider"]>;
   busy: boolean;
   disabled: boolean;
   resume: boolean;
   onContinue(): void;
 }) {
-  const provider = type.provider;
   const health = useSyncExternalStore(
-    provider?.subscribe ?? (() => () => {}),
-    provider?.snapshot ?? (() => undefined),
+    provider.subscribe,
+    provider.snapshot,
+    provider.snapshot,
   );
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     try {
-      void Promise.resolve(provider?.check()).catch((reason) =>
+      void Promise.resolve(provider.check()).catch((reason) =>
         setError(errorText(reason)),
       );
     } catch (reason) {
@@ -271,7 +289,25 @@ function ReadyProvider({
     }
   }, [provider]);
   const Icon = type.icon;
-  const ready = health?.readiness === "ready";
+  const ready = health.readiness === "ready";
+  const checking = health.readiness === "checking";
+  const working = !!health.blocking;
+  // The provider owns its own recovery copy; onboarding states the next step
+  // in its words rather than inventing one.
+  const setupLabel = working
+    ? `Show ${type.title} setup`
+    : (health.attentionLabel ?? `Set up ${type.title}`);
+  const setUp = () => {
+    if (!working && provider.attentionAction) {
+      try {
+        provider.attentionAction();
+        return;
+      } catch {
+        // Fall back to the provider's own recovery controls.
+      }
+    }
+    setOpen(true);
+  };
   return (
     <>
       <PreferenceRow
@@ -279,11 +315,13 @@ function ReadyProvider({
         title={type.title}
         subtitle={
           error ||
-          (ready
-            ? "Connected"
-            : health?.readiness === "checking"
-              ? "Checking…"
-              : "Connect your account")
+          (working
+            ? "Setting up…"
+            : ready
+              ? "Connected"
+              : checking
+                ? "Checking…"
+                : undefined)
         }
         trailing={
           <>
@@ -297,12 +335,26 @@ function ReadyProvider({
             )}
             <Button
               ref={trigger}
-              disabled={busy || disabled || health?.readiness === "checking"}
+              disabled={busy || disabled || checking}
               loading={busy && !disabled}
-              variant={ready ? "prominent" : "subtle"}
-              onClick={() => (ready ? onContinue() : setOpen(true))}
+              variant="prominent"
+              aria-busy={checking || undefined}
+              onClick={() => (ready ? onContinue() : setUp())}
             >
-              {ready ? (resume ? "Resume welcome" : "Continue") : "Connect"}
+              {checking && (
+                <CircleNotchIcon
+                  size={17}
+                  aria-hidden="true"
+                  className="motion-safe:animate-spin"
+                />
+              )}
+              {checking
+                ? "Checking…"
+                : ready
+                  ? resume
+                    ? "Resume welcome"
+                    : "Continue"
+                  : setupLabel}
             </Button>
           </>
         }
@@ -326,6 +378,8 @@ export function WelcomeControls({
   signal,
   receipt,
   onSaved,
+  openProfile,
+  onSend,
 }: {
   agents: Agents;
   session: RelaySession;
@@ -333,6 +387,8 @@ export function WelcomeControls({
   signal: AbortSignal;
   receipt: WelcomeReceipt;
   onSaved(): void;
+  openProfile?: ((target: string) => boolean) | undefined;
+  onSend?: ((id: string) => void) | undefined;
 }) {
   const found = useAgent(agents, receipt.agent ?? "");
   const [busy, setBusy] = useState(false);
@@ -424,6 +480,18 @@ export function WelcomeControls({
       <p role="status">
         The Welcome agent is unavailable. Open Agents to check it.
       </p>
+    );
+  if (receipt.complete && receipt.greeting)
+    return (
+      <WelcomeNextSteps
+        agents={agents}
+        session={session}
+        scope={scope}
+        receipt={receipt}
+        signal={signal}
+        openProfile={openProfile}
+        onSend={onSend}
+      />
     );
   if (receipt.complete)
     return (
@@ -628,7 +696,11 @@ function CustomizeAgent({
             `draft:${receipt.channelId}`,
             followupDraft([{ pubkey: agent.pubkey, name: name.trim() }]),
           );
-          saveWelcome(scope, { ...receipt, complete: true });
+          saveWelcome(scope, {
+            ...receipt,
+            complete: true,
+            greeting: "pending",
+          });
           onSaved();
         } catch (reason) {
           if (active.current && !signal.aborted) {

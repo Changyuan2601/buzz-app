@@ -1,3 +1,4 @@
+import { savedWelcomeClientId } from "../agents/conversation-start";
 // One device's explicitly requested Welcome setup, scoped like Solo's drafts.
 // The existing outbox owns signed channel operations; this receipt owns sequence.
 import type { Agents } from "../agents/service";
@@ -25,6 +26,9 @@ export type WelcomeReceipt = {
   replyId?: string;
   kickoffAt?: number;
   complete?: boolean;
+  greeting?: "pending" | "attempted";
+  greetingId?: string;
+  greetingAt?: number;
 };
 export function readWelcome(scope: string): WelcomeReceipt | undefined {
   const revision = viewRevision(scope, WELCOME_KEY);
@@ -37,9 +41,14 @@ export function readWelcome(scope: string): WelcomeReceipt | undefined {
     !uuid.test(value.channelId) ||
     typeof value.type !== "string" ||
     (value.agent !== undefined && !pubkey.test(value.agent)) ||
-    [value.creationId, value.replyId].some(
+    [value.creationId, value.replyId, value.greetingId].some(
       (id) => id !== undefined && !pubkey.test(id),
     ) ||
+    (value.greetingAt !== undefined &&
+      (!Number.isSafeInteger(value.greetingAt) || value.greetingAt < 0)) ||
+    (value.greeting !== undefined &&
+      value.greeting !== "pending" &&
+      value.greeting !== "attempted") ||
     (value.kickoffAt !== undefined &&
       (!Number.isSafeInteger(value.kickoffAt) || value.kickoffAt < 0)) ||
     (value.kickoff !== undefined &&
@@ -166,9 +175,16 @@ export async function observedWelcome(
   session: RelaySession,
   receipt: WelcomeReceipt,
   signal: AbortSignal,
+  phase: "connected" | "saved" = "connected",
 ): Promise<EventData | undefined> {
-  if (!receipt.agent || !receipt.kickoffAt) return undefined;
-  const since = receipt.kickoffAt;
+  if (!receipt.agent || (phase === "connected" && !receipt.kickoffAt))
+    return undefined;
+  const since =
+    phase === "saved"
+      ? (receipt.greetingAt ?? receipt.kickoffAt ?? 0)
+      : (receipt.kickoffAt ?? 0);
+  const marker =
+    phase === "saved" ? savedWelcomeClientId(receipt.channelId) : undefined;
   // Use an ordinary author-filtered query, not NIP-CW's channel window:
   // that path requires a composite cursor and does not apply author/since
   // predicates. It also owns cancellation of live timeline head reads.
@@ -193,6 +209,10 @@ export async function observedWelcome(
       event.kind === 9 &&
       event.pubkey === receipt.agent &&
       event.created_at >= since &&
+      (!marker ||
+        event.tags.some(
+          ([key, value]) => key === "client-id" && value === marker,
+        )) &&
       !event.tags.some(([key]) => key === "e") &&
       event.tags.some(
         ([key, value]) => key === "h" && value === receipt.channelId,

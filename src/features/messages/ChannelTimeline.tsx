@@ -143,6 +143,8 @@ export type ChannelTimelineProps = {
   /** Host-owned setup content around the messages, in the same scrollport. */
   beforeMessages?: ReactNode;
   afterMessages?: ReactNode;
+  /** Anchor host content after this exact loaded message, never the moving tail. */
+  afterMessageId?: string | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -203,6 +205,7 @@ function Timeline({
   activityLane = false,
   beforeMessages,
   afterMessages,
+  afterMessageId,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -298,8 +301,9 @@ function Timeline({
     ),
   );
   const contentSignature = useMemo(
-    () => geometrySignature(visibleRows, profiles, resolveName),
-    [visibleRows, profiles, resolveName],
+    () =>
+      `${geometrySignature(visibleRows, profiles, resolveName)}:${afterMessageId ?? ""}`,
+    [visibleRows, profiles, resolveName, afterMessageId],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
@@ -896,7 +900,9 @@ function Timeline({
         );
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
-            .messageId,
+            .messageId ??
+            event.target.closest<HTMLElement>("[data-after-message-id]")
+              ?.dataset.afterMessageId,
         );
       }}
       onBlur={(event) => {
@@ -1053,11 +1059,13 @@ function Timeline({
                     <MessageRow
                       stackPrevious={
                         !!previousRow &&
+                        previousRow.id !== afterMessageId &&
                         !foldedActivity.has(previousRow.id) &&
                         continuesMessageGroup(previousRow, row)
                       }
                       stackNext={
                         !!nextRow &&
+                        row.id !== afterMessageId &&
                         !foldedActivity.has(nextRow.id) &&
                         continuesMessageGroup(row, nextRow)
                       }
@@ -1080,9 +1088,13 @@ function Timeline({
                     />
                   )}
                 </ActivityExpansion>
-                {index === rows.length - 1 && !afterMessages && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
+                {afterMessageId === row.id && afterMessages && (
+                  <div data-after-message-id={row.id}>{afterMessages}</div>
                 )}
+                {index === rows.length - 1 &&
+                  (!afterMessages || afterMessageId) && (
+                    <div className={styles.timelineEnd} aria-hidden="true" />
+                  )}
               </Fragment>
             );
           })}
@@ -1102,7 +1114,7 @@ function Timeline({
             />
           </div>
         )}
-      {afterMessages}
+      {!afterMessageId && afterMessages}
     </section>
   );
 }

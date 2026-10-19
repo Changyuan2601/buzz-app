@@ -4,6 +4,7 @@ import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
+import { suggestNames } from "./name-ideas";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
@@ -98,6 +99,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: { ...defaults } }),
     Create,
     CreateModel,
+    startConversation: async (input) => {
+      await setup.installed(input.signal);
+      return runtime.startConversation(input);
+    },
+    suggestNames: async (raw, exclude, signal) => {
+      await setup.installed(signal);
+      return suggestNames(
+        start,
+        providerController.resolve(raw),
+        exclude,
+        signal,
+      );
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

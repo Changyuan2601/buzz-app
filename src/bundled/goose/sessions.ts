@@ -25,6 +25,10 @@ export const IDLE_MS = 15 * 60_000;
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
 const LATE: Settled = { ok: false, error: "goose did not start in time" };
+const CANCELLED: Settled = {
+  ok: false,
+  error: "Conversation start was cancelled",
+};
 /** Saved conversations per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -176,6 +180,10 @@ export class AgentSessions {
    * prompted for the old one. */
   private readonly had = new Set<string>();
   private disposed = false;
+  /** Openings stopped before their session took its message. */
+  private readonly cancelledStarts = new WeakSet<
+    Promise<{ settled?: Promise<Settled> }>
+  >();
 
   constructor(private readonly options: SessionsOptions) {}
 
@@ -261,8 +269,10 @@ export class AgentSessions {
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
-    // waits for this session instead of opening another.
-    const starting = (async () => {
+    // waits for this session instead of opening another. `stop` cancels it by
+    // this promise, which is assigned before the session opens.
+    let starting: Promise<{ settled?: Promise<Settled> }> | undefined;
+    starting = (async () => {
       // Perhaps built for a session closed since, which had been shown the rest.
       if (this.had.has(key) && fresh) text = await fresh();
       const live = await this.open(
@@ -273,6 +283,10 @@ export class AgentSessions {
       if (this.disposed) {
         void this.close(live);
         throw new Error("goose was stopped");
+      }
+      if (starting && this.cancelledStarts.has(starting)) {
+        this.drop(key, live);
+        return { settled: Promise.resolve(CANCELLED) };
       }
       if (signal?.aborted) return {};
       this.touch(key, live, seen);
@@ -299,6 +313,14 @@ export class AgentSessions {
   async interrupt(key: string) {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
+  }
+
+  /** Cancels only this conversation, including a session still opening. */
+  stop(key: string) {
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    const opening = this.opening.get(key);
+    if (opening) this.cancelledStarts.add(opening);
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the

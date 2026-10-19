@@ -112,6 +112,7 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  proposeInstructions?(text: string, channelId: string): void;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

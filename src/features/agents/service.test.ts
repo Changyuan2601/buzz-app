@@ -1,4 +1,9 @@
+import { saveWelcome, WELCOME_KEY } from "../sessions/welcome";
+import { setDefaultAgent } from "../solo/default-agent";
+import { writeView } from "../../shared/view-state";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
+import { createMessages } from "../relay/messages";
+import { createOutbox } from "../relay/outbox";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -42,6 +47,7 @@ import {
   sibling,
   steps,
   viewer,
+  viewerKeys,
 } from "./service-testing";
 
 /** The tag that the echo type's default watch matches. */
@@ -5985,9 +5991,11 @@ it("starts Welcome through the claimed runner with app input, target-only signed
   let execute: NonNullable<
     AgentType<Config>["startConversation"]
   > = async () => ({ ok: true });
-  const { service, session, native, select } = await setup({
-    startConversation: (input) => execute(input),
-  });
+  const { service, session, native, select, run, emit, activity } = await setup(
+    {
+      startConversation: (input) => execute(input),
+    },
+  );
   await service.create({ type: "example/echo", name: "Welcome" });
   const roster = {
     id: channel,
@@ -6057,6 +6065,182 @@ it("starts Welcome through the claimed runner with app input, target-only signed
   await expect(
     held?.agent.publish({ kind: 9, content: "late", tags: [["h", channel]] }),
   ).rejects.toThrow("finished");
+  const setupScope = `https://relay.example.test:${viewer}`;
+  const local = memoryStorage();
+  vi.stubGlobal("localStorage", local);
+  try {
+    await expect(
+      service.welcome(bot, channel, new AbortController().signal, "saved"),
+    ).rejects.toThrow("Save this Welcome agent");
+    await service.save(bot, { name: "Ada" });
+    setDefaultAgent(setupScope, bot);
+    saveWelcome(setupScope, {
+      type: "example/echo",
+      agent: bot,
+      channelId: channel,
+      complete: true,
+      greeting: "attempted",
+    });
+    const savedReply = await service.welcome(
+      bot,
+      channel,
+      new AbortController().signal,
+      "saved",
+    );
+    expect(savedReply.tags).toContainEqual([
+      "client-id",
+      `welcome-saved:${channel}`,
+    ]);
+    expect(held?.agent.name).toBe("Ada");
+    expect(held?.prompt).toContain('"firstAgentInThisCommunity":true');
+    expect(held?.prompt).toContain("new Solo chats in this community use you");
+    expect(held).not.toHaveProperty("trigger");
+    saveWelcome(setupScope, {
+      type: "example/echo",
+      agent: bot,
+      channelId: channel,
+      complete: true,
+      greetingId: "e".repeat(64),
+    });
+    const published: RelayEvent[] = [];
+    const outbox = createOutbox(
+      viewer,
+      {
+        sign: async (template) => signed(viewerKeys, template),
+        publish: async (signed) => {
+          published.push(signed);
+          emit({ channelId: channel, events: [signed] });
+        },
+      },
+      { load: () => [], save: () => {} },
+    );
+    Object.assign(session, {
+      messages: createMessages(
+        outbox.outbox,
+        viewer,
+        () => undefined,
+        () => [],
+        () => {},
+      ),
+    });
+    const proposed = "Help with planning. Ask before taking action.";
+    const seenGuidance: (string | undefined)[] = [];
+    run.mockImplementation((delivery) => {
+      seenGuidance.push(delivery.guidance);
+      expect(delivery.trigger.type).toBe("mention");
+      expect(activity.reader.work()).toContainEqual(
+        expect.objectContaining({
+          messageId:
+            delivery.trigger.type === "mention"
+              ? delivery.trigger.event.id
+              : "",
+          state: "working",
+        }),
+      );
+      if (delivery.guidance?.includes("guided agent customization")) {
+        expect(() =>
+          delivery.agent.proposeInstructions?.(proposed, "elsewhere"),
+        ).toThrow("guided customization");
+        delivery.agent.proposeInstructions?.(proposed, channel);
+        expect(() =>
+          delivery.agent.proposeInstructions?.("Again", channel),
+        ).toThrow("owner must choose");
+      } else
+        expect(() =>
+          delivery.agent.proposeInstructions?.(proposed, channel),
+        ).toThrow("owner must choose");
+    });
+    try {
+      for (const [key, label] of [
+        ["buzz", "Tell me about Buzz"],
+        ["community", "Tell me about this community"],
+        ["customize", "Finish setting up this agent"],
+      ] as const) {
+        const count = run.mock.calls.length;
+        const id = await service.welcomeAction(
+          bot,
+          channel,
+          key,
+          new AbortController().signal,
+        );
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(count + 1));
+        expect(published.at(-1)).toMatchObject({
+          id,
+          pubkey: viewer,
+          content: label,
+          kind: 9,
+        });
+        expect(published.at(-1)?.tags).toContainEqual(["p", bot]);
+        expect(started).toHaveBeenCalledTimes(2);
+        expect(seenGuidance.at(-1)).toContain(
+          key === "buzz"
+            ? "Buzz quick guide"
+            : key === "community"
+              ? "AS THIS AGENT"
+              : "guided agent customization",
+        );
+      }
+      const proposal = service.instructionProposal(bot);
+      expect(proposal).toMatchObject({
+        text: proposed,
+        basedOn: "",
+        type: "example/echo",
+      });
+      expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+      if (proposal) service.dismissInstructionProposal(bot, proposal.id);
+      expect(service.instructionProposal(bot)).toBeUndefined();
+      // Matching words from someone else never grant consent or app guidance.
+      emit({
+        channelId: channel,
+        events: [
+          event("outside-action", {
+            pubkey: other,
+            content: "Finish setting up this agent",
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ],
+      });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+      expect(seenGuidance.at(-1)).toBeUndefined();
+      // Ordinary owner follow-ups can propose after a fresh explicit setup request.
+      run.mockImplementationOnce(() => {});
+      await service.welcomeAction(
+        bot,
+        channel,
+        "customize",
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+      run.mockImplementationOnce((delivery) =>
+        delivery.agent.proposeInstructions?.(proposed, channel),
+      );
+      emit({
+        channelId: channel,
+        events: [
+          event("customize-followup", {
+            pubkey: viewer,
+            content: "Help with planning; that's enough for now.",
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(service.instructionProposal(bot)?.text).toBe(proposed),
+      );
+      expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+    } finally {
+      outbox.dispose();
+    }
+  } finally {
+    writeView(setupScope, WELCOME_KEY, null);
+    vi.unstubAllGlobals();
+  }
   select(null);
   await expect(
     service.welcome(bot, channel, new AbortController().signal),
@@ -6091,10 +6275,17 @@ it.each(["foreign-roster", "shared", "not-solo", "claim-failed", "claim-held"])(
 
     if (failure === "claim-failed")
       native.claim.mockRejectedValue(new Error("unavailable"));
-    if (failure === "claim-held") native.claim.mockResolvedValue(false);
+    if (failure === "claim-held") {
+      await service.save(bot, { name: "Mochi" });
+      native.claim.mockResolvedValue(false);
+    }
     await expect(
       service.welcome(bot, channel, new AbortController().signal),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      failure === "claim-held"
+        ? "Another copy of Buzz is running Mochi. Continue in that copy, or close it first."
+        : undefined,
+    );
     expect(started).not.toHaveBeenCalled();
   },
 );

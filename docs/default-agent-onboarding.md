@@ -2,17 +2,23 @@
 
 ## Status and scope
 
-This branch uses the real desktop app, Solo page/sidebar, registered Claude setup,
+This branch uses the real desktop app, Solo page/sidebar, registered provider setup,
 Agents service/native-held identity, private channel outbox and ordinary message
 history. The earlier standalone simulated preview and its fixture entry are removed.
 There is no fake provider connection, fabricated agent reply or hidden viewer-authored
 seed event. The prepared welcome is visibly app-authored content before compute.
 
-The first slice supports the native **Claude** agent type on its existing macOS/Linux
-hosts, not other adapters. `AgentType.startConversation` is an optional capability.
-Welcome also lists the other registered types as placeholders with disabled Connect
-buttons and “Not available in this demo”; it does not check their readiness, open
-setup or create agents through them. Existing ordinary chats with other types
+The current slice supports native **Claude, Codex and Goose** on their existing
+macOS/Linux hosts. Goose exposes its actual provider/key/model controls; it does
+not hard-code a vendor list. `AgentType.startConversation` is an optional capability.
+Welcome offers only the registered types that can deliver the app-authored
+introduction, each through its own real provider controls: the provider's own
+attention label is the button, its attention action runs directly, running setup
+reports itself, and a failing contribution degrades to an unavailable row. Types
+that cannot finish Welcome are not offered here; one line names them as agents
+that can be added in Agents later, and their readiness is never checked. With no
+eligible type the step states the real next step, turning on an agent plugin in
+Settings. Existing ordinary chats with other types
 remain unchanged. No host command, key namespace, protocol kind, application
 startup or plugin foundation was modified.
 
@@ -28,13 +34,14 @@ visible error, not permission to bypass the claim. The Dock icon names the branc
 2. Open **Solo**. With no Solo chats/default, the normal new destination presents
    app-authored **Welcome**. A Welcome sidebar entry also opens the explicit
    `welcome` Solo route before a saved chat exists.
-3. One provider card lists the registered choices. **Connect** or Claude's gear
-   action opens its existing provider management dialog. Readiness, sign-in and
-   provider defaults stay real; this flow uses those defaults rather than adding
-   a model form to the card. Other demo providers remain disabled. **Continue** creates
+3. One provider card lists the choices that can finish Welcome. The provider's
+   own setup action, or its gear action once ready, opens its existing
+   provider management dialog. Readiness, install, sign-in and provider defaults
+   stay real; this flow uses those defaults rather than adding
+   a model form to the card. **Continue** creates
    an actual agent named Welcome and an ordinary private Solo chat named Welcome,
    confirms placement/invitation, then selects that exact agent for this chat.
-4. Buzz sends a private app-authored instruction into the agent's continuing Claude
+4. Buzz sends a private app-authored instruction into the agent's continuing provider
    session. The prepared welcome stays above it; the new actual signed `send`
    asks: “Great, we’re connected! Before we get started, take a sec to give me a
    name and choose an avatar, and then I can show you around.” It appears in the
@@ -73,8 +80,9 @@ TypeScript, targeted Biome and 10 sidebar cases, including Cancel/focus restorat
 confirmed customization reset and the in-progress creation guard. No screenshots
 or live publications were made.
 
-Name ideas come from the connected Claude provider using its effective model in
-an unsaved, safe-mode process with no tools, MCP servers or workspace instructions.
+Name ideas come from the selected provider using its effective model in a bounded,
+tools-free scratch request: Claude safe-mode, Codex ephemeral isolated exec, or a
+Goose bare session. No request exposes Buzz tools or publishes a chat message.
 A 30-second bounded request produces up to 12 ideas; the mounted card consumes the
 batch before asking again. Existing local agent names and already-shown ideas are
 excluded, without claiming globally unique names. Avatars are sampled from the full
@@ -83,7 +91,9 @@ late suggestions; errors leave the current draft editable with Shuffle available
 retry. Neither suggestion nor Shuffle saves an identity, posts a chat message or
 changes the default. Only **Looks good** does that. Response-style presets, shortcut
 actions, cross-device default sync, default management UI, app-wide first-run routing,
-other provider adapters and the earlier Bestie role are not included.
+the earlier Bestie role and hosted Builderlab onboarding are not included.
+Builderlab currently lacks both app-authored startup and name/avatar update APIs;
+it remains a separate hosted agent creation path, not an inert provider button.
 
 ## Ownership and safety
 
@@ -192,7 +202,161 @@ Focused checks run during implementation:
 The human has tried the native flow during interactive design feedback; that is
 not complete acceptance of the final snapshot. Full scan, packaged/cross-platform
 acceptance, simultaneous-window setup, startup routing after account/community/profile
-creation, other provider adapters and hosted behavior remain deferred. Local passing
+creation, hosted Builderlab onboarding and live Codex/Goose acceptance remain deferred. Local passing
 checks and one real native path are not a claim that onboarding is ready to ship.
 The branch is a work-in-progress snapshot for team feedback, not an integration-ready
 release. It retains its original base; newer mainline changes are not integrated.
+
+## Provider parity feedback round (2026-10-19)
+
+- Claude, Codex and Goose register real continuing-conversation startup and private
+  AI name ideas. There is no synthetic viewer event or prepared substitute reply.
+- Codex keeps the saved Solo thread and ordinary model/default resolver. Welcome
+  cancellation interrupts its exact turn; failure is shown as setup recovery,
+  never published as a successful introduction.
+- Goose reuses its existing provider/key/model fields in the host ProviderDialog.
+  Connect tests a bare tools-free session before saving the device-wide nonsecret
+  selection. New agents snapshot that choice; existing agents are not rewritten.
+  Its welcome uses the ordinary channel session and cancels live or opening work.
+  Goose provider flows requiring external sign-in retain their existing guidance;
+  no in-app OAuth support is invented.
+- Restart welcome remains development-only and must be removed before the final
+  onboarding flow is finalized.
+- Focused protocol fixtures cover continuing sessions and cancellation; mounted
+  controls cover all three rows and actual Goose setup. These are not live vendor
+  acceptance or packaged/native quit-relaunch validation. No new live chat posts
+  were made during this round. Test provider connection/setup deliberately, then
+  Continue, observe a real welcome, and confirm a name/avatar with Looks good.
+
+Current check snapshot: TypeScript, targeted Biome, design guards and 330 focused
+Vitest cases in 15 files pass. The native accessibility tree confirms Claude,
+Codex and Goose setup actions and the disabled welcome composer. Goose's real
+provider dialog opens; its provider inventory read did not complete before the
+bounded native timeout. A macOS credential-access prompt was present and was not
+approved automatically. Native source inspection confirms this inventory reads
+provider secrets for configuration evidence, so human credential consent may be
+needed. No fresh live Codex/Goose welcome or vendor response is claimed verified.
+
+## After customization (2026-10-19)
+
+Looks good still saves the real name/avatar first, then the scoped default. The
+completed receipt now also records a pending post-save greeting. Its separate
+app-authored turn uses the same continuing provider conversation, claimed runner,
+private-roster checks and agent signing as the first introduction. It never posts
+as the viewer. The prompt supplies confirmed facts and asks for a brief greeting in the agent's
+own words (not exact app-scripted wording). It acknowledges the saved identity,
+calls it the first
+agent only when this community's inventory contains no other owned agents, and
+states the default for **new Solo chats in this community** only while selected.
+It explains that another agent can be chosen for a new chat, including agents
+created later; this does not claim a new global-default settings UI exists.
+
+The runner stamps the post-save publication with a signed, host-owned `client-id`.
+An explicit retry uses the ordinary bounded history read and exact marker checks,
+so the original welcome or a same-second ordinary reply cannot be mistaken for
+this greeting. The pending/attempted/id fields are durable; remount does not
+repeat an attempted turn. Failure keeps the saved identity/default and enabled
+chat, showing Check and retry greeting instead. Existing completed receipts
+without a greeting request keep their prior display; they are not replayed.
+
+After the actual greeting is confirmed, an app-owned inset card follows it in the
+same timeline scrollport, anchored after that exact greeting message (not the
+moving end of history): **Tell me about Buzz**, **Tell me about this community**,
+and **Finish setting up this agent**. Clicking a button explicitly sends its exact
+visible wording as an ordinary viewer-authored message. This is user-selected
+chat content, unlike the automatic app-authored introduction and greeting.
+No hidden kickoff message or designed tour is added.
+The original prepared Welcome identity and saved Welcome chat title are unchanged.
+
+
+## Getting-started actions (2026-10-19)
+
+The three actions are enabled after the actual post-save greeting. A click uses
+`session.messages.send` with its exact label and the exact agent recipient, through
+the ordinary outbox/signing/delivery path. The normal verified relay observation
+starts a mention turn in the same continuing provider conversation. Its existing
+message-linked activity bubble owns the working indication. No synthetic runner
+event, alternate model invocation, action reply receipt, custom retry control,
+working explanation or Stop waiting button remains. Ordinary message delivery
+errors and retry stay with the outbox. Remount never sends an action automatically.
+
+The service supplies app guidance only for exact owner-authored action wording in
+the completed private Welcome Solo chat, with its exact agent/member/type checks.
+The actual message remains unchanged in each provider's ordinary event prompt;
+separate app context carries the help facts and read-only community guidance.
+Existing agent instructions are not rewritten to inject onboarding content.
+
+- **Tell me about Buzz** loads the bundled draft
+  `features/agents/buzz-help.md` overview on demand. The guide was written for this
+  onboarding experiment from repository evidence; it is not approved product
+  documentation and needs human accuracy, emphasis and voice review. The agent explains it naturally
+  and can answer ordinary chat follow-ups. It is not a provider-specific filesystem
+  skill or a visual tour. The app owns the guide and action label, not model prose.
+- **Tell me about this community** asks the agent to discover channel metadata and
+  inspect at most three useful channels, preferring welcome/general/about, using
+  the existing channels/channel/read/canvas tools. Search is bounded and citations
+  use discovered channel/message IDs. This is the agent's own signed relay access,
+  never borrowed viewer access. It must report partial, empty or inaccessible
+  evidence and must not join/invite or write community content. Prompt instructions
+  are guidance, not an isolated hostile-plugin security sandbox; normal relay
+  authorization remains authoritative. These are normal agent turns, not the
+  introduction's restricted one-message handle; prompt read-only constraints are
+  not a new tool sandbox.
+- **Finish setting up this agent** opens the actual owned profile with Identity /
+  Instructions, not a parallel editor, and starts the guided conversation directly.
+  The agent asks one question at a time about tasks, response style, initiative
+  and boundaries; ordinary owner replies continue that same chat. The owner can
+  skip/finish or start working instead. The app offers a single reviewable draft
+  through `propose_instructions`; no preference is saved by the tool.
+
+The shared tools retain one stable list across providers, including an explicitly
+availability-gated instruction-proposal tool. Codex's binding schema version moves
+to v7 so resumed older threads cannot silently lack it. Standalone/external clients
+without the optional proposal capability receive a clear unavailable response.
+No native command, credential store, FOUNDATION, or signing policy was changed.
+
+One bounded in-memory proposal per agent is partitioned by community/viewer. It
+requires an actual owner-authored **Finish setting up this agent** message in
+that exact private Solo chat, matching type
+and unchanged saved instructions. A successful proposal consumes that consent;
+starting guided customization again permits a new proposal. Disconnect/session
+replacement clears permissions and proposals. Reload does not retain unsaved
+proposals; choose **Finish setting up this agent** again. The profile displays text with no Markdown/HTML
+execution. Apply to draft changes only the existing provider-owned Instructions
+field, asks confirmation before replacing a changed draft, and keeps the existing
+Save action as the sole persistence path. Failed saves retain the draft/proposal;
+successful instruction changes dismiss it. Other config fields remain owned by
+the provider form and are not rewritten by onboarding.
+
+Focused evidence now includes exact button dispatch, a real viewer-signed outbox
+message observed by the actual runner with ordinary local message activity,
+owner-only scoped guidance, one-shot proposal consent and ordinary follow-ups.
+Continuing Claude/Codex/Goose protocol tests exercise separate app guidance beside
+the actual owner event, not app-start input. The earlier channel-only activity
+workaround was removed; message activity needs no shared store/schema expansion.
+The card retains only the requested heading, supporting line and three actions;
+setup still opens the real profile, with explicit Apply to draft and Save.
+
+No new live relay messages or provider calls were made by the assistant for this
+change. Human live acceptance of the button → visible user message → standard
+working indicator → reply remains pending. Both-theme/narrow/enlarged-text layout,
+packaged relaunch and broader CI remain separate.
+
+The action card stays at that one historical position while the selected user
+message and agent replies appear below it. It is not re-offered after responses.
+Scroll back to use the same card again. If the greeting is outside the loaded
+history window, the card is omitted until that exact message loads; it never
+falls back to the newest message. Focus inside the card keeps its virtual row
+mounted through the timeline's existing focus pinning. No new persistence flag,
+subscription or scrollport was added.
+
+## Team-testing snapshot
+
+This push is WIP for teammate testing, not a merge/readiness declaration. Human
+feedback reported the native conversation and single historical card looking
+good. Focused automated checks cover visible action sends, continuing protocol
+sessions, proposal review/save and anchored timeline composition. Full live
+Codex/Goose acceptance, packaged relaunch, browser geometry/accessibility across
+themes and sizes, and integration with newer main remain deferred. Keep other
+development copies from holding the same agent while testing; do not bypass the
+normal execution claim. Restart welcome remains temporary development UI.
