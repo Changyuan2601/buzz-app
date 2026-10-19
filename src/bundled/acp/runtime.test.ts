@@ -126,6 +126,7 @@ function setup(
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
+  const workingUntil = vi.fn((_done: Promise<unknown>) => undefined);
   const deliver = (
     event: RelayEvent,
     config: Config,
@@ -138,7 +139,7 @@ function setup(
       agent,
       config,
       signal,
-      workingUntil: () => undefined,
+      workingUntil,
       ignored,
     } as unknown as Delivery);
     return { run, ignored };
@@ -149,7 +150,24 @@ function setup(
         AcpRuntime["sync"]
       >[0][number],
     ]);
-  return { fake, runtime, deliver, sync, published };
+  return { fake, runtime, deliver, sync, published, workingUntil };
+}
+
+/** Resolves once a turn has settled and its report step has finished. */
+async function reported(
+  runtime: { subscribe(listener: () => void): () => void },
+  workingUntil: { mock: { calls: unknown[][] } },
+) {
+  await vi.waitFor(() => expect(workingUntil.mock.calls).toHaveLength(1));
+  await workingUntil.mock.calls[0]?.[0];
+  // Subscribed before the report step's continuation runs; that step ends by
+  // notifying, after any post it makes.
+  await new Promise<void>((resolve) => {
+    const stop = runtime.subscribe(() => {
+      stop();
+      resolve();
+    });
+  });
 }
 
 describe("AcpRuntime", () => {
@@ -286,11 +304,12 @@ describe("AcpRuntime", () => {
     "posts nothing for %s the harness wrote without send",
     async (_, chunk) => {
       const config = await confirmed();
-      const { fake, deliver, sync, published } = setup({ chunk });
+      const { runtime, deliver, sync, published, workingUntil } = setup({
+        chunk,
+      });
       sync(config);
       await deliver(message("1", "@Opal hello"), config).run;
-      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
-      await flush(50);
+      await reported(runtime, workingUntil);
       expect(published).toEqual([]);
     },
   );
@@ -506,6 +525,28 @@ describe("AcpRuntime", () => {
     await vi.waitFor(() => expect(short.published).toHaveLength(1));
     expect(short.published[0]?.content).toContain(
       "Authentication required. Run `opencode auth login`.",
+    );
+  });
+
+  it("gives no sign-in hint when a refusal follows the sign-in error", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync, published } = setup({ hold: true });
+    sync(config);
+    const first = message("1", "@Opal one");
+    await deliver(first, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    // Queued behind the running prompt, so one turn answers both.
+    const reply = message("2", "@Opal two");
+    reply.tags.push(["e", first.id, "", "reply"]);
+    await deliver(reply, config).run;
+    await flush(50);
+    const harness = fake.harnesses[0];
+    harness?.turns[0]?.fail(-32000, "Authentication required");
+    await vi.waitFor(() => expect(harness?.turns).toHaveLength(2));
+    harness?.turns[1]?.finish("refusal");
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toBe(
+      "⚠️ I couldn't finish that: OpenCode refused the request",
     );
   });
 
