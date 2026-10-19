@@ -10,6 +10,7 @@ import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
+import { withHome } from "./storage";
 
 export const TYPE_ID = "goose";
 
@@ -19,15 +20,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
+  const userSpawn = host.spawn?.bind(host);
+  const spawn = userSpawn && withHome(userSpawn);
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(
-    host,
+    {
+      ...(spawn ? { spawn } : {}),
+      ...(host.serveMcp ? { serveMcp: host.serveMcp.bind(host) } : {}),
+    },
     agents.relay,
     (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     () => agents.tools(),
   );
-  const spawn = host.spawn?.bind(host);
   const setup = new GooseSetup(spawn, () => runtime.defaultsChanged());
   const {
     Create,
@@ -39,7 +44,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   } = createTabs({
     setup,
     runtime,
-    history: new GooseHistory(spawn),
+    history: new GooseHistory(spawn, userSpawn),
   });
   const sync = () => {
     const snapshot = agents.snapshot();

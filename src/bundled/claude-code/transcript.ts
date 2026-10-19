@@ -252,14 +252,30 @@ export function startedFor(file: string, conversation: Conversation) {
   return false;
 }
 
-/** Other session files mentioning the conversation. The agent starts a new
- * session when it cannot resume one, e.g. in another build of the app, which
- * keeps its own saved sessions. */
-async function otherSessions(spawn: Spawn, project: string, pattern: string) {
+/** Buzz's home first, then the user's home for sessions from older builds. */
+async function projectRoots(spawn: Spawn) {
+  let output = "";
+  const process = await spawn("projects", {
+    onStdout: (data) => {
+      output += data;
+    },
+  });
+  if ((await process.exited) !== 0)
+    throw new Error("Could not find Claude's session storage");
+  return [...new Set(output.trim().split("\n").filter(Boolean))];
+}
+
+/** Other session files mentioning the conversation. */
+async function otherSessions(
+  spawn: Spawn,
+  directory: string,
+  project: string,
+  pattern: string,
+) {
   let output = "";
   const process = await spawn("find", {
     args: [pattern, "."],
-    cwd: `~/.claude/projects/${project}`,
+    cwd: `${directory}/${project}`,
     onStdout: (data) => {
       output += data;
     },
@@ -304,33 +320,36 @@ export async function readSessionTitle(
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project || !/^[\w-]+$/.test(sessionId)) return undefined;
   let file: string;
-  try {
-    file = new TextDecoder().decode(
-      await readFile(
-        spawn,
-        "~/.claude/projects",
-        `./${project}/${sessionId}.jsonl`,
-        signal,
-      ),
-    );
-  } catch (error) {
-    signal.throwIfAborted();
-    if (/no such file/i.test(error instanceof Error ? error.message : ""))
-      return undefined;
-    throw error;
-  }
-  let title: string | undefined;
-  for (const line of file.split("\n")) {
-    if (!line.includes('"ai-title"')) continue;
+  for (const directory of await projectRoots(spawn)) {
     try {
-      const record = object(JSON.parse(line));
-      const value = str(record?.aiTitle).trim();
-      if (record?.type === "ai-title" && value) title = value;
-    } catch {
-      // A partial last line is still being written.
+      file = new TextDecoder().decode(
+        await readFile(
+          spawn,
+          directory,
+          `./${project}/${sessionId}.jsonl`,
+          signal,
+        ),
+      );
+    } catch (error) {
+      signal.throwIfAborted();
+      if (/no such file/i.test(error instanceof Error ? error.message : ""))
+        continue;
+      throw error;
     }
+    let title: string | undefined;
+    for (const line of file.split("\n")) {
+      if (!line.includes('"ai-title"')) continue;
+      try {
+        const record = object(JSON.parse(line));
+        const value = str(record?.aiTitle).trim();
+        if (record?.type === "ai-title" && value) title = value;
+      } catch {
+        // A partial last line is still being written.
+      }
+    }
+    return title;
   }
-  return title;
+  return undefined;
 }
 
 /** The conversation's transcript across its sessions, or undefined when this
@@ -346,49 +365,55 @@ export async function readTranscript(
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project) return undefined;
   const saved = conversation.sessionId && `${conversation.sessionId}.jsonl`;
-  const names = new Set([
-    ...(saved ? [saved] : []),
-    ...(await otherSessions(
-      spawn,
-      project,
-      conversation.root ?? conversation.channelId,
-    )),
-  ]);
-  signal.throwIfAborted();
   const turns: TranscriptTurn[] = [];
   let found = false;
-  for (const name of names) {
-    let file: string;
-    try {
-      file = new TextDecoder().decode(
-        await readFile(
-          spawn,
-          "~/.claude/projects",
-          // Project names start with `-`; GNU base64 would read one as options.
-          `./${project}/${name}`,
-          signal,
+  const read = new Set<string>();
+  for (const directory of await projectRoots(spawn)) {
+    const names = new Set([
+      ...(saved ? [saved] : []),
+      ...(await otherSessions(
+        spawn,
+        directory,
+        project,
+        conversation.root ?? conversation.channelId,
+      )),
+    ]);
+    signal.throwIfAborted();
+    for (const name of names) {
+      if (read.has(name)) continue;
+      let file: string;
+      try {
+        file = new TextDecoder().decode(
+          await readFile(
+            spawn,
+            directory,
+            // Project names start with `-`; GNU base64 would read one as options.
+            `./${project}/${name}`,
+            signal,
+          ),
+        );
+      } catch (error) {
+        signal.throwIfAborted();
+        if (/no such file/i.test(error instanceof Error ? error.message : ""))
+          continue;
+        throw error;
+      }
+      if (name !== saved && !startedFor(file, conversation)) continue;
+      read.add(name);
+      found = true;
+      const sessionId = name.slice(0, -".jsonl".length);
+      turns.push(
+        ...claudeTurns(
+          file,
+          {
+            sessionId,
+            channelId: conversation.channelId,
+            ...(conversation.root ? { root: conversation.root } : {}),
+          },
+          working && name === saved,
         ),
       );
-    } catch (error) {
-      signal.throwIfAborted();
-      if (/no such file/i.test(error instanceof Error ? error.message : ""))
-        continue;
-      throw error;
     }
-    if (name !== saved && !startedFor(file, conversation)) continue;
-    found = true;
-    const sessionId = name.slice(0, -".jsonl".length);
-    turns.push(
-      ...claudeTurns(
-        file,
-        {
-          sessionId,
-          channelId: conversation.channelId,
-          ...(conversation.root ? { root: conversation.root } : {}),
-        },
-        working && name === saved,
-      ),
-    );
   }
   if (!found) return undefined;
   turns.sort((a, b) => a.startedAt - b.startedAt);

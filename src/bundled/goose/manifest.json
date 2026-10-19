@@ -9,6 +9,7 @@
   },
   "host": {
     "processes": [
+      { "id": "storage", "program": "bash", "args": ["-c"] },
       { "id": "goose", "program": "goose-acp", "bundled": true },
       { "id": "read", "program": "base64", "args": ["-i"] },
       { "id": "workspace", "program": "pwd" }

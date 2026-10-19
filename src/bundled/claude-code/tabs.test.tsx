@@ -146,14 +146,16 @@ function applied({
         ),
       };
     }
-    if (name === "workspace" || name === "read") {
+    if (name === "workspace" || name === "read" || name === "projects") {
       const file = files[args];
       queueMicrotask(() =>
-        name === "workspace"
-          ? options.onStdout?.("/Users/me/.buzz\n")
-          : file === undefined
-            ? options.onStderr?.(`base64: ${args}: No such file or directory`)
-            : options.onStdout?.(btoa(file)),
+        name === "projects"
+          ? options.onStdout?.("/buzz/claude-home/projects\n")
+          : name === "workspace"
+            ? options.onStdout?.("/Users/me/.buzz\n")
+            : file === undefined
+              ? options.onStderr?.(`base64: ${args}: No such file or directory`)
+              : options.onStdout?.(btoa(file)),
       );
       return {
         write: async () => undefined,

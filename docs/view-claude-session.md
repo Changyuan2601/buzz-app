@@ -8,16 +8,29 @@ standalone snapshots and manual transcript inspection.
 This guide is for agents investigating a Buzz conversation. All commands run
 non-interactively and read the saved transcript without invoking Claude or tools.
 
-Buzz runs Claude through `claude-agent-acp`. Claude saves transcripts
-as JSONL under `~/.claude/projects/<project>/<session-id>.jsonl`. The project
+Buzz runs its managed Claude Code binary over stream-json, with `CLAUDE_CONFIG_DIR`
+set only for its child processes to `~/Library/Application Support/Buzz/claude-home`
+on macOS, or `${XDG_DATA_HOME:-~/.local/share}/buzz/claude-home` on Linux.
+Claude saves transcripts as JSONL under `<claude-home>/projects/<project>/<session-id>.jsonl`. The project
 directory derives from the agent's working directory, with non-alphanumeric
 characters replaced by `-` (long paths also get truncated and hashed). For
 example, `/Users/alex/.buzz` becomes `-Users-alex--buzz`.
 
-If the agent has `CLAUDE_CONFIG_DIR` set in its Environment, use that config
-directory instead. `CLAUDE_CODE_PROJECT_DIR_NAME` overrides the project name when
-set alongside `CLAUDE_CONFIG_DIR`. Run the commands below on the machine that runs
-the agent, with `rg` and `jq` installed.
+The launcher links user settings, instructions, rules, skills, agents, commands,
+plugins and file-based credentials from `$CLAUDE_CONFIG_DIR` (default `~/.claude`).
+macOS Keychain login is scoped to the config directory and needs a separate Buzz
+sign-in. Normal terminal launches keep their own storage. A conflicting file in
+Buzz's home stops setup rather than being replaced. Use absolute paths in shared
+settings. Signing out of a linked credentials file inside Buzz can remove the link;
+sign out through the terminal to change the shared file-based account.
+Buzz clears inherited `CLAUDE_CODE_PROJECT_DIR_NAME` so transcripts remain grouped
+by the actual workspace, as its Activity reader expects.
+
+Older Buzz sessions remain in the user's Claude home. On resume, Buzz copies only
+that session and its subagent files once; the original and an already-continued
+Buzz copy are never replaced. Activity and session-debug discovery read both homes,
+preferring Buzz's copy. Run the commands below on the machine that runs the agent,
+with `rg` and `jq` installed.
 
 ## Find the session
 
@@ -27,7 +40,9 @@ the thread root. Search transcripts for the context Buzz sent to Claude:
 
 ```sh
 root='<thread-root-id>'
-claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+# Linux: "${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-home".
+# For an older session: "${CLAUDE_CONFIG_DIR:-$HOME/.claude}".
+claude_config_dir="$HOME/Library/Application Support/Buzz/claude-home"
 rg -l -F -e "Thread root: $root" -e "Event ID: $root" \
   "$claude_config_dir/projects" -g '*.jsonl'
 ```

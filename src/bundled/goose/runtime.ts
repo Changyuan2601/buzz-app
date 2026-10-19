@@ -131,7 +131,7 @@ export class GooseRuntime {
   >();
 
   constructor(
-    private readonly host: Host,
+    private readonly host: Pick<Host, "spawn" | "serveMcp">,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */

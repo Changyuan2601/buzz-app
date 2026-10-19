@@ -223,6 +223,52 @@ describe("GooseHistory", () => {
     );
   const signal = new AbortController().signal;
 
+  it("keeps legacy Buzz history visible beside new sessions without including another agent's sessions", async () => {
+    const oldMessages = [
+      user([text(ask())]),
+      assistant([text("The older reply")]),
+    ];
+    const goose = new GooseHistory(
+      fakeSpawn({
+        history: [session("same", "Gander · #general", conversation())],
+        home: "/home/test",
+      }).spawn,
+      fakeSpawn({
+        history: [
+          session("same", "Old Buzz conversation", oldMessages),
+          session("theirs", "Other", [user([text(ask(other))])]),
+        ],
+        home: "/home/test",
+      }).spawn,
+    );
+    expect(
+      (await goose.recent(agent, "~/.buzz", signal)).map(
+        (row) => row.sessionId,
+      ),
+    ).toEqual(["same", "legacy:same"]);
+    const read = await goose.transcript(
+      {
+        agent,
+        workspace: "~/.buzz",
+        place: { channelId: CHANNEL, root: root.id },
+      },
+      signal,
+    );
+    expect(read?.turns.map((turn) => turn.sessionId)).toEqual([
+      "legacy:same",
+      "same",
+    ]);
+    const legacy = await goose.transcript(
+      { agent, workspace: "~/.buzz", sessionId: "legacy:same" },
+      signal,
+    );
+    expect(legacy?.turns.map((turn) => turn.sessionId)).toEqual([
+      "legacy:same",
+    ]);
+    expect(JSON.stringify(legacy)).toContain("The older reply");
+    expect(JSON.stringify(legacy)).not.toContain("Replied in the thread.");
+  });
+
   it("lists the sessions in its workspace that its first prompt names it in", async () => {
     const rows = await history([
       session("s1", "Gander · #general · 11111111", conversation()),

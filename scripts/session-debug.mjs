@@ -102,12 +102,15 @@ export async function createInspector({
           "buzz/codex-home",
         );
   const userCodex = process.env.CODEX_HOME || join(home, ".codex");
+  const buzzClaude = join(buzzCodex, "../claude-home");
   roots ??= [
     ...[buzzCodex, userCodex].flatMap((codex) => [
       join(codex, "sessions"),
       join(codex, "archived_sessions"),
     ]),
-    join(process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "projects"),
+    ...[buzzClaude, process.env.CLAUDE_CONFIG_DIR || join(home, ".claude")].map(
+      (claude) => join(claude, "projects"),
+    ),
   ];
   traceRoot ??= join(home, ".buzz", "session-debug");
   const known = new Map();

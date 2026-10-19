@@ -8,6 +8,8 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  readlink,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -27,7 +29,7 @@ afterEach(async () => {
 
 /** Buzz's claude-code folder in a new home, holding fake `releases` with `current`. */
 async function disk(releases: readonly string[], current?: string) {
-  const home = await mkdtemp(join(tmpdir(), "buzz-claude-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "buzz-claude-")));
   homes.push(home);
   const dir =
     process.platform === "darwin"
@@ -57,6 +59,76 @@ async function disk(releases: readonly string[], current?: string) {
         .sort(),
   };
 }
+
+it("keeps Buzz sessions private while sharing settings and leaving terminal storage alone", async () => {
+  const f = await disk(["0.1.0"], "0.1.0");
+  const shared = join(f.home, ".claude");
+  await mkdir(shared);
+  await writeFile(join(shared, "settings.json"), '{"model":"opus"}');
+  const binary = join(f.dir, "0.1.0/claude");
+  await writeFile(
+    binary,
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion
+    '#!/bin/sh\nroot="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"\nmkdir -p "$root/projects/work"\necho "$1" > "$root/projects/work/$1.jsonl"\n',
+  );
+  await Promise.all(
+    Array.from({ length: 6 }, (_, i) => f.step("run", `buzz-${i}`)),
+  );
+  const own = join(f.dir, "../claude-home");
+  expect(await readdir(join(shared, "projects")).catch(() => [])).toEqual([]);
+  expect(await readFile(join(own, "projects/work/buzz-0.jsonl"), "utf8")).toBe(
+    "buzz-0\n",
+  );
+  expect(await readlink(join(own, "settings.json"))).toBe(
+    join(shared, "settings.json"),
+  );
+  await run(binary, ["terminal"], {
+    env: { PATH: process.env.PATH, HOME: f.home },
+  });
+  expect(
+    await readFile(join(shared, "projects/work/terminal.jsonl"), "utf8"),
+  ).toBe("terminal\n");
+  expect(await readdir(join(own, "projects/work"))).not.toContain(
+    "terminal.jsonl",
+  );
+});
+
+it("adopts only a resumed session, never overwriting Buzz's continued copy or the original", async () => {
+  const f = await disk(["0.1.0"], "0.1.0");
+  const project = join(f.home, ".claude/projects/work");
+  await mkdir(join(project, "saved/subagents"), { recursive: true });
+  await writeFile(join(project, "saved.jsonl"), '{"message":"original"}');
+  await writeFile(join(project, "other.jsonl"), "unrelated\n");
+  await writeFile(join(project, "saved/subagents/child.jsonl"), "child\n");
+  await f.step("run", "--resume", "saved");
+  const copy = join(f.dir, "../claude-home/projects/work/saved.jsonl");
+  expect(await readFile(copy, "utf8")).toBe('{"message":"original"}\n');
+  expect(
+    await readFile(
+      join(f.dir, "../claude-home/projects/work/saved/subagents/child.jsonl"),
+      "utf8",
+    ),
+  ).toBe("child\n");
+  await writeFile(copy, "continued\n");
+  await f.step("run", "--resume", "saved");
+  expect(await readFile(copy, "utf8")).toBe("continued\n");
+  expect(await readFile(join(project, "saved.jsonl"), "utf8")).toBe(
+    '{"message":"original"}',
+  );
+  expect(
+    await readdir(join(f.dir, "../claude-home/projects/work")),
+  ).not.toContain("other.jsonl");
+  await expect(f.step("run", "--resume", "../saved")).rejects.toThrow();
+});
+
+it("refuses to replace a user's file in Buzz's Claude configuration", async () => {
+  const f = await disk(["0.1.0"], "0.1.0");
+  const own = join(f.dir, "../claude-home");
+  await mkdir(own, { recursive: true });
+  await writeFile(join(own, "settings.json"), "keep me");
+  await expect(f.step("run")).rejects.toThrow();
+  expect(await readFile(join(own, "settings.json"), "utf8")).toBe("keep me");
+});
 
 // Builds that fetched 0.2.0 and 0.3.0 switch in either order, or at once;
 // none prunes what another made current.

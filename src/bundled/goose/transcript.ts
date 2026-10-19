@@ -280,6 +280,11 @@ type Listed = {
   updatedAt?: string | null;
 };
 
+// Goose IDs are only unique within a database (e.g. both can have 20261017_1).
+const legacyId = (id: string, legacy: boolean) =>
+  legacy ? `legacy:${id}` : id;
+type HistorySource = Readonly<{ goose: GooseProcess; legacy: boolean }>;
+
 /** The agent's goose sessions in its workspace, newest first; `query` keeps
  * those whose messages mention it. */
 async function list(goose: GooseProcess, cwd: string, query?: string) {
@@ -321,37 +326,50 @@ export type Lookup = Readonly<{
 
 /** goose's history for an agent, each read in its own short-lived `goose-acp`. */
 export class GooseHistory {
-  constructor(private readonly spawn: Spawn | undefined) {}
+  constructor(
+    private readonly spawn: Spawn | undefined,
+    private readonly legacySpawn?: Spawn,
+  ) {}
 
   /** The agent's latest sessions in `workspace`, newest first: those whose
    * first prompt names its pubkey, `agent`. */
   recent(agent: string, workspace: string, signal: AbortSignal) {
-    return this.with(signal, async (goose, spawn) => {
+    return this.with(signal, async (sources, spawn) => {
       const cwd = await absolute(spawn, workspace);
       const rows: GooseSessionRow[] = [];
-      for (const row of await list(goose, cwd, agent)) {
-        if (rows.length >= RECENT_LIMIT) break;
-        signal.throwIfAborted();
-        // One goose deleted since it listed it is left out.
-        const read = await messages(goose, row.sessionId).catch((error) => {
-          if (/not found/i.test(String(error))) return [];
-          throw error;
-        });
-        if (opening(read)?.("Agent") === agent) rows.push(row);
+      for (const { goose, legacy } of sources) {
+        let count = 0;
+        for (const row of await list(goose, cwd, agent)) {
+          if (count >= RECENT_LIMIT) break;
+          signal.throwIfAborted();
+          // One goose deleted since it listed it is left out.
+          const read = await messages(goose, row.sessionId).catch((error) => {
+            if (/not found/i.test(String(error))) return [];
+            throw error;
+          });
+          if (opening(read)?.("Agent") === agent) {
+            count++;
+            rows.push({ ...row, sessionId: legacyId(row.sessionId, legacy) });
+          }
+        }
       }
-      return rows;
+      return rows.sort((a, b) => b.at - a.at).slice(0, RECENT_LIMIT);
     });
   }
 
   /** The agent's newest session for `place`, or undefined when goose has none
    * for it in this workspace. */
   find(agent: string, workspace: string, place: Place, signal: AbortSignal) {
-    return this.with(signal, async (goose, spawn) => {
+    return this.with(signal, async (sources, spawn) => {
       const cwd = await absolute(spawn, workspace);
-      for (const row of await candidates(goose, cwd, place))
-        if (startedFor(await messages(goose, row.sessionId), agent, place))
-          return row;
-      return undefined;
+      const found: GooseSessionRow[] = [];
+      for (const { goose, legacy } of sources)
+        for (const row of await candidates(goose, cwd, place))
+          if (startedFor(await messages(goose, row.sessionId), agent, place)) {
+            found.push({ ...row, sessionId: legacyId(row.sessionId, legacy) });
+            break;
+          }
+      return found.sort((a, b) => b.at - a.at)[0];
     });
   }
 
@@ -361,38 +379,51 @@ export class GooseHistory {
     lookup: Lookup,
     signal: AbortSignal,
   ): Promise<GooseTranscript | undefined> {
-    return this.with(signal, async (goose, spawn) => {
-      const ids = new Set(lookup.sessionId ? [lookup.sessionId] : []);
-      if (lookup.place) {
-        const cwd = await absolute(spawn, lookup.workspace);
-        for (const row of await candidates(goose, cwd, lookup.place))
-          ids.add(row.sessionId);
-      }
+    return this.with(signal, async (sources, spawn) => {
       const turns: TranscriptTurn[] = [];
       let found = false;
-      for (const sessionId of ids) {
-        let read: Message[];
-        try {
-          read = await messages(goose, sessionId);
-        } catch (error) {
-          if (/not found/i.test(String(error))) continue;
-          throw error;
+      let savedRead = false;
+      const seen = new Set<string>();
+      for (const { goose, legacy } of sources) {
+        const saved = lookup.sessionId?.startsWith("legacy:")
+          ? legacy
+            ? lookup.sessionId.slice(7)
+            : undefined
+          : lookup.sessionId;
+        const ids = new Set(saved && !savedRead ? [saved] : []);
+        if (lookup.place) {
+          const cwd = await absolute(spawn, lookup.workspace);
+          for (const row of await candidates(goose, cwd, lookup.place))
+            ids.add(row.sessionId);
         }
-        signal.throwIfAborted();
-        if (
-          lookup.place &&
-          sessionId !== lookup.sessionId &&
-          !startedFor(read, lookup.agent, lookup.place)
-        )
-          continue;
-        found = true;
-        turns.push(
-          ...gooseTurns(
-            read,
-            { sessionId, ...(lookup.place ?? { channelId: "" }) },
-            sessionId === lookup.working,
-          ),
-        );
+        for (const sessionId of ids) {
+          const id = legacyId(sessionId, legacy);
+          if (seen.has(id)) continue;
+          let read: Message[];
+          try {
+            read = await messages(goose, sessionId);
+          } catch (error) {
+            if (/not found/i.test(String(error))) continue;
+            throw error;
+          }
+          signal.throwIfAborted();
+          if (
+            lookup.place &&
+            !(sessionId === saved && !savedRead) &&
+            !startedFor(read, lookup.agent, lookup.place)
+          )
+            continue;
+          found = true;
+          if (sessionId === saved) savedRead = true;
+          seen.add(id);
+          turns.push(
+            ...gooseTurns(
+              read,
+              { sessionId: id, ...(lookup.place ?? { channelId: "" }) },
+              !legacy && sessionId === lookup.working,
+            ),
+          );
+        }
       }
       if (!found) return undefined;
       turns.sort((a, b) => a.startedAt - b.startedAt);
@@ -406,12 +437,24 @@ export class GooseHistory {
 
   private async with<T>(
     signal: AbortSignal,
-    run: (goose: GooseProcess, spawn: Spawn) => Promise<T>,
+    run: (sources: readonly HistorySource[], spawn: Spawn) => Promise<T>,
   ) {
     const { spawn } = this;
     if (!spawn) throw new Error("goose runs only in the desktop app");
     signal.throwIfAborted();
-    const result = await briefly(spawn, (goose) => run(goose, spawn));
+    const result = await briefly(spawn, (goose) =>
+      this.legacySpawn
+        ? briefly(this.legacySpawn, (legacy) =>
+            run(
+              [
+                { goose, legacy: false },
+                { goose: legacy, legacy: true },
+              ],
+              spawn,
+            ),
+          )
+        : run([{ goose, legacy: false }], spawn),
+    );
     signal.throwIfAborted();
     return result;
   }

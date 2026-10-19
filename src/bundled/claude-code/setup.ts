@@ -1,7 +1,7 @@
 // Claude on this computer: Buzz's own copy, whether it is signed in, and
 // keeping that copy on the latest release. Each step runs as a declared
-// process; the copy lives apart from any `claude` the user installed, and
-// shares their `~/.claude` sign-in and settings.
+// process; the copy and its sessions live apart from any `claude` the user
+// installed, while settings and file-based credentials stay shared.
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import type {
   HostProcess,
@@ -39,6 +39,7 @@ const STEPS: Readonly<Record<string, string>> = {
   claude: "run",
   install: "install",
   use: "use",
+  projects: "projects",
 };
 /** Starts `claude`, `install` and `use` as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */

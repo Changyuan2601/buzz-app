@@ -181,14 +181,24 @@ it("names projects as Claude Code does", () => {
 
 /** `workspace` prints the resolved folder; `read` serves `files` as base64,
  * and `find` lists those in the project folder that contain its pattern. */
-function host(files: Record<string, string>) {
+function host(
+  files: Record<string, string>,
+  legacyFiles: Record<string, string> = {},
+) {
   const reads: HostProcessOptions[] = [];
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     let code = 0;
+    if (id === "projects")
+      options.onStdout?.(
+        "/buzz/claude-home/projects\n/user/.claude/projects\n",
+      );
+    const currentFiles = options.cwd?.startsWith("/user/")
+      ? legacyFiles
+      : files;
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
     if (id === "find") {
       const project = options.cwd?.split("/").pop();
-      const matches = Object.entries(files).flatMap(([path, content]) =>
+      const matches = Object.entries(currentFiles).flatMap(([path, content]) =>
         path.startsWith(`./${project}/`) &&
         content.includes(options.args?.[0] ?? "")
           ? [`./${path.split("/").pop()}`]
@@ -200,7 +210,7 @@ function host(files: Record<string, string>) {
     if (id === "read") {
       reads.push(options);
       const path = options.args?.[0] ?? "";
-      const content = files[path];
+      const content = currentFiles[path];
       if (content === undefined) {
         options.onStderr?.(`base64: ${path}: No such file or directory\n`);
         code = 1;
@@ -232,7 +242,7 @@ it("reads the session file from the project of the agent's workspace", async () 
     expect.objectContaining({ cwd: "~/.buzz" }),
   );
   expect(reads[0]).toMatchObject({
-    cwd: "~/.claude/projects",
+    cwd: "/buzz/claude-home/projects",
     args: ["./-Users-me--buzz/session-1.jsonl"],
   });
   expect(read).toMatchObject({ more: false, unknownThread: 0 });
@@ -250,6 +260,31 @@ it("treats a missing session file as no transcript, not a failure", async () => 
       new AbortController().signal,
     ),
   ).resolves.toBeUndefined();
+});
+
+it("reads legacy history and prefers Buzz's continued copy of the same session", async () => {
+  const path = "./-Users-me--buzz/session-1.jsonl";
+  const legacy = file();
+  const signal = new AbortController().signal;
+  const old = host({}, { [path]: legacy });
+  expect(
+    (await readTranscript(old.spawn, "~/.buzz", conversation, false, signal))
+      ?.turns,
+  ).toHaveLength(2);
+  const current = host(
+    { [path]: legacy.replace("Any time.", "Continued in Buzz.") },
+    { [path]: legacy },
+  );
+  const read = await readTranscript(
+    current.spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    signal,
+  );
+  expect(read?.turns).toHaveLength(2);
+  expect(JSON.stringify(read)).toContain("Continued in Buzz.");
+  expect(JSON.stringify(read)).not.toContain("Any time.");
 });
 
 it("merges the agent's other sessions for the thread, oldest turn first", async () => {
@@ -301,7 +336,7 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
     "find",
     expect.objectContaining({
       args: [root, "."],
-      cwd: "~/.claude/projects/-Users-me--buzz",
+      cwd: "/buzz/claude-home/projects/-Users-me--buzz",
     }),
   );
   // Without a saved session, the found ones are the conversation's.

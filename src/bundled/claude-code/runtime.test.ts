@@ -62,14 +62,19 @@ function setup(
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
-    if (options.title && (id === "workspace" || id === "read")) {
+    if (
+      options.title &&
+      (id === "workspace" || id === "read" || id === "projects")
+    ) {
       spawnOptions?.onStdout?.(
-        id === "workspace"
-          ? "/Users/me/.buzz\n"
-          : Buffer.from(
-              JSON.stringify({ type: "ai-title", aiTitle: options.title }) +
-                "\n",
-            ).toString("base64"),
+        id === "projects"
+          ? "/buzz/claude-home/projects\n"
+          : id === "workspace"
+            ? "/Users/me/.buzz\n"
+            : Buffer.from(
+                JSON.stringify({ type: "ai-title", aiTitle: options.title }) +
+                  "\n",
+              ).toString("base64"),
       );
       return {
         exited: Promise.resolve(0),

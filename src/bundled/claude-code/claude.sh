@@ -5,6 +5,7 @@
 #   run [ARGS...]                    runs the copy in use with ARGS
 #   install VERSION PLATFORM SHA256  downloads a release and checks it
 #   use VERSION                      makes a downloaded release the one in use
+#   projects                         prints Buzz's and the user's transcript roots
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
@@ -30,8 +31,55 @@ newer() {
 
 command="$1"
 shift
+# Keep conversations private to Buzz, sharing only user customizations and
+# file-based credentials. Keychain login is scoped to this home by Claude.
+if [ "$command" = run ] || [ "$command" = projects ]; then
+  mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  shared=$(cd "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" && pwd -P)
+  mkdir -p "$shared/rules" "$shared/skills" "$shared/agents" "$shared/commands" "$shared/plugins"
+  buzz_home="${dir%/claude-code}/claude-home"
+  mkdir -p -m 700 "$buzz_home"
+  mkdir -p "$buzz_home/projects"
+  buzz_home=$(cd "$buzz_home" && pwd -P)
+  [ "$buzz_home" != "$shared" ] ||
+    { echo "Buzz's Claude home must differ from the shared one" >&2; exit 1; }
+  for name in settings.json CLAUDE.md rules skills agents commands plugins .credentials.json; do
+    [ -e "$buzz_home/$name" ] || [ -L "$buzz_home/$name" ] ||
+      ln -sn "$shared/$name" "$buzz_home/$name" 2>/dev/null || true
+    [ "$(readlink "$buzz_home/$name")" = "$shared/$name" ] ||
+      { echo "Buzz's Claude setup conflicts with $buzz_home/$name" >&2; exit 1; }
+  done
+  export CLAUDE_CONFIG_DIR="$buzz_home"
+  # Buzz's transcript reader derives the project name from the workspace.
+  unset CLAUDE_CODE_PROJECT_DIR_NAME
+fi
 case "$command" in
 run)
+  # Continue a pre-isolation Buzz session from a copy, never over one Buzz
+  # already continued. Only the explicitly resumed session is adopted.
+  resume=""
+  previous=""
+  for arg do
+    [ "$previous" != --resume ] || resume="$arg"
+    previous="$arg"
+  done
+  if [ -n "$resume" ]; then
+    case "$resume" in *[!0-9A-Za-z-]*) echo "Invalid session" >&2; exit 2 ;; esac
+    for original in "$shared"/projects/*/"$resume.jsonl"; do
+      [ -f "$original" ] || continue
+      project=$(basename "$(dirname "$original")")
+      copy="$buzz_home/projects/$project/$resume.jsonl"
+      [ -e "$copy" ] && continue
+      mkdir -p "$(dirname "$copy")"
+      cp -p "$original" "$copy.$$"
+      [ -z "$(tail -c 1 "$copy.$$")" ] || echo >>"$copy.$$"
+      ln "$copy.$$" "$copy" 2>/dev/null || true
+      rm -f "$copy.$$"
+      if [ -d "${original%.jsonl}" ]; then
+        cp -Rn "${original%.jsonl}" "$(dirname "$copy")/"
+      fi
+    done
+  fi
   # A failed exec returns (execfail, without errexit), so the launcher can
   # look again when a release it read was pruned before it started.
   set +e
@@ -47,6 +95,9 @@ run)
     [ -z "${BUZZ_CLAUDE_VERSION:-}" ] &&
       [ "$(cat "$dir/current" 2>/dev/null)" != "$version" ] || exit 127
   done
+  ;;
+projects)
+  printf '%s\n' "$buzz_home/projects" "$shared/projects"
   ;;
 install)
   version="$1" platform="$2" checksum="$3"
