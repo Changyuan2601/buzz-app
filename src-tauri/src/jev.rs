@@ -17,6 +17,12 @@ pub(crate) const KEY_SERVICE: &str = if cfg!(debug_assertions) {
 } else {
     "dev.local.buzz.foundation.jev-key"
 };
+/// The classifier key service, kept apart for a development sandbox.
+#[cfg_attr(test, allow(dead_code))]
+fn key_service() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    buzz_credential_store::sandboxed(&NAME, KEY_SERVICE)
+}
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) const KEY_ACCOUNT: &str = "typesafe";
 pub(crate) const MODEL: &str = "jev-1.13.0";
@@ -261,7 +267,7 @@ mod platform {
             // is an error, so it neither hides nor removes a saved key.
             match SecKeychain::default()
                 .map_err(error)?
-                .find_generic_password(KEY_SERVICE, KEY_ACCOUNT)
+                .find_generic_password(key_service(), KEY_ACCOUNT)
             {
                 Ok((password, _)) => decode(Zeroizing::new(password.to_vec())),
                 Err(e) if e.code() == NOT_FOUND => Ok(None),
@@ -273,13 +279,13 @@ mod platform {
             // key as it was. A new item's access list trusts only this binary.
             SecKeychain::default()
                 .map_err(error)?
-                .set_generic_password(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes())
+                .set_generic_password(key_service(), KEY_ACCOUNT, key.as_bytes())
                 .map_err(error)
         }
         fn clear(&self) -> Result<(), String> {
             match SecKeychain::default()
                 .map_err(error)?
-                .find_generic_password(KEY_SERVICE, KEY_ACCOUNT)
+                .find_generic_password(key_service(), KEY_ACCOUNT)
             {
                 Ok((_, item)) => item.delete(),
                 Err(e) if e.code() == NOT_FOUND => return Ok(()),
@@ -309,17 +315,17 @@ mod platform {
     }
     impl KeyStore for OsKeyStore {
         fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
-            match credentials::read(KEY_SERVICE, KEY_ACCOUNT) {
+            match credentials::read(key_service(), KEY_ACCOUNT) {
                 Ok(bytes) => decode(bytes),
                 Err(Error::Absent) => Ok(None),
                 Err(e) => Err(error(e)),
             }
         }
         fn replace(&self, key: &str) -> Result<(), String> {
-            credentials::replace(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes()).map_err(error)
+            credentials::replace(key_service(), KEY_ACCOUNT, key.as_bytes()).map_err(error)
         }
         fn clear(&self) -> Result<(), String> {
-            match credentials::delete(KEY_SERVICE, KEY_ACCOUNT) {
+            match credentials::delete(key_service(), KEY_ACCOUNT) {
                 Ok(()) | Err(Error::Absent) => Ok(()),
                 Err(e) => Err(error(e)),
             }

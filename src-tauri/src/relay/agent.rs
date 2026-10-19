@@ -13,7 +13,6 @@ use std::{
     collections::{BTreeMap, HashSet},
     path::PathBuf,
 };
-use tauri::Manager;
 
 const HEX: &str = "0123456789abcdef";
 fn key(value: &str) -> bool {
@@ -790,10 +789,7 @@ fn library_field(row: &Value, name: &str, max: usize) -> Result<String> {
 pub(crate) async fn relay_agent_library<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Value> {
-    let parent = app
-        .path()
-        .data_dir()
-        .map_err(|_| "Current Buzz library unavailable")?;
+    let parent = crate::legacy_data_dir(&app).ok_or("Current Buzz library unavailable")?;
     let path = parent.join("xyz.block.buzz.app/agents/managed-agents.json");
     tauri::async_runtime::spawn_blocking(move || read_agent_library(path))
         .await

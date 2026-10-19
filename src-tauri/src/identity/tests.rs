@@ -259,7 +259,7 @@ fn uppercase_import_keeps_the_exact_key_and_mixed_case_is_rejected() {
 #[test]
 fn development_and_release_items_are_separate() {
     assert_eq!(
-        credentials::HUMAN_SERVICE,
+        credentials::human_service_name(),
         if cfg!(debug_assertions) {
             "dev.local.buzz.foundation.identity.debug"
         } else {
@@ -267,7 +267,7 @@ fn development_and_release_items_are_separate() {
         }
     );
     assert_eq!(credentials::HUMAN_ACCOUNT, "human");
-    assert!(!credentials::HUMAN_SERVICE.starts_with("buzz-desktop"));
+    assert!(!credentials::human_service_name().starts_with("buzz-desktop"));
 }
 
 #[test]

@@ -1,5 +1,5 @@
 //! One agent-only Keychain item; session caching never couples human custody.
-use super::{Failure, Keychain, SecretMap, MAX_BLOB, SERVICE};
+use super::{service, Failure, Keychain, SecretMap, MAX_BLOB};
 use crate::{Result, Secret};
 use std::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
@@ -67,7 +67,7 @@ impl Bundle {
             }
             // Only absence in a successfully loaded bundle permits migration.
             // Never consult old Buzz or substitute another identity/community.
-            let bytes = match keychain.saved(SERVICE, account) {
+            let bytes = match keychain.saved(service(), account) {
                 Ok(bytes) => bytes,
                 Err(Failure::Absent) => return Ok(None),
                 Err(error) => return Err(error),
@@ -93,7 +93,7 @@ impl Bundle {
             if map.0.contains_key(account) {
                 return Err(Failure::Occupied);
             }
-            match keychain.saved(SERVICE, account) {
+            match keychain.saved(service(), account) {
                 Ok(_) => return Err(Failure::Occupied),
                 Err(Failure::Absent) => {}
                 Err(error) => return Err(error),
@@ -111,7 +111,7 @@ impl Bundle {
             lock.invalidate()?;
             // Remove the rollback copy first. A failure leaves the bundle intact;
             // a later bundle-write failure leaves the card available for retry.
-            match keychain.delete(SERVICE, account) {
+            match keychain.delete(service(), account) {
                 Ok(()) | Err(Failure::Absent) => {}
                 Err(error) => return Err(error),
             }
@@ -126,7 +126,7 @@ fn parse(value: &str, pubkey: &str) -> std::result::Result<Secret, Failure> {
     Secret::parse(value, pubkey).map_err(|_| Failure::Corrupt)
 }
 fn load(keychain: &dyn Keychain) -> std::result::Result<SecretMap, Failure> {
-    let bytes = match keychain.saved(SERVICE, ACCOUNT) {
+    let bytes = match keychain.saved(service(), ACCOUNT) {
         Ok(bytes) => bytes,
         Err(Failure::Absent) => return Ok(SecretMap::default()),
         Err(error) => return Err(error),
@@ -158,8 +158,8 @@ fn persist(
     }
     state.cached = None;
     let epoch = lock.invalidate()?;
-    keychain.replace(SERVICE, ACCOUNT, &bytes)?;
-    let verified = decode(&keychain.saved(SERVICE, ACCOUNT)?)?;
+    keychain.replace(service(), ACCOUNT, &bytes)?;
+    let verified = decode(&keychain.saved(service(), ACCOUNT)?)?;
     if verified.0 != map.0 {
         return Err(Failure::Corrupt);
     }

@@ -14,6 +14,11 @@ mod platform;
 mod tests;
 
 const SERVICE: &str = "dev.local.buzz.foundation.agents";
+/// The agent key service, kept apart for a development sandbox.
+fn service() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    buzz_credential_store::sandboxed(&NAME, SERVICE)
+}
 const MAX_BLOB: usize = 2 * 1024 * 1024;
 /// Another operation, in this app or another, holds the store; it may be retried.
 pub const BUSY: &str = "Credentials are busy; retry after the current operation finishes";
@@ -143,7 +148,7 @@ impl Credentials for PlatformCredentials {
         if let Some(bundle) = &self.bundle {
             return bundle.read(self.keychain.as_ref(), &account, pubkey);
         }
-        match self.keychain.saved(SERVICE, &account) {
+        match self.keychain.saved(service(), &account) {
             Ok(bytes) => {
                 if bytes.len() > 64 {
                     return Err(Failure::Corrupt.message());
@@ -166,7 +171,7 @@ impl Credentials for PlatformCredentials {
         }
         let value = key.hex();
         self.keychain
-            .add(SERVICE, &account, value.as_bytes())
+            .add(service(), &account, value.as_bytes())
             .map_err(Failure::message)
     }
     fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
@@ -178,7 +183,7 @@ impl Credentials for PlatformCredentials {
         if let Some(bundle) = &self.bundle {
             return bundle.delete(self.keychain.as_ref(), &account);
         }
-        match self.keychain.delete(SERVICE, &account) {
+        match self.keychain.delete(service(), &account) {
             Ok(()) | Err(Failure::Absent) => Ok(()),
             Err(error) => Err(error.message()),
         }

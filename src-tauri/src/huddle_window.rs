@@ -321,18 +321,25 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     let app = window.app_handle();
     let companion = match app.get_webview_window(LABEL) {
         Some(existing) => existing,
-        None => tauri::WebviewWindowBuilder::new(
-            app,
-            LABEL,
-            tauri::WebviewUrl::App("huddle.html".into()),
-        )
-        .title("Huddle — Buzz")
-        .inner_size(520.0, 560.0)
-        .min_inner_size(360.0, 400.0)
-        .center()
-        .disable_drag_drop_handler()
-        .build()
-        .map_err(|e| e.to_string())?,
+        None => {
+            let builder = tauri::WebviewWindowBuilder::new(
+                app,
+                LABEL,
+                tauri::WebviewUrl::App("huddle.html".into()),
+            )
+            .title("Huddle — Buzz")
+            .inner_size(520.0, 560.0)
+            .min_inner_size(360.0, 400.0)
+            .center()
+            .disable_drag_drop_handler();
+            // A development sandbox's windows share its own WebView storage.
+            #[cfg(target_os = "macos")]
+            let builder = match crate::dev_webview_store() {
+                Some(store) => builder.data_store_identifier(store),
+                None => builder,
+            };
+            builder.build().map_err(|e| e.to_string())?
+        }
     };
     companion.on_window_event(on_closed);
     // Call completion may race native window creation. It retires the session;

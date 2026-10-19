@@ -8,12 +8,57 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use std::path::Path;
+use std::sync::OnceLock;
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 pub const HUMAN_ACCOUNT: &str = "human";
-pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
+
+/// The human identity's keychain service for this build and development sandbox.
+pub fn human_service_name() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    sandboxed(&NAME, human_service(cfg!(debug_assertions)))
+}
+
+/// A development build's `BUZZ_DEV_SANDBOX`: a name that keeps this copy's keys and
+/// key-custody folders apart from every other Buzz, so a sandbox can start from
+/// first run and be erased without touching them. Release builds ignore it. A set
+/// but invalid name stops the app rather than falling back to the shared storage.
+pub fn dev_sandbox() -> Option<&'static str> {
+    static SANDBOX: OnceLock<Option<String>> = OnceLock::new();
+    SANDBOX
+        .get_or_init(|| {
+            if !cfg!(debug_assertions) {
+                return None;
+            }
+            let value = std::env::var("BUZZ_DEV_SANDBOX").ok()?;
+            if value.is_empty() {
+                return None;
+            }
+            assert!(
+                valid_sandbox(&value),
+                "BUZZ_DEV_SANDBOX must be 1-32 lowercase letters, digits or hyphens"
+            );
+            Some(value)
+        })
+        .as_deref()
+}
+
+fn valid_sandbox(value: &str) -> bool {
+    (1..=32).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// `name`, suffixed with `.sandbox.<name>` while a development sandbox is set.
+pub fn sandboxed(cell: &'static OnceLock<String>, name: &str) -> &'static str {
+    cell.get_or_init(|| match dev_sandbox() {
+        Some(sandbox) => format!("{name}.sandbox.{sandbox}"),
+        None => name.to_owned(),
+    })
+}
 
 pub const fn human_service(debug: bool) -> &'static str {
     if debug {
@@ -210,7 +255,7 @@ fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
 /// Read only the human identity used by the desktop app; never create or select another key.
 #[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
-    read(HUMAN_SERVICE, HUMAN_ACCOUNT)
+    read(human_service_name(), HUMAN_ACCOUNT)
 }
 
 #[cfg(all(not(test), target_os = "macos"))]
@@ -218,7 +263,7 @@ pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
     use security_framework::os::macos::keychain::SecKeychain;
     let keychain = SecKeychain::default().map_err(mac_error)?;
     keychain
-        .find_generic_password(HUMAN_SERVICE, HUMAN_ACCOUNT)
+        .find_generic_password(human_service_name(), HUMAN_ACCOUNT)
         .map(|(password, _)| Zeroizing::new(password.to_vec()))
         .map_err(mac_error)
 }

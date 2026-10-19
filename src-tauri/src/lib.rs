@@ -660,6 +660,19 @@ pub fn run() {
                     })?;
                 }
             }
+            // A development sandbox's config holds its windows back (`create:
+            // false`) so they open here on its own WebView storage; Tauri's config
+            // codegen can't carry a data store identifier.
+            #[cfg(target_os = "macos")]
+            if let Some(store) = dev_webview_store() {
+                for config in app.config().app.windows.clone() {
+                    if !config.create {
+                        tauri::WebviewWindowBuilder::from_config(app, &config)?
+                            .data_store_identifier(store)
+                            .build()?;
+                    }
+                }
+            }
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
                     eprintln!("Could not restore Buzz window: {error}");
@@ -700,10 +713,8 @@ pub fn run() {
                     .app_data_dir()
                     .map_err(|_| "Could not resolve local agent storage")?
                     .join("agent-controller");
-                let legacy = app
-                    .path()
-                    .data_dir()
-                    .map_err(|_| "Could not resolve legacy library directory")?;
+                let legacy = legacy_data_dir(app.handle())
+                    .ok_or("Could not resolve legacy library directory")?;
                 Ok((root, legacy))
             })();
             app.manage(agent_state::AgentState::new(
@@ -936,4 +947,35 @@ mod tests {
             )
         );
     }
+}
+
+/// Where earlier Buzz apps keep the agents Agents can import. A development
+/// sandbox starts as a clean install, so it sees none.
+pub(crate) fn legacy_data_dir<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<std::path::PathBuf> {
+    if buzz_credential_store::dev_sandbox().is_some() {
+        return app
+            .path()
+            .app_data_dir()
+            .ok()
+            .map(|dir| dir.join("no-legacy-apps"));
+    }
+    app.path().data_dir().ok()
+}
+
+/// A development sandbox's WebView data store (`BUZZ_DEV_WEBVIEW_STORE`, 32 hex
+/// digits), set by `just desktop --sandbox`.
+#[cfg(target_os = "macos")]
+pub(crate) fn dev_webview_store() -> Option<[u8; 16]> {
+    buzz_credential_store::dev_sandbox()?;
+    let hex = std::env::var("BUZZ_DEV_WEBVIEW_STORE").ok()?;
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut store = [0u8; 16];
+    for (index, byte) in store.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(store)
 }

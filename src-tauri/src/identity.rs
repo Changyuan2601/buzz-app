@@ -200,7 +200,7 @@ mod platform {
             SecKeychain::default()
                 .map_err(error)?
                 .add_generic_password(
-                    credentials::HUMAN_SERVICE,
+                    credentials::human_service_name(),
                     credentials::HUMAN_ACCOUNT,
                     value,
                 )
@@ -209,8 +209,10 @@ mod platform {
         fn delete(&self) -> Result<()> {
             match SecKeychain::default()
                 .map_err(error)?
-                .find_generic_password(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT)
-            {
+                .find_generic_password(
+                    credentials::human_service_name(),
+                    credentials::HUMAN_ACCOUNT,
+                ) {
                 Ok((_, item)) => {
                     item.delete();
                     Ok(())
@@ -243,14 +245,17 @@ mod keyring_platform {
         }
         fn add(&self, value: &[u8]) -> Result<()> {
             credentials::add(
-                credentials::HUMAN_SERVICE,
+                credentials::human_service_name(),
                 credentials::HUMAN_ACCOUNT,
                 value,
             )
             .map_err(error)
         }
         fn delete(&self) -> Result<()> {
-            match credentials::delete(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT) {
+            match credentials::delete(
+                credentials::human_service_name(),
+                credentials::HUMAN_ACCOUNT,
+            ) {
                 Ok(()) | Err(Error::Absent) => Ok(()),
                 Err(e) => Err(error(e)),
             }

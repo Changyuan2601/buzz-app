@@ -294,7 +294,17 @@ fn human_identity_slots_stay_separate() {
         "dev.local.buzz.foundation.identity.debug"
     );
     assert_eq!(human_service(false), "dev.local.buzz.foundation.identity");
-    assert_eq!(HUMAN_SERVICE, human_service(cfg!(debug_assertions)));
+    assert_eq!(human_service_name(), human_service(cfg!(debug_assertions)));
+}
+
+#[test]
+fn development_sandboxes_are_plain_names() {
+    for name in ["clean", "a", "fresh-2", &"x".repeat(32)] {
+        assert!(valid_sandbox(name), "{name}");
+    }
+    for name in ["", "Clean", "a.b", "a/b", "a b", "../x", &"x".repeat(33)] {
+        assert!(!valid_sandbox(name), "{name}");
+    }
 }
 
 #[test]

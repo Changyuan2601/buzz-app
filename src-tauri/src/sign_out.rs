@@ -119,11 +119,11 @@ impl Paths {
         Some(Self {
             marker: data.join(marker_name(
                 identifier,
-                buzz_credential_store::HUMAN_SERVICE,
+                buzz_credential_store::human_service_name(),
             )),
-            finished: data.join(finished_name(buzz_credential_store::HUMAN_SERVICE)),
+            finished: data.join(finished_name(buzz_credential_store::human_service_name())),
             lock: data.join(LOCK),
-            key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_SERVICE)),
+            key_lock: data.join(key_lock_name(buzz_credential_store::human_service_name())),
             ownership: data.join(AGENT_OWNERSHIP),
             app_data,
             backups: crate::nsec_backup_choice::root()?,

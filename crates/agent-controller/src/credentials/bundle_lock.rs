@@ -15,6 +15,11 @@ pub(super) fn acquire() -> Result<Lock, Failure> {
 fn acquire_at_home(home: &Path) -> Result<Lock, Failure> {
     acquire_at(&home.join(".buzz-foundation-credential-locks"))
 }
+/// The bundle's lock file; a development sandbox locks its own bundle.
+fn lock_name() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    buzz_credential_store::sandboxed(&NAME, "agent-bundle-v1.lock")
+}
 pub(super) fn acquire_at(root: &Path) -> Result<Lock, Failure> {
     if !root.is_absolute() {
         return Err(Failure::Unavailable);
@@ -28,7 +33,7 @@ pub(super) fn acquire_at(root: &Path) -> Result<Lock, Failure> {
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let file = options
-        .open(root.join("agent-bundle-v1.lock"))
+        .open(root.join(lock_name()))
         .map_err(|_| Failure::Unavailable)?;
     if !file.metadata().map_err(|_| Failure::Unavailable)?.is_file() {
         return Err(Failure::Unavailable);
