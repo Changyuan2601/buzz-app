@@ -55,6 +55,12 @@ function restore(scope: string): HiddenDm[] {
   });
 }
 
+/** The DMs this scope's sidebar has hidden, as it last saved them. The
+ * sidebar's own hook drops an entry when a newer message restores the row. */
+export function savedHiddenDmIds(scope: string): ReadonlySet<string> {
+  return new Set(restore(scope).map((entry) => entry.id));
+}
+
 /** Local, viewer-scoped sidebar intent; verified message evidence restores a row. */
 export function useHiddenDms(
   scope: string,

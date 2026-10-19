@@ -12,6 +12,7 @@ import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
+import { savedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
@@ -93,6 +94,7 @@ export function SearchResults({
   openConversation,
   openAgentSession,
   usageScope,
+  sidebarScope,
 }: {
   session: RelaySession;
   pages: readonly SearchDestination[];
@@ -105,6 +107,8 @@ export function SearchResults({
   openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
   usageScope?: string | undefined;
+  /** The sidebar's view scope, whose hidden DMs search leaves out too. */
+  sidebarScope?: string | undefined;
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
@@ -131,6 +135,21 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
+  // A DM hidden from the sidebar (Remove from Team, or Hide conversation) has
+  // no row here either. Its messages still match, and choosing the person
+  // opens it again, which also restores its sidebar row.
+  const dmVisibility = useSyncExternalStore(
+    session.channelLifecycle.subscribe,
+    session.channelLifecycle.snapshot,
+    session.channelLifecycle.snapshot,
+  );
+  const savedHidden = useMemo(
+    () => (sidebarScope ? savedHiddenDmIds(sidebarScope) : new Set<string>()),
+    [sidebarScope],
+  );
+  const sidebarHidden = (channel: ChannelSummary) =>
+    channel.channelType === "dm" &&
+    (savedHidden.has(channel.id) || dmVisibility.hidden.includes(channel.id));
   const [selectedAuthor, setSelectedAuthor] = useState<{
     query: string;
     pubkey: string;
@@ -622,6 +641,7 @@ export function SearchResults({
     channels.filter(
       (channel) =>
         parsed.text &&
+        !sidebarHidden(channel) &&
         matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
@@ -765,9 +785,9 @@ export function SearchResults({
   };
   const personDestination = ({
     person,
-    order,
+    score,
   }: (typeof rankedPeople)[number]): SearchDestination & {
-    order: number;
+    score: number;
   } => {
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
@@ -798,7 +818,7 @@ export function SearchResults({
         src: avatarMedia(person.picture, session.media),
         shape: person.agent ? "squircle" : "circle",
       },
-      order,
+      score,
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)
@@ -815,7 +835,10 @@ export function SearchResults({
     .slice(0, PERSON_ROWS)
     .map(personDestination);
   const recent: SearchDestination[] = channels
-    .filter((channel) => !channel.readOnly && !channel.archived)
+    .filter(
+      (channel) =>
+        !channel.readOnly && !channel.archived && !sidebarHidden(channel),
+    )
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
@@ -947,6 +970,9 @@ export function SearchResults({
                 // Named destinations lead, so typed text selects one first.
                 // The group with the best match leads them, so Enter opens
                 // the "Work" page before a channel that merely contains it.
+                // Every group scores on the same scale: match tier and usage,
+                // not the relationship band that orders rows inside People
+                // and Agents. On a tie, people and agents come before DMs.
                 ...[
                   {
                     label: "Channels",
@@ -954,21 +980,21 @@ export function SearchResults({
                     best: Math.min(...channelResults.map(channelRank)),
                   },
                   {
+                    label: "People",
+                    destinations: personResults,
+                    best: Math.min(...personResults.map(({ score }) => score)),
+                  },
+                  {
+                    label: "Agents",
+                    destinations: agentResults,
+                    best: Math.min(...agentResults.map(({ score }) => score)),
+                  },
+                  {
                     label: "Direct messages",
                     destinations: directMessageResults.map(
                       conversationDestination,
                     ),
                     best: Math.min(...directMessageResults.map(channelRank)),
-                  },
-                  {
-                    label: "People",
-                    destinations: personResults,
-                    best: Math.min(...personResults.map(({ order }) => order)),
-                  },
-                  {
-                    label: "Agents",
-                    destinations: agentResults,
-                    best: Math.min(...agentResults.map(({ order }) => order)),
                   },
                   {
                     label: "Pages",

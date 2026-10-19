@@ -343,6 +343,7 @@ function CommunitySearch({
       currentChannelId={currentChannelId}
       onScopeChange={onScopeChange}
       usageScope={usageScope(scope)}
+      sidebarScope={connection.scope}
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();
         if (

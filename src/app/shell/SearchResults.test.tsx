@@ -38,6 +38,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import { clearViewScope, writeView } from "../../shared/view-state";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -3676,5 +3677,198 @@ it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary d
     release();
     cleanup();
     owner.dispose();
+  }
+});
+
+/** A community with the viewer's own agent "Scout", the stranger "Scoop", and
+ * the given rooms and DMs. Message search finds `hits`. */
+function groupFixture({
+  channels = [],
+  dms = [],
+  hits = [],
+  relayHidden = [],
+}: {
+  channels?: readonly string[];
+  dms?: readonly { id: string; name: string }[];
+  hits?: readonly { channel: string; text: string }[];
+  relayHidden?: readonly string[];
+}) {
+  const relay = keypair(),
+    viewer = keypair(),
+    scout = keypair(),
+    scoop = keypair();
+  const members = dms.map((dm) => ({ ...dm, key: keypair() }));
+  const discovery = [
+    ...channels.flatMap((name, index) => [
+      metadata(relay, `room-${index}`, name),
+      roster(relay, `room-${index}`, [viewer.pubkey]),
+    ]),
+    ...members.flatMap(({ id, key, name }) => [
+      metadata(relay, id, "opaque", 1700000000, [
+        ["t", "dm"],
+        ["private", ""],
+      ]),
+      roster(relay, id, [viewer.pubkey, key.pubkey]),
+      profile(key, { name }),
+    ]),
+    profile(scout, { name: "Scout", is_agent: true }),
+  ];
+  const stranger = profile(scoop, { name: "Scoop" });
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return filters.some((filter) => filter.kinds?.includes(0))
+          ? [stranger]
+          : hits.map(({ channel, text }) =>
+              message(viewer, channel, text, 1700000001),
+            );
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const mine = [{ pubkey: scout.pubkey, name: "Scout", managed: true }];
+  const choices = { ...source.snapshot(), identities: mine, selectable: mine };
+  const lifecycle = owner.session.channelLifecycle;
+  const visibility = {
+    ...lifecycle.snapshot(),
+    status: "ready" as const,
+    hidden: Object.freeze([...relayHidden]),
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+    channelLifecycle: {
+      ...lifecycle,
+      snapshot: () => visibility,
+      subscribe: () => () => {},
+    },
+  } as typeof owner.session;
+  return { owner, session };
+}
+
+const groupNames = () =>
+  screen
+    .getAllByRole("group")
+    .map((group) => group.getAttribute("aria-label") ?? group.textContent);
+
+it("leads with Agents and People when they match better than every channel", async () => {
+  // The reported case: "larr" put a nearer channel row above the agent named
+  // Larry, because a relationship band pushed Agents below every channel.
+  const { owner, session } = groupFixture({
+    channels: Array.from({ length: 9 }, (_, n) => `ask scout ${n}`),
+  });
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+        openAgentSession={() => {}}
+      />,
+    );
+    const agents = await screen.findByRole("group", { name: "Agents" });
+    expect(
+      within(agents).getByRole("option", { name: /Scout/ }),
+    ).toHaveTextContent("New chat");
+    await screen.findByRole("group", { name: "People" });
+    await screen.findByRole("group", { name: "Channels" });
+    const order = groupNames();
+    expect(order.indexOf("Agents")).toBeLessThan(order.indexOf("Channels"));
+    expect(order.indexOf("People")).toBeLessThan(order.indexOf("Channels"));
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("orders equally matched groups Channels, People, Agents, then DMs", async () => {
+  const { owner, session } = groupFixture({
+    channels: ["scout-ops"],
+    dms: [{ id: "scotty-dm", name: "Scotty" }],
+  });
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+        openAgentSession={() => {}}
+      />,
+    );
+    for (const name of ["Channels", "People", "Agents", "Direct messages"])
+      await screen.findByRole("group", { name });
+    expect(
+      groupNames().filter((name) =>
+        ["Channels", "People", "Agents", "Direct messages"].includes(
+          name ?? "",
+        ),
+      ),
+    ).toEqual(["Channels", "People", "Agents", "Direct messages"]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", async () => {
+  const scope = "search-hidden-dms";
+  writeView(scope, "hidden-dms", [{ id: "local-dm" }]);
+  const { owner, session } = groupFixture({
+    dms: [
+      { id: "local-dm", name: "Scotty" },
+      { id: "relay-dm", name: "Scooby" },
+      { id: "shown-dm", name: "Scott" },
+    ],
+    hits: [
+      { channel: "local-dm", text: "sco from local" },
+      { channel: "relay-dm", text: "sco from relay" },
+    ],
+    relayHidden: ["relay-dm"],
+  });
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+        sidebarScope={scope}
+      />,
+    );
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    expect(
+      await direct.findByRole("option", { name: /^Scott(?!y)/ }),
+    ).toBeVisible();
+    expect(direct.queryByRole("option", { name: /Scotty/ })).toBeNull();
+    expect(direct.queryByRole("option", { name: /Scooby/ })).toBeNull();
+    expect(
+      await screen.findByRole("option", { name: /sco from local/ }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("option", { name: /sco from relay/ }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+    clearViewScope(scope);
   }
 });
