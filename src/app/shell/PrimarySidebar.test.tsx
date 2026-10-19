@@ -23,6 +23,9 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   const all = screen.getByRole("tab", { name: "All" });
   const solo = screen.getByRole("tab", { name: "Solo" });
   const team = screen.getByRole("tab", { name: "Team" });
+  // The fixture opens in a Solo chat, and landing in a chat selects Solo.
+  expect(solo).toHaveAttribute("aria-selected", "true");
+  await user.click(all);
   expect(all).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("button", { name: "New" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
@@ -165,8 +168,30 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
     "true",
   );
   await user.click(screen.getByRole("tab", { name: "All" }));
-  f.navigate(conversationTarget(scope, id));
+  f.navigate({
+    version: 1,
+    kind: "conversation",
+    channelId: "team-channel",
+    scope: { viewer, communityOrigin: "https://relay.test" },
+  });
   expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it.each([
+  ["a started chat", () => conversationTarget(scope, id)],
+  [
+    "a new chat with an agent",
+    () => soloDraftTarget(scope, { agent: "ab".repeat(32) }),
+  ],
+])("selects Solo from All when the destination is %s", async (_, target) => {
+  const f = fixture(true);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("tab", { name: "All" }));
+  f.navigate(target());
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

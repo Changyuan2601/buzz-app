@@ -127,14 +127,20 @@ function ScopedSidebar({
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
-  // A deliberate filter change leaves the pane alone; only a new destination reveals its inventory.
+  // A deliberate filter change leaves the pane alone; only a new destination
+  // reveals its inventory. Landing in a chat always selects Solo, however it
+  // was opened; a Team destination keeps All when All is selected.
   if (attempt !== observedAttempt) setObservedAttempt(attempt);
   if (
     destination &&
     location &&
     (view.location !== location || attempt !== observedAttempt)
   ) {
-    setView({ filter: view.filter === "all" ? "all" : destination, location });
+    setView({
+      filter:
+        destination === "team" && view.filter === "all" ? "all" : destination,
+      location,
+    });
   }
   useEffect(() => {
     writeView(scope, "navigation-scope", view);

@@ -606,7 +606,11 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
-  await expect(sidebar).toBeVisible();
+  // The converted conversation is a Team channel now, so Team's inventory shows.
+  await expect(
+    page.getByRole("tab", { name: "Team", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(sidebar).toBeHidden();
   await expect(sidebar.locator(`[data-solo-channel-id="${id}"]`)).toHaveCount(
     0,
   );

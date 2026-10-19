@@ -16,6 +16,9 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   app,
 }, testInfo) => {
   await page.goto(app.origin);
+  const scope = (name) => page.getByRole("tab", { name, exact: true });
+  await scope("All").click();
+  await expect(scope("All")).toHaveAttribute("aria-selected", "true");
   const modifier = await page.evaluate(() =>
     /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
   );
@@ -48,6 +51,8 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
       exact: true,
     }),
   ).toBeVisible();
+  // Landing in a chat selects Solo, even from All.
+  await expect(scope("Solo")).toHaveAttribute("aria-selected", "true");
   // This browser fixture cannot start Solo chats (it says so below the
   // composer). SoloDraft tests cover the first message.
   await page.screenshot({
