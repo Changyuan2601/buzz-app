@@ -279,6 +279,22 @@ describe("AcpRuntime", () => {
     expect(fake.harnesses).toEqual([]);
   });
 
+  it.each([
+    ["a provider error", "Request failed: https://p.test/v1?key=SENTINEL"],
+    ["a plain answer", "Here is my answer, SENTINEL"],
+  ])(
+    "posts nothing for %s the harness wrote without send",
+    async (_, chunk) => {
+      const config = await confirmed();
+      const { fake, deliver, sync, published } = setup({ chunk });
+      sync(config);
+      await deliver(message("1", "@Opal hello"), config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+      await flush(50);
+      expect(published).toEqual([]);
+    },
+  );
+
   it("says in the thread that it can't run an unconfirmed launch", async () => {
     const config = { ...(await confirmed()), command: "edited" };
     const { fake, deliver, sync, published } = setup();
