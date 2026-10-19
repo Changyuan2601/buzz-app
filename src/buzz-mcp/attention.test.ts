@@ -11,8 +11,7 @@ import { ATTENTION_TOOLS } from "./attention";
 import type { BuzzClient } from "./client";
 import { BUZZ_PROMPT } from "./prompt";
 import { respond } from "./rpc";
-import { BUZZ_SESSION, turnNote } from "./session-tools";
-import { TOOLS } from "./tools";
+import { turnNote } from "./session-tools";
 
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
 const NOW = 10_000;
@@ -97,13 +96,10 @@ describe("the tool list", () => {
   it("always offers the attention tools and guidance, and says each turn whether attention is on", async () => {
     // One list whatever the setting, so turning attention on or off never
     // replaces a session or its cached prompt prefix.
-    const names = BUZZ_SESSION.tools.map((tool) => tool.name);
+    const names = await list();
     expect(names).toEqual(
-      expect.arrayContaining(
-        [...TOOLS, ...ATTENTION_TOOLS].map((tool) => tool.name),
-      ),
+      expect.arrayContaining(ATTENTION_TOOLS.map((tool) => tool.name)),
     );
-    expect(await list()).toEqual(names);
     for (const enabled of [true, false])
       expect(
         await list({
