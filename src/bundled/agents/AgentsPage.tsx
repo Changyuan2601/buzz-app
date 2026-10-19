@@ -755,7 +755,10 @@ function InventoryCard({
     setSaving(true);
     setError("");
     try {
-      await service.save(agent.pubkey, { config });
+      await service.save(agent.pubkey, {
+        config,
+        ...(agent.configBase && { base: agent.configBase }),
+      });
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -1278,6 +1281,7 @@ function Teams({
               <li key={item.id} className="contents">
                 <TeamCard
                   name={item.name}
+                  note={item.note}
                   aria-label={item.name}
                   members={item.members.flatMap((pubkey) => {
                     const member = byKey.get(pubkey);

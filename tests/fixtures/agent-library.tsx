@@ -66,6 +66,7 @@ const agents = {
   relay: () => undefined,
   save: async () => {},
   classifier: () => "unavailable",
+  configHistory: () => undefined,
 } as unknown as Agents;
 const disconnected = { status: "disconnected", generation: 0 };
 const relay = {

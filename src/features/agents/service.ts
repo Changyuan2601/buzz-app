@@ -1,10 +1,13 @@
 import { createLocalAgentActivity } from "./local-activity";
+import { AgentConfigStore, type Subject } from "./agent-config";
 import {
-  AgentConfigStore,
-  type SettingsSchema,
-  type Subject,
-} from "./agent-config";
-import { isSynced, type Mode, resolveStart } from "./agent-start";
+  isSynced,
+  type Mode,
+  resolveStart,
+  type StartInput,
+  type SyncedSettings,
+  type TeamSource,
+} from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -107,6 +110,29 @@ import {
   type Unfinished,
 } from "./store";
 import { soloChat } from "./solo-chat";
+import { nativeRelayInfo } from "../relay/native";
+import {
+  type AgentBinding,
+  type CommunityConfig,
+  type ConfigAgent,
+  type ConfigBase,
+  type ConfigJournals,
+  communityConfig,
+  content as sideContent,
+  type Side,
+  storedBinding,
+} from "./community-config";
+import type { Expected, SnapshotRead } from "./agent-config-artifacts";
+import type { revertTemplate, SettingsCheck } from "./agent-config-history";
+import type { RevertOutcome } from "./AgentConfigHistory";
+import { type Lifecycle, LifecycleJournal } from "./config-lifecycle";
+import { MigrationJournal, type Saved } from "./config-writes";
+import {
+  TeamJournal,
+  type SyncedTeam,
+  UNREADABLE_TEAM,
+  teamBody,
+} from "./team-config";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
@@ -133,6 +159,9 @@ export type Agent<Config = unknown> = Readonly<{
   archiveUnchecked?: true;
   /** Its Delete did not finish: it is stopped until Delete runs again. */
   deleting?: true;
+  /** Where Delete's recoverable archive stands (§8.1); absent is active.
+   * Nothing starts it until it is active again. */
+  lifecycle?: Exclude<Lifecycle, "active">;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -141,12 +170,25 @@ export type Agent<Config = unknown> = Readonly<{
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   config: Config;
+  /** With config sync, the synced heads `config` shows; an editor saves
+   * them back as `AgentChange.base`. */
+  configBase?: ConfigBase;
+  /** Config saves made on this device since launch. Runtimes restart the
+   * agent's conversations when it changes; an edit synced from another
+   * device leaves them on their config until Restart to apply. */
+  saves?: number;
 }>;
+/** What changes when an agent's runtime should restart its conversations: a
+ * save on this device, or `defaults`, the device's own defaults for it. */
+export const localKey = (agent: Agent, defaults?: unknown) =>
+  JSON.stringify([agent.saves ?? 0, defaults ?? null]);
 export type AgentChange<Config = unknown> = Readonly<{
   name?: string;
   /** An HTTPS image URL; `null` or empty removes the picture. */
   picture?: string | null;
   config?: Config;
+  /** The `configBase` of the agent the editor opened: Save revises it. */
+  base?: ConfigBase;
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
@@ -356,6 +398,10 @@ export type Delivery<Config = unknown> = Readonly<{
   config: Config;
   /** The synced config revisions this run started from; empty when local. */
   revisions?: readonly string[];
+  /** The settings in `config` that came from the synced copy. A runtime
+   * refuses one it doesn't support rather than default it (NIP-AP
+   * "Settings"); local settings keep their fallbacks. */
+  synced?: Readonly<Record<string, string>>;
   /** The model the owner asked for in the triggering message: one of the
    * type's `models`. Absent means the agent's own model. */
   model?: string;
@@ -435,6 +481,8 @@ export type AgentProvider = Readonly<{
 export type ConfigBinding = Readonly<{
   settings?: Readonly<{ mode: Mode; subject: Subject }>;
   instructions?: Readonly<{ mode: Mode; subject: Subject }>;
+  /** Team config channels listing the agent; unset while teams are local. */
+  teams?: readonly TeamSource[];
 }>;
 
 export type AgentType<Config = unknown> = {
@@ -481,14 +529,12 @@ export type AgentType<Config = unknown> = {
   models?(agent: Agent<Config>): Models | Promise<Models>;
   /** The settings that sync across devices and how they merge into this
    * device's config. Without it, the type's settings never sync. */
-  syncedSettings?: Readonly<{
-    schema: SettingsSchema;
-    withSynced(
-      config: Config,
-      settings: Readonly<Record<string, string>>,
-    ): Config;
-  }>;
+  syncedSettings?: SyncedSettings<Config>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Restart to apply: each running conversation keeps the config it started
+   * with, and new ones start on the agent's current config. Without it, the
+   * host shows no Restart to apply. */
+  restart?: AgentRestart;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
@@ -499,6 +545,16 @@ export type AgentType<Config = unknown> = {
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
 };
+export type AgentRestart = Readonly<{
+  /** Whether a running conversation started on config other than `config`,
+   * the agent's current config. */
+  outdated(pubkey: string, config: unknown): boolean;
+  /** Replaces idle conversations now and busy ones once idle, each starting
+   * again on the current config. */
+  apply(pubkey: string): void;
+  /** Called when `outdated` may have changed. */
+  subscribe(listener: () => void): () => void;
+}>;
 /** A hosted type's provider: it holds each agent's key and runs it. The app
  * calls these in order to create one (`provision`, then `activate`) and owns
  * the owner's agent list; every step is asked again after a failure, so each
@@ -690,6 +746,9 @@ export type Agents = {
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
+  /** Recovers a deleted (archived) agent with the same key; it starts again
+   * once its config channel is active and its heads are read (§8.1). */
+  recover(pubkey: string): Promise<void>;
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
   /** Saves the TypeSafe key in native storage, which the classifier uses.
@@ -701,7 +760,26 @@ export type Agents = {
   saveTeam(team: TeamChange): Promise<Team>;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
+  /** The History of each of the agent's synced config sides; undefined while
+   * none syncs here. */
+  configHistory(pubkey: string): ConfigHistory | undefined;
 };
+export type ConfigHistory = Readonly<{
+  read: SnapshotRead;
+  sides: readonly Readonly<{
+    side: Side;
+    expected: Expected;
+    head: RelayEvent | undefined;
+    version: number;
+  }>[];
+  /** What a settings revision must fit to be reverted to. */
+  settings?: SettingsCheck;
+  /** Saves a revert or restore of `side`, as History builds it. */
+  revise(
+    side: Side,
+    template: ReturnType<typeof revertTemplate>,
+  ): Promise<RevertOutcome>;
+}>;
 declare module "@deepseek-ai/cordis" {
   interface Context {
     agents: Agents;
@@ -719,6 +797,25 @@ const serializable = (value: unknown) => {
 };
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
+/** Why an agent whose config syncs can't change while its community isn't. */
+const UNSYNCED = (name: string) =>
+  `${name}'s config syncs through its community, which isn't connected. Try again once it is.`;
+/** What the editor shows for a save that isn't confirmed. */
+function saveProblem(result: Exclude<Saved, { status: "saved" }>) {
+  switch (result.status) {
+    case "conflict":
+    case "superseded":
+      return "This config changed on another device; your edit is kept as a draft.";
+    case "uncertain":
+      return result.retired
+        ? `This edit may have been saved: ${result.message}`
+        : `This edit may not have been saved yet; it keeps trying while connected (${result.message}).`;
+    case "accepted-unavailable":
+      return "This edit was saved, but it can't be read back yet.";
+    case "refused":
+      return `The relay refused this config: ${result.message}`;
+  }
+}
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
@@ -935,6 +1032,12 @@ export class AgentsService extends Service implements Agents {
   >();
   /** Confirmed synced config copies, the only synced launch source. */
   private readonly configStore: AgentConfigStore;
+  /** Each agent's `saves`. */
+  private readonly saves = new Map<string, number>();
+  /** Each bound community's config channels, while config sync is on. */
+  private readonly communityConfigs = new Map<string, CommunityConfig>();
+  /** What config sync persisted, read even while no community is live. */
+  private readonly configJournals: ConfigJournals;
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -971,6 +1074,11 @@ export class AgentsService extends Service implements Agents {
       teams: this.teamList,
     });
     this.configStore = new AgentConfigStore(storage);
+    this.configJournals = {
+      migration: new MigrationJournal(storage),
+      teams: new TeamJournal(storage),
+      lifecycle: new LifecycleJournal(storage),
+    };
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
     );
@@ -994,41 +1102,52 @@ export class AgentsService extends Service implements Agents {
       },
       write: (record) => this.write(record),
       start: (agent) => {
-        const { settings, instructions } = this.configBinding?.(agent) ?? {};
-        const merge = this.types().find(
-          (type) => type.key === agent.type,
-        )?.syncedSettings;
-        if (!merge && isSynced(this.configStore, settings))
+        const lifecycle = this.lifecycleOf(agent);
+        if (lifecycle !== "active")
           return {
             ok: false,
-            state: "invalid",
-            reason: "This agent type has no synced settings",
+            state: "unavailable",
+            reason:
+              lifecycle === "recovering"
+                ? "This agent is being recovered"
+                : "This agent is deleted; recover it from Settings",
           };
+        const live = this.communityConfigs.get(originOf(agent.relay) ?? "");
+        const synced = this.syncedBinding(agent);
+        // A live community decides a new agent's binding before it starts.
+        if (live && !synced && !live.settled(agent.pubkey))
+          return {
+            ok: false,
+            state: "unavailable",
+            reason: "Waiting for this agent's config to sync",
+          };
+        const binding: ConfigBinding =
+          this.configBinding?.(agent) ?? synced ?? {};
+        const { teams } = binding;
         return resolveStart({
-          store: this.configStore,
-          local: agent.config as object,
-          agentType: agent.type,
-          ...(settings && merge
-            ? {
-                settings: {
-                  ...settings,
-                  schema: merge.schema,
-                  withSynced: merge.withSynced as (
-                    config: object,
-                    synced: Readonly<Record<string, string>>,
-                  ) => object,
-                },
-              }
-            : {}),
-          ...(instructions ? { instructions } : {}),
+          ...this.startInput(agent, agent.config, binding),
+          ...(teams ? { teams } : {}),
         });
       },
-      team: (pubkey) =>
-        teamPrompt(
-          this.teamList,
+      team: (agent, admitted) => {
+        // Local teams stay local; for an id the relay knows in this run's
+        // owner and community, archived or unreadable too, its copy wins.
+        const relay = new Set(
+          this.configJournals.teams
+            .known(agent.owner, originOf(agent.relay) ?? "")
+            ?.map((team) => team.id),
+        );
+        return teamPrompt(
+          admitted
+            ? [
+                ...this.teamList.filter((team) => !relay.has(team.id)),
+                ...admitted,
+              ]
+            : this.teamList,
           this.identities.filter((identity) => !identity.deleted),
-          pubkey,
-        ),
+          agent.pubkey,
+        );
+      },
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1193,6 +1312,38 @@ export class AgentsService extends Service implements Agents {
   };
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
+  configHistory = (pubkey: string): ConfigHistory | undefined => {
+    const agent = this.find(pubkey);
+    const config =
+      agent && this.communityConfigs.get(originOf(agent.relay) ?? "");
+    const sides = config?.history(pubkey);
+    if (!agent || !config || !sides?.length) return undefined;
+    const schema = this.types().find((type) => type.key === agent.type)
+      ?.syncedSettings?.schema;
+    return {
+      read: config.read,
+      sides,
+      ...(schema && { settings: { agentType: agent.type, schema } }),
+      revise: async (side, template) => {
+        const result = await config.revise(pubkey, side, template);
+        this.update();
+        switch (result.status) {
+          case "saved":
+          case "accepted-unavailable":
+            return { status: "accepted" };
+          case "uncertain":
+            return { status: "uncertain", message: result.message };
+          case "refused":
+            return { status: "refused", message: result.message };
+          default:
+            return {
+              status: "refused",
+              message: "This config changed on another device",
+            };
+        }
+      },
+    };
+  };
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
@@ -1702,6 +1853,12 @@ export class AgentsService extends Service implements Agents {
     if (!identity)
       return this.exclusive(pubkey, () => this.saveHosted(pubkey, change));
     if (!this.native) throw new Error("No such agent on this device");
+    if (
+      change.config !== undefined &&
+      this.everSynced(identity) &&
+      !this.communityConfigs.has(originOf(identity.relay) ?? "")
+    )
+      throw new Error(UNSYNCED(identity.name));
     if (change.config !== undefined && this.runners.transitioning(pubkey))
       throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
@@ -1737,12 +1894,16 @@ export class AgentsService extends Service implements Agents {
           "Remove or move the watches and timers that use this Interest first",
         );
     }
+    if (change.config !== undefined)
+      this.saves.set(pubkey, (this.saves.get(pubkey) ?? 0) + 1);
     if (
       change.config !== undefined ||
       change.attention ||
       change.attentionEnabled !== undefined
     )
       this.write(record);
+    if (change.config !== undefined)
+      await this.saveSynced(identity, record, change.base);
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
     const renamed = name !== undefined && name !== identity.name;
@@ -1754,6 +1915,27 @@ export class AgentsService extends Service implements Agents {
     if (renamed || repictured) await this.refresh();
   }
 
+  /** Saves the synced sides an edit changed as revisions of the heads its
+   * editor opened. The local row already holds the edit, so anything but a
+   * save leaves it as a draft, and the editor is told. */
+  private async saveSynced(
+    identity: AgentIdentity,
+    record: AgentRecord,
+    base?: ConfigBase,
+  ) {
+    const config = this.communityConfigs.get(originOf(identity.relay) ?? "");
+    if (!config) return;
+    const saved = await config.save(
+      this.configAgent(identity, record.config as object),
+      record.config as object,
+      base,
+    );
+    const failures: string[] = [];
+    for (const result of Object.values(saved) as Saved[])
+      if (result.status !== "saved") failures.push(saveProblem(result));
+    this.update();
+    if (failures.length) throw new Error(failures.join(" "));
+  }
   /** A hosted agent's name and picture are its provider's to publish; the app
    * then lists it under them. Its settings are the provider's, not saved here. */
   private async saveHosted(pubkey: string, change: AgentChange) {
@@ -1877,6 +2059,21 @@ export class AgentsService extends Service implements Agents {
   async remove(pubkey: string): Promise<void> {
     if (!this.identities.some((identity) => identity.pubkey === pubkey))
       return this.removeHosted(pubkey);
+    const identity = this.live(pubkey);
+    const config =
+      identity && this.communityConfigs.get(originOf(identity.relay) ?? "");
+    // With config channels, Delete is a recoverable archive (§8.1): the row,
+    // key and settings stay, and Settings → Deleted agents recovers it.
+    if (config) {
+      const settled = await config.archive(pubkey);
+      this.update();
+      if (settled === "active")
+        throw new Error(`${identity.name} couldn't be deleted. Try again.`);
+      return;
+    }
+    // Never the key-destroying path for an agent whose config syncs.
+    if (identity && this.everSynced(identity))
+      throw new Error(UNSYNCED(identity.name));
     const running = this.deleting.get(pubkey);
     if (running) return running;
     const work = this.removeLocal(pubkey).finally(() =>
@@ -1917,6 +2114,22 @@ export class AgentsService extends Service implements Agents {
     await native.forget(pubkey);
     // Drops its settings.
     await this.refresh();
+  }
+
+  async recover(pubkey: string): Promise<void> {
+    const identity = this.live(pubkey);
+    const config =
+      identity && this.communityConfigs.get(originOf(identity.relay) ?? "");
+    if (!config)
+      throw new Error("Its community isn't connected. Try again once it is.");
+    const settled = await config.recover(pubkey);
+    this.update();
+    if (settled !== "active")
+      throw new Error(
+        settled === "recovering"
+          ? `${identity.name} isn't recovered yet; it keeps trying while connected.`
+          : `${identity.name} couldn't be recovered.`,
+      );
   }
 
   async unarchive(pubkey: string): Promise<string | undefined> {
@@ -1971,6 +2184,7 @@ export class AgentsService extends Service implements Agents {
     if (!name.trim()) throw new Error("Name the team");
     const unknown = members.find((pubkey) => !this.live(pubkey));
     if (unknown) throw new Error("A member is not an agent on this device");
+    if (id) this.syncedTeam(id);
     if (id && !this.teamList.some((team) => team.id === id))
       throw new Error("No such team");
     const team: Team = Object.freeze({
@@ -2011,6 +2225,7 @@ export class AgentsService extends Service implements Agents {
   }
 
   async removeTeam(id: string) {
+    this.syncedTeam(id);
     this.writeTeams(this.teamList.filter((team) => team.id !== id));
   }
 
@@ -2018,8 +2233,42 @@ export class AgentsService extends Service implements Agents {
   private writeTeams(teams: readonly Team[]) {
     writeTeams(this.storage, teams);
     this.teamList = Object.freeze(teams);
-    this.state = Object.freeze({ ...this.state, teams: this.teamList });
+    this.showTeams();
+  }
+  /** Shows local teams with each community's synced, unarchived ones. */
+  private showTeams() {
+    const all = [...this.communityConfigs.values()].flatMap(
+      (config) => config.teams() ?? [],
+    );
+    const shown = (team: SyncedTeam): Team => {
+      const entry = this.configStore.state(team.subject);
+      const body =
+        !team.unreadable && entry.state === "present" && entry.head
+          ? teamBody(entry.head.content)
+          : undefined;
+      return Object.freeze({
+        id: team.id,
+        name: body?.name ?? "",
+        instructions: body?.instructions ?? "",
+        members: team.members,
+        ...(body ? {} : { note: UNREADABLE_TEAM }),
+      });
+    };
+    this.state = Object.freeze({
+      ...this.state,
+      teams: Object.freeze([
+        ...this.teamList,
+        ...all.filter((team) => !team.archived).map(shown),
+      ]),
+    });
     this.notify();
+  }
+  /** Refuses a change to team `id` when it is synced: found on the relay,
+   * whether or not its community is available now. It never falls through
+   * to a local write. */
+  private syncedTeam(id: string) {
+    if (this.configJournals.teams.synced(id))
+      throw new Error("Synced teams can't be changed in this version yet");
   }
 
   /** Saves which imports need an archive check, then keeps it in memory. */
@@ -2319,6 +2568,9 @@ export class AgentsService extends Service implements Agents {
     };
   }
   private view(identity: AgentIdentity, record: AgentRecord): Agent {
+    const lifecycle = this.lifecycleOf(identity);
+    const editor = this.editorConfig(identity, record.config as object);
+    const saves = this.saves.get(identity.pubkey);
     return Object.freeze({
       pubkey: identity.pubkey,
       name: identity.name,
@@ -2331,10 +2583,75 @@ export class AgentsService extends Service implements Agents {
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
       attentionEnabled: record.attentionEnabled === true,
-      config: record.config,
+      config: editor?.config ?? record.config,
+      ...(editor && { configBase: editor.base }),
+      ...(saves && { saves }),
       ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
       ...(identity.deleting && { deleting: true }),
+      ...(lifecycle !== "active" && { lifecycle }),
     });
+  }
+  /** What `resolveStart` needs of an agent's type and binding, besides its
+   * teams: its local row, and the type's synced settings if it has them. */
+  private startInput(
+    agent: Pick<Agent, "type">,
+    local: unknown,
+    {
+      settings,
+      instructions,
+    }: Pick<ConfigBinding, "settings" | "instructions">,
+  ): StartInput<unknown> {
+    const syncedSettings = this.types().find(
+      (type) => type.key === agent.type,
+    )?.syncedSettings;
+    return {
+      store: this.configStore,
+      local,
+      agentType: agent.type,
+      ...(settings ? { settings } : {}),
+      ...(syncedSettings ? { syncedSettings } : {}),
+      ...(instructions ? { instructions } : {}),
+    };
+  }
+  /** What an editor opens for an agent whose config syncs: its row with each
+   * synced side's confirmed copy, and those heads as the base its Save
+   * revises. Undefined while every side is local. */
+  private editorConfig(identity: AgentIdentity, local: object) {
+    const binding = this.syncedBinding(identity);
+    const sides = (["settings", "instructions"] as const).filter((side) =>
+      isSynced(this.configStore, binding?.[side]),
+    );
+    if (!binding || !sides.length) return undefined;
+    const base: Partial<Record<Side, RelayEvent | null>> = {};
+    for (const side of sides) {
+      const subject = binding[side]?.subject;
+      base[side] = (subject && this.configStore.state(subject).head) ?? null;
+    }
+    const resolved = resolveStart(this.startInput(identity, local, binding));
+    return {
+      config: resolved.ok ? resolved.config : local,
+      base: Object.freeze(base),
+    };
+  }
+  /** The agent's archive lifecycle in its community's config channels. */
+  private lifecycleOf({ pubkey, relay }: Pick<Agent, "pubkey" | "relay">) {
+    return this.configJournals.lifecycle.get(originOf(relay) ?? "", pubkey);
+  }
+  /** The agent's synced binding: its live community's, or else the one this
+   * device persisted, so losing the community never makes it local again. */
+  private syncedBinding(
+    agent: Pick<Agent, "pubkey" | "relay" | "owner">,
+  ): AgentBinding | undefined {
+    const origin = originOf(agent.relay) ?? "";
+    return (
+      this.communityConfigs.get(origin)?.binding(agent.pubkey) ??
+      storedBinding(this.configJournals, agent.owner, origin, agent.pubkey)
+    );
+  }
+  /** Whether config sync ever took the agent over here: then nothing but its
+   * live community archives, edits or deletes it. */
+  private everSynced(agent: Pick<Agent, "pubkey" | "relay" | "owner">) {
+    return !!this.syncedBinding(agent) || this.lifecycleOf(agent) !== "active";
   }
   private archiveUnchecked(pubkey: string) {
     return this.unarchiving.has(pubkey) || undefined;
@@ -2548,6 +2865,8 @@ export class AgentsService extends Service implements Agents {
     entry?.stop();
     entry?.binding?.stopLive();
     entry?.binding?.controller.abort();
+    this.communityConfigs.get(origin)?.dispose();
+    this.communityConfigs.delete(origin);
   }
   private bind(origin: string) {
     const entry = this.bound.get(origin);
@@ -2575,6 +2894,8 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
+      this.communityConfigs.get(origin)?.dispose();
+      this.communityConfigs.delete(origin);
       const connection: Connection = {
         epoch: 0,
         start: Math.floor(Date.now() / 1000),
@@ -2591,7 +2912,81 @@ export class AgentsService extends Service implements Agents {
     if (changed && entry.binding) {
       this.sync();
       this.refreshCore(origin);
+      void this.startConfig(origin, entry.binding);
     }
+  }
+
+  /** Brings up the community's config channels when config sync is on and
+   * its relay passes the support check; a replaced binding drops it. */
+  private async startConfig(origin: string, binding: Binding) {
+    const config = await communityConfig(
+      {
+        session: binding.session,
+        owner: binding.viewer,
+        community: origin,
+        store: this.configStore,
+        journals: this.configJournals,
+        info: (signal) => nativeRelayInfo(origin, signal),
+        strip: (pubkey, side, accepted) =>
+          this.stripLocal(pubkey, side, accepted),
+        changed: () => {
+          this.showTeams();
+          this.update();
+        },
+      },
+      binding.controller.signal,
+    ).catch(() => null);
+    if (!config) return;
+    if (this.bound.get(origin)?.binding !== binding) return config.dispose();
+    this.communityConfigs.set(origin, config);
+    this.update();
+    await config.attach(
+      this.state.running
+        .filter((agent) => originOf(agent.relay) === origin)
+        .map((agent) => this.configAgent(agent, agent.config as object)),
+    );
+    // Retries archives and recoveries left pending by a restart (§8.1).
+    await config.resume().catch(() => {});
+  }
+  /** An agent here as its config channels need it. */
+  private configAgent(
+    agent: Pick<Agent, "pubkey" | "name" | "type">,
+    config: object,
+  ): ConfigAgent {
+    return {
+      ...agent,
+      config,
+      schema: this.types().find((type) => type.key === agent.type)
+        ?.syncedSettings?.schema,
+    };
+  }
+  /** Retires a side's local field once its exact value is the synced head.
+   * Given `accepted`, this device's save just became the head: runtimes are
+   * told either way, and a newer local edit stays a draft. */
+  private stripLocal(pubkey: string, side: Side, accepted?: RelayEvent) {
+    const identity = this.live(pubkey);
+    if (!identity) return;
+    const record = this.recordOf(identity);
+    // Runtimes take the accepted head as a local save, not the earlier token
+    // they spent on the old head while it was sent.
+    this.saves.set(pubkey, (this.saves.get(pubkey) ?? 0) + 1);
+    if (
+      accepted &&
+      sideContent(
+        side,
+        this.configAgent(identity, record.config as object),
+        record.config as object,
+        accepted,
+      ) !== accepted.content
+    )
+      return this.update();
+    const config = { ...(record.config as Record<string, unknown>) };
+    const fields =
+      side === "instructions"
+        ? ["instructions"]
+        : Object.keys(this.configAgent(identity, config).schema ?? {});
+    for (const field of fields) delete config[field];
+    this.write({ ...record, config });
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -2670,7 +3065,8 @@ export class AgentsService extends Service implements Agents {
           prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey) &&
-          prior.deleting === identity.deleting
+          prior.deleting === identity.deleting &&
+          (prior.lifecycle ?? "active") === this.lifecycleOf(identity)
           ? prior
           : this.view(identity, record),
       );
@@ -2678,7 +3074,10 @@ export class AgentsService extends Service implements Agents {
     const selected = originOf(this.communities.snapshot().selected ?? "");
     const agents = [
       ...running.filter(
-        (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
+        (agent) =>
+          originOf(agent.relay) === selected &&
+          this.bindingOf(agent) &&
+          agent.lifecycle !== "archived",
       ),
       ...this.listedAgents(selected),
     ];
@@ -2708,6 +3107,12 @@ export class AgentsService extends Service implements Agents {
     );
     this.announce();
     this.runners.catchUp(false);
+    for (const [origin, config] of this.communityConfigs)
+      void config.attach(
+        running
+          .filter((agent) => originOf(agent.relay) === origin)
+          .map((agent) => this.configAgent(agent, agent.config as object)),
+      );
   }
 
   /** Tells each community which agents this copy runs there: online every

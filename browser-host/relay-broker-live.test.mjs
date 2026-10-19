@@ -2039,3 +2039,84 @@ test("host capture persists both kinds without plugin demand, toggles independen
     await h.close();
   }
 });
+
+test("config scope control opens the config route, stamps its frames and never coalesces its state", async () => {
+  let response;
+  const states = [];
+  const configs = [];
+  const h = await harness(0, undefined, {
+    holdSetup: true,
+    response(res) {
+      response = res;
+      Object.defineProperty(res, "writableNeedDrain", { get: () => true });
+      const write = res.write.bind(res);
+      res.write = (chunk, ...args) => {
+        const text = String(chunk);
+        const data = () => JSON.parse(text.split("data: ")[1]);
+        if (text.startsWith("event: state\n")) states.push(data());
+        if (text.startsWith("event: config\n")) configs.push(data());
+        return write(chunk, ...args);
+      };
+    },
+  });
+  try {
+    const opened = await h.post([]);
+    await until(() => h.requests.length === 2);
+    const control = (body) =>
+      fetch(`${h.base}/api/relay/stream-config`, {
+        method: "POST",
+        headers: { Origin: h.base, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId: opened.response.headers.get("x-buzz-live-id"),
+          ...body,
+        }),
+      });
+    expect(
+      (await control({ channels: ["bad id"], configRevision: 1 })).status,
+    ).toBe(400);
+    expect((await control({ channels: ["a"], configRevision: 1 })).status).toBe(
+      200,
+    );
+    expect((await control({ channels: ["b"], configRevision: 1 })).status).toBe(
+      409,
+    );
+    const config = h.requests.find((r) => r.filter["#P"]);
+    expect(config.filters.map((f) => f.kinds)).toEqual([
+      [39000],
+      [45010, 45011, 9005],
+      [39000, 39002],
+    ]);
+    expect(config.filters.every((f) => f.limit === 0)).toBe(true);
+    const before = states.length;
+    await config.socket.receive(["EOSE", config.id]);
+    // Backpressure coalesces channel progress, never a config transition.
+    expect(states).toHaveLength(before + 1);
+    expect(states.at(-1)).toMatchObject({ configRevision: 1 });
+    expect(states.at(-1).routes.find((r) => r.id === "config").status).toBe(
+      "live",
+    );
+    const event = finalizeEvent(
+      {
+        kind: 45010,
+        content: "x",
+        created_at: 1_700_000_000,
+        tags: [["h", "a"]],
+      },
+      new Uint8Array(32).fill(2),
+    );
+    await config.socket.receive(["EVENT", config.id, event]);
+    expect(configs).toEqual([
+      { event: expect.objectContaining({ id: event.id }), configRevision: 1 },
+    ]);
+    expect((await control({ channels: null, configRevision: 2 })).status).toBe(
+      200,
+    );
+    expect(h.frames.some((f) => f.kind === "CLOSE" && f.id === config.id)).toBe(
+      true,
+    );
+    response.emit("drain");
+    opened.abort();
+  } finally {
+    await h.close();
+  }
+});

@@ -60,9 +60,9 @@ const setup = (
     let settings: Launch = {
       workspace: "~/.buzz",
       systemPrompt: "prompt",
+      choice: { provider: "", model: "" },
       ...initial,
     };
-    let choice: Choice = { provider: "", model: "" };
     const sessions = new AgentSessions({
       spawn: fake.spawn,
       tools: agentTools,
@@ -73,9 +73,9 @@ const setup = (
         store: { set: (key: string, saved) => void store.set(key, saved) },
       }),
       launch: async () => settings,
-      choice: () => choice,
       fingerprint: () =>
         JSON.stringify([settings.workspace, settings.systemPrompt]),
+      snapshot: () => JSON.stringify(settings),
     });
     return {
       sessions,
@@ -83,15 +83,20 @@ const setup = (
         settings = { ...settings, ...next };
         if (reconfigure) sessions.reconfigure();
       },
-      /** Picks a provider and model, as saving the agent's settings does. */
+      /** Picks a provider, model and thinking level, as saving the agent's
+       * settings does. */
       choose: (next: Choice) => {
-        choice = next;
+        const before = JSON.stringify(settings);
+        settings = { ...settings, choice: next };
+        sessions.choose(next, before);
         sessions.reconfigure();
       },
     };
   };
   return { fake, pool, process, agent, ...agent(initial, tools, onChange) };
 };
+
+const NO_CHOICE = { provider: "", model: "" };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -231,6 +236,20 @@ describe("AgentSessions", () => {
       "session-1 model=gpt-4.1",
       "session-1 model=gpt-default",
       "session-1 provider=goose",
+    ]);
+  });
+
+  it("runs a session still opening on a provider saved meanwhile", async () => {
+    const { fake, sessions, choose } = setup();
+    const first = sessions.deliver("a", "one", 1);
+    choose({ provider: "openai", model: "gpt-4.1" });
+    await first;
+    await sessions.deliver("a", "two", 2);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.configured).toEqual([
+      "session-1 provider=openai",
+      "session-1 model=gpt-4.1",
     ]);
   });
 
@@ -422,10 +441,14 @@ describe("AgentSessions", () => {
       store: { set: (key, saved) => void store.set(key, saved) },
       launch: async () => {
         await held;
-        return { workspace: "/w", systemPrompt: "" };
+        return {
+          workspace: "/w",
+          systemPrompt: "",
+          choice: { provider: "", model: "" },
+        };
       },
-      choice: () => ({ provider: "", model: "" }),
       fingerprint: () => "",
+      snapshot: () => "",
     });
     const abort = new AbortController();
     const late = sessions.deliver("a", "one", 1, { signal: abort.signal });
@@ -448,9 +471,13 @@ describe("AgentSessions", () => {
       tools,
       process: new SharedProcess(fake.spawn, fake.serve),
       pool: new ServerPool(),
-      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
-      choice: () => ({ provider: "", model: "" }),
+      launch: async () => ({
+        workspace: "/w",
+        systemPrompt: "",
+        choice: NO_CHOICE,
+      }),
       fingerprint: () => "",
+      snapshot: () => "",
     });
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
@@ -466,7 +493,7 @@ describe("AgentSessions", () => {
     });
     const launch = vi.fn(async () => {
       await held;
-      return { workspace: "/w", systemPrompt: "" };
+      return { workspace: "/w", systemPrompt: "", choice: NO_CHOICE };
     });
     const sessions = new AgentSessions({
       spawn: fake.spawn,
@@ -474,8 +501,8 @@ describe("AgentSessions", () => {
       process: new SharedProcess(fake.spawn, fake.serve),
       pool: new ServerPool(),
       launch,
-      choice: () => ({ provider: "", model: "" }),
       fingerprint: () => "",
+      snapshot: () => "",
     });
     const delivering = sessions.deliver("a", "one", 1);
     const once = sessions.runOnce("watch/x", () => "look");
@@ -783,4 +810,125 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
   expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
+});
+
+it("a remote Goose thinking edit stays pinned until Restart to apply", async () => {
+  const { sessions, change, fake } = setup({
+    choice: { provider: "", model: "", effort: "high" },
+  });
+  try {
+    await sessions.deliver("a", "before", 1);
+    change({ choice: { provider: "", model: "" } }, false);
+    await sessions.deliver("a", "still before", 2);
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=high",
+    ]);
+    expect(fake.geese[0]?.turns.map((t) => t.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    change({ systemPrompt: "Restart applied" });
+    await sessions.deliver("a", "after restart", 3);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.geese[0]?.turns.at(-1)?.sessionId).toBe("session-2");
+  } finally {
+    sessions.dispose();
+  }
+});
+
+it("marks an opening session current after two local choice saves", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  const { sessions, fake, choose } = setup({}, false, {
+    serve: (serve) => async (handler) => {
+      entered = true;
+      await held;
+      return serve(handler);
+    },
+  });
+  try {
+    const opening = sessions.deliver("a", "first", 1);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    choose({ provider: "openai", model: "gpt-4.1" });
+    choose({ provider: "openai", model: "gpt-default" });
+    release();
+    await opening;
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toContain("session-1 model=gpt-default");
+    expect(
+      sessions.outdated(
+        JSON.stringify({
+          workspace: "~/.buzz",
+          systemPrompt: "prompt",
+          choice: { provider: "openai", model: "gpt-default" },
+        }),
+      ),
+    ).toBe(false);
+  } finally {
+    release();
+    sessions.dispose();
+  }
+});
+
+it("applies the last local effort Save to a deferred opening before its next turn", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  const { sessions, fake, choose } = setup({}, false, {
+    serve: (serve) => async (handler) => {
+      entered = true;
+      await held;
+      return serve(handler);
+    },
+  });
+  try {
+    const first = sessions.deliver("a", "first", 1);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    choose({ provider: "openai", model: "gpt-4.1", effort: "high" });
+    release();
+    await first;
+    await sessions.deliver("a", "next", 2);
+    expect(fake.geese[0]?.configured).toContain(
+      "session-1 thinking_effort=high",
+    );
+    expect(fake.geese[0]?.closed).toEqual([]);
+  } finally {
+    release();
+    sessions.dispose();
+  }
+});
+
+it("keeps an older remote snapshot through several local choice Saves", async () => {
+  const { sessions, change, choose, fake } = setup({
+    choice: { provider: "openai", model: "gpt-4.1" },
+  });
+  try {
+    await sessions.deliver("a", "old remote config A", 1);
+    // The host delivers newer remote B, but an existing session keeps A.
+    change({ choice: { provider: "openai", model: "gpt-default" } }, false);
+    choose({ provider: "openai", model: "gpt-4.1", effort: "high" });
+    choose({ provider: "openai", model: "gpt-default", effort: "high" });
+    await sessions.deliver("a", "after two local Saves", 2);
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toContain(
+      "session-1 thinking_effort=high",
+    );
+    expect(
+      sessions.outdated(
+        JSON.stringify({
+          workspace: "~/.buzz",
+          systemPrompt: "prompt",
+          choice: { provider: "openai", model: "gpt-default", effort: "high" },
+        }),
+      ),
+    ).toBe(true);
+  } finally {
+    sessions.dispose();
+  }
 });

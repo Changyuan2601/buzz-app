@@ -124,6 +124,19 @@ export class AgentConfigStore {
     return "reread";
   }
 
+  /** A live move-removal (NIP-AR kind 45011) of this artifact from its config
+   * channel. Config never moves, so it is no longer readable here. Only a
+   * removal naming the cached head as `prev` retires it; any other asks for a
+   * read, since an older move must not retire a newer head. */
+  applyRemoval(subject: Subject, generation: number, prev?: string): Applied {
+    const entry = this.state(subject);
+    if (generation !== entry.generation || entry.state === "unavailable")
+      return "unchanged";
+    if (!prev || entry.head?.id !== prev) return "reread";
+    this.write(subject, { state: "unavailable" });
+    return "applied";
+  }
+
   /** Community switch, channel reselection, archive, sign-out or loss of
    * access: every in-flight writer's capture becomes stale. */
   rebind(subject: Subject) {
@@ -186,15 +199,18 @@ export class AgentConfigStore {
   }
   private load(): Stored {
     const empty: Stored = { version: 1, entries: {}, hadVersion: {} };
-    let value: Stored;
+    let value: unknown;
     try {
       value = JSON.parse(this.storage.getItem(CONFIG_STORAGE_KEY) ?? "null");
     } catch {
       return empty;
     }
-    if (value?.version !== 1 || typeof value.entries !== "object") return empty;
+    if (!isRecord(value) || value.version !== 1 || !isRecord(value.entries))
+      return empty;
     const entries: Record<string, Entry> = {};
     for (const [k, entry] of Object.entries(value.entries)) {
+      // A malformed entry counts as never synced.
+      if (!isEntry(entry)) continue;
       // A stored head is re-verified; one that fails counts as never synced.
       const copy = entry.head && { ...entry.head };
       const head = copy && verifyEvent(copy) ? copy : undefined;
@@ -207,8 +223,27 @@ export class AgentConfigStore {
             }
           : entry;
     }
-    return { version: 1, entries, hadVersion: value.hadVersion ?? {} };
+    const hadVersion = (value.hadVersion ?? {}) as Stored["hadVersion"];
+    return { version: 1, entries, hadVersion };
   }
+}
+
+const STATES: readonly unknown[] = [
+  "present",
+  "invalid",
+  "deleted",
+  "unavailable",
+];
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isCount = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
+function isEntry(v: unknown): v is Entry {
+  return (
+    isRecord(v) &&
+    STATES.includes(v.state) &&
+    isCount(v.generation) &&
+    isCount(v.sequence)
+  );
 }
 
 function live(
@@ -249,6 +284,20 @@ export const pickSettings = (schema: SettingsSchema, config: object) =>
       .filter((name) => name in config)
       .map((name) => [name, (config as Record<string, unknown>)[name]]),
   ) as Record<string, string>;
+
+/** A config with its synced fields taken only from accepted `settings`: a
+ * field they leave out gets the plugin's default, never this device's value.
+ * Everything outside the schema stays this device's. */
+export const withSynced = <C extends object>(
+  schema: SettingsSchema,
+  defaults: C,
+  config: C,
+  settings: Readonly<Record<string, string>>,
+): C => ({
+  ...config,
+  ...pickSettings(schema, defaults),
+  ...pickSettings(schema, settings),
+});
 
 /** A `buzz.agent.settings` body for a plugin: `{version: 1, agentType,
  * settings}`. Another agent type, or a value the plugin can't honour, is

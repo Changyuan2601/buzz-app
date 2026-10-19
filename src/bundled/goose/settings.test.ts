@@ -6,10 +6,12 @@ import {
 import {
   syncedSettings as claude,
   syncedSettingsSchema as claudeSchema,
+  withSyncedSettings as claudeWithSynced,
 } from "../claude-code/settings";
 import {
   syncedSettings as codex,
   syncedSettingsSchema as codexSchema,
+  withSyncedSettings as codexWithSynced,
 } from "../codex/settings";
 import { DEFAULT_CONFIG as gooseDefaults } from "./runtime";
 import {
@@ -78,3 +80,27 @@ it("rejects a remote workspace setting as an unknown key for every agent type", 
     });
   }
 });
+
+it.each([
+  ["goose", withSyncedSettings, { provider: "" }],
+  ["claude-code", claudeWithSynced, { effort: "" }],
+  ["codex", codexWithSynced, { effort: "" }],
+] as const)(
+  "%s defaults synced settings an accepted revision leaves out, never keeping this device's",
+  (_, merge, unset) => {
+    const local = {
+      model: "local-model",
+      provider: "local-provider",
+      effort: "high",
+      instructions: "local text",
+      workspace: "~/w",
+      scope: "channel" as const,
+    };
+    expect(merge(local as never, { model: "accepted-model" })).toEqual({
+      ...local,
+      ...unset,
+      model: "accepted-model",
+      scope: "thread",
+    });
+  },
+);

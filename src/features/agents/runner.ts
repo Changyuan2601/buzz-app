@@ -55,8 +55,8 @@ import {
 } from "./classifier";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
-import type { AgentRecord } from "./store";
-import { Runs, type Start } from "./agent-start";
+import type { AgentRecord, Team } from "./store";
+import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -335,8 +335,10 @@ export type RunnerHost = {
   record(pubkey: string): AgentRecord;
   /** Saves one record; throws when storage refuses it. */
   write(record: AgentRecord): void;
-  /** The team sections of its prompt; empty without a team. */
-  team(pubkey: string): string;
+  /** The team sections of its prompt; empty without a team. `admitted`: the
+   * teams its start resolved from synced config, which win over local copies
+   * with the same id in `agent`'s owner and community. */
+  team(agent: Agent, admitted?: readonly Team[]): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
   /** The owner's channel templates as the agent's handle offers them. */
@@ -395,8 +397,6 @@ export type RunnerHost = {
 
 export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -1791,15 +1791,15 @@ export class AgentRunners {
       const pick = await pickFor(job.trigger, agent, type);
       const start = this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
-      const team = this.host.team(agent.pubkey);
+      const team = this.host.team(agent, start.teams);
       signal.throwIfAborted();
-      this.started.start(agent.pubkey, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,
+        ...(start.synced ? { synced: start.synced } : {}),
         ...pick,
         ...(team ? { team } : {}),
         signal,

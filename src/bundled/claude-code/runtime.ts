@@ -24,6 +24,7 @@ import type {
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
+import { localKey } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
@@ -102,10 +103,17 @@ type Entry = {
   config: Config;
   /** The team sections of the latest run; a change restarts idle sessions. */
   team: string;
+  /** Advanced by a local save or Restart to apply, which replace every
+   * process started before; a remote edit leaves running ones alone. */
+  restarts: number;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
+  /** The local row's config as last synced. Each delivery sets `config` to
+   * what the host resolved for it, synced copies included, before any session
+   * launches; only a change of the local row replaces that here. */
+  local?: string;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
   /** The project folders each Solo chat's latest turn named, for its process. */
@@ -177,19 +185,25 @@ export class ClaudeRuntime {
       }
     for (const agent of agents) {
       const next = this.resolveConfig(agent.config);
+      const local = localKey(agent, this.resolveConfig({}));
       const entry = this.agents.get(agent.pubkey);
       if (!entry) {
-        this.entry(agent.pubkey, next).name = agent.name;
+        Object.assign(this.entry(agent.pubkey, next), {
+          name: agent.name,
+          local,
+        });
         continue;
       }
-      if (
-        JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name
-      ) {
+      if (entry.local === local && entry.name === agent.name) continue;
+      // Only a change of the local row replaces delivered config, and restarts
+      // the agent; an entry a delivery made first keeps what the host resolved.
+      if (entry.local !== undefined && entry.local !== local) {
         entry.config = next;
-        entry.name = agent.name;
-        entry.sessions.reconfigure();
+        entry.restarts++;
       }
+      entry.local = local;
+      entry.name = agent.name;
+      entry.sessions.reconfigure();
     }
     this.spare.warm(
       ...agents.map((agent) => where(this.resolveConfig(agent.config))),
@@ -243,6 +257,35 @@ export class ClaudeRuntime {
         ...models,
       ],
     };
+  }
+
+  /** Why a synced effort refuses the turn: the model this delivery runs on
+   * doesn't offer it, which Claude would otherwise run at another level, or
+   * Claude's model list can't confirm it (NIP-AP "Settings"). */
+  private async refusedEffort(
+    entry: Entry,
+    settings: Config,
+    synced: Delivery["synced"],
+    key?: string,
+  ): Promise<string | undefined> {
+    const effort = synced?.effort;
+    // A conversation kept on its started config doesn't run the synced one.
+    if (!effort || (key !== undefined && entry.sessions.pinned(key)))
+      return undefined;
+    const { models, model: reported } = await entry.sessions.metadata(key);
+    const wanted = settings.model.trim() || reported;
+    const listed = models.find(
+      (model) =>
+        model.value !== "default" &&
+        (model.value === wanted || model.resolvedModel === wanted),
+    );
+    if (!listed)
+      return `The synced effort "${effort}" couldn't be checked: Claude doesn't list ${wanted ? `the model ${wanted}` : "its model"}.`;
+    if (
+      effortChoices(effortLevels(listed)).some((level) => level.id === effort)
+    )
+      return undefined;
+    return `The synced effort "${effort}" isn't available for ${modelName(listed.resolvedModel ?? listed.value)}. Choose a supported effort in Settings.`;
   }
 
   /** Conversations each agent has running, for its status view. */
@@ -333,6 +376,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    synced,
     team,
     workingUntil,
     ignored,
@@ -357,7 +401,8 @@ export class ClaudeRuntime {
       return;
     }
     signal.throwIfAborted();
-    const entry = this.entry(agent.pubkey, settings);
+    const entry = this.delivery(agent.pubkey, settings);
+    // Set before `key` and the effort check read the fingerprint.
     entry.handle = agent;
     entry.team = team ?? "";
     const { event } = trigger;
@@ -373,6 +418,11 @@ export class ClaudeRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
+    const refused =
+      !model &&
+      !effort &&
+      (await this.refusedEffort(entry, settings, synced, key));
+    if (refused) throw new Error(refused);
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) =>
       this.review(
@@ -497,7 +547,10 @@ export class ClaudeRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
+    const settings = this.resolveConfig(delivery.config);
+    const entry = this.delivery(agent.pubkey, settings);
+    const refused = await this.refusedEffort(entry, settings, delivery.synced);
+    if (refused) return { ok: false, error: refused };
     entry.handle = agent;
     entry.team = team ?? "";
     const done = entry.sessions.runOnce(key, prompt);
@@ -654,12 +707,37 @@ export class ClaudeRuntime {
     };
   }
 
+  /** Whether a conversation runs on config other than `config`, what the
+   * host now resolves for the agent: it shows Restart to apply. */
+  outdated(pubkey: string, config: unknown) {
+    const entry = this.agents.get(pubkey);
+    return !!entry?.sessions.outdated(snapshot(this.resolveConfig(config)));
+  }
+  /** Restart to apply: idle conversations stop now, busy ones once idle, and
+   * each starts again on the agent's current config. */
+  restart(pubkey: string) {
+    const entry = this.agents.get(pubkey);
+    if (!entry) return;
+    entry.restarts++;
+    entry.sessions.reconfigure();
+  }
+
+  /** The agent's entry for a delivery, on the config the host resolved for
+   * it: a conversation started from here on uses it. One already running
+   * keeps the config it started on until a local save or Restart to apply. */
+  private delivery(pubkey: string, config: Config): Entry {
+    const entry = this.entry(pubkey, config);
+    entry.config = config;
+    return entry;
+  }
+
   private entry(pubkey: string, initial: Config): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
+      restarts: 0,
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
@@ -695,21 +773,20 @@ export class ClaudeRuntime {
       fingerprint: (key) =>
         JSON.stringify([
           key ? (entry.directories.get(key) ?? []) : [],
-          entry.config.model,
-          entry.config.effort,
-          entry.config.workspace,
-          entry.config.instructions,
-          entry.config.scope,
+          entry.restarts,
           entry.team,
           entry.name,
           addedKey(this.added()),
         ]),
+      snapshot: () => snapshot(entry.config),
       launch: async (key) => {
-        const { workspace, instructions, scope } = entry.config;
+        // Read before anything is awaited, as `snapshot` was.
+        const config = entry.config;
+        const { workspace, instructions, scope } = config;
         const memory = await this.core(pubkey);
         const directories = key ? entry.directories.get(key) : undefined;
         return {
-          ...where(entry.config),
+          ...where(config),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
@@ -744,6 +821,16 @@ export class ClaudeRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
+
+/** The settings a process starts with, as compared for Restart to apply. */
+const snapshot = (config: Config) =>
+  JSON.stringify([
+    config.model,
+    config.effort,
+    config.workspace,
+    config.instructions,
+    config.scope,
+  ]);
 
 /** `claude-opus-5-5` reads as `Opus 5.5`, and an alias such as `opus` as
  * `Opus`. Anything else is shown as it is. */

@@ -124,6 +124,9 @@ export type Launch = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   systemPrompt: string;
+  /** The provider, model and thinking level each of the session's turns
+   * runs on. */
+  choice: Choice;
 }>;
 
 export type SessionsOptions = Readonly<{
@@ -136,22 +139,40 @@ export type SessionsOptions = Readonly<{
   pool: ServerPool;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
-  /** The agent's provider, model and thinking level now, which each new
-   * turn runs on. */
-  choice(): Choice;
-  /** Changes when a setting a session was opened with has changed. */
+  /** Changes when an open session must be replaced: a local save or Restart
+   * to apply. A remote edit leaves it, so a conversation keeps the config it
+   * started with. */
   fingerprint(): string;
   /** Where each conversation's last use is saved. */
   store?: SessionStore;
+  /** The config a session opened now runs on, read with `fingerprint` before
+   * `launch`, which must use the same config. */
+  snapshot(): string;
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
 }>;
 
+/** A local save of a choice, made while sessions ran on `before`; `next` is
+ * the save after it. */
+type Chosen = { choice: Choice; before: string; after: string; next?: Chosen };
+
+/** Switches a session to a saved choice; one that ran on the config it was
+ * saved over now runs on the config saved. */
+const switchTo = (live: Live, { choice, before, after }: Chosen) => {
+  live.choice = choice;
+  if (live.snapshot === before) live.snapshot = after;
+};
+
 type Live = {
   session: GooseSession;
   process: GooseProcess;
   fingerprint: string;
+  /** The config it opened on; only a local save of its choice
+   * changes it while it is open. */
+  snapshot: string;
+  /** The provider, model and thinking level its turns run on. */
+  choice: Choice;
   slot: Slot;
   /** When it last took in a message or ended a turn. */
   at: number;
@@ -176,6 +197,9 @@ export class AgentSessions {
    * prompted for the old one. */
   private readonly had = new Set<string>();
   private disposed = false;
+  /** The latest local save of a choice, or none yet; a session opening
+   * replays each save after the one it read with its settings. */
+  private chosen: { next?: Chosen } = {};
 
   constructor(private readonly options: SessionsOptions) {}
 
@@ -338,6 +362,21 @@ export class AgentSessions {
     }
   }
 
+  /** A local save of only the provider, model or thinking level: open and
+   * opening sessions switch to it from their next turn. Those that ran on
+   * `before` now run on the config saved. */
+  choose(choice: Choice, before: string) {
+    const chosen: Chosen = { choice, before, after: this.options.snapshot() };
+    this.chosen.next = chosen;
+    this.chosen = chosen;
+    for (const live of this.live.values()) switchTo(live, chosen);
+  }
+
+  /** Whether a conversation's session runs on config other than `current`. */
+  outdated(current: string) {
+    return [...this.live.values()].some((live) => live.snapshot !== current);
+  }
+
   /** Closes idle sessions opened with old settings; busy ones close when they
    * next fall idle. */
   reconfigure() {
@@ -358,7 +397,7 @@ export class AgentSessions {
   private stale(live: Live) {
     return (
       live.fingerprint !== this.options.fingerprint() ||
-      Boolean(live.session.effort && !this.options.choice().effort)
+      Boolean(live.session.effort && !live.choice.effort)
     );
   }
 
@@ -372,6 +411,8 @@ export class AgentSessions {
     const { pool, spawn } = this.options;
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
+    const snapshot = this.options.snapshot();
+    const chosen = this.chosen;
     const launch = await this.options.launch();
     // Removed meanwhile: a goose started now would outlive it.
     if (this.disposed) throw new Error("goose was stopped");
@@ -389,13 +430,15 @@ export class AgentSessions {
     // Busy until it is adopted as a conversation's.
     const slot: Slot = { idle: () => false, evict: async () => undefined };
     const room = pool.take(slot);
+    // Asked as the session opens and before each turn.
+    let live: Live | undefined;
     const start = () =>
       process.open({
         cwd,
         systemPrompt: launch.systemPrompt,
         ...(title ? { title } : {}),
         tools: this.options.tools,
-        choice: this.options.choice,
+        choice: () => live?.choice ?? launch.choice,
       });
     let session: GooseSession;
     try {
@@ -416,7 +459,16 @@ export class AgentSessions {
     const released = () => pool.release(slot);
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
-    const live = { session, process, fingerprint, slot, at: Date.now() };
+    live = {
+      session,
+      process,
+      fingerprint,
+      snapshot,
+      choice: launch.choice,
+      slot,
+      at: Date.now(),
+    };
+    for (let next = chosen.next; next; next = next.next) switchTo(live, next);
     if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);

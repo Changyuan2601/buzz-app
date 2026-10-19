@@ -402,6 +402,7 @@ function renderAgentActivity(
     snapshot: () => agentsSnapshot,
     types: () => types,
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
+    configHistory: () => undefined,
   } as unknown as Agents;
   render(
     <ProfilePanel

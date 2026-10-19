@@ -324,6 +324,7 @@ function setup(
     }),
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    recover: vi.fn(async () => {}),
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),
@@ -337,6 +338,7 @@ function setup(
       return team;
     }),
     core: vi.fn(async () => undefined),
+    configHistory: () => undefined,
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
         ...snapshot,
@@ -1330,6 +1332,30 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+});
+
+it("shows a synced team's refusal and keeps its editor open", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(() =>
+    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
+  );
+  const refused = new Error(
+    "Synced teams can't be changed in this version yet",
+  );
+  agents.saveTeam.mockRejectedValueOnce(refused);
+  agents.removeTeam.mockRejectedValueOnce(refused);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  const form = screen.getByRole("form", { name: "Edit Crew" });
+  for (const name of ["Save", "Delete team"]) {
+    await user.click(within(form).getByRole("button", { name }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent(
+      refused.message,
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBe(form);
+  }
+  expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
 });
 
 it("closes the team editor when leaving Your teams", async () => {

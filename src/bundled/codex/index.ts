@@ -84,6 +84,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
     id: TYPE_ID,
+    restart: {
+      outdated: (pubkey, config) => runtime.outdated(pubkey, config),
+      apply: (pubkey) => runtime.restart(pubkey),
+      subscribe: runtime.subscribe,
+    },
     title: "Codex",
     icon: CodexLogoIcon,
     description:

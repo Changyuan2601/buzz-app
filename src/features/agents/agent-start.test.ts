@@ -2,7 +2,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { describe, expect, it } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import { AgentConfigStore, type Subject } from "./agent-config";
-import { resolveStart, Runs, type Mode, type StartInput } from "./agent-start";
+import { resolveStart, type Mode, type StartInput } from "./agent-start";
 import {
   syncedSettingsSchema,
   withSyncedSettings,
@@ -75,7 +75,8 @@ function input(
     store,
     local,
     agentType: "claude-code",
-    settings: { mode, subject: settings, ...plugin },
+    settings: { mode, subject: settings },
+    syncedSettings: plugin,
     instructions: { mode, subject: instructions },
     ...extra,
   };
@@ -111,11 +112,27 @@ describe("start resolution", () => {
       config: {
         ...local,
         model: "synced-model",
+        // Left out of the accepted settings, so Claude's default, not "low".
+        effort: "",
         scope: "channel",
         instructions: "synced text",
       },
       revisions: [s.id, i.id],
+      synced: { model: "synced-model", scope: "channel" },
     });
+  });
+
+  it("starts a channel-scope agent on thread scope when the accepted settings leave scope out", () => {
+    const store = new AgentConfigStore(memoryStorage());
+    const s = revision({ agentType: "claude-code", settings: { model: "m" } });
+    install(store, settings, s);
+    const resolved = resolveStart(
+      input(store, "synced", {
+        local: { ...local, scope: "channel" },
+        instructions: { mode: "local", subject: instructions },
+      }),
+    );
+    expect(resolved).toMatchObject({ ok: true, config: { scope: "thread" } });
   });
 
   it("blocks on unavailable with no local fallback, even with local text", () => {
@@ -197,10 +214,28 @@ describe("start resolution", () => {
     expect(
       resolveStart(
         input(fresh, "migrating", {
-          settings: { mode: "local", subject: settings, ...plugin },
+          settings: { mode: "local", subject: settings },
         }),
       ),
     ).toMatchObject({ ok: false, state: "unavailable" });
+  });
+  it("refuses synced settings for a type with no synced settings, and starts local ones", () => {
+    const typeless = (store: AgentConfigStore, mode: Mode) => {
+      const { syncedSettings: _, ...rest } = input(store, mode);
+      return rest;
+    };
+    const { store } = seeded();
+    expect(resolveStart(typeless(store, "synced"))).toEqual({
+      ok: false,
+      state: "invalid",
+      reason: "This agent type has no synced settings",
+    });
+    const empty = new AgentConfigStore(memoryStorage());
+    expect(resolveStart(typeless(empty, "local"))).toEqual({
+      ok: true,
+      config: local,
+      revisions: [],
+    });
   });
 });
 
@@ -230,6 +265,7 @@ describe("team sections", () => {
         },
       ],
       revisions: [s.id, i.id, t.id],
+      synced: { model: "synced-model", scope: "channel" },
     });
     expect(
       resolveStart(input(store, "synced", { teams: [member("archived")] })),
@@ -254,22 +290,5 @@ describe("team sections", () => {
       state: "unavailable",
       reason: expect.stringContaining('"team-1"'),
     });
-  });
-});
-
-describe("applying changes to a running agent", () => {
-  it("restarts on a local save, marks a remote change, and restarts no one for a team save", () => {
-    const runs = new Runs();
-    expect(runs.changed("agent", "remote", ["b"])).toBe("none");
-    runs.start("agent", ["a"]);
-    expect(runs.revisions("agent")).toEqual(["a"]);
-    expect(runs.changed("agent", "team", ["a", "t2"])).toBe("none");
-    expect(runs.changed("agent", "remote", ["a"])).toBe("none");
-    expect(runs.restartToApply("agent")).toBe(false);
-    expect(runs.changed("agent", "remote", ["b"])).toBe("restart-to-apply");
-    expect(runs.restartToApply("agent")).toBe(true);
-    expect(runs.changed("agent", "local", ["c"])).toBe("restart");
-    runs.start("agent", ["c"]);
-    expect(runs.restartToApply("agent")).toBe(false);
   });
 });

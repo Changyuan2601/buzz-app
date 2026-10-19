@@ -1,7 +1,9 @@
 import { observerFrame, observerGeneration } from "../agents/observer";
 import { eventDto } from "./events";
 import {
+  isConfigRoute,
   liveChannels,
+  liveConfigScope,
   livePresenceAuthors,
   liveJoined,
   liveProvenance,
@@ -45,6 +47,10 @@ export function subscribeBrokerTraffic(
   let observerPending = false;
   let presenceAuthors: string[] = [];
   let presencePending = false;
+  let config: string[] | null = null;
+  // Frames and route states stamped with an older revision are fenced out.
+  let configRevision = 0;
+  let configPending = false;
   let controller: AbortController | undefined;
   let streamId: string | undefined;
   let controlPending = false;
@@ -67,6 +73,7 @@ export function subscribeBrokerTraffic(
     interestsPending = false;
     observerPending = false;
     presencePending = false;
+    configPending = false;
     receiving = true;
     controller?.abort();
     clearTimeout(retryTimer);
@@ -90,6 +97,7 @@ export function subscribeBrokerTraffic(
     const startingPriority = JSON.stringify(priority);
     const startingObserver = observer;
     const startingPresence = JSON.stringify(presenceAuthors);
+    const startingConfig = configRevision;
     void (async () => {
       try {
         const response = await fetch(`${endpoint}/stream`, {
@@ -103,6 +111,8 @@ export function subscribeBrokerTraffic(
             observer,
             presenceAuthors,
             interestRevision,
+            config,
+            configRevision,
           }),
           signal: owned.signal,
         });
@@ -130,6 +140,7 @@ export function subscribeBrokerTraffic(
         if (startingObserver !== observer) sendObserver();
         if (startingPresence !== JSON.stringify(presenceAuthors))
           sendPresence();
+        if (startingConfig !== configRevision) sendConfig();
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -188,6 +199,13 @@ export function subscribeBrokerTraffic(
                   presenceAuthors.includes(event.pubkey)
                 )
                   callbacks.presence?.(event);
+              } else if (kind === "config") {
+                const record = data as {
+                  event?: unknown;
+                  configRevision?: unknown;
+                };
+                if (config !== null && record.configRevision === configRevision)
+                  callbacks.config?.(eventDto(record.event));
               } else if (kind === "observer") {
                 const record = data as {
                   frame?: unknown;
@@ -199,12 +217,16 @@ export function subscribeBrokerTraffic(
                 const snapshot = liveSnapshot(data);
                 const revision = (data as { interestRevision?: unknown })
                   .interestRevision;
+                const configCurrent =
+                  (data as { configRevision?: unknown }).configRevision ===
+                  configRevision;
                 publish({
                   ...snapshot,
-                  routes: snapshot.routes.filter(
-                    (route) =>
-                      !route.channelId ||
-                      currentChannel(route.channelId, revision),
+                  routes: snapshot.routes.filter((route) =>
+                    isConfigRoute(route.id)
+                      ? configCurrent
+                      : !route.channelId ||
+                        currentChannel(route.channelId, revision),
                   ),
                 });
               } else if (kind === "established") {
@@ -366,6 +388,35 @@ export function subscribeBrokerTraffic(
         if (sent !== observer) sendObserver();
       });
   }
+  function sendConfig() {
+    if (closed || !streamId || configPending) return;
+    const current = generation;
+    const sent = configRevision;
+    configPending = true;
+    void fetch(`${endpoint}/stream-config`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, channels: config, configRevision }),
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Config subscription control failed");
+      })
+      .catch(() => {
+        // Unknown control outcome: reconnect sends the current scope.
+        if (!closed && current === generation)
+          controller?.abort(new Error("Config subscription interrupted"));
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        configPending = false;
+        if (sent !== configRevision) sendConfig();
+      });
+  }
   function sendPresence() {
     if (closed || !streamId || presencePending) return;
     const current = generation;
@@ -431,6 +482,19 @@ export function subscribeBrokerTraffic(
       return accepted === true;
     },
     identity: () => (closed ? undefined : streamId),
+    configScope(input) {
+      const next = liveConfigScope(input ? input.channels : null);
+      if (closed || JSON.stringify(next) === JSON.stringify(config)) return;
+      config = next;
+      configRevision++; // Fence old frames synchronously, before the POST completes.
+      // Old-scope config routes are stale now: drop them, as stale state frames
+      // are, so nothing reads the new scope as live before the broker says so.
+      publish({
+        ...latest,
+        routes: latest.routes.filter((route) => !isConfigRoute(route.id)),
+      });
+      sendConfig();
+    },
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
@@ -531,8 +595,8 @@ function liveSnapshot(value: unknown): LiveSnapshot {
       snapshot.status,
     ) ||
     !Array.isArray(snapshot.routes) ||
-    // Keep limited channels visible alongside both globals and the optional observer.
-    snapshot.routes.length > 1027 ||
+    // Limited channels, both globals, the optional observer and up to 21 config REQs.
+    snapshot.routes.length > 1048 ||
     (snapshot.error !== undefined && typeof snapshot.error !== "string")
   )
     throw new Error("Invalid live broker status");

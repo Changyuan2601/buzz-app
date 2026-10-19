@@ -35,7 +35,9 @@ it.each(["here", "hosted"] as const)(
     };
     render(
       <AgentTabs
-        agents={{ save: vi.fn() } as unknown as Agents}
+        agents={
+          { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+        }
         agent={agent}
         type={undefined}
         channels={[]}

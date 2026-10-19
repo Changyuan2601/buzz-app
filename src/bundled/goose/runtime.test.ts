@@ -166,6 +166,7 @@ function setup(
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
     agent,
+    host,
     core,
     deliver,
     runOnce,
@@ -291,6 +292,89 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("starts each new session from the config its delivery carries, never the local row", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const row = (instructions: string) =>
+      runtime.sync([
+        { ...agent, config: { ...DEFAULT_CONFIG, instructions } },
+      ] as unknown as Agent[]);
+    const carrying = (instructions: string) =>
+      ({
+        config: { ...DEFAULT_CONFIG, scope: "thread", instructions },
+      }) as Partial<Delivery>;
+    row("LOCAL");
+    await deliver(message("1", "@Gander hi"), carrying("SYNCED A"));
+    await flush(100);
+    // An unchanged local row neither replaces the delivered config nor
+    // closes the session started from it.
+    row("LOCAL");
+    await deliver(message("2", "@Gander again"), carrying("SYNCED B"));
+    await flush(100);
+    const prompts = fake.geese.flatMap((goose) => [...goose.prompts]);
+    expect(prompts.map(([id]) => id)).toEqual(["session-1", "session-2"]);
+    const [first, second] = prompts.map(([, text]) => text);
+    expect(first).toContain("SYNCED A");
+    expect(second).toContain("SYNCED B");
+    expect(prompts.join()).not.toContain("LOCAL");
+    expect(fake.geese.flatMap((goose) => goose.closed)).toEqual([]);
+  });
+
+  it("keeps each open conversation on the config it opened with until Restart to apply", async () => {
+    const { deliver, fake, runtime } = setup();
+    const synced = (instructions: string, provider = "") => ({
+      ...DEFAULT_CONFIG,
+      scope: "thread",
+      instructions,
+      provider,
+    });
+    const reply = (id: string, text: string, root: string) =>
+      message(id, text, {
+        tags: [
+          ["h", channel],
+          ["e", root, "", "reply"],
+          ["p", self],
+        ],
+      });
+    const first = message("1", "@Gander hi");
+    await deliver(first, { config: synced("SYNCED A") } as Partial<Delivery>);
+    await flush(100);
+    // An edit from another device reaches the open conversation's next
+    // message, which still runs on the config the session opened with.
+    const b = synced("SYNCED B", "openai");
+    await deliver(reply("2", "@Gander again", first.id), {
+      config: b,
+    } as Partial<Delivery>);
+    await flush(100);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.configured).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    expect(runtime.outdated(self, b)).toBe(true);
+    // A new conversation opens on the current copy.
+    await deliver(message("3", "@Gander new"), {
+      config: b,
+    } as Partial<Delivery>);
+    await flush(100);
+    const prompts = () => fake.geese.flatMap((goose) => [...goose.prompts]);
+    expect(prompts().map(([id]) => id)).toEqual(["session-1", "session-2"]);
+    expect(prompts()[1]?.[1]).toContain("SYNCED B");
+    // Restart to apply closes the idle sessions, and the conversation's next
+    // message opens one on the current copy.
+    runtime.restart(self);
+    await flush(100);
+    expect(goose?.closed).toContain("session-1");
+    expect(runtime.outdated(self, b)).toBe(false);
+    await deliver(reply("4", "@Gander after", first.id), {
+      config: b,
+    } as Partial<Delivery>);
+    await flush(100);
+    expect(prompts().at(-1)?.[1]).toContain("SYNCED B");
+    expect(prompts()).toHaveLength(3);
+  });
+
   it("starts a session from the host's core memory, reading none from the relay", async () => {
     const { core, deliver, goose, memoryOpen } = setup({
       core: "I am Gander.",
@@ -332,15 +416,53 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("keeps Restart to apply for a session on an older remote copy after a local provider save", async () => {
+    const { agent, deliver, runtime } = setup();
+    const synced = (instructions: string, provider = "") => ({
+      ...DEFAULT_CONFIG,
+      scope: "thread" as const,
+      instructions,
+      provider,
+    });
+    let saves = 0;
+    const saved = (config: typeof DEFAULT_CONFIG) =>
+      runtime.sync([{ ...agent, config, saves: ++saves } as unknown as Agent]);
+    saved(synced("SYNCED A"));
+    const first = message("1", "@Gander hi");
+    await deliver(first, { config: synced("SYNCED A") } as Partial<Delivery>);
+    await flush(100);
+    // A remote edit reaches the open conversation, which stays on A.
+    const b = synced("SYNCED B");
+    await deliver(
+      message("2", "@Gander again", {
+        tags: [
+          ["h", channel],
+          ["e", first.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+      { config: b } as Partial<Delivery>,
+    );
+    await flush(100);
+    expect(runtime.outdated(self, b)).toBe(true);
+    // Saving only a provider over B leaves the session's A prompt in place.
+    const c = synced("SYNCED B", "openai");
+    saved(c);
+    expect(runtime.outdated(self, c)).toBe(true);
+  });
+
   it("switches a saved provider in the live session without restarting goose", async () => {
     const { agent, deliver, fake, runtime } = setup();
+    let saves = 0;
     const saved = (config: typeof DEFAULT_CONFIG) =>
-      runtime.sync([{ ...agent, config } as unknown as Agent]);
+      runtime.sync([{ ...agent, config, saves: ++saves } as unknown as Agent]);
     saved(DEFAULT_CONFIG);
     const first = message("1", "@Gander which model?");
     await deliver(first);
     await flush(100);
-    saved({ ...DEFAULT_CONFIG, provider: "openai" });
+    const next = { ...DEFAULT_CONFIG, provider: "openai" };
+    saved(next);
+    // The host delivers the config it resolved from the saved row.
     await deliver(
       message("2", "@Gander and now?", {
         tags: [
@@ -349,6 +471,7 @@ describe("GooseRuntime", () => {
           ["p", self],
         ],
       }),
+      { config: { ...next, scope: "thread" } } as Partial<Delivery>,
     );
     await flush(100);
     expect(fake.geese).toHaveLength(1);
@@ -536,4 +659,164 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await shared.deliver(message("1", "@Gander hi"));
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});
+
+it("captures Goose choice with the launch snapshot before memory is awaited", async () => {
+  const f = setup();
+  let release!: (value: string | null) => void;
+  const gate = new Promise<string | null>((done) => {
+    release = done;
+  });
+  f.core.mockImplementation(() => gate as never);
+  const before = {
+    ...DEFAULT_CONFIG,
+    instructions: "BEFORE",
+    provider: "openai",
+    model: "before-model",
+    effort: "high",
+  };
+  const after = {
+    ...DEFAULT_CONFIG,
+    instructions: "AFTER",
+    provider: "anthropic",
+    model: "after-model",
+    effort: "low",
+  };
+  try {
+    await f.deliver(message("1", "first"), { config: before });
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(1));
+    await f.deliver(message("2", "second"), { config: after });
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(2));
+    release(null);
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(2));
+    const goose = f.fake.geese[0];
+    expect.soft(goose?.prompts.get("session-1")).toContain("BEFORE");
+    expect.soft(goose?.opened[0]?._meta).toMatchObject({ provider: "openai" });
+    expect.soft(goose?.configured).toContain("session-1 model=before-model");
+    expect.soft(goose?.configured).toContain("session-1 thinking_effort=high");
+  } finally {
+    release(null);
+    f.runtime.dispose();
+  }
+});
+
+it.each(["team", "name"] as const)(
+  "Goose fences a %s change while memory is awaited",
+  async (field) => {
+    const f = setup();
+    let release!: (value: string | null) => void;
+    const gate = new Promise<string | null>((done) => {
+      release = done;
+    });
+    f.core.mockImplementation(() => gate as never);
+    const before = {
+      ...DEFAULT_CONFIG,
+      instructions: "BEFORE INSTRUCTIONS",
+      model: "before-model",
+    };
+    const after = {
+      ...DEFAULT_CONFIG,
+      instructions: "AFTER INSTRUCTIONS",
+      model: "after-model",
+    };
+    const row = { ...f.agent, config: before, saves: 0 } as unknown as Agent;
+    f.runtime.sync([row]);
+    try {
+      await f.deliver(message("1", "first"), {
+        config: before,
+        team: "BEFORE TEAM",
+      });
+      await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(1));
+      if (field === "name")
+        f.runtime.sync([{ ...row, name: "NEW NAME", config: after }]);
+      await f.deliver(message("2", "second"), {
+        config: after,
+        team: field === "team" ? "AFTER TEAM" : "BEFORE TEAM",
+      });
+      await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(2));
+      release(null);
+      await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(2));
+      const goose = f.fake.geese[0];
+      if (!goose) throw new Error("Goose started");
+      expect(goose.closed).toContain("session-1");
+      for (const turn of goose.turns) {
+        const prompt = goose.prompts.get(turn.sessionId);
+        expect(prompt).toContain("AFTER INSTRUCTIONS");
+        expect(prompt).not.toContain("BEFORE INSTRUCTIONS");
+        expect(prompt).toContain(field === "team" ? "AFTER TEAM" : "NEW NAME");
+      }
+    } finally {
+      release(null);
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("a Goose team change and revert during launch never admits mixed inputs", async () => {
+  const f = setup();
+  let firstMemory!: (value: string | null) => void;
+  let otherMemory!: (value: string | null) => void;
+  let openServer!: () => void;
+  const firstGate = new Promise<string | null>((done) => {
+    firstMemory = done;
+  });
+  const otherGate = new Promise<string | null>((done) => {
+    otherMemory = done;
+  });
+  const serverGate = new Promise<void>((done) => {
+    openServer = done;
+  });
+  f.core
+    .mockImplementationOnce(() => firstGate as never)
+    .mockImplementation(() => otherGate as never);
+  const { serveMcp } = f.host;
+  if (!serveMcp) throw new Error("The host serves MCP");
+  const serve = serveMcp.bind(f.host);
+  const serving = vi.fn(async (...args: Parameters<typeof serve>) => {
+    await serverGate;
+    return serve(...args);
+  });
+  f.host.serveMcp = serving;
+  const before = {
+    ...DEFAULT_CONFIG,
+    instructions: "BEFORE INSTRUCTIONS",
+    model: "before-model",
+  };
+  const after = {
+    ...DEFAULT_CONFIG,
+    instructions: "AFTER INSTRUCTIONS",
+    model: "after-model",
+  };
+  try {
+    await f.deliver(message("1", "first"), {
+      config: before,
+      team: "BEFORE TEAM",
+    });
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(1));
+    await f.deliver(message("2", "second"), {
+      config: after,
+      team: "AFTER TEAM",
+    });
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(2));
+    firstMemory(null);
+    await vi.waitFor(() => expect(serving).toHaveBeenCalledTimes(1));
+    await f.deliver(message("3", "third"), {
+      config: before,
+      team: "BEFORE TEAM",
+    });
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(3));
+    openServer();
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    const goose = f.fake.geese[0];
+    if (!goose) throw new Error("Goose started");
+    const prompt = goose.prompts.get(goose.turns[0]?.sessionId ?? "");
+    expect.soft(prompt).toContain("BEFORE INSTRUCTIONS");
+    expect.soft(prompt).toContain("BEFORE TEAM");
+    expect.soft(prompt).not.toContain("AFTER TEAM");
+  } finally {
+    firstMemory(null);
+    otherMemory(null);
+    openServer();
+    f.runtime.dispose();
+  }
 });

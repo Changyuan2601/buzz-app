@@ -28,6 +28,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
+import { localKey } from "../../features/agents/service";
 import { soloChat } from "../../features/agents/solo-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -106,10 +107,17 @@ type Entry = {
   config: Config;
   /** The team sections of the latest run; a change reopens idle sessions. */
   team: string;
+  /** Advanced by a local save or Restart to apply, which replace every
+   * session opened before; a remote edit leaves open ones alone. */
+  restarts: number;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
+  /** The local row's config as last synced. Each delivery sets `config` to
+   * what the host resolved for it, synced copies included, before any session
+   * launches; only a change of the local row replaces that here. */
+  local?: string;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
 };
@@ -165,16 +173,29 @@ export class GooseRuntime {
     if (!this.agents.size) this.goose.stop();
     for (const agent of agents) {
       const next = config(agent.config);
+      const local = localKey(agent);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
-      else if (
-        JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name
-      ) {
-        entry.config = next;
-        entry.name = agent.name;
-        entry.sessions.reconfigure();
+      if (!entry) {
+        Object.assign(this.entry(agent.pubkey, next), {
+          name: agent.name,
+          local,
+        });
+        continue;
       }
+      if (entry.local === local && entry.name === agent.name) continue;
+      // Only a change of the local row replaces delivered config, and restarts
+      // the agent; an entry a delivery made first keeps what the host resolved.
+      if (entry.local !== undefined && entry.local !== local) {
+        // A provider, model or thinking level alone switches in the open
+        // sessions.
+        if (opened(entry.config) !== opened(next)) entry.restarts++;
+        const before = snapshot(entry.config);
+        entry.config = next;
+        entry.sessions.choose(choiceOf(next), before);
+      }
+      entry.local = local;
+      entry.name = agent.name;
+      entry.sessions.reconfigure();
     }
     this.notify();
   }
@@ -250,7 +271,7 @@ export class GooseRuntime {
       }
       signal.throwIfAborted();
     }
-    const entry = this.entry(agent.pubkey, settings);
+    const entry = this.delivery(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     const { event } = trigger;
@@ -335,7 +356,7 @@ export class GooseRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent.pubkey, config(delivery.config));
+    const entry = this.delivery(agent.pubkey, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
     const done = entry.sessions.runOnce(
@@ -499,12 +520,37 @@ export class GooseRuntime {
     };
   }
 
+  /** Whether a conversation runs on config other than `config`, what the
+   * host now resolves for the agent: it shows Restart to apply. */
+  outdated(pubkey: string, raw: unknown) {
+    const entry = this.agents.get(pubkey);
+    return !!entry?.sessions.outdated(snapshot(config(raw)));
+  }
+  /** Restart to apply: idle conversations close now, busy ones once idle,
+   * and each opens again on the agent's current config. */
+  restart(pubkey: string) {
+    const entry = this.agents.get(pubkey);
+    if (!entry) return;
+    entry.restarts++;
+    entry.sessions.reconfigure();
+  }
+
+  /** The agent's entry for a delivery, on the config the host resolved for
+   * it: a conversation opened from here on uses it. One already open keeps
+   * the config it opened on until a local save or Restart to apply. */
+  private delivery(pubkey: string, config: Config): Entry {
+    const entry = this.entry(pubkey, config);
+    entry.config = config;
+    return entry;
+  }
+
   private entry(pubkey: string, initial: Config): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
+      restarts: 0,
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -538,34 +584,30 @@ export class GooseRuntime {
       pool: this.pool,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
-      // Read as each turn starts, so a change needs no restart.
-      choice: () => ({
-        provider: entry.config.provider.trim(),
-        model: entry.config.model.trim(),
-        effort: entry.config.effort,
-      }),
       fingerprint: () =>
         JSON.stringify([
-          entry.config.workspace,
-          entry.config.instructions,
-          entry.config.scope,
+          entry.restarts,
           entry.team,
           entry.name,
           addedKey(this.added()),
         ]),
+      snapshot: () => snapshot(entry.config),
       launch: async () => {
-        const { workspace, instructions, scope } = entry.config;
+        // Every input is read before anything is awaited, as `snapshot` was.
+        const { config, team, name } = entry;
+        const { workspace, instructions, scope } = config;
         const memory = await this.core(pubkey);
         return {
           workspace,
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
-            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
+            ...(name ? { agent: { name, pubkey } } : {}),
             instructions,
-            team: entry.team,
+            team,
             ...(memory === undefined ? {} : { memory }),
           }),
+          choice: choiceOf(config),
         };
       },
     });
@@ -605,3 +647,19 @@ export class GooseRuntime {
     );
   }
 }
+
+/** What a session is opened with: changing it reopens the session. */
+const opened = (config: Config) =>
+  JSON.stringify([config.workspace, config.instructions, config.scope]);
+const choiceOf = ({
+  provider,
+  model,
+  effort,
+}: Pick<Config, "provider" | "model" | "effort">) => ({
+  provider: provider.trim(),
+  model: model.trim(),
+  effort,
+});
+/** The settings a session runs on, as compared for Restart to apply. */
+const snapshot = (config: Config) =>
+  JSON.stringify([opened(config), choiceOf(config)]);

@@ -50,6 +50,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    restart: {
+      outdated: (pubkey, config) => runtime.outdated(pubkey, config),
+      apply: (pubkey) => runtime.restart(pubkey),
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     title: "Goose",
     icon: GooseLogoIcon,
     description:

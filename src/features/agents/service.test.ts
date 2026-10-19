@@ -15,6 +15,18 @@ import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
+  agentConfigs,
+  type CommunityConfigInput,
+  type ConfigJournals,
+} from "./community-config";
+import {
+  ARTIFACT_MAX_EVENT_BYTES,
+  artifactD,
+  artifactTemplate,
+} from "./agent-config-artifacts";
+import { revertTemplate } from "./agent-config-history";
+import { TEAMS_MIGRATION_KEY, UNREADABLE_TEAM } from "./team-config";
+import {
   type Agent,
   AgentsService,
   type AgentType,
@@ -22,13 +34,16 @@ import {
   type Delivery,
   type Trigger,
   fromOwner,
+  localKey,
   teamPrompt,
 } from "./service";
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
 import { memoryStorage } from "./test-fakes";
+import { MigrationJournal } from "./config-writes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { readTeams, writeTeams } from "./store";
+import { readTeams, TEAMS_KEY, writeTeams } from "./store";
+import { teamSubject } from "./config-channels";
 import {
   bot,
   channel,
@@ -70,6 +85,19 @@ vi.mock("./relay-removal", () => ({
   removeRelayAgent: records.removeAgent,
 }));
 
+// Config channels are off in the app; lifecycle tests hand the service one
+// community's config through this.
+const communityFake = vi.hoisted(() => ({
+  value: null as unknown,
+}));
+vi.mock("./community-config", async (actual) => ({
+  ...(await actual<typeof import("./community-config")>()),
+  communityConfig: async (input: unknown) =>
+    typeof communityFake.value === "function"
+      ? communityFake.value(input)
+      : communityFake.value,
+}));
+
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
@@ -83,6 +111,8 @@ async function setup({
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
+  models = async () => {},
+  extraType = undefined as AgentType | undefined,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -152,24 +182,28 @@ async function setup({
         },
       },
     }),
-    models: async () => ({
-      current: "fast",
-      models: [
-        {
-          id: "fast",
-          label: "Fast",
-          efforts: [
-            { id: "low", label: "Low" },
-            { id: "high", label: "High" },
-          ],
-        },
-        { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
-      ],
-    }),
+    models: async () => {
+      await models();
+      return {
+        current: "fast",
+        models: [
+          {
+            id: "fast",
+            label: "Fast",
+            efforts: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+          { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
+        ],
+      };
+    },
     run,
     ...(runOnce ? { runOnce } : {}),
   };
   plugin.agents.register(type);
+  if (extraType) plugin.agents.register(extraType);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   return {
     activity,
@@ -5798,4 +5832,1367 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+describe("Delete as a recoverable archive", () => {
+  type Life = "active" | "archiving" | "archived" | "recovering";
+  /** One community's config whose archive state lands in the service's own
+   * lifecycle journal, as the real one's does. */
+  function fakeConfig() {
+    const life = { next: "archived" as Life };
+    let journals: ConfigJournals | undefined;
+    let community = "";
+    const put = (state: Life) =>
+      journals?.lifecycle.put(
+        community,
+        bot,
+        state === "active" ? undefined : { state, channel: "cfg" },
+      );
+    const config = {
+      life,
+      archive: vi.fn(async () => {
+        put(life.next);
+        return life.next;
+      }),
+      recover: vi.fn(async () => {
+        put("active");
+        return "active";
+      }),
+      save: vi.fn(async (): Promise<Record<string, unknown>> => ({})),
+      resume: vi.fn(async () => {}),
+      attach: vi.fn(async () => []),
+      binding: () => undefined,
+      teams: () => undefined,
+      settled: () => true,
+      dispose() {},
+    };
+    const open = (input: CommunityConfigInput) => {
+      journals = input.journals;
+      community = input.community;
+      return config;
+    };
+    return Object.assign(open, config);
+  }
+  afterEach(() => {
+    communityFake.value = null;
+  });
+  const mention = (f: Awaited<ReturnType<typeof setup>>, id: string) =>
+    f.emit({
+      events: [
+        event(id, {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+
+  it("archives instead of deleting, keeps the key, and blocks starts until recovered", async () => {
+    const config = fakeConfig();
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    await f.service.remove(bot);
+    expect(config.archive).toHaveBeenCalledWith(bot);
+    expect(f.native.remove).not.toHaveBeenCalled();
+    expect(f.service.snapshot().agents.map((a) => a.pubkey)).not.toContain(bot);
+    mention(f, "1");
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "This agent is deleted; recover it from Settings",
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+    await f.service.recover(bot);
+    expect(config.recover).toHaveBeenCalledWith(bot);
+    mention(f, "2");
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    await f.ctx.fiber.dispose();
+  });
+
+  it("keeps starts blocked while an archive is unconfirmed, and says so", async () => {
+    const config = fakeConfig();
+    config.life.next = "archiving";
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    await f.service.remove(bot);
+    expect(f.service.find(bot)?.lifecycle).toBe("archiving");
+    mention(f, "1");
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({ state: "error" }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+    await f.ctx.fiber.dispose();
+  });
+
+  it("never deletes, edits or starts locally an agent synced before, while its community is unavailable", async () => {
+    // A restart onto a relay that is down or no longer supports config
+    // channels: only the persisted journal says the agent synced.
+    const storage = memoryStorage();
+    new MigrationJournal(storage).put(
+      {
+        owner: viewer,
+        community: "https://relay.example.test",
+        subject: alder,
+        type: "buzz.agent.instructions",
+        channel: "",
+      },
+      { status: "confirmed", channelId: "cfg", d: "x", attempts: 1 },
+    );
+    const f = await setup({ storage, identities: [here(alder)] });
+    await expect(f.service.remove(alder)).rejects.toThrow(
+      "Alder's config syncs through its community, which isn't connected.",
+    );
+    expect(f.native.beginDelete).not.toHaveBeenCalled();
+    expect(f.native.remove).not.toHaveBeenCalled();
+    await expect(
+      f.service.save(alder, { config: { reply: "local edit" } }),
+    ).rejects.toThrow("isn't connected");
+    mention(f, "1");
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({ state: "error" }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+    await f.ctx.fiber.dispose();
+  });
+
+  it("saves through the community with the editor's base, and never reports an unconfirmed save as saved", async () => {
+    const config = fakeConfig();
+    config.save.mockResolvedValue({
+      instructions: {
+        status: "uncertain",
+        message: "may have been saved",
+        retired: false,
+      },
+    });
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    const base = { instructions: null };
+    await expect(
+      f.service.save(bot, { config: { reply: "edit" }, base }),
+    ).rejects.toThrow();
+    expect(config.save).toHaveBeenCalledWith(
+      expect.objectContaining({ pubkey: bot }),
+      { reply: "edit" },
+      base,
+    );
+    await f.ctx.fiber.dispose();
+  });
+
+  /** The real per-agent config wiring over an in-memory config relay that
+   * outlives each service, so restarts and reconnects meet the same heads. */
+  function configRelay(
+    teams: () => Promise<
+      { id: string; archived: boolean; label: string; members?: string[] }[]
+    > = async () => [],
+  ) {
+    const owner = keypair();
+    const heads = new Map<string, RelayEvent>();
+    /** Config channels by subject label, as the relay keeps them. */
+    const channels = new Map<
+      string,
+      { id: string; family: string; archived: boolean; members: string[] }
+    >();
+    const archiveChannel = (id: string, archived: boolean) => {
+      for (const channel of channels.values())
+        if (channel.id === id) channel.archived = archived;
+    };
+    /** While set, no config channel can be made. */
+    const offline = { value: false };
+    /** While set, the relay takes each revision only once it settles. */
+    const held: { value?: Promise<void> | undefined } = {};
+    const publishing = vi.fn();
+    const addMember = vi.fn(async (id: string, pubkey: string) => {
+      const found = [...channels.values()].find((c) => c.id === id);
+      if (found && !found.members.includes(pubkey)) found.members.push(pubkey);
+      return { status: "confirmed" as const };
+    });
+    const key = (event: RelayEvent) =>
+      event.tags.find(([name]) => name === "d")?.[1] ?? "";
+    const opens = vi.fn((input: CommunityConfigInput) =>
+      agentConfigs({
+        channels: {
+          ensure: vi.fn(async () => {
+            if (offline.value) throw new Error("Offline");
+            return {
+              id: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+              archived: false,
+            };
+          }),
+          teams: vi.fn(async () => [
+            ...(await teams()),
+            ...[...channels].map(([label, channel]) => ({ ...channel, label })),
+          ]),
+          addMember,
+          owns: vi.fn(async () => true),
+          archive: vi.fn(async (id: string) => archiveChannel(id, true)),
+          unarchive: vi.fn(async (id: string) => archiveChannel(id, false)),
+          archived: vi.fn(async () => false),
+        },
+        teamJournal: input.journals.teams,
+        lifecycle: input.journals.lifecycle,
+        sync: {
+          // A team channel's first read installs its head, as sync's does.
+          bind: vi.fn(
+            async (
+              bindings: readonly {
+                family: string;
+                subject: string;
+                channel: string;
+              }[],
+            ) => {
+              for (const { family, subject, channel } of bindings) {
+                if (family !== "team-config") continue;
+                const head = [...heads.values()].find((event) =>
+                  event.tags.some(
+                    ([name, value]) => name === "h" && value === channel,
+                  ),
+                );
+                const artifact = {
+                  owner: input.owner,
+                  community: input.community,
+                  subject,
+                  channel,
+                  type: "buzz.team" as const,
+                };
+                if (head)
+                  input.store.applyRead(
+                    artifact,
+                    input.store.capture(artifact),
+                    {
+                      kind: "head",
+                      event: head,
+                    },
+                  );
+              }
+            },
+          ),
+          unbind: vi.fn(),
+          dispose() {},
+        },
+        deps: {
+          read: async (filters) =>
+            [...heads.values()].filter((event) =>
+              filters.some((filter) =>
+                (filter["#d"] ?? []).includes(key(event)),
+              ),
+            ),
+          writer: {
+            sign: async (template) => signed(owner, template),
+            async publish(event) {
+              publishing(event);
+              await held.value;
+              const head = heads.get(key(event));
+              const prev = event.tags.find(([name]) => name === "prev")?.[1];
+              if (!head || prev === head.id) heads.set(key(event), event);
+            },
+          },
+          store: input.store,
+          journal: input.journals.migration,
+          maxEventBytes: ARTIFACT_MAX_EVENT_BYTES,
+          signal: new AbortController().signal,
+        },
+        owner: input.owner,
+        community: input.community,
+        strip: input.strip,
+        changed: input.changed,
+      }),
+    );
+    /** Team `id`, made on another device: its config channel and head. */
+    const remoteTeam = async (id: string, members: string[]) => {
+      const channelId = crypto.randomUUID();
+      channels.set(await teamSubject(id), {
+        id: channelId,
+        family: "team-config",
+        archived: false,
+        members: [viewer, ...members],
+      });
+      const head = await signed(owner, {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({
+          version: 1,
+          name: "Remote",
+          instructions: "TEAM RULE",
+        }),
+        tags: [
+          ["ar", "1"],
+          ["d", await artifactD("buzz.team", channelId)],
+          ["h", channelId],
+          ["type", "buzz.team"],
+          ["title", "Remote"],
+          ["op", "create"],
+          ["team", id],
+        ],
+      });
+      heads.set(key(head), head);
+      return channelId;
+    };
+    return {
+      opens,
+      heads,
+      addMember,
+      channels,
+      offline,
+      held,
+      remoteTeam,
+      publishing,
+    };
+  }
+  const mentionAlder = (f: Awaited<ReturnType<typeof setup>>, id: string) =>
+    f.emit({
+      events: [
+        event(id, {
+          tags: [
+            ["h", channel],
+            ["p", alder],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+
+  it("with config sync on, keeps a synced agent's authority across reconnect, downgrade and restart", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const f = await setup({ storage, identities: [here(alder)] });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    expect(relay.heads.size).toBe(1);
+    // A new session opens a new community config; the agent stays synced.
+    f.reconnecting();
+    f.connect(true);
+    await vi.waitFor(() => expect(relay.opens).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    mentionAlder(f, "1");
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    // The relay stops supporting config channels on the next session.
+    communityFake.value = null;
+    f.reconnecting();
+    f.connect(true);
+    await settle();
+    await expect(f.service.remove(alder)).rejects.toThrow("isn't connected");
+    await expect(
+      f.service.save(alder, { config: { reply: "local edit" } }),
+    ).rejects.toThrow("isn't connected");
+    expect(f.native.beginDelete).not.toHaveBeenCalled();
+    expect(f.native.remove).not.toHaveBeenCalled();
+    // Starts still come from the confirmed synced copy.
+    mentionAlder(f, "2");
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    await f.ctx.fiber.dispose();
+    // A restart while the relay still can't sync keeps every refusal.
+    const again = await setup({ storage, identities: [here(alder)] });
+    await expect(again.service.remove(alder)).rejects.toThrow(
+      "isn't connected",
+    );
+    expect(again.native.remove).not.toHaveBeenCalled();
+    await again.ctx.fiber.dispose();
+  });
+
+  it("with config sync on, blocks a member's start while its team can't be read, and shows the team safely", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      TEAMS_MIGRATION_KEY,
+      JSON.stringify({
+        version: 1,
+        known: {
+          [`https://relay.example.test\n${viewer}`]: [
+            {
+              id: "5d2f6c1e-0d7b-4c51-9a63-2a9a1a0c7e11",
+              channel: "0c9e7a52-3b1d-4f6e-8a20-6d4b2f9e1c33",
+              archived: false,
+              unreadable: false,
+              members: [alder],
+            },
+          ],
+        },
+      }),
+    );
+    const relay = configRelay(async () => [
+      {
+        id: "0c9e7a52-3b1d-4f6e-8a20-6d4b2f9e1c33",
+        archived: false,
+        label: "unproven",
+        members: [viewer, alder],
+      },
+    ]);
+    communityFake.value = relay.opens;
+    const f = await setup({ storage, identities: [here(alder)] });
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({
+          id: "5d2f6c1e-0d7b-4c51-9a63-2a9a1a0c7e11",
+          members: [alder],
+          note: UNREADABLE_TEAM,
+        }),
+      ]),
+    );
+    mentionAlder(f, "1");
+    await settle();
+    expect(f.run).not.toHaveBeenCalled();
+    await f.ctx.fiber.dispose();
+  });
+
+  it("keeps team sections while a synced community is unavailable", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await f.service.saveTeam({
+        name: "Core",
+        instructions: "TEAM RULE",
+        members: [alder],
+      });
+      mentionAlder(f, "before");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("TEAM RULE");
+      communityFake.value = null;
+      f.reconnecting();
+      f.connect(true);
+      await settle();
+      mentionAlder(f, "after");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+      expect(f.run.mock.calls[1]?.[0].team).toContain("TEAM RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("blocks an unreadable team even with a cached present head", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const team = { id: "5d2f6c1e-0d7b-4c51-9a63-2a9a1a0c7e11" };
+      await relay.remoteTeam(team.id, [alder]);
+      const config = relay.opens.mock.results[0]?.value;
+      await config?.refreshTeams();
+      mentionAlder(f, "before");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("TEAM RULE");
+      const synced = config
+        ?.teams()
+        ?.find((t: { id: string }) => t.id === team.id);
+      if (!config || !synced) throw new Error("no synced team");
+      for (const [d, head] of relay.heads)
+        if (
+          head.tags.some(
+            ([name, value]) => name === "h" && value === synced.channel,
+          )
+        )
+          relay.heads.delete(d);
+      config.rosterChanged(synced.channel);
+      await vi.waitFor(() =>
+        expect(
+          f.service.snapshot().teams.find((t) => t.id === team.id)?.note,
+        ).toBe(UNREADABLE_TEAM),
+      );
+      mentionAlder(f, "after");
+      await settle();
+      expect(f.run).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  /** A device that found team `id`, made on another device, in its
+   * community; `away` then loses the community. */
+  async function foundRemoteTeam(away: boolean) {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    const id = "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+    await relay.remoteTeam(id, [alder]);
+    await relay.opens.mock.results[0]?.value.refreshTeams();
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams).toEqual([
+        expect.objectContaining({ id, name: "Remote", members: [alder] }),
+      ]),
+    );
+    if (away) {
+      communityFake.value = null;
+      f.reconnecting();
+      f.connect(true);
+      await settle();
+    }
+    return { f, id };
+  }
+
+  for (const away of [false, true])
+    it(`refuses Edit and Delete of a team found on the relay while its community is ${away ? "unavailable" : "available"}, writing nothing locally`, async () => {
+      const { f, id } = await foundRemoteTeam(away);
+      try {
+        const before = {
+          teams: f.storage.getItem(TEAMS_KEY),
+          journal: f.storage.getItem(TEAMS_MIGRATION_KEY),
+        };
+        const refusal = "Synced teams can't be changed in this version yet";
+        await expect(
+          f.service.saveTeam({
+            id,
+            name: "Changed",
+            instructions: "",
+            members: [alder],
+          }),
+        ).rejects.toThrow(refusal);
+        await expect(f.service.removeTeam(id)).rejects.toThrow(refusal);
+        expect({
+          teams: f.storage.getItem(TEAMS_KEY),
+          journal: f.storage.getItem(TEAMS_MIGRATION_KEY),
+        }).toEqual(before);
+        expect(readTeams(f.storage)).toEqual([]);
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    });
+
+  it("with config sync on, creates, edits and deletes a new team on this device only", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const team = await f.service.saveTeam({
+        name: "Core",
+        instructions: "TEAM RULE",
+        members: [alder],
+      });
+      expect(readTeams(f.storage)).toEqual([team]);
+      const edited = await f.service.saveTeam({ ...team, name: "Renamed" });
+      expect(readTeams(f.storage)).toEqual([edited]);
+      const types = [...relay.heads.values()].flatMap((head) =>
+        head.tags.filter(([name]) => name === "type").map(([, type]) => type),
+      );
+      expect(types).not.toContain("buzz.team");
+      expect(relay.channels.size).toBe(0);
+      await f.service.removeTeam(team.id);
+      expect(readTeams(f.storage)).toEqual([]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it.each([
+    ["another community", viewer, "https://not-joined.example.test"],
+    ["another owner", "e".repeat(64), "https://relay.example.test"],
+  ])(
+    "with config sync on, keeps local team rules when a same-id relay team is known for %s",
+    async (_, owner, community) => {
+      const relay = configRelay();
+      communityFake.value = relay.opens;
+      const id = "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+      const storage = memoryStorage();
+      writeTeams(storage, [
+        {
+          id,
+          name: "Local",
+          instructions: "SCOPED LOCAL RULE",
+          members: [alder],
+        },
+      ]);
+      storage.setItem(
+        TEAMS_MIGRATION_KEY,
+        JSON.stringify({
+          version: 1,
+          known: {
+            [`${community}\n${owner}`]: [
+              {
+                id,
+                channel: crypto.randomUUID(),
+                archived: false,
+                unreadable: false,
+                members: [],
+              },
+            ],
+          },
+        }),
+      );
+      const f = await setup({ identities: [here(alder)], storage });
+      try {
+        await vi.waitFor(() =>
+          expect(f.service.find(alder)?.configBase).toBeDefined(),
+        );
+        await relay.opens.mock.results[0]?.value.refreshTeams();
+        mentionAlder(f, "foreign-discovery");
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+        expect(f.run.mock.calls[0]?.[0].team).toContain("SCOPED LOCAL RULE");
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it("with config sync on, keeps local team rules after empty relay discovery", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await f.service.saveTeam({
+        name: "Local",
+        instructions: "LOCAL RULE MUST REMAIN",
+        members: [alder],
+      });
+      await relay.opens.mock.results[0]?.value.refreshTeams();
+      mentionAlder(f, "local-after-discovery");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("LOCAL RULE MUST REMAIN");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, runs with both local and relay team rules", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      await f.service.saveTeam({
+        name: "Local",
+        instructions: "LOCAL RULE MUST REMAIN",
+        members: [alder],
+      });
+      mentionAlder(f, "before-discovery");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("LOCAL RULE MUST REMAIN");
+      await relay.remoteTeam("7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f", [alder]);
+      const config = relay.opens.mock.results[0]?.value;
+      if (!config) throw new Error("No community config");
+      await config.refreshTeams();
+      mentionAlder(f, "after-discovery");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+      expect(f.run.mock.calls[1]?.[0].team).toContain("TEAM RULE");
+      expect(f.run.mock.calls[1]?.[0].team).toContain("LOCAL RULE MUST REMAIN");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, uses the relay team over a local team with the same id", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const local = await f.service.saveTeam({
+        name: "Local",
+        instructions: "LOCAL COPY MUST GO",
+        members: [alder],
+      });
+      await relay.remoteTeam(local.id, [alder]);
+      await relay.opens.mock.results[0]?.value.refreshTeams();
+      mentionAlder(f, "same-id");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("TEAM RULE");
+      expect(f.run.mock.calls[0]?.[0].team).not.toContain("LOCAL COPY MUST GO");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, keeps the relay team over its local copy when the community disconnects during model selection", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const selecting = vi.fn(() => gate);
+    const f = await setup({ identities: [here(alder)], models: selecting });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const local = await f.service.saveTeam({
+        name: "Local",
+        instructions: "LOCAL COPY MUST GO",
+        members: [alder],
+      });
+      await relay.remoteTeam(local.id, [alder]);
+      await relay.opens.mock.results[0]?.value.refreshTeams();
+      f.emit({
+        events: [
+          event("disconnect-during-pick", {
+            pubkey: viewer,
+            tags: [
+              ["h", channel],
+              ["p", alder],
+              ["model", alder, "fast"],
+            ],
+          }),
+        ],
+        channelId: channel,
+      });
+      await vi.waitFor(() => expect(selecting).toHaveBeenCalledTimes(1));
+      f.connect(false);
+      expect(f.service.snapshot().running).toEqual([]);
+      release();
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].team).toContain("TEAM RULE");
+      expect(f.run.mock.calls[0]?.[0].team).not.toContain("LOCAL COPY MUST GO");
+    } finally {
+      release();
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, leaves hosted agents out of config sync", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    const { type, remote } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    await settle();
+    expect(relay.heads.size).toBe(1);
+    expect(relay.addMember).toHaveBeenCalledWith(
+      expect.any(String),
+      alder,
+      expect.anything(),
+    );
+    expect(relay.addMember).not.toHaveBeenCalledWith(
+      expect.anything(),
+      hostedKey,
+      expect.anything(),
+    );
+    expect(f.service.find(hostedKey)?.configBase).toBeUndefined();
+    // Delete stays the provider's, never an archive in config channels.
+    await f.service.remove(hostedKey);
+    expect(remote.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ pubkey: hostedKey }),
+    );
+    await f.ctx.fiber.dispose();
+  });
+
+  async function syncedGoose() {
+    const { GooseRuntime, DEFAULT_CONFIG } = await import(
+      "../../bundled/goose/runtime"
+    );
+    const { gooseRun } = await import("../../bundled/goose/run");
+    const { fakeSpawn } = await import("../../bundled/goose/goose-testing");
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const process = fakeSpawn();
+    let relayData: ReturnType<typeof fakeRelay>["relay"] | undefined;
+    const runtime = new GooseRuntime(
+      { spawn: process.spawn, serveMcp: process.serve } as never,
+      () => relayData,
+      async () => null,
+      storage,
+    );
+    const f = await setup({
+      storage,
+      identities: [{ ...here(bot), type: "example/goose" }],
+      extraType: {
+        id: "goose",
+        title: "Goose",
+        defaults: () => ({
+          config: {
+            ...DEFAULT_CONFIG,
+            workspace: "/tmp/review-goose",
+            instructions: "CONFIG A",
+            model: "model-a",
+          },
+        }),
+        ...gooseRun(runtime),
+      },
+    });
+    relayData = f.relay;
+    Object.assign(f.session, {
+      profiles: { ensure: async () => {}, snapshot: () => new Map() },
+      names: { resolve: () => "Owner" },
+    });
+    const sync = () =>
+      runtime.sync(
+        f.service.snapshot().running.filter((a) => a.type === "example/goose"),
+      );
+    const off = f.service.subscribe(sync);
+    sync();
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.configBase?.instructions).toBeTruthy(),
+    );
+    await relay.opens.mock.results[0]?.value.reconnected();
+    const first = event("1".repeat(64), {
+      pubkey: viewer,
+      tags: [
+        ["h", channel],
+        ["p", bot],
+      ],
+      created_at: Math.floor(Date.now() / 1000) + 1,
+    });
+    const deliver = (id: string) =>
+      f.emit({
+        events: [
+          {
+            ...first,
+            id: id.padEnd(64, "0"),
+            tags: [...first.tags, ["e", first.id, "", "reply"]],
+          },
+        ],
+        channelId: channel,
+      });
+    f.emit({ events: [first], channelId: channel });
+    await vi.waitFor(() => expect(process.geese[0]?.turns).toHaveLength(1));
+    await vi.waitFor(() => expect(runtime.sessions(bot)[0]?.busy).toBe(false));
+    expect(
+      process.geese[0]?.prompts.get(
+        process.geese[0]?.turns[0]?.sessionId ?? "",
+      ),
+    ).toContain("CONFIG A");
+    const save = (model = "model-b", instructions = "CONFIG B") => {
+      const agent = f.service.find(bot);
+      if (!agent) throw new Error("no agent");
+      return f.service.save(bot, {
+        config: {
+          ...(agent.config as object),
+          instructions,
+          model,
+        },
+        ...(agent.configBase ? { base: agent.configBase } : {}),
+      });
+    };
+    return {
+      f,
+      relay,
+      storage,
+      runtime,
+      process,
+      deliver,
+      save,
+      close: async () => {
+        off();
+        runtime.dispose();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it("applies an accepted synced Save through the real Goose subscription and next turn", async () => {
+    const g = await syncedGoose();
+    let accept!: () => void;
+    g.relay.held.value = new Promise((resolve) => {
+      accept = resolve;
+    });
+    try {
+      const before = g.relay.publishing.mock.calls.length;
+      const saving = g.save();
+      await vi.waitFor(() =>
+        expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+      );
+      accept();
+      await saving;
+      g.deliver("2".repeat(64));
+      await vi.waitFor(() => expect(g.process.geese[0]?.turns).toHaveLength(2));
+      expect(
+        g.process.geese[0]?.prompts.get(
+          g.process.geese[0]?.turns[1]?.sessionId ?? "",
+        ),
+      ).toContain("CONFIG B");
+      expect(g.runtime.outdated(bot, g.f.service.find(bot)?.config)).toBe(
+        false,
+      );
+    } finally {
+      accept();
+      await g.close();
+    }
+  });
+
+  it("keeps a newer local draft when an earlier Save is accepted", async () => {
+    const g = await syncedGoose();
+    let accept!: () => void;
+    g.relay.held.value = new Promise((resolve) => {
+      accept = resolve;
+    });
+    try {
+      const before = g.relay.publishing.mock.calls.length;
+      const savingB = g.save("model-a");
+      await vi.waitFor(() =>
+        expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+      );
+      // Edited again while B is unconfirmed, from the same opened head.
+      const savingC = g.save("model-a", "CONFIG C");
+      const refusal = expect(savingC).rejects.toThrow("kept as a draft");
+      accept();
+      await savingB;
+      await refusal;
+      // B is the head now, but C is still this device's stored draft.
+      expect(g.storage.getItem("buzz.agents.v1")).toContain("CONFIG C");
+    } finally {
+      accept();
+      g.relay.held.value = undefined;
+      await g.close();
+    }
+  });
+
+  it.each([
+    ["direct", "instructions"],
+    ["reconnect", "instructions"],
+    ["direct", "settings"],
+    ["reconnect", "settings"],
+  ])(
+    "applies accepted Save B while retaining draft C on %s for %s",
+    async (mode, side) => {
+      const g = await syncedGoose();
+      let accept!: () => void;
+      let reject!: (e: Error) => void;
+      g.relay.held.value = new Promise((yes, no) => {
+        accept = yes;
+        reject = no;
+      });
+      try {
+        const seen: unknown[] = [];
+        const off = g.f.service.subscribe(() =>
+          seen.push(g.f.service.find(bot)?.config),
+        );
+        const before = g.relay.publishing.mock.calls.length;
+        const savingB =
+          side === "instructions"
+            ? g.save("model-a")
+            : g.save("model-b", "CONFIG A");
+        const refusalB =
+          mode === "reconnect" ? expect(savingB).rejects.toThrow() : undefined;
+        await vi.waitFor(() =>
+          expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+        );
+        if (mode === "reconnect") {
+          reject(new Error("connection lost"));
+          await refusalB;
+        }
+        const savingC =
+          side === "instructions"
+            ? g.save("model-a", "CONFIG C")
+            : g.save("model-c", "CONFIG A");
+        const refusalC = expect(savingC).rejects.toThrow();
+        if (mode === "direct") accept();
+        else {
+          const beforeC = g.relay.publishing.mock.calls.length;
+          await vi.waitFor(() =>
+            expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(
+              beforeC,
+            ),
+          );
+          reject(new Error("connection lost again"));
+        }
+        if (mode === "direct") await savingB;
+        await refusalC;
+        g.relay.held.value = undefined;
+        if (mode === "reconnect")
+          await g.relay.opens.mock.results[0]?.value.reconnected();
+        expect(g.storage.getItem("buzz.agents.v1")).toContain(
+          side === "instructions" ? "CONFIG C" : "model-c",
+        );
+        const shown = g.f.service.find(bot)?.config as {
+          instructions: string;
+          model: string;
+        };
+        if (side === "instructions")
+          expect(shown.instructions).toBe("CONFIG B");
+        else expect(shown.model).toBe("model-b");
+        off();
+        for (const value of seen) {
+          const view = value as { instructions?: string; model?: string };
+          expect(view.instructions).not.toBe("CONFIG C");
+          expect(view.model).not.toBe("model-c");
+        }
+        g.deliver("4".repeat(64));
+        await vi.waitFor(() =>
+          expect(g.process.geese[0]?.turns).toHaveLength(2),
+        );
+        const prompt = g.process.geese[0]?.prompts.get(
+          g.process.geese[0]?.turns[1]?.sessionId ?? "",
+        );
+        if (side === "instructions") {
+          expect(prompt).toContain("CONFIG B");
+          expect(prompt).not.toContain("CONFIG C");
+        } else {
+          expect(
+            g.process.geese[0]?.configured.some((change) =>
+              change.endsWith("model=model-b"),
+            ),
+          ).toBe(true);
+          expect(
+            g.process.geese[0]?.configured.some((change) =>
+              change.endsWith("model=model-c"),
+            ),
+          ).toBe(false);
+          expect(g.runtime.outdated(bot, shown)).toBe(false);
+        }
+      } finally {
+        accept();
+        g.relay.held.value = undefined;
+        await g.close();
+      }
+    },
+  );
+
+  it("applies a History revert in an existing Goose conversation", async () => {
+    const g = await syncedGoose();
+    try {
+      const first = g.f.service
+        .configHistory(bot)
+        ?.sides.find((s) => s.side === "instructions")?.head;
+      if (!first) throw new Error("no original head");
+      await g.save("model-a");
+      g.deliver("5".repeat(64));
+      await vi.waitFor(() => expect(g.process.geese[0]?.turns).toHaveLength(2));
+      await vi.waitFor(() =>
+        expect(g.runtime.sessions(bot)[0]?.busy).toBe(false),
+      );
+      expect(
+        g.process.geese[0]?.prompts.get(
+          g.process.geese[0]?.turns[1]?.sessionId ?? "",
+        ),
+      ).toContain("CONFIG B");
+      const history = g.f.service.configHistory(bot);
+      const side = history?.sides.find((s) => s.side === "instructions");
+      if (!history || !side?.head) throw new Error("no History");
+      expect(
+        await history.revise(
+          "instructions",
+          revertTemplate(side.expected, side.head, first),
+        ),
+      ).toEqual({ status: "accepted" });
+      expect(
+        (g.f.service.find(bot)?.config as { instructions?: string } | undefined)
+          ?.instructions,
+      ).toBe("CONFIG A");
+      g.deliver("6".repeat(64));
+      await vi.waitFor(() => expect(g.process.geese[0]?.turns).toHaveLength(3));
+      expect(
+        g.process.geese[0]?.prompts.get(
+          g.process.geese[0]?.turns[2]?.sessionId ?? "",
+        ),
+      ).toContain("CONFIG A");
+    } finally {
+      await g.close();
+    }
+  });
+
+  it("never overlays draft C onto an accepted settings head that omits a setting", async () => {
+    const g = await syncedGoose();
+    let accept!: () => void;
+    g.relay.held.value = new Promise((resolve) => {
+      accept = resolve;
+    });
+    try {
+      const opened = g.f.service.find(bot);
+      const historyBefore = g.f.service.configHistory(bot);
+      const settingsBefore = historyBefore?.sides.find(
+        (side) => side.side === "settings",
+      );
+      if (!opened || !historyBefore || !settingsBefore?.head)
+        throw new Error("no agent settings History");
+      const body = JSON.parse(settingsBefore.head.content);
+      delete body.settings.model;
+      body.settings.scope = "channel";
+      const before = g.relay.publishing.mock.calls.length;
+      const savingB = historyBefore.revise(
+        "settings",
+        artifactTemplate({
+          ...settingsBefore.expected,
+          title: "Settings",
+          content: JSON.stringify(body),
+          op: "update",
+          prev: settingsBefore.head.id,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+      );
+      const savingC = g.f.service.save(bot, {
+        config: {
+          ...(opened.config as object),
+          scope: "channel",
+          model: "model-c",
+        },
+        ...(opened.configBase ? { base: opened.configBase } : {}),
+      });
+      const refusal = expect(savingC).rejects.toThrow("kept as a draft");
+      accept();
+      expect(await savingB).toEqual({ status: "accepted" });
+      await refusal;
+      expect(g.storage.getItem("buzz.agents.v1")).toContain("model-c");
+      const history = g.f.service
+        .configHistory(bot)
+        ?.sides.find((side) => side.side === "settings");
+      expect(
+        JSON.parse(history?.head?.content ?? "{}").settings,
+      ).not.toHaveProperty("model");
+      const shown = g.f.service.find(bot)?.config as { model?: string };
+      // Complete an actual next turn before inspecting the process boundary.
+      g.deliver("a".repeat(64));
+      await vi.waitFor(() => expect(g.process.geese[0]?.turns).toHaveLength(2));
+      await vi.waitFor(() =>
+        expect(g.runtime.sessions(bot)[0]?.busy).toBe(false),
+      );
+      expect.soft(shown.model).not.toBe("model-c");
+      expect
+        .soft(
+          g.process.geese[0]?.configured.some((change) =>
+            change.endsWith("model=model-c"),
+          ),
+        )
+        .toBe(false);
+    } finally {
+      accept();
+      g.relay.held.value = undefined;
+      await g.close();
+    }
+  });
+
+  it("applies a settings History revert and direct revise to an existing Goose conversation", async () => {
+    const g = await syncedGoose();
+    const next = async (id: string, model: string) => {
+      const count = g.process.geese[0]?.turns.length ?? 0;
+      g.deliver(id.repeat(64));
+      await vi.waitFor(() =>
+        expect(g.process.geese[0]?.turns).toHaveLength(count + 1),
+      );
+      await vi.waitFor(() =>
+        expect(g.runtime.sessions(bot)[0]?.busy).toBe(false),
+      );
+      expect(g.process.geese[0]?.configured.at(-1)).toMatch(
+        new RegExp(`model=${model}$`),
+      );
+    };
+    try {
+      const first = g.f.service
+        .configHistory(bot)
+        ?.sides.find((s) => s.side === "settings")?.head;
+      if (!first) throw new Error("no settings head");
+      await g.save("model-b", "CONFIG A");
+      await next("7", "model-b");
+      const history = g.f.service.configHistory(bot);
+      const side = history?.sides.find((s) => s.side === "settings");
+      if (!history || !side?.head) throw new Error("no History");
+      expect(
+        await history.revise(
+          "settings",
+          revertTemplate(side.expected, side.head, first, history.settings),
+        ),
+      ).toEqual({ status: "accepted" });
+      await next("8", "model-a");
+      const updated = g.f.service
+        .configHistory(bot)
+        ?.sides.find((s) => s.side === "settings");
+      if (!updated?.head) throw new Error("no updated head");
+      expect(
+        await history.revise(
+          "settings",
+          artifactTemplate({
+            ...updated.expected,
+            title: "Settings",
+            content: JSON.stringify({
+              ...JSON.parse(updated.head.content),
+              settings: {
+                ...JSON.parse(updated.head.content).settings,
+                model: "model-d",
+              },
+            }),
+            op: "update",
+            prev: updated.head.id,
+          }),
+        ),
+      ).toEqual({ status: "accepted" });
+      await next("9", "model-d");
+    } finally {
+      await g.close();
+    }
+  });
+
+  it("does not consume more local-save tokens on settled reconnects", async () => {
+    const g = await syncedGoose();
+    try {
+      await g.save();
+      const accepted = g.f.service.find(bot)?.saves;
+      const config = g.relay.opens.mock.results[0]?.value;
+      await config.reconnected();
+      await config.reconnected();
+      expect(g.f.service.find(bot)?.saves).toBe(accepted);
+    } finally {
+      await g.close();
+    }
+  });
+
+  it("applies a held synced Save to an existing Goose conversation when reconnect accepts it", async () => {
+    const g = await syncedGoose();
+    let reject!: (error: Error) => void;
+    g.relay.held.value = new Promise((_, no) => {
+      reject = no;
+    });
+    try {
+      const before = g.relay.publishing.mock.calls.length;
+      const saving = g.save("model-a");
+      const refusal = expect(saving).rejects.toThrow();
+      await vi.waitFor(() =>
+        expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+      );
+      reject(new Error("connection lost before acceptance"));
+      await refusal;
+      g.relay.held.value = undefined;
+      const config = g.relay.opens.mock.results[0]?.value;
+      await config.reconnected();
+      const accepted = g.f.service.find(bot)?.config as
+        | { instructions?: string }
+        | undefined;
+      expect(accepted?.instructions).toBe("CONFIG B");
+      g.deliver("3".repeat(64));
+      await vi.waitFor(() => expect(g.process.geese[0]?.turns).toHaveLength(2));
+      expect(
+        g.process.geese[0]?.prompts.get(
+          g.process.geese[0]?.turns[1]?.sessionId ?? "",
+        ),
+      ).toContain("CONFIG B");
+      expect(g.runtime.outdated(bot, g.f.service.find(bot)?.config)).toBe(
+        false,
+      );
+    } finally {
+      g.relay.held.value = undefined;
+      await g.close();
+    }
+  });
+
+  it("with config sync on, advances an agent's local-save token once the relay accepts its Save", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    /** Each view a runtime's sync would see: its local-save token and the
+     * instructions it would run on. */
+    const seen: [string, unknown][] = [];
+    const unsubscribe = f.service.subscribe(() => {
+      const agent = f.service.find(alder);
+      if (agent)
+        seen.push([
+          localKey(agent),
+          (agent.config as { instructions?: unknown }).instructions,
+        ]);
+    });
+    const agent = f.service.find(alder);
+    if (!agent?.configBase) throw new Error("not synced");
+    const before = (agent.config as { instructions?: unknown }).instructions;
+    let accept!: () => void;
+    relay.held.value = new Promise((resolve) => {
+      accept = resolve;
+    });
+    const saving = f.service.save(alder, {
+      config: { ...(agent.config as object), instructions: "SAVED HERE" },
+      base: agent.configBase,
+    });
+    await settle();
+    accept();
+    await saving;
+    unsubscribe();
+    expect(seen.at(-1)?.[1]).toBe("SAVED HERE");
+    // The token the saved config arrives with is not one a runtime already
+    // used up on the old config.
+    const spent = seen
+      .filter(([, instructions]) => instructions === before)
+      .map(([key]) => key);
+    expect(spent).not.toContain(seen.at(-1)?.[0]);
+    await f.ctx.fiber.dispose();
+  });
+
+  it("with config sync on, restores a deleted synced side from History, and refuses a stale one", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    await vi.waitFor(() =>
+      expect(f.service.configHistory(alder)?.sides).toHaveLength(1),
+    );
+    const history = f.service.configHistory(alder);
+    const side = history?.sides[0];
+    const first = side?.head;
+    if (!history || !side || !first) throw new Error("no History");
+    expect(side.side).toBe("instructions");
+    // Another device deletes the instructions.
+    const removal = artifactTemplate({
+      ...side.expected,
+      op: "update",
+      prev: first.id,
+      title: "Agent instructions",
+      content: "{}",
+    });
+    const deleted = await signed(keypair(), {
+      ...removal,
+      content: "",
+      tags: removal.tags.map((tag) =>
+        tag[0] === "op" ? ["op", "delete"] : tag,
+      ),
+    });
+    relay.heads.set(side.expected.d, deleted);
+    const store = (f.service as unknown as { configStore: AgentConfigStore })
+      .configStore;
+    const subject = (
+      f.service as unknown as {
+        syncedBinding(agent: unknown): { instructions?: { subject: Subject } };
+      }
+    ).syncedBinding(f.service.find(alder))?.instructions?.subject;
+    if (!subject) throw new Error("not synced");
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: deleted,
+    });
+    expect(f.service.configHistory(alder)?.sides[0]?.head?.id).toBe(deleted.id);
+    const restore = revertTemplate(side.expected, deleted, first);
+    expect(await history.revise("instructions", restore)).toEqual({
+      status: "accepted",
+    });
+    const restored = f.service.configHistory(alder)?.sides[0]?.head;
+    expect(restored?.tags).toContainEqual(["op", "restore"]);
+    expect(restored?.content).toBe(first.content);
+    // A History still showing the deletion builds on a head that moved on.
+    expect(await history.revise("instructions", restore)).toEqual({
+      status: "refused",
+      message: "This config changed on another device",
+    });
+    await f.ctx.fiber.dispose();
+  });
+
+  it("says Delete failed when the archive was definitely refused", async () => {
+    const config = fakeConfig();
+    config.life.next = "active";
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    await expect(f.service.remove(bot)).rejects.toThrow(
+      "Echo couldn't be deleted. Try again.",
+    );
+    await f.ctx.fiber.dispose();
+  });
 });

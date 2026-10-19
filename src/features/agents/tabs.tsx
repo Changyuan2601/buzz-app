@@ -9,14 +9,17 @@ import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type {
   Agent,
   AgentConversation,
+  AgentRestart,
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
 } from "./service";
 import { AgentSaveButton } from "./AgentSaveButton";
+import { AgentConfigHistory } from "./AgentConfigHistory";
+import { Button } from "../../shared/design-system/ui/Button";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:history`, `agent:attention`
    * or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
@@ -57,18 +60,35 @@ export function agentSections({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
     render: () => (
-      <Component
-        agent={agent}
-        {...(role === "settings" && settingsSection ? { settingsSection } : {})}
-        {...(role === "settings" && settingsContent ? { settingsContent } : {})}
-        {...(conversation && { conversation })}
-        save={(config) =>
-          settingsHost?.pendingSave
-            ? settingsHost.pendingSave(config)
-            : agents.save(agent.pubkey, { config })
-        }
-        {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-      />
+      <EditorBase agents={agents} agent={agent}>
+        {(save) => (
+          <>
+            {role === "settings" && type?.restart && (
+              <RestartNotice
+                agents={agents}
+                pubkey={agent.pubkey}
+                restart={type.restart}
+              />
+            )}
+            <Component
+              agent={agent}
+              {...(role === "settings" && settingsSection
+                ? { settingsSection }
+                : {})}
+              {...(role === "settings" && settingsContent
+                ? { settingsContent }
+                : {})}
+              {...(conversation && { conversation })}
+              save={(config) =>
+                settingsHost?.pendingSave
+                  ? settingsHost.pendingSave(config)
+                  : save(config)
+              }
+              {...(role === "settings" && settingsHost ? { settingsHost } : {})}
+            />
+          </>
+        )}
+      </EditorBase>
     ),
   }));
   if (settingsHost && !settingsTab)
@@ -78,13 +98,26 @@ export function agentSections({
       render: () => <HostSettings host={settingsHost} />,
     });
   if (agent.place === "here")
-    tabs.push({
-      value: "agent:attention",
-      label: "Attention",
-      render: () => (
-        <AttentionSection agents={agents} agent={agent} channels={channels} />
-      ),
-    });
+    tabs.push(
+      ...(agents.configHistory(agent.pubkey)
+        ? [
+            {
+              value: "agent:history" as const,
+              label: "History",
+              render: () => (
+                <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />
+              ),
+            },
+          ]
+        : []),
+      {
+        value: "agent:attention",
+        label: "Attention",
+        render: () => (
+          <AttentionSection agents={agents} agent={agent} channels={channels} />
+        ),
+      },
+    );
   return [
     ...tabs,
     {
@@ -93,6 +126,90 @@ export function agentSections({
       render: () => <MemoryPanel agent={agent} memories={memories} />,
     },
   ];
+}
+
+/** Saves a type tab's config as a revision of the synced heads it opened
+ * with, so an edit made over a stale view conflicts instead of overwriting.
+ * Each save moves the base to what it saved. */
+function EditorBase({
+  agents,
+  agent,
+  children,
+}: {
+  agents: Pick<Agents, "save" | "snapshot">;
+  agent: Agent;
+  children(save: (config: unknown) => Promise<void>): ReactNode;
+}) {
+  const [base, setBase] = useState(agent.configBase);
+  return children(async (config) => {
+    await agents.save(agent.pubkey, { config, ...(base && { base }) });
+    setBase(
+      agents.snapshot().agents.find((a) => a.pubkey === agent.pubkey)
+        ?.configBase,
+    );
+  });
+}
+
+/** Shown while a running conversation is on older config than the agent's
+ * current copy, as after an edit on another device: Restart to apply moves
+ * them onto it. */
+function RestartNotice({
+  agents,
+  pubkey,
+  restart,
+}: {
+  agents: Pick<Agents, "find" | "subscribe">;
+  pubkey: string;
+  restart: AgentRestart;
+}) {
+  const outdated = useSyncExternalStore(
+    (listener) => {
+      const offAgents = agents.subscribe(listener);
+      const offSessions = restart.subscribe(listener);
+      return () => {
+        offAgents();
+        offSessions();
+      };
+    },
+    () => {
+      const agent = agents.find(pubkey);
+      return !!agent && restart.outdated(pubkey, agent.config);
+    },
+  );
+  if (!outdated) return null;
+  return (
+    <div role="status" className="flex items-center justify-between gap-3">
+      <p>Running conversations use an older version of this config.</p>
+      <Button onClick={() => restart.apply(pubkey)}>Restart to apply</Button>
+    </div>
+  );
+}
+
+/** Each synced side's History, current as the agent's config changes. */
+function ConfigHistoryTab({
+  agents,
+  pubkey,
+}: {
+  agents: Pick<Agents, "configHistory" | "snapshot" | "subscribe">;
+  pubkey: string;
+}) {
+  useSyncExternalStore(agents.subscribe, agents.snapshot);
+  const history = agents.configHistory(pubkey);
+  if (!history) return <p>This agent's config doesn't sync here.</p>;
+  return history.sides.map(({ side, expected, head, version }) => (
+    <AgentConfigHistory
+      key={side}
+      title={side === "settings" ? "Settings history" : "Instructions history"}
+      expected={expected}
+      head={head}
+      version={version}
+      read={history.read}
+      {...(side === "settings" && history.settings
+        ? { settings: history.settings }
+        : {})}
+      onRevert={(template) => history.revise(side, template)}
+    />
+  ));
 }
 
 function HostSettings({ host }: { host: AgentSettingsHost }) {

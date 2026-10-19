@@ -22,19 +22,23 @@ export type TeamSource = Readonly<{
   members: readonly string[];
 }>;
 
-export type StartInput<C extends object> = Readonly<{
+/** The settings an agent type syncs across devices, and how they merge into
+ * this device's config (`AgentType.syncedSettings`). */
+export type SyncedSettings<C> = Readonly<{
+  schema: SettingsSchema;
+  withSynced(config: C, settings: Readonly<Record<string, string>>): C;
+}>;
+
+export type StartInput<C> = Readonly<{
   store: AgentConfigStore;
   /** This device's row: the launch source in `local`/`migrating`, and the
    * only source of `workspace` and unsynced fields in every mode. */
   local: C;
   agentType: string;
   /** Absent while the agent has no config channel: the type is `local`. */
-  settings?: Readonly<{
-    mode: Mode;
-    subject: Subject;
-    schema: SettingsSchema;
-    withSynced: (config: C, settings: Readonly<Record<string, string>>) => C;
-  }>;
+  settings?: Readonly<{ mode: Mode; subject: Subject }>;
+  /** The type's synced settings; without them, synced settings refuse. */
+  syncedSettings?: SyncedSettings<C>;
   instructions?: Readonly<{ mode: Mode; subject: Subject }>;
   /** Teams from the synced store; `undefined` while teams are still local. */
   teams?: readonly TeamSource[];
@@ -45,8 +49,10 @@ export type Start<C> =
       ok: true;
       config: C;
       teams?: readonly Team[];
-      /** The synced revisions this start used, for "Restart to apply". */
+      /** The synced revisions this start used. */
       revisions: readonly string[];
+      /** The synced settings merged into `config`. */
+      synced?: Readonly<Record<string, string>>;
     }>
   | Readonly<{ ok: false; state: ArtifactState; reason: string }>;
 
@@ -79,7 +85,7 @@ export const isSynced = (
  * A transport failure never changes a stored state, so a confirmed `present`
  * head keeps serving while the relay is unreachable (offline rule, §4.4);
  * `invalid`, `deleted` and lost access block. */
-export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
+export function resolveStart<C>(input: StartInput<C>): Start<C> {
   const { store } = input;
   const synced = (
     side: StartInput<C>["instructions"],
@@ -87,19 +93,28 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
     isSynced(store, side);
   const revisions: string[] = [];
   let config = input.local;
+  let merged: Readonly<Record<string, string>> | undefined;
 
   const { settings } = input;
-  if (settings && synced(settings)) {
+  if (synced(settings)) {
+    const merge = input.syncedSettings;
+    if (!merge)
+      return {
+        ok: false,
+        state: "invalid",
+        reason: "This agent type has no synced settings",
+      };
     const entry = store.state(settings.subject);
     if (entry.state !== "present" || !entry.head)
       return blocked(entry.state, entry.problem, "Settings");
     const read = syncedSettings(
       entry.head.content,
       input.agentType,
-      settings.schema,
+      merge.schema,
     );
     if ("problem" in read) return blocked("invalid", read.problem, "Settings");
-    config = settings.withSynced(config, read.settings);
+    config = merge.withSynced(config, read.settings);
+    merged = read.settings;
     revisions.push(entry.head.id);
   }
   const { instructions } = input;
@@ -110,7 +125,13 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
     config = { ...config, instructions: text.text };
     if (entry.head) revisions.push(entry.head.id);
   }
-  if (!input.teams) return { ok: true, config, revisions };
+  const ok = {
+    ok: true as const,
+    config,
+    revisions,
+    ...(merged && { synced: merged }),
+  };
+  if (!input.teams) return ok;
 
   const teams: Team[] = [];
   for (const team of input.teams) {
@@ -141,7 +162,7 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
     });
     revisions.push(entry.head.id);
   }
-  return { ok: true, config, teams, revisions };
+  return { ...ok, teams };
 }
 
 function teamName(content: string) {
@@ -152,38 +173,3 @@ function teamName(content: string) {
     return "";
   }
 }
-
-/** Why a running agent's config changed. */
-export type Change = "local" | "remote" | "team";
-
-/** Tracks the synced revisions each agent's current run started from (§4.5):
- * a local save restarts that agent; a remote change only marks it "Restart to
- * apply"; a team save restarts no one, and the next start uses the new copy. */
-export class Runs {
-  private readonly started = new Map<string, readonly string[]>();
-  private readonly stale = new Set<string>();
-
-  start(agent: string, revisions: readonly string[]) {
-    this.started.set(agent, revisions);
-    this.stale.delete(agent);
-  }
-  revisions = (agent: string) => this.started.get(agent);
-  restartToApply = (agent: string) => this.stale.has(agent);
-
-  /** What to do with `agent`'s run after a change whose current revisions are
-   * `current`. */
-  changed(
-    agent: string,
-    change: Change,
-    current: readonly string[],
-  ): "restart" | "restart-to-apply" | "none" {
-    const started = this.started.get(agent);
-    if (!started) return "none";
-    if (change === "local") return "restart";
-    if (change === "team" || sameSet(started, current)) return "none";
-    this.stale.add(agent);
-    return "restart-to-apply";
-  }
-}
-const sameSet = (a: readonly string[], b: readonly string[]) =>
-  a.length === b.length && a.every((id) => b.includes(id));

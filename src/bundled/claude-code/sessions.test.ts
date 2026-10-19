@@ -35,11 +35,14 @@ function sessions(
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
+    /** The model each launch runs, when config sets one apart from `model`. */
+    launchModel: () => string | undefined;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
   const store = options.store ?? memoryStore();
   let model = "opus";
+  let config: string | undefined;
   let ids = 0;
   const spawn = (id: string, spawnOptions?: object) => {
     // The fake records each process as the call begins.
@@ -53,7 +56,7 @@ function sessions(
     ...(options.spare ? { spare: options.spare } : {}),
     store,
     launch: async () => {
-      const current = model;
+      const current = options.launchModel?.() ?? model;
       await options.launched;
       return {
         cwd: "/work",
@@ -63,6 +66,7 @@ function sessions(
       };
     },
     fingerprint: () => model,
+    snapshot: () => config ?? model,
     newId: () => `new-${++ids}`,
   });
   const claudes = () =>
@@ -75,6 +79,10 @@ function sessions(
     live: () => claudes().filter((process) => !process.killed),
     setModel: (next: string) => {
       model = next;
+    },
+    /** A remote edit: new config that restarts nothing. */
+    setConfig: (next: string) => {
+      config = next;
     },
   };
 }
@@ -550,4 +558,64 @@ it("does not start metadata discovery after its agent is disposed during launch"
   release();
   await stopped;
   expect(claudes()).toHaveLength(0);
+});
+
+it("counts a conversation as pinned only while its process runs on config other than current", async () => {
+  const { pool, setConfig, setModel } = sessions();
+  await pool.deliver("c/kept", "hello", 10);
+  await flush();
+  expect(pool.pinned("c/kept")).toBe(false);
+  setConfig("remote");
+  expect(pool.pinned("c/kept")).toBe(true);
+  // A conversation with no process starts on current config.
+  expect(pool.pinned("c/new")).toBe(false);
+  // A local save replaces it, so its next turn starts on current.
+  setModel("sonnet");
+  expect(pool.pinned("c/kept")).toBe(false);
+});
+
+it("reads the reported model only from a process on current config", async () => {
+  // The older config ran haiku; the current one runs the agent's opus.
+  let older: string | undefined = "haiku";
+  const { pool, live, setConfig } = sessions({ launchModel: () => older });
+  await pool.deliver("c/old", "hello", 10);
+  await flush();
+  older = undefined;
+  setConfig("remote");
+  await pool.deliver("c/current", "hello", 10);
+  await flush();
+  expect(pool.pinned("c/old")).toBe(true);
+  expect(live()).toHaveLength(2);
+  // A conversation with no process yet runs on current config.
+  expect((await pool.metadata("c/new")).model).toBe("claude-opus-5-5");
+  pool.dispose();
+});
+
+it("refreshes metadata discovery after remote config changes", async () => {
+  let launched = "haiku";
+  const { pool, setConfig } = sessions({ launchModel: () => launched });
+  expect((await pool.metadata("c/first")).model).toBe("claude-haiku-5-5");
+  launched = ""; // A remote edit clears the explicit model; Claude now reports its default, opus.
+  setConfig("remote");
+  try {
+    expect((await pool.metadata("c/new")).model).toBe("claude-opus-5-5");
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("reads the model chooser's defaults from current config, not a pinned conversation", async () => {
+  let launched: string | undefined = "haiku";
+  const { pool, setConfig } = sessions({ launchModel: () => launched });
+  await pool.deliver("c/old", "hello", 10);
+  await flush();
+  launched = undefined;
+  setConfig("remote");
+  try {
+    expect(pool.pinned("c/old")).toBe(true);
+    // The next new conversation runs on current config, so its model leads.
+    expect((await pool.metadata()).model).toBe("claude-opus-5-5");
+  } finally {
+    pool.dispose();
+  }
 });

@@ -26,6 +26,9 @@ function fixture() {
   const headers: ReturnType<typeof deferred<Response>>[] = [];
   const controls: ReturnType<typeof deferred<Response>>[] = [];
   const interests: ReturnType<typeof deferred<Response>>[] = [];
+  const configs: ReturnType<typeof deferred<Response>>[] = [];
+  const configBodies: unknown[] = [];
+  const streamBodies: unknown[] = [];
   const signals: AbortSignal[] = [];
   const snapshots: unknown[] = [];
   const bodyControllers: ReadableStreamDefaultController[] = [];
@@ -40,6 +43,12 @@ function fixture() {
             live: true,
           }),
         );
+      if (url.endsWith("/stream-config")) {
+        const d = deferred<Response>();
+        configs.push(d);
+        configBodies.push(JSON.parse(String(init.body)));
+        return d.promise;
+      }
       if (url.endsWith("/stream-interests")) {
         const d = deferred<Response>();
         interests.push(d);
@@ -56,6 +65,7 @@ function fixture() {
         return d.promise;
       }
       if (url.endsWith("/stream")) {
+        streamBodies.push(JSON.parse(String(init.body)));
         const d = deferred<Response>();
         headers.push(d);
         return d.promise;
@@ -92,6 +102,9 @@ function fixture() {
     headers,
     controls,
     interests,
+    configs,
+    configBodies,
+    streamBodies,
     disconnect(index: number) {
       required(bodyControllers[index]).error(new Error("fixture disconnect"));
     },
@@ -111,6 +124,7 @@ function fixture() {
         snapshots.push(s);
       },
       receive: vi.fn(),
+      config: vi.fn(),
       established() {},
       denied() {},
     },
@@ -126,7 +140,7 @@ it("rejects status snapshots beyond channel interests plus both globals and obse
     await tick();
     f.publish(0, {
       status: "connected",
-      routes: Array.from({ length: 1028 }, (_, i) => ({
+      routes: Array.from({ length: 1049 }, (_, i) => ({
         id: `route-${i}`,
         status: "pending",
         replay: "unknown",
@@ -520,6 +534,53 @@ it("in-place channel interests preserve an outstanding presence publication", as
     required(f.controls[0]).resolve(Response.json({ accepted: true }));
     expect(await result).toBe(true);
     expect(f.headers).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("config scope posts a fenced revision; old frames and route states are dropped", async () => {
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    owner.configScope?.({ channels: ["b", "a"] });
+    expect(f.configBodies.at(-1)).toEqual({
+      streamId: "1".padStart(32, "0"),
+      channels: ["a", "b"],
+      configRevision: 1,
+    });
+    const event = signed(keypair(), {
+      kind: 45010,
+      content: "x",
+      created_at: 1_700_000_000,
+      tags: [["h", "a"]],
+    });
+    const live = { id: "config", status: "live", replay: "unknown" };
+    f.frame("config", { event, configRevision: 0 });
+    f.publish(0, { status: "connected", routes: [live], configRevision: 0 });
+    await tick();
+    expect(f.callbacks.config).not.toHaveBeenCalled();
+    expect(f.snapshots.at(-1)).toMatchObject({ routes: [] });
+    f.frame("config", { event, configRevision: 1 });
+    f.publish(0, { status: "connected", routes: [live], configRevision: 1 });
+    await tick();
+    expect(f.callbacks.config).toHaveBeenCalledWith(event);
+    expect(f.snapshots.at(-1)).toMatchObject({ routes: [live] });
+    // An equal scope sends nothing; a new stream carries the current scope.
+    owner.configScope?.({ channels: ["a", "b"] });
+    expect(f.configs).toHaveLength(1);
+    required(f.configs[0]).resolve(new Response(null, { status: 200 }));
+    f.disconnect(0);
+    await vi.waitFor(() => expect(f.headers).toHaveLength(2));
+    expect(f.streamBodies.at(-1)).toMatchObject({
+      config: ["a", "b"],
+      configRevision: 1,
+    });
+    owner.configScope?.(null);
+    expect(f.configs).toHaveLength(1); // No stream owner yet; start sends it.
   } finally {
     owner.dispose();
   }

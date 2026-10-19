@@ -1263,6 +1263,72 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
   }
 });
 
+it("passes the config scope and config traffic through the native stream wrapper", async () => {
+  const sockets: Socket[] = [];
+  class Socket {
+    readyState = 1;
+    onmessage?: (event: { data: string }) => Promise<void>;
+    onclose?: () => void;
+    sent: unknown[][] = [];
+    constructor() {
+      sockets.push(this);
+    }
+    send(raw: string) {
+      this.sent.push(JSON.parse(raw));
+    }
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+    async receive(value: unknown) {
+      await this.onmessage?.({ data: JSON.stringify(value) });
+    }
+  }
+  vi.stubGlobal("WebSocket", Socket);
+  const transport = await connectNativeTransport(community);
+  const config = vi.fn();
+  const receive = vi.fn();
+  const traffic = transport.subscribe?.({
+    receive,
+    state: vi.fn(),
+    established: vi.fn(),
+    denied: vi.fn(),
+    config,
+  });
+  assert.exists(traffic);
+  try {
+    traffic.configScope?.({ channels: ["cfg"] });
+    const socket = sockets[0];
+    assert.exists(socket);
+    await socket.receive(["AUTH", "nonce"]);
+    const proof = socket.sent.find(
+      ([kind]) => kind === "AUTH",
+    )?.[1] as VerifiedEvent;
+    await socket.receive(["OK", proof.id, true]);
+    const route = socket.sent.find(
+      ([kind, , filter]) =>
+        kind === "REQ" && (filter as { "#P"?: string[] })["#P"],
+    );
+    assert.exists(route);
+    expect(route.slice(2)).toMatchObject([
+      { kinds: [39000], "#P": [viewer.pubkey], limit: 0 },
+      { kinds: [45010, 45011, 9005], "#h": ["cfg"], limit: 0 },
+      { kinds: [39000, 39002], "#d": ["cfg"], limit: 0 },
+    ]);
+    const event = signed(keypair(), {
+      kind: 45010,
+      created_at: 1700000010,
+      tags: [["h", "cfg"]],
+      content: "{}",
+    });
+    await socket.receive(["EVENT", route[1], event]);
+    expect(config).toHaveBeenCalledWith(event);
+    expect(receive).not.toHaveBeenCalled();
+  } finally {
+    traffic.dispose();
+  }
+});
+
 it.each([
   { changed: false, kind: 24200, expected: "error" },
   { changed: true, kind: 24200, expected: "off" },

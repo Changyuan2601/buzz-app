@@ -1168,7 +1168,10 @@ it.each(["Identity", "Settings"])(
       .fn()
       .mockRejectedValueOnce(new Error("Save failed"))
       .mockResolvedValue(undefined);
-    const agents = { save } as unknown as Agents;
+    const agents = {
+      save,
+      configHistory: () => undefined,
+    } as unknown as Agents;
     const type = {
       tabs: [
         {

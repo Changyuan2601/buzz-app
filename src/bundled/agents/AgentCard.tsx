@@ -82,9 +82,11 @@ export function AgentCard({
 export function TeamCard({
   name,
   members,
+  note,
   ...props
 }: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
   name: string;
+  note?: string | undefined;
   members: readonly (Portrayed & { community?: string | undefined })[];
 }) {
   return (
@@ -103,6 +105,7 @@ export function TeamCard({
           {members.map((member) => member.name).join(", ") || "No members"}
         </span>
       </span>
+      {note && <span className={styles.detailText}>{note}</span>}
     </SurfaceButton>
   );
 }

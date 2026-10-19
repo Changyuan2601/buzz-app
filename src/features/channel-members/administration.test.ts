@@ -11,6 +11,7 @@ import { matchesEvent } from "../relay/projection";
 import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "./administration";
 import {
+  authorizeMemberChange,
   memberAuthority,
   validateMemberAdministrationTemplate,
   type MemberChange,
@@ -339,7 +340,12 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -374,7 +380,12 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -395,7 +406,12 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
     });
   },
 );
@@ -577,7 +593,12 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+        authority: {
+          roles: {},
+          canManage: false,
+          canRemoveOwnedAgent: false,
+          system: false,
+        },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -590,6 +611,7 @@ it.each(["cache", "access"] as const)(
         roles: {},
         canManage: false,
         canRemoveOwnedAgent: false,
+        system: false,
       });
       await recoverAccess();
       await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
@@ -910,4 +932,28 @@ it("shares exact native/broker command admission fixtures", () => {
     ).not.toThrow();
   for (const { event } of contract.rejected)
     expect(() => validateMemberAdministrationTemplate(event, viewer)).toThrow();
+});
+
+it("authorizes a system-channel add only for a non-member other than the viewer with an editable role", () => {
+  const state = {
+    roles: { [viewer]: "owner" as const, [author]: "member" as const },
+    canManage: true,
+    canRemoveOwnedAgent: false,
+    system: true,
+  };
+  const add = (change: Partial<MemberChange>) => () =>
+    authorizeMemberChange(state, viewer, {
+      pubkey: target,
+      expectedRole: "none",
+      role: "member",
+      ...change,
+    } as MemberChange);
+
+  expect(add({})).not.toThrow();
+  expect(add({ pubkey: author })).toThrow(/Membership or permissions changed/);
+  expect(add({ pubkey: viewer })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "remove" })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "owner" as never })).toThrow(
+    /Membership or permissions changed/,
+  );
 });

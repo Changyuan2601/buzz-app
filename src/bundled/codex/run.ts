@@ -21,8 +21,10 @@ export const codexRun = (
 > => ({
   models: (agent) => runtime.preview(agent),
   run: async (delivery) => {
+    // Before setup can wait, so a Save during it isn't pinned over.
+    const restarts = runtime.fence(delivery.agent.pubkey);
     await ready?.(delivery.signal);
-    return runtime.run(delivery);
+    return runtime.run(delivery, restarts);
   },
   runOnce: async (turn) => {
     await ready?.(turn.signal);

@@ -201,3 +201,42 @@ it("shows a failed revert beside the revision, keeps history and allows retry", 
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(onRevert).toHaveBeenCalledTimes(4);
 });
+
+it("reloads when an older revision is redacted, and restores over a deleted head", async () => {
+  const r0 = rev("r0", undefined, "kept");
+  const r1 = rev("r1", "r0", "redacted");
+  const deleted = {
+    ...rev("r2", "r1", ""),
+    content: "",
+    tags: rev("r2", "r1", "").tags.map((tag) =>
+      tag[0] === "op" ? ["op", "delete"] : tag,
+    ),
+  } as RelayEvent;
+  let revisions = [deleted, r1, r0];
+  const read: SnapshotRead = async ([filter]) =>
+    (filter?.offset ?? 0) ? [] : revisions;
+  const onRevert = vi.fn(async () => ({ status: "accepted" as const }));
+  const view = (version: number) => (
+    <AgentConfigHistory
+      expected={expected}
+      head={deleted}
+      version={version}
+      read={read}
+      onRevert={onRevert}
+    />
+  );
+  const { rerender } = render(view(0));
+  expect(await screen.findAllByText("Restore this")).toHaveLength(2);
+  revisions = [deleted, r0];
+  rerender(view(1));
+  await waitFor(() =>
+    expect(screen.getAllByText("Restore this")).toHaveLength(1),
+  );
+  fireEvent.click(screen.getByText("Restore this"));
+  await waitFor(() => expect(onRevert).toHaveBeenCalledTimes(1));
+  const [template] = onRevert.mock.calls[0] as unknown as [
+    { tags: string[][] },
+  ];
+  expect(template.tags).toContainEqual(["op", "restore"]);
+  expect(template.tags).toContainEqual(["prev", "r2"]);
+});

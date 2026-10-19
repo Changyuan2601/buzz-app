@@ -32,6 +32,7 @@ const empty: MemberAdministrationState = Object.freeze({
     roles: Object.freeze({}),
     canManage: false,
     canRemoveOwnedAgent: false,
+    system: false,
   }),
 });
 const uncertain =

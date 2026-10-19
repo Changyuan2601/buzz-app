@@ -190,7 +190,11 @@ function setup(
   const stale = new Set<string>();
   // What the host holds: a delivered watch or timer, and its Interest.
   const objects = new Map<string, Record<string, unknown>>();
-  const deliver = (trigger: Delivery["trigger"]) => {
+  const deliver = (
+    trigger: Delivery["trigger"],
+    config: typeof DEFAULT_CONFIG = DEFAULT_CONFIG,
+    synced?: Delivery["synced"],
+  ) => {
     if (trigger.type !== "mention") {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
@@ -206,7 +210,8 @@ function setup(
       trigger,
       channelId: channel,
       agent,
-      config: DEFAULT_CONFIG,
+      config,
+      ...(synced ? { synced } : {}),
       signal,
       workingUntil,
       ...(options.named ? { named: options.named } : {}),
@@ -554,6 +559,44 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
   runtime.dispose();
 });
 
+it("keeps an idle session when only a synced edit changes the agent's config", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root]);
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await runtime.run({
+    trigger: { type: "mention", event: root },
+    channelId: channel,
+    agent,
+    config: DEFAULT_CONFIG,
+    signal: new AbortController().signal,
+    workingUntil: () => undefined,
+  } as unknown as Delivery);
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  // Another device's edit: the agent's config changes, its saves do not.
+  runtime.sync([
+    { pubkey: self, config: { ...DEFAULT_CONFIG, effort: "low" } } as Agent,
+  ]);
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  // A save on this device restarts it.
+  runtime.sync([
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, effort: "low" },
+      saves: 1,
+    } as Agent,
+  ]);
+  await flush(10);
+  expect(first?.killed).toBe(true);
+  runtime.dispose();
+});
+
 it("resumes an idle session at a newly saved effort", async () => {
   const root = message("2", "@Claude hi", {
     tags: [
@@ -569,9 +612,10 @@ it("resumes an idle session at a newly saved effort", async () => {
     ],
   });
   const { runtime, claudes, agent } = setup([root, reply]);
+  let saves = 0;
   const run = (event: typeof root, effort: string) => {
     const config = { ...DEFAULT_CONFIG, effort };
-    runtime.sync([{ pubkey: self, config } as Agent]);
+    runtime.sync([{ pubkey: self, config, saves: ++saves } as Agent]);
     return runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
@@ -1683,4 +1727,183 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.options.args).not.toContain("--add-dir");
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
+});
+
+it("starts each new session from the config its delivery carries, never the local row", async () => {
+  const f = setup();
+  const row = (instructions: string) =>
+    [
+      {
+        pubkey: self,
+        name: "Claude",
+        type: "claude-code",
+        config: { ...DEFAULT_CONFIG, instructions },
+      },
+    ] as unknown as Agent[];
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  // Processes a session was launched in (a spare has no prompt yet).
+  const launched = () =>
+    f.claudes().filter((claude) => /SYNCED|LOCAL/.test(systemPromptOf(claude)));
+  // The runtime already knows the agent from its local row.
+  f.runtime.sync(row("LOCAL"));
+  await f.deliver(mention("1"), {
+    ...DEFAULT_CONFIG,
+    instructions: "SYNCED A",
+  });
+  await flush(10);
+  const [first] = launched();
+  expect(launched()).toHaveLength(1);
+  expect(systemPromptOf(first)).toContain("SYNCED A");
+  expect(systemPromptOf(first)).not.toContain("LOCAL");
+  // An unchanged local row neither replaces the delivered config nor ends
+  // the session started from it.
+  f.runtime.sync(row("LOCAL"));
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  // The next delivery carries a newer synced copy: the new session uses it.
+  await f.deliver(mention("2"), {
+    ...DEFAULT_CONFIG,
+    instructions: "SYNCED B",
+  });
+  await flush(10);
+  const later = launched().slice(1);
+  expect(later).toHaveLength(1);
+  expect(systemPromptOf(later[0])).toContain("SYNCED B");
+  expect(systemPromptOf(later[0])).not.toContain("LOCAL");
+});
+
+it("keeps each running conversation on the config it started with until Restart to apply", async () => {
+  const f = setup();
+  const root = message("1", "@Claude one", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const event = (id: string, text: string, thread?: string) =>
+    message(id, text, {
+      tags: [
+        ["h", channel],
+        ...(thread ? [["e", thread, "", "reply"]] : []),
+        ["p", self],
+      ],
+    });
+  const mention = (e: ReturnType<typeof message>) =>
+    ({ type: "mention", event: e }) as Delivery["trigger"];
+  const config = (instructions: string) => ({
+    ...DEFAULT_CONFIG,
+    instructions,
+  });
+  const launched = () =>
+    f.claudes().filter((claude) => /SYNCED/.test(systemPromptOf(claude)));
+  await f.deliver(mention(root), config("SYNCED A"));
+  await flush(10);
+  const [first] = launched();
+  expect(systemPromptOf(first)).toContain("SYNCED A");
+  expect(f.runtime.outdated(self, config("SYNCED A"))).toBe(false);
+  // An edit from another device: the next message in the running
+  // conversation carries it, but the conversation keeps its own copy.
+  await f.deliver(
+    mention(event("2", "@Claude again", root.id)),
+    config("SYNCED B"),
+  );
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  expect(launched()).toHaveLength(1);
+  expect(first?.prompts).toHaveLength(2);
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(true);
+  // A new conversation starts on the current copy.
+  await f.deliver(mention(event("3", "@Claude new")), config("SYNCED B"));
+  await flush(10);
+  const second = launched()[1];
+  expect(systemPromptOf(second)).toContain("SYNCED B");
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(true);
+  // Restart to apply replaces the idle conversation on the old copy; its
+  // next message runs on the current one.
+  f.runtime.restart(self);
+  await flush(10);
+  expect(first?.killed).toBe(true);
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(false);
+  await f.deliver(
+    mention(event("4", "@Claude after", root.id)),
+    config("SYNCED B"),
+  );
+  await flush(10);
+  const resumed = launched()
+    .filter((claude) => claude !== second)
+    .at(-1);
+  expect(resumed).not.toBe(first);
+  expect(systemPromptOf(resumed)).toContain("SYNCED B");
+});
+
+it("checks a synced effort only for a conversation that will run on it", async () => {
+  const f = setup();
+  const event = (id: string, thread?: string) =>
+    message(id, `@Claude ${id}`, {
+      tags: [
+        ["h", channel],
+        ...(thread ? [["e", thread, "", "reply"]] : []),
+        ["p", self],
+      ],
+    });
+  const mention = (e: ReturnType<typeof message>) =>
+    ({ type: "mention", event: e }) as Delivery["trigger"];
+  const synced = (model: string) => ({
+    config: { ...DEFAULT_CONFIG, model, effort: "xhigh" },
+    synced: { model, effort: "xhigh" },
+  });
+  const root = event("1");
+  const opus = synced("opus");
+  await f.deliver(mention(root), opus.config, opus.synced);
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  // An edit from another device to a model without that effort: the running
+  // conversation keeps opus, so its next message runs.
+  const haiku = synced("haiku");
+  await f.deliver(mention(event("2", root.id)), haiku.config, haiku.synced);
+  await flush(10);
+  expect(first?.prompts).toHaveLength(2);
+  expect(first?.killed).toBe(false);
+  // A new conversation would start on haiku, so it is refused.
+  await expect(
+    f.deliver(mention(event("3")), haiku.config, haiku.synced),
+  ).rejects.toThrow(/isn't available for/);
+});
+
+it("checks default-model effort against fresh discovery after a remote edit", async () => {
+  const f = setup();
+  try {
+    f.runtime.sync([
+      {
+        pubkey: self,
+        name: "Claude",
+        config: { ...DEFAULT_CONFIG, model: "haiku" },
+      },
+    ] as unknown as Agent[]);
+    // Opening the model chooser before any conversation caches haiku discovery.
+    await f.runtime.models(self);
+    const next = { ...DEFAULT_CONFIG, model: "", effort: "xhigh" };
+    const trigger = {
+      type: "mention",
+      event: message("a", "@Claude fresh"),
+    } as Delivery["trigger"];
+    // Remote config clears the explicit model. The fake's default is opus,
+    // which supports xhigh, unlike the previously discovered haiku.
+    await expect(
+      f.deliver(trigger, next, { model: "", effort: "xhigh" }),
+    ).resolves.toBeUndefined();
+    await flush(10);
+    expect(f.claudes().some((c) => c.prompts.length > 0)).toBe(true);
+  } finally {
+    f.runtime.dispose();
+  }
 });

@@ -2,6 +2,8 @@ import type { PluginModule } from "../../plugins/api";
 import { AgentsPage } from "./AgentsPage";
 import { availableAgentProviderRoute } from "./routes";
 import { ClassifierSettings } from "./ClassifierSettings";
+import { CONFIG_SYNC_ENABLED } from "../../features/agents/community-config";
+import { DeletedAgentsSettings } from "./DeletedAgentsSettings";
 
 export const inject = [
   "pages",
@@ -38,4 +40,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <ClassifierSettings agents={agents} active={active} />
     ),
   });
+  // Deleting is an archive only with config sync; until then it hard-deletes.
+  if (CONFIG_SYNC_ENABLED)
+    ctx.settingsCards.register({
+      id: "deleted-agents",
+      title: "Deleted agents",
+      group: "Account",
+      component: ({ active }) => (
+        <DeletedAgentsSettings agents={agents} active={active} />
+      ),
+    });
 };

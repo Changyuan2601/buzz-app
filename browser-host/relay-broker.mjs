@@ -104,6 +104,7 @@ import {
 // Scoped writes support basic messages, profile setup and invite admission; signing remains here.
 import {
   liveChannels,
+  liveConfigScope,
   liveJoined,
   subscribeRelayTraffic,
   livePresenceAuthors,
@@ -732,6 +733,12 @@ function failureSummary(error) {
     NETWORK_FAILURES.has(value),
   );
   return `${category}${code ? ` (${code})` : ""}`;
+}
+/** A control revision: a non-negative safe integer. */
+function revisionOf(value) {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error("Invalid control revision");
+  return value;
 }
 const json = (res, code, body) => {
   res.writeHead(code, {
@@ -1461,6 +1468,7 @@ export function relayBrokerPlugin({
               "/api/relay/stream-observer",
               "/api/relay/stream-presence",
               "/api/relay/stream-presence-authors",
+              "/api/relay/stream-config",
             ].includes(route) &&
             req.method === "POST"
           ) {
@@ -1470,6 +1478,7 @@ export function relayBrokerPlugin({
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
+            const configuring = route === "/api/relay/stream-config";
             let raw = "";
             req.setEncoding("utf8");
             for await (const part of req) {
@@ -1478,11 +1487,13 @@ export function relayBrokerPlugin({
                 Buffer.byteLength(raw) >
                 (updating
                   ? 450000
-                  : watchingPresence
-                    ? 20000
-                    : prioritizing
-                      ? 9000
-                      : 256)
+                  : configuring
+                    ? 150000
+                    : watchingPresence
+                      ? 20000
+                      : prioritizing
+                        ? 9000
+                        : 256)
               )
                 return json(res, 413, { error: "Live control too large" });
             }
@@ -1494,7 +1505,9 @@ export function relayBrokerPlugin({
               interests,
               joined,
               removed,
-              interestRevision;
+              interestRevision,
+              config,
+              configRevision;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
@@ -1520,6 +1533,10 @@ export function relayBrokerPlugin({
                   interestRevision < 0
                 )
                   throw new Error("Invalid interest revision");
+              }
+              if (configuring) {
+                config = liveConfigScope(body.channels);
+                configRevision = revisionOf(body.configRevision);
               }
               if (prioritizing) {
                 liveChannels(body.channels);
@@ -1582,6 +1599,11 @@ export function relayBrokerPlugin({
               stream.channels = interests;
               stream.joined = joined;
               stream.traffic.update(interests, joined);
+            } else if (configuring) {
+              if (configRevision <= stream.configRevision)
+                return json(res, 409, { error: "Stale config control" });
+              stream.configRevision = configRevision;
+              stream.traffic.configScope(config && { channels: config });
             } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
             else if (watchingPresence)
@@ -1602,10 +1624,14 @@ export function relayBrokerPlugin({
               priority,
               observer,
               interestRevision,
-              presenceAuthors;
+              presenceAuthors,
+              config,
+              configRevision;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              config = liveConfigScope(body.config ?? null);
+              configRevision = revisionOf(body.configRevision ?? 0);
               joined = liveJoined(channels, body.joined ?? []);
               interestRevision = body.interestRevision ?? 0;
               if (
@@ -1656,6 +1682,7 @@ export function relayBrokerPlugin({
             let pendingState;
             let lastStateStatus;
             let lastObserverStatus;
+            let lastConfigStatus;
             let liveChannelIds = new Set();
             const flushState = () => {
               const state = pendingState;
@@ -1666,10 +1693,17 @@ export function relayBrokerPlugin({
               const observerStatus = state.routes.find(
                 (route) => route.id === "observer",
               )?.status;
+              // Each config route transition is a sync barrier; never coalesce it.
+              const configStatus = JSON.stringify(
+                state.routes
+                  .filter((route) => route.id.startsWith("config"))
+                  .map((route) => [route.id, route.status]),
+              );
               const replaceable =
                 state.status === "connected" &&
                 lastStateStatus === "connected" &&
                 observerStatus === lastObserverStatus &&
+                configStatus === lastConfigStatus &&
                 !state.routes.some(
                   (route) =>
                     route.channelId &&
@@ -1683,6 +1717,7 @@ export function relayBrokerPlugin({
               );
               lastStateStatus = state.status;
               lastObserverStatus = observerStatus;
+              lastConfigStatus = configStatus;
               pendingState = undefined;
               if (replaceable && res.writableNeedDrain) pendingState = state;
               else write("state", state);
@@ -1693,6 +1728,7 @@ export function relayBrokerPlugin({
               channels,
               joined,
               interestRevision,
+              configRevision,
               traffic: undefined,
               archiveState: (state) => write("archive-state", { state }),
               close: undefined,
@@ -1711,6 +1747,11 @@ export function relayBrokerPlugin({
                     });
                 },
                 presence: (event) => write("presence", event),
+                config: (event) =>
+                  write("config", {
+                    event,
+                    configRevision: stream.configRevision,
+                  }),
                 capture: (event) => {
                   try {
                     localArchive().ingest(
@@ -1753,6 +1794,7 @@ export function relayBrokerPlugin({
                   writeState({
                     ...state,
                     interestRevision: stream.interestRevision,
+                    configRevision: stream.configRevision,
                   }),
                 established: (channelId) =>
                   write("established", {
@@ -1779,6 +1821,7 @@ export function relayBrokerPlugin({
             traffic.watchPresence(presenceAuthors);
             traffic.prioritize(priority);
             traffic.update(channels, joined);
+            traffic.configScope(config && { channels: config });
             const keepAlive = setInterval(
               () => res.write(": keepalive\n\n"),
               15000,

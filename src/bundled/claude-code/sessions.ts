@@ -46,9 +46,14 @@ export type SessionsOptions = Readonly<{
   /** How to start a process with the agent's current settings, for the
    * conversation `key` when given. */
   launch(key?: string): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
-  /** Changes when a setting that a running process fixed has changed, for the
-   * conversation `key` when given. */
+  /** Changes when a running process must be replaced: a local save,
+   * Restart to apply, or a change to the conversation `key`'s directories
+   * when given. A remote edit leaves it, so a conversation keeps the config
+   * it started with. */
   fingerprint(key?: string): string;
+  /** The config a process started now runs on, read with `fingerprint`
+   * before `launch`, which must use the same config. */
+  snapshot(): string;
   now?(): number;
   newId?(): string;
   /** Called when a conversation's process starts, is sent a message, or
@@ -59,6 +64,8 @@ export type SessionsOptions = Readonly<{
 type Live = {
   process: ClaudeProcess;
   fingerprint: string;
+  /** The config it started on; never changes while it runs. */
+  snapshot: string;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
 };
@@ -72,6 +79,7 @@ export class AgentSessions {
   private discovery:
     | {
         fingerprint: string;
+        snapshot: string;
         result: Promise<{
           models: readonly ClaudeModel[];
           model: string | undefined;
@@ -104,9 +112,24 @@ export class AgentSessions {
     ];
   }
 
-  /** Read defaults without assigning the shared spare to this agent. */
-  async metadata() {
+  /** Whether the conversation's next turn runs on a process it keeps, started
+   * on config other than `current`, rather than one started now. */
+  pinned(key: string) {
+    const live = this.live.get(key);
+    return (
+      !!live &&
+      live.process.running &&
+      live.fingerprint === this.options.fingerprint(key) &&
+      live.snapshot !== this.options.snapshot()
+    );
+  }
+
+  /** Read defaults without assigning the shared spare to this agent: from
+   * `key`'s own process when it runs on current config, else any such one,
+   * else a discovery process started on current config. */
+  async metadata(key?: string) {
     const fingerprint = this.options.fingerprint();
+    const current = this.options.snapshot();
     const read = async (process: ClaudeProcess) => {
       const [models, model, effort] = await Promise.all([
         process.models(),
@@ -115,22 +138,35 @@ export class AgentSessions {
       ]);
       return { models, model, effort };
     };
-    for (const live of this.live.values())
-      if (live.fingerprint === fingerprint && live.process.running) {
+    // Discovery started on other config reports that config's model.
+    const fresh = (
+      discovery: AgentSessions["discovery"],
+    ): discovery is NonNullable<AgentSessions["discovery"]> =>
+      discovery?.fingerprint === fingerprint && discovery.snapshot === current;
+    const own = key === undefined ? undefined : this.live.get(key);
+    const candidates = [
+      ...(own ? [own] : []),
+      ...[...this.live.values()].filter((live) => live !== own),
+    ];
+    for (const live of candidates)
+      if (
+        live.fingerprint === fingerprint &&
+        live.process.running &&
+        live.snapshot === current
+      ) {
         const metadata = await read(live.process);
-        const discovered =
-          this.discovery?.fingerprint === fingerprint
-            ? await this.discovery.result
-            : undefined;
+        const discovered = fresh(this.discovery)
+          ? await this.discovery.result
+          : undefined;
         return { ...metadata, model: metadata.model ?? discovered?.model };
       }
     if (this.disposed)
       return { models: [], model: undefined, effort: undefined };
-    if (this.discovery?.fingerprint === fingerprint)
-      return this.discovery.result;
+    if (fresh(this.discovery)) return this.discovery.result;
     this.clearDiscovery();
     const discovery: NonNullable<AgentSessions["discovery"]> = {
       fingerprint,
+      snapshot: current,
       result: Promise.resolve().then(async () => {
         const launch = await this.options.launch();
         if (this.disposed || this.discovery !== discovery)
@@ -300,6 +336,11 @@ export class AgentSessions {
     }
   }
 
+  /** Whether a conversation's process runs on config other than `current`. */
+  outdated(current: string) {
+    return [...this.live.values()].some((live) => live.snapshot !== current);
+  }
+
   /** Stops idle processes started with old settings; busy ones stop when they
    * next fall idle. */
   reconfigure() {
@@ -322,12 +363,13 @@ export class AgentSessions {
   private async start(resume: string | undefined, key?: string): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
+    const snapshot = this.options.snapshot();
     const launch = await this.options.launch(key);
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
     if (fingerprint === this.options.fingerprint(key) || this.disposed)
-      return { process, fingerprint, used: this.now() };
+      return { process, fingerprint, snapshot, used: this.now() };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
     return this.start(resume, key);
