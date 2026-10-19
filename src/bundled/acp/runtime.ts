@@ -255,6 +255,19 @@ export class AcpRuntime {
       };
     };
     const { key, text, place } = await prompt(false);
+    // A launch change while the conversation loaded retired this entry, and
+    // its sessions would only say it stopped. The message isn't moved to the
+    // new launch, which the owner may not have confirmed it for.
+    const now = this.agents.get(agent.pubkey);
+    if (now && now !== entry)
+      return void this.report(
+        agent,
+        channel,
+        event,
+        "this agent's settings changed while it was reading the conversation",
+        topLevel,
+        "Send your message again.",
+      );
     entry.contexts.set(
       key,
       topLevel
