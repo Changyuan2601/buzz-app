@@ -575,7 +575,7 @@ confirmedPresence(
         "Notifications",
         "Shortcuts",
         "Agent setup",
-        "Decisions",
+        "Decisions API",
         "Channel templates",
         "Software updates",
         "Manage plugins",

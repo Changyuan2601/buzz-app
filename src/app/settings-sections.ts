@@ -52,7 +52,7 @@ const app: readonly SettingsSection[] = [
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agent setup", icon: RobotIcon },
-  { id: "decisions", label: "Decisions", icon: BrainIcon },
+  { id: "decisions", label: "Decisions API", icon: BrainIcon },
   { id: "updates", label: "Software updates", icon: DownloadIcon },
 ];
 const plugins: SettingsSection = {
