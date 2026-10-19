@@ -1,3 +1,5 @@
+import { chatOrigin } from "../../features/solo/local-origin-preview";
+import { channelOriginContext } from "../../features/relay/channel-origin";
 // Turns Agents deliveries into goose turns. Every agent of this type shares
 // one `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the agent's ACP session for its conversation; a watch or timer wake
@@ -488,7 +490,13 @@ export class GooseRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
-    const project = (await reading)?.section;
+    const project =
+      ((await reading)?.section ?? "") +
+      channelOriginContext(
+        session
+          ? chatOrigin(session.scope, session.viewer, summary)
+          : undefined,
+      );
     return {
       key,
       event,

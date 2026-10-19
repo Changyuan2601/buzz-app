@@ -1,9 +1,6 @@
-import { linkedDraftKey, shareBackKey, type LinkedChat } from "./linked-chat";
-import {
-  composerSchema,
-  readComposerDocument,
-  projectComposerDocument,
-} from "../messages/composer-document";
+import { localOriginPreview, saveLocalOrigin } from "./local-origin-preview";
+import { linkedDraftKey } from "./linked-chat";
+import type { ChannelOrigin } from "../relay/channel-origin";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -97,7 +94,7 @@ export function SoloDraft({
   source,
 }: {
   linkedId?: string | undefined;
-  source?: LinkedChat | undefined;
+  source?: ChannelOrigin | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
   agent?: string | undefined;
   focusRequest?: number | AbortSignal;
@@ -182,28 +179,6 @@ export function SoloDraft({
   }, []);
   async function start(draft: MentionDraft, files: AttachmentDraft) {
     const text = composerMarkdown(draft);
-    // Keep the source in the ordinary chat draft too if setup/send is interrupted.
-    const linkedDocument = source
-      ? readComposerDocument(draft, draft.recipients)
-      : undefined;
-    const outgoingDraft =
-      linkedDocument && source
-        ? {
-            ...draft,
-            ...projectComposerDocument(
-              linkedDocument.copy(
-                linkedDocument.content
-                  .addToEnd(composerSchema.nodes.paragraph.create())
-                  .addToEnd(
-                    composerSchema.nodes.paragraph.create(
-                      null,
-                      composerSchema.text(`Source: ${source.link}`),
-                    ),
-                  ),
-              ),
-            ).draft,
-          }
-        : draft;
     if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
     setBusy(true);
@@ -260,21 +235,27 @@ export function SoloDraft({
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
+      const localSource =
+        !!source &&
+        !session.channelWrites.originSupported &&
+        localOriginPreview();
+      if (source && localSource) saveLocalOrigin(scope, channelId, source);
       creation.current ??= session.channelWrites.create(
         channelId,
         name,
         ttlSeconds,
         named,
+        ...(source && !localSource ? [source] : []),
       );
       // Once requested, the chat finishes starting even if this view closes.
       await session.channelWrites.delivered(creation.current);
-      await session.channelWrites.refresh(channelId);
+      await session.channelWrites.refresh(
+        channelId,
+        source && !localSource ? { origin: source } : {},
+      );
       // The chat exists. From here its own composer keeps the text, so an
       // interruption leaves an ordinary chat to send from.
-      if (
-        replaceView(scope, `draft:${channelId}`, null, outgoingDraft) ===
-        "failed"
-      )
+      if (replaceView(scope, `draft:${channelId}`, null, draft) === "failed")
         throw new Error(
           "Your message couldn’t be saved on this device. Retry to finish opening the chat.",
         );
@@ -307,9 +288,9 @@ export function SoloDraft({
         throw new Error(
           "This conversation is no longer in Solo. Open it in Team.",
         );
-      const messageId = session.messages.send(
+      session.messages.send(
         channelId,
-        source ? `${text}\n\nSource: ${source.link}` : text,
+        text,
         recipients,
         ...(uploaded.length ? [uploaded] : []),
       );
@@ -319,13 +300,6 @@ export function SoloDraft({
         `draft:${channelId}`,
         rememberedMentions(session, draft, recipients),
       );
-      if (source?.share) {
-        await session.channelWrites.delivered(messageId);
-        if (!writeView(scope, shareBackKey(channelId), source))
-          throw new Error(
-            "The share choice couldn’t be saved. Open Share to try again.",
-          );
-      }
       if (mounted.current) onStarted(channelId);
     } catch (reason) {
       if (!mounted.current) return;

@@ -1,3 +1,4 @@
+import { channelOriginTag, type ChannelOrigin } from "./channel-origin";
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
@@ -26,6 +27,7 @@ export function createChannelWrites(
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
   channelIdentity = false,
+  originSupported = false,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -194,6 +196,7 @@ export function createChannelWrites(
       member?: string;
       members?: readonly string[];
       system?: boolean | undefined;
+      origin?: ChannelOrigin | undefined;
     } = {},
     soloOnly = true,
   ) {
@@ -237,6 +240,8 @@ export function createChannelWrites(
       const matches = (channel: ChannelSummary) =>
         channel.id === id &&
         (!soloOnly || channel.channelType === "solo") &&
+        (!expected.origin ||
+          JSON.stringify(channel.origin) === JSON.stringify(expected.origin)) &&
         (!expected.member || channel.members?.includes(expected.member)) &&
         (!expected.members ||
           expected.members.every((key) => channel.members?.includes(key)));
@@ -475,6 +480,7 @@ export function createChannelWrites(
   }
   return Object.freeze({
     available,
+    originSupported,
     addAgents,
     refreshMembership,
     memberChannels,
@@ -528,9 +534,18 @@ export function createChannelWrites(
         active,
       );
     },
-    create(id: string, title: string, ttlSeconds?: number, named = false) {
+    create(
+      id: string,
+      title: string,
+      ttlSeconds?: number,
+      named = false,
+      origin?: ChannelOrigin,
+    ) {
       writer();
       identifier(id);
+      if (origin && !originSupported)
+        throw new Error("This community does not support linked chats yet.");
+      const originTag = origin ? channelOriginTag(origin) : undefined;
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
       if (!channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
@@ -551,6 +566,7 @@ export function createChannelWrites(
           ["visibility", "private"],
           ["channel_type", "stream"],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+          ...(originTag ? [originTag] : []),
           ...channelLabelTags(
             named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
           ),

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
@@ -10,26 +9,24 @@ import {
   linkedDraftKey,
 } from "../../features/solo/linked-chat";
 import { soloDraft } from "../../features/channel-navigation/routes";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-} from "../../shared/design-system/ui/Menu";
-import { StartLinkedChat } from "./StartLinkedChat";
+import { StartLinkedMessage } from "./StartLinkedChat";
 
 const owner = createRelaySession(null);
 afterAll(() => owner.dispose());
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllEnvs();
 });
 const viewer = "a".repeat(64),
   root = "b".repeat(64),
   reply = "c".repeat(64);
 const scope = `https://relay.test:${viewer}`;
-it.each([false, true])(
-  "opens an isolated Solo draft with exact source and share choice (share=%s)",
-  async (share) => {
+it.each([true, false])(
+  "opens an isolated private draft through relay support or opted-in local preview (relay=%s)",
+  async (supported) => {
+    vi.stubEnv("DEV", true);
+    vi.stubEnv("VITE_BUZZ_LOCAL_ORIGIN_PREVIEW", supported ? "0" : "1");
     const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
     const session = {
       ...owner.session,
@@ -41,7 +38,7 @@ it.each([false, true])(
           status: "ready" as const,
           channels: [
             {
-              id: "design",
+              id: "11111111-1111-4111-8111-111111111111",
               name: "Design",
               channelType: "stream" as const,
               members: [viewer],
@@ -49,54 +46,34 @@ it.each([false, true])(
           ],
         }),
       },
-      channelWrites: { ...owner.session.channelWrites, available: true },
+      channelWrites: {
+        ...owner.session.channelWrites,
+        available: true,
+        originSupported: supported,
+      },
     };
     const view = render(
-      <MenuRoot>
-        <MenuTrigger>Message actions</MenuTrigger>
-        <MenuPopup>
-          <StartLinkedChat
-            session={session}
-            navigation={{ ...({} as Navigation), open }}
-            channelId="design"
-            message={{
-              id: reply,
-              channelId: "design",
-              threadRootId: root,
-              delivery: "seen",
-              authorId: viewer,
-              content: "Please look at this",
-              createdAt: 1,
-              mentions: [],
-              participants: [],
-              attachments: [],
-              reactions: [],
-              replyCount: 0,
-            }}
-          />
-        </MenuPopup>
-      </MenuRoot>,
+      <StartLinkedMessage
+        session={session}
+        navigation={{ ...({} as Navigation), open }}
+        close={() => {}}
+        message={{
+          id: reply,
+          channelId: "11111111-1111-4111-8111-111111111111",
+          threadRootId: root,
+          delivery: "seen",
+          authorId: viewer,
+          content: "Please look at this",
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+      />,
     );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Message actions" }));
-    const submenu = await screen.findByRole("menuitem", {
-      name: "Start Solo chat",
-    });
-    submenu.focus();
-    await user.keyboard("{ArrowRight}");
-    expect(submenu).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(
-      screen
-        .getAllByRole("menuitem")
-        .filter((item) => item !== submenu)
-        .map((item) => item.textContent),
-    ).toEqual(["Private chat", "Shared chat"]);
-    await user.click(
-      screen.getByRole("menuitem", {
-        name: share ? "Shared chat" : "Private chat",
-      }),
-    );
+    await waitFor(() => expect(open).toHaveBeenCalledOnce());
     expect(open).toHaveBeenCalledOnce();
     const destination = open.mock.calls[0]?.[0];
     const parsed =
@@ -107,11 +84,9 @@ it.each([false, true])(
     expect(id).toBeTruthy();
     expect(parsed).toEqual({ linked: id });
     expect(readLinkedChat(scope, linkedDraftKey(id ?? ""))).toEqual({
-      channelId: "design",
-      channelName: "Design",
-      link: `buzz://message?channel=design&id=${reply}&thread=${root}`,
+      channelId: "11111111-1111-4111-8111-111111111111",
+      messageId: reply,
       threadRootId: root,
-      share,
     });
     expect(owner.session.outbox?.snapshot() ?? []).toEqual([]);
     view.unmount();

@@ -1,5 +1,4 @@
-import { readLinkedChat, shareBackKey } from "../../features/solo/linked-chat";
-import { writeView } from "../../shared/view-state";
+
 import {
   useRef,
   useState,
@@ -55,9 +54,7 @@ export function SoloHeading({
   onConvert(trigger: HTMLElement | null): void;
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
-  const [shareBack, setShareBack] = useState(() =>
-    readLinkedChat(scope, shareBackKey(channel.id)),
-  );
+
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
@@ -143,48 +140,6 @@ export function SoloHeading({
           channel={channel}
           signal={signal}
           onConvert={onConvert}
-          initialDestination={shareBack?.channelId}
-          destinationThread={shareBack?.threadRootId}
-          initialOpen={!!shareBack}
-          autoShare={!!shareBack && !shareBack.attempted}
-          initialMessageId={shareBack?.messageId}
-          onAttempt={() => {
-            if (
-              shareBack &&
-              !writeView(scope, shareBackKey(channel.id), {
-                ...shareBack,
-                attempted: true,
-              })
-            )
-              throw new Error(
-                "The share choice couldn’t be saved. Retry sharing.",
-              );
-          }}
-          onLinkQueued={(messageId) => {
-            if (
-              shareBack &&
-              !writeView(scope, shareBackKey(channel.id), {
-                ...shareBack,
-                attempted: true,
-                messageId,
-              })
-            )
-              throw new Error(
-                "The link receipt couldn’t be saved. Check Outbox before retrying.",
-              );
-          }}
-          onShared={() => {
-            writeView(scope, shareBackKey(channel.id), null);
-            setShareBack(undefined);
-          }}
-          onClose={() => {
-            // Closing failed sharing is not Start over. Keep its destination
-            // and exact card so reopening uses the existing recovery path.
-            if (readLinkedChat(scope, shareBackKey(channel.id))?.attempted)
-              return;
-            writeView(scope, shareBackKey(channel.id), null);
-            setShareBack(undefined);
-          }}
         />
         <IconButton
           ref={settingsTrigger}

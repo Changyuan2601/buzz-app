@@ -25,7 +25,7 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { linkedDraftKey, shareBackKey } from "../../features/solo/linked-chat";
+import { linkedDraftKey } from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
@@ -695,66 +695,49 @@ it("does not recreate a consumed linked draft on history navigation", () => {
   expect(readView(f.scope, linkedDraftKey(linked), null)).toBeNull();
 });
 
-it("reopens an attempted share-back without automatically sharing and keeps it when closed", async () => {
-  const f = fixture();
-  writeView(f.scope, shareBackKey(id), {
-    channelId: "design",
-    channelName: "Design",
-    link: "buzz://channel/design",
-    share: true,
-    attempted: true,
-  });
-  f.mount();
-  expect(
-    await screen.findByRole("dialog", { name: "Share chat" }),
-  ).toBeVisible();
-  expect(f.send).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(readView(f.scope, shareBackKey(id), null)).toMatchObject({
-    channelId: "design",
-    attempted: true,
-  });
-});
-
-it("finishes opening a linked shared chat across roster updates while first-message confirmation is pending", async () => {
+it("finishes a linked chat across roster updates without appending source prose", async () => {
   const linked = "22222222-2222-4222-8222-222222222222";
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
-  writeView(f.scope, linkedDraftKey(linked), {
-    channelId: "design",
-    channelName: "Design",
-    link: "buzz://channel/design",
-    share: true,
-  });
-  let release!: () => void;
-  const confirmation = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  f.session.channelWrites.delivered.mockImplementation(async (messageId) => {
-    if (messageId === "d".repeat(64)) await confirmation;
-  });
+  const source = {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    messageId: "e".repeat(64),
+  };
+  writeView(f.scope, linkedDraftKey(linked), source);
   f.mount();
   const user = userEvent.setup();
-  try {
-    await user.click(screen.getByRole("textbox"));
-    await user.keyboard("Investigate this");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() =>
-      expect(f.session.channelWrites.delivered).toHaveBeenCalledWith(
-        "d".repeat(64),
-      ),
-    );
-    expect(screen.queryByText("Draft unavailable")).toBeNull();
-    expect(f.open).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => release());
-  }
+  await user.click(screen.getByRole("textbox"));
+  await user.keyboard("Investigate this");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
-  const created = f.session.channelWrites.create.mock.calls[0]?.[0];
-  expect(f.open).toHaveBeenCalledWith(
-    conversationTarget(f.scope, created ?? ""),
+  expect(screen.queryByText("Draft unavailable")).toBeNull();
+  expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
+  expect(f.session.channelWrites.create.mock.calls[0]?.[4]).toEqual(source);
+});
+
+it("returns to the exact source from chat metadata without requiring message history", async () => {
+  const f = fixture();
+  const source = {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    messageId: "e".repeat(64),
+    threadRootId: "f".repeat(64),
+  };
+  const prior = f.session.channels.list();
+  const next = {
+    ...prior,
+    channels: prior.channels.map((channel) => ({ ...channel, origin: source })),
+  };
+  f.session.channels.list = () => next;
+  f.mount();
+  await userEvent.click(screen.getByRole("button", { name: "Chat actions" }));
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Back to source" }),
   );
-  expect(readView(f.scope, shareBackKey(created ?? ""), null)).toMatchObject({
-    channelId: "design",
-    share: true,
-  });
+  expect(f.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: source.channelId,
+      messageId: source.messageId,
+      threadRootId: source.threadRootId,
+    }),
+  );
 });

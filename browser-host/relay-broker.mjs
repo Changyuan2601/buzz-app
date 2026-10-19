@@ -317,6 +317,9 @@ async function relayAuthority(fetch, relay) {
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
     // NIP-CL: the relay keeps channel labels and answers label lookups.
+    channelOrigin:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-channel-origin-v1"),
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
@@ -1445,6 +1448,7 @@ export function relayBrokerPlugin({
               sidebarMuteWrites: true,
               channelKit: true,
               channelIdentity: (await getAuthority(relay)).channelIdentity,
+              channelOrigin: (await getAuthority(relay)).channelOrigin,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
@@ -2512,7 +2516,10 @@ export function relayBrokerPlugin({
                 !enrollment &&
                 !(
                   validChannelCommand(filters) &&
-                  (filters.kind === 9000 || authority.channelCreation)
+                  (filters.kind === 9000 ||
+                    (authority.channelCreation &&
+                      (!filters.tags.some((tag) => tag[0] === "origin") ||
+                        authority.channelOrigin)))
                 )
               )
                 return json(res, 400, {

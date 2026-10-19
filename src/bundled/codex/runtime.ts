@@ -1,3 +1,4 @@
+import { channelOriginContext } from "../../features/relay/channel-origin";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
@@ -518,10 +519,12 @@ export class CodexRuntime {
     );
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
-    const project = topLevel
+    const canvasSection = topLevel
       ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
           ?.section
       : undefined;
+    const project =
+      (canvasSection ?? "") + channelOriginContext(channel?.origin);
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();

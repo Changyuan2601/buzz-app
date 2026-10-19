@@ -1,3 +1,4 @@
+import { channelOrigin } from "./channel-origin";
 import { channelTtl, channelVisibility } from "./channel-details-protocol";
 import { huddleParent } from "../huddle/lifecycle";
 import { soloLabels } from "../solo/labels";
@@ -242,6 +243,7 @@ export class DiscoveryState {
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
+    const origin = event && channelOrigin(event.tags);
     return {
       id,
       ...(huddle ? { huddle: true as const } : {}),
@@ -277,6 +279,7 @@ export class DiscoveryState {
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
       ...(identity?.labels.length ? { labels: identity.labels } : {}),
+      ...(origin ? { origin } : {}),
       ...(identity?.creator ? { creator: identity.creator } : {}),
       ...(identity?.createdAt !== undefined
         ? { createdAt: identity.createdAt }

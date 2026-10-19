@@ -130,6 +130,7 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  readonly channelOrigin?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -455,6 +456,7 @@ export async function connectBrokerTransport(
     channelKit?: boolean;
     channelIdentity?: boolean;
     searchSort?: boolean;
+    channelOrigin?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
@@ -756,6 +758,7 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.channelOrigin === true ? { channelOrigin: true as const } : {}),
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
       : {}),

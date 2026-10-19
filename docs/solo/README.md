@@ -288,33 +288,56 @@ not complete visual acceptance.
 
 ## Start a Solo chat from a channel or message
 
-**Start Solo chat** is available in an active stream/forum channel's actions and
-in delivered messages' overflow menus. Its compact submenu offers **Private chat** or **Shared chat**; either choice opens
-the ordinary Solo draft immediately, without a confirmation dialog. No remote
-chat, membership grant or card is created until its first send. Each shortcut has
-its own scoped draft, preserving any unrelated New chat draft and project.
+**Start Solo chat** opens an isolated private draft immediately, with the normal
+default agent and editable project choice. No audience submenu, automatic post,
+or access grant. The action is available only when the community advertises
+`buzz-channel-origin-v1`; ordinary Solo creation remains available without it.
 
-The draft appends the existing channel/message link to the first prompt without
-an explanatory label above the composer. It does not copy a transcript, create a parent-linked session, or
-add an agent to the source. Agent selection, required tags, creation, project
-settings and first-send retry remain owned by the existing Solo composer. A source
-link grants no access: the tagged agent may report that it cannot read the source.
+The draft carries only a source channel and optional exact message and containing
+thread IDs. First send writes this `origin` with ordinary channel creation. The
+client confirms the same origin in relay metadata before proceeding to the first
+message. It never appends source prose or modifies the author's prompt. A source
+is not a parent channel: agents are added only to the new chat.
 
-If sharing was chosen, after the first message is confirmed the chat's existing
-Share control runs its normal fresh-roster/grant/card sequence. Channel-origin
-cards post in the channel; message-origin cards reply to that message's thread.
-The current channel audience includes agents and receives full chat participation,
-not ongoing membership synchronization. The chat stays in Solo and uses the
-existing Shared indicator. Source discussion remains separate from agent replies.
+The relay keeps origin independently of messages and labels. Renaming, project
+filing, deleting the first prompt, sharing and conversion preserve it. Origin
+cannot be changed or added after creation. **Chat actions → Back to source** uses
+the existing same-community navigation/access checks. A missing or inaccessible
+source does not erase its reference. All chat members can see the source IDs;
+public conversion exposes them along with the chat, not the source content.
 
-A failed share stays in the existing Share dialog with its ordinary recovery,
-partial-access disclosure and Retry. Thread identity is frozen with the share
-intent and included in exact-card recovery matching. The local shortcut records
-whether sharing was attempted and its queued card ID; reopening after interruption
-requires explicit retry rather than another automatic grant sequence. Completed
-sharing clears the shortcut before optional discovery feedback. Closing a failed
-share preserves its destination and exact-card recovery; it never revokes
-already-confirmed access. The existing
-Outbox remains the durable owner of submitted writes. Cross-device composite
-resume is not added. Consumed linked drafts are retired rather than creating a
-second chat when visited through history.
+Current in-app agents and the updated remote ACP harness receive the source as
+context from channel metadata, not by scanning history. It is a pointer, not
+instructions, source access, or permission to post. Existing remote versions need
+the harness update. Reading source content and publishing a result remain explicit
+work, not background behavior.
+
+Ordinary **Share** remains independent: it grants access to the full chat and can
+post a card in any chosen channel. Origin is one starting place, not a list of
+sharing destinations. Shared sessions discovery is unchanged. Automatic share-back,
+its local attempted/card receipt state, and thread-targeted sharing were removed.
+No reverse origin index, drag gesture, reply-drafting action or migration of old
+source-in-prompt chats is included.
+
+The companion relay migration and capability must be deployed before linked
+creation is available. Unit/fixture checks do not establish database persistence,
+live relay, native GUI, remote process or cross-device acceptance.
+
+### Worktree-only local source preview
+
+For UX iteration against a relay without origin support, opt in with
+`BUZZ_DEV_LOCAL_ORIGIN_PREVIEW=1` in the worktree's ignored `.env.local`.
+Restart the development server once after changing this setting. All Vite builds
+force it off, including builds using development mode; it is not a release flag.
+
+In this mode only, an unsupported relay receives ordinary Solo creation without
+an origin tag. Before creating, the draft saves the validated source in existing
+account/community-scoped view storage. A storage failure stops creation with the
+draft intact. Back to source and agents running in this app use that local pointer
+for the owner's readable chat. Relay metadata always wins. The relay capability,
+signing rules, membership checks, normal message content and Share stay unchanged.
+
+This is local UX evidence, not backend acceptance. Source references do not sync
+between devices, browser ports or native webviews and are not visible to remote
+agents or other members. Turning the flag off ignores the local records. Do not
+use this mode to establish durable relay source behavior.

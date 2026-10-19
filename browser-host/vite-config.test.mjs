@@ -45,6 +45,15 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 );
               }
             }
+            for (const command of ['serve', 'build']) {
+              for (const setting of [undefined, '0', '1', 'true']) {
+                if (setting === undefined) delete process.env.BUZZ_DEV_LOCAL_ORIGIN_PREVIEW;
+                else process.env.BUZZ_DEV_LOCAL_ORIGIN_PREVIEW = setting;
+                const result = await loadConfigFromFile({ command, mode: 'development' }, configFile);
+                assert.equal(result.config.define['import.meta.env.VITE_BUZZ_LOCAL_ORIGIN_PREVIEW'], JSON.stringify(command === 'serve' && setting === '1' ? '1' : '0'));
+              }
+            }
+            delete process.env.BUZZ_DEV_LOCAL_ORIGIN_PREVIEW;
             delete process.env.BUZZ_DEV_NOTIFICATIONS;
             writeFileSync('.env.local', 'BUZZ_DEV_NOTIFICATIONS=0');
             for (const command of ['serve', 'build']) {

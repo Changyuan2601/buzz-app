@@ -339,6 +339,9 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const channelOrigin =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-channel-origin-v1");
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -776,6 +779,7 @@ export async function connectNativeTransport(
     },
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
+    ...(channelOrigin ? { channelOrigin: true as const } : {}),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     writer: {

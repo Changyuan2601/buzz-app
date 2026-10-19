@@ -1,3 +1,4 @@
+import { channelOrigin } from "../src/features/relay/channel-origin.ts";
 import { validChannelLabel } from "../src/features/relay/channel-labels.ts";
 // Host signing allowlist. No arbitrary kinds, roles or metadata edits.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -39,6 +40,12 @@ export function validChannelCommand(event) {
     )
       return false;
     if (labels.length) tags = tags.slice(0, firstLabel);
+    const origins = tags.filter((tag) => tag[0] === "origin");
+    if (origins.length) {
+      if (!channelOrigin(origins) || tags.at(-1)?.[0] !== "origin")
+        return false;
+      tags = tags.slice(0, -1);
+    }
     const optional = tags.slice(expected.length);
     const optionalNames = optional.map(([name]) => name);
     const validOptionalOrder = [[], ["about"], ["ttl"], ["about", "ttl"]].some(
