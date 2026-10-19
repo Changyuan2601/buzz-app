@@ -550,6 +550,31 @@ describe("AcpRuntime", () => {
     );
   });
 
+  it("gives no sign-in hint to a refusal after a sign-in error while the session opened", async () => {
+    const config = await confirmed();
+    let open!: () => void;
+    const opening = new Promise<void>((resolve) => (open = resolve));
+    const { fake, deliver, sync, published } = setup({ hold: true, opening });
+    sync(config);
+    const first = message("1", "@Opal one");
+    await deliver(first, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.opened).toHaveLength(1));
+    // Both arrive before the session has seen a message, so both are first.
+    const reply = message("2", "@Opal two");
+    reply.tags.push(["e", first.id, "", "reply"]);
+    await deliver(reply, config).run;
+    open();
+    const harness = fake.harnesses[0];
+    await vi.waitFor(() => expect(harness?.turns).toHaveLength(1));
+    harness?.turns[0]?.fail(-32000, "Authentication required");
+    await vi.waitFor(() => expect(harness?.turns).toHaveLength(2));
+    harness?.turns[1]?.finish("refusal");
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toBe(
+      "⚠️ I couldn't finish that: OpenCode refused the request",
+    );
+  });
+
   it("gives no sign-in hint for a later turn that needs a login", async () => {
     const config = await confirmed();
     const { fake, deliver, sync, published } = setup({
