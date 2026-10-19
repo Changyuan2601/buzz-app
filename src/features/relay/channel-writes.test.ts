@@ -218,6 +218,68 @@ it.each([
   },
 );
 
+it.each([
+  "Buzz session (buzz.sessions/v1)",
+  "Buzz session (buzz.sessions/v1)\npersonal",
+  "Buzz session (buzz.sessions/v1)\nparent:33333333-3333-4333-8333-333333333333",
+])(
+  "does not restore a saved receipt from a retired session start as a pending channel (%j)",
+  async (about) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const ordinary = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "Release notes"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ],
+    });
+    // Saved later and also confirmed (so absent from the Outbox list): a
+    // restore that accepted it would choose it first.
+    const session = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["name", "closed this as superseded"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", about],
+      ],
+    });
+    const records: readonly OutgoingEvent[] = [
+      { event: ordinary, signed: ordinary, delivery: "seen" },
+      { event: session, signed: session, delivery: "seen" },
+    ];
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: { kinds: [9007], sign: vi.fn(), publish: vi.fn() },
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: () => {},
+        },
+      },
+    );
+    try {
+      await vi.waitFor(() =>
+        expect(owner.session.channelCreation.snapshot()).toEqual({
+          name: "Release notes",
+          visibility: "open",
+        }),
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 it.each([false, true])(
   "retains a seen channel creation while creator membership is unconfirmed (channel kit: %s)",
   async (kit) => {

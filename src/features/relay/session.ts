@@ -137,6 +137,8 @@ type PendingChannelCreation = Readonly<{
 }>;
 const channelId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Description header written by session starts before Solo labels. */
+const RETIRED_SESSION_DESCRIPTION = "Buzz session (buzz.sessions/v1)";
 
 function restoredChannelCreation(
   events: LocalEvents | undefined,
@@ -196,6 +198,9 @@ function parseChannelCreation(
   // Solo chats start only through channel writes.
   if (labels.includes(SOLO_LABEL)) return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
+  // Saved receipts from retired session starts were never channel-creation
+  // intent; restoring one would lock the Create dialog on an old chat.
+  if (description?.split("\n", 1)[0] === RETIRED_SESSION_DESCRIPTION) return;
   const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
   const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
   if (
