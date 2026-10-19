@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import type { Agents, AgentsSnapshot } from "../features/agents/service";
+import { isApplePlatform } from "../features/shortcuts/format";
 import { Button } from "../shared/design-system/ui/Button";
 import { Field } from "../shared/design-system/ui/Field";
 import { Header } from "../shared/design-system/ui/Header";
@@ -24,12 +25,15 @@ const DISCLOSURE =
 export function DecisionsSettings({
   agents,
   active,
+  apple = isApplePlatform(navigator.platform),
 }: {
   agents: Pick<
     Agents,
     "snapshot" | "subscribe" | "setClassifierKey" | "clearClassifierKey"
   >;
   active(): boolean;
+  /** Whether the key goes to the macOS Keychain, which only Buzz can read. */
+  apple?: boolean;
 }) {
   const state = useSyncExternalStore(
     agents.subscribe,
@@ -76,6 +80,12 @@ export function DecisionsSettings({
             <p role="status" className="text-body-sm text-secondary">
               {KEY_STATUS[keyState]}
             </p>
+            {!apple && (
+              <p className="text-body-sm text-secondary">
+                Other programs you run, agent shells included, can read the
+                saved key.
+              </p>
+            )}
             <form
               className="flex w-full flex-col items-start gap-3"
               onSubmit={(event) => {

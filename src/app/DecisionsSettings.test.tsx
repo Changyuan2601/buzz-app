@@ -120,6 +120,17 @@ it("does not call a key missing until its status is read, or when it cannot be",
   expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
 });
 
+it("warns that other programs can read the key only off Apple platforms", () => {
+  const text = /Other programs you run, agent shells included, can read/;
+  const { unmount } = render(
+    <DecisionsSettings agents={fake()} active={() => true} apple={false} />,
+  );
+  expect(screen.getByText(text)).toBeVisible();
+  unmount();
+  render(<DecisionsSettings agents={fake()} active={() => true} apple />);
+  expect(screen.queryByText(text)).not.toBeInTheDocument();
+});
+
 it("says once, in the header, that the provider receives message text", () => {
   render(<DecisionsSettings agents={fake()} active={() => true} />);
   const disclosure = screen.getByText(/provider receives the message text/);
