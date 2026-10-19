@@ -1,6 +1,6 @@
 // An ACP agent's settings: a preset or a typed command, its args and env, and
 // the screen where the owner confirms the exact launch before it can run.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -18,6 +18,7 @@ import {
   shownValue,
   withPreset,
 } from "./config";
+import { READY } from "./harness";
 import { CUSTOM, PRESETS } from "./presets";
 
 const message = (error: unknown) =>
@@ -41,6 +42,9 @@ const rowsOf = (env: Config["env"]): Row[] =>
   Object.entries(env).map(([name, value]) => ({ name, value }));
 const replaced = (rows: readonly Row[], at: number, row: Row) =>
   rows.map((old, index) => (index === at ? row : old));
+/** What an env row is called to a screen reader: its name, or its place. */
+const rowLabel = ({ name }: Row, index: number) =>
+  name.trim() || `variable ${index + 1}`;
 const envOf = (rows: readonly Row[]) =>
   Object.fromEntries(
     rows.filter(({ name }) => name.trim()).map((r) => [r.name.trim(), r.value]),
@@ -107,7 +111,19 @@ export function createTabs({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [confirming, setConfirming] = useState(false);
-    const [checked, setChecked] = useState("");
+    const [confirmError, setConfirmError] = useState("");
+    const [checking, setChecking] = useState(false);
+    const [checked, setChecked] = useState<{ ready: boolean; text: string }>();
+    // Problems in an edit wait until the owner leaves a field or saves.
+    const [touched, setTouched] = useState(false);
+    // The env control to focus once rows re-render, after Add or Remove.
+    const env = useRef<HTMLFieldSetElement>(null);
+    const [focusing, setFocusing] = useState<string>();
+    useEffect(() => {
+      if (focusing === undefined) return;
+      env.current?.querySelector<HTMLElement>(focusing)?.focus();
+      setFocusing(undefined);
+    }, [focusing]);
     // A preset switch needs a new confirmation, even back to the same command.
     const [reset, setReset] = useState(false);
     const current = useApproved(saved) && !reset;
@@ -121,6 +137,15 @@ export function createTabs({
     const configChanged = JSON.stringify(edited) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const found = problems(edited);
+    const shown = touched || !configChanged ? found : [];
+    const launchChanged =
+      JSON.stringify([
+        edited.command,
+        edited.args,
+        edited.env,
+        edited.workspace,
+      ]) !==
+      JSON.stringify([saved.command, saved.args, saved.env, saved.workspace]);
     const run = async (work: () => Promise<void>) => {
       setBusy(true);
       setError("");
@@ -133,22 +158,62 @@ export function createTabs({
       }
     };
     // Saving a launch the owner hasn't confirmed drops the approval.
-    const submit = () =>
-      run(async () => {
+    const submit = () => {
+      setTouched(true);
+      if (found.length > 0) return;
+      return run(async () => {
         await save(
           (await approved(edited)) ? edited : { ...edited, approval: "" },
         );
-        setChecked("");
+        setChecked(undefined);
         setReset(false);
+        setTouched(false);
       });
-    const confirm = () =>
-      run(async () => {
+    };
+    const closeDialog = () => {
+      setConfirming(false);
+      setConfirmError("");
+    };
+    // Its failure stays in the dialog, where Confirm can be tried again.
+    const confirm = async () => {
+      setBusy(true);
+      setConfirmError("");
+      try {
         await save(await approve(saved));
         setConfirming(false);
-      });
+      } catch (reason) {
+        setConfirmError(message(reason));
+      } finally {
+        setBusy(false);
+      }
+    };
+    const runCheck = async () => {
+      setChecking(true);
+      setChecked(undefined);
+      try {
+        const text = await check(saved);
+        setChecked({ ready: text === READY, text });
+      } catch (reason) {
+        setChecked({ ready: false, text: message(reason) });
+      } finally {
+        setChecking(false);
+      }
+    };
+    const removeRow = (index: number) => {
+      const next = rows.filter((_, i) => i !== index);
+      setRows(next);
+      // The row that took its place, else the one before, else Add.
+      const target = Math.min(index, next.length - 1);
+      setFocusing(
+        target < 0 ? "[data-env-add]" : `[data-env-remove="${target}"]`,
+      );
+    };
     return (
       <form
         className="grid gap-4"
+        onBlur={(event) => {
+          if (event.target.matches("input, textarea")) setTouched(true);
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -187,7 +252,7 @@ export function createTabs({
             }}
           />
         </Field>
-        <fieldset className="grid gap-2">
+        <fieldset ref={env} className="grid gap-2">
           <legend>Environment</legend>
           <p>
             Extra variables for the harness. Values are hidden, except PATH.
@@ -196,14 +261,15 @@ export function createTabs({
             // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity but their place.
             <div key={index} className="flex gap-2">
               <Input
-                aria-label="Name"
+                aria-label={`Name of ${rowLabel(row, index)}`}
+                data-env-name={index}
                 value={row.name}
                 onValueChange={(name) =>
                   setRows(replaced(rows, index, { ...row, name }))
                 }
               />
               <Input
-                aria-label="Value"
+                aria-label={`Value of ${rowLabel(row, index)}`}
                 type={row.name.trim() === "PATH" ? "text" : "password"}
                 value={row.value}
                 onValueChange={(value) =>
@@ -211,14 +277,22 @@ export function createTabs({
                 }
               />
               <Button
-                onClick={() => setRows(rows.filter((_, i) => i !== index))}
+                aria-label={`Remove ${rowLabel(row, index)}`}
+                data-env-remove={index}
+                onClick={() => removeRow(index)}
               >
                 Remove
               </Button>
             </div>
           ))}
           <div>
-            <Button onClick={() => setRows([...rows, { name: "", value: "" }])}>
+            <Button
+              data-env-add=""
+              onClick={() => {
+                setRows([...rows, { name: "", value: "" }]);
+                setFocusing(`[data-env-name="${rows.length}"]`);
+              }}
+            >
               Add variable
             </Button>
           </div>
@@ -238,7 +312,7 @@ export function createTabs({
           description="Sent ahead of the first message of every session."
           onChange={(instructions) => setDraft({ ...draft, instructions })}
         />
-        {found.map((problem) => (
+        {shown.map((problem) => (
           <p key={problem} role="alert" className="buzz-field-error">
             {problem}
           </p>
@@ -249,17 +323,26 @@ export function createTabs({
           </p>
         )}
         <p>
-          {current
-            ? "You confirmed this command."
-            : "This command needs your confirmation before the agent can run."}
+          {launchChanged
+            ? "You changed the command. After you save, confirm it again before the agent can run."
+            : current
+              ? "You confirmed this command."
+              : "This command needs your confirmation before the agent can run."}
         </p>
-        {checked && <p role="status">{checked}</p>}
+        {checked &&
+          (checked.ready ? (
+            <p role="status">{checked.text}</p>
+          ) : (
+            <p role="alert" className="buzz-field-error">
+              Check failed: {checked.text}
+            </p>
+          ))}
         <div className="flex gap-2">
           <Button
             type="submit"
             variant="prominent"
             loading={busy}
-            disabled={!changed || found.length > 0}
+            disabled={!changed}
             focusableWhenDisabled
           >
             Save
@@ -271,8 +354,9 @@ export function createTabs({
             Confirm command
           </Button>
           <Button
+            loading={checking}
             disabled={configChanged || !current || busy}
-            onClick={() => run(async () => setChecked(await check(saved)))}
+            onClick={runCheck}
           >
             Check
           </Button>
@@ -281,13 +365,13 @@ export function createTabs({
           <Dialog
             open
             onOpenChange={(open) => {
-              if (!open) setConfirming(false);
+              if (!open) closeDialog();
             }}
             title="Run this command?"
             description="This agent runs exactly this, with your permissions, each time it starts."
             actions={
               <>
-                <Button onClick={() => setConfirming(false)}>Cancel</Button>
+                <Button onClick={closeDialog}>Cancel</Button>
                 <Button variant="prominent" loading={busy} onClick={confirm}>
                   Confirm
                 </Button>
@@ -295,6 +379,11 @@ export function createTabs({
             }
           >
             <Confirmation value={saved} />
+            {confirmError && (
+              <p role="alert" className="buzz-field-error">
+                Couldn't save your confirmation: {confirmError}
+              </p>
+            )}
           </Dialog>
         )}
       </form>

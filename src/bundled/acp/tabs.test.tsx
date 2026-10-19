@@ -1,11 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent } from "../../features/agents/service";
-import { approved, type Config, DEFAULT_CONFIG } from "./config";
+import { approve, approved, type Config, DEFAULT_CONFIG } from "./config";
+import { READY } from "./harness";
 import { createTabs } from "./tabs";
 
 afterEach(cleanup);
@@ -17,15 +25,21 @@ const start: Config = {
   env: { CURSOR_API_KEY: "hunter2", PATH: "/opt/bin" },
 };
 
-function mount(check = vi.fn(async () => "Ready."), initial = start) {
+function mount(
+  check = vi.fn(async (_: Config) => READY),
+  initial = start,
+  failing = 0,
+) {
   const { SettingsTab } = createTabs({ check });
   const saves: Config[] = [];
+  let failures = failing;
   function Host() {
     const [config, setConfig] = useState(initial);
     return (
       <SettingsTab
         agent={{ config } as Agent<Config>}
         save={async (next) => {
+          if (failures-- > 0) throw new Error("disk full");
           saves.push(next);
           setConfig(next);
         }}
@@ -54,7 +68,7 @@ it("confirms the exact launch without showing env values other than PATH", async
   await waitFor(() => expect(checkButton).toBeEnabled());
   await userEvent.click(checkButton);
   expect(check).toHaveBeenCalledWith(saves[0]);
-  expect(await screen.findByRole("status")).toHaveTextContent("Ready.");
+  expect(await screen.findByRole("status")).toHaveTextContent(READY);
 });
 
 it("drops the approval when a launch setting is saved changed", async () => {
@@ -72,16 +86,104 @@ it("drops the approval when a launch setting is saved changed", async () => {
   expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
 });
 
-it("won't save a reserved env name", async () => {
-  mount();
+it("won't save a reserved env name, and says so once the field is left", async () => {
+  const { saves } = mount();
   await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
-  const names = screen.getAllByRole("textbox", { name: "Name" });
-  await userEvent.type(names.at(-1) as HTMLElement, "BUZZ_PRIVATE_KEY");
+  const name = screen.getByRole("textbox", { name: "Name of variable 3" });
+  expect(name).toHaveFocus();
+  await userEvent.type(name, "BUZZ_PRIVATE_KEY");
+  // Not while typing.
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await userEvent.tab();
   expect(screen.getByRole("alert")).toHaveTextContent("reserved for Buzz");
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(saves).toHaveLength(0);
+});
+
+it("shows an edit's problem on Save without waiting for the field to be left", async () => {
+  const { saves } = mount();
+  const args = screen.getByRole("textbox", { name: "Arguments" });
+  await userEvent.type(args, "\n");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.submit(args.closest("form") as HTMLFormElement);
+  expect(screen.getByRole("alert")).toHaveTextContent("can't be empty");
+  expect(saves).toHaveLength(0);
+});
+
+it("names each env row by its variable and keeps focus on hand after Remove", async () => {
+  mount();
+  const removeKey = screen.getByRole("button", {
+    name: "Remove CURSOR_API_KEY",
+  });
+  expect(screen.getByLabelText("Value of CURSOR_API_KEY")).toBeInTheDocument();
+  await userEvent.click(removeKey);
+  // The row that moved up into its place.
+  expect(screen.getByRole("button", { name: "Remove PATH" })).toHaveFocus();
+  await userEvent.click(screen.getByRole("button", { name: "Remove PATH" }));
+  expect(screen.getByRole("button", { name: "Add variable" })).toHaveFocus();
+});
+
+it("moves focus to the row before when the last row is removed", async () => {
+  mount();
+  await userEvent.click(screen.getByRole("button", { name: "Remove PATH" }));
+  expect(
+    screen.getByRole("button", { name: "Remove CURSOR_API_KEY" }),
+  ).toHaveFocus();
+});
+
+it("says that a changed command needs confirming again after Save", async () => {
+  mount();
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Arguments" }),
+    "\n--force",
+  );
+  expect(
+    screen.getByText(/After you save, confirm it again/),
+  ).toBeInTheDocument();
+});
+
+it("keeps a failed confirmation in the dialog, where it can be retried", async () => {
+  const { saves } = mount(undefined, start, 1);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Confirm command" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "disk full",
+  );
+  expect(saves).toHaveLength(0);
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm" }),
+  );
+  await waitFor(() => expect(saves).toHaveLength(1));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(await approved(saves[0] as Config)).toBe(true);
+});
+
+it("shows Check pending on Check, and its failure apart from readiness", async () => {
+  let finish!: (text: string) => void;
+  const check = vi.fn(
+    (_: Config) => new Promise<string>((resolve) => (finish = resolve)),
+  );
+  mount(check, await approve(start));
+  const button = screen.getByRole("button", { name: "Check" });
+  await waitFor(() => expect(button).toBeEnabled());
+  await userEvent.click(button);
+  expect(button).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute(
+    "aria-busy",
     "true",
   );
+  finish("cursor-agent wasn't found");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Check failed: cursor-agent wasn't found",
+  );
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
 it("needs a new confirmation after switching preset away and back", async () => {
