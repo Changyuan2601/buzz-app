@@ -19,6 +19,7 @@ import {
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import { AgentSessions } from "../../features/agent-harness/acp/agent-sessions";
+import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import type {
   ServeMcp,
   Spawn,
@@ -33,7 +34,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
-import { meChat } from "../../features/agents/me-chat";
+import { soloChat } from "../../features/agents/solo-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -224,7 +225,7 @@ export class AcpRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await meChat(
+    const topLevel = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,
@@ -420,6 +421,15 @@ export class AcpRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const owner = entry.handle?.owner;
+    const reading = topLevel
+      ? readProject(
+          session && owner
+            ? () => ownerCanvas(session.canvas, owner, channelId)
+            : undefined,
+        )
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel))
       try {
@@ -462,6 +472,7 @@ export class AcpRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = (await reading)?.section;
     return {
       key,
       event,
@@ -479,6 +490,7 @@ export class AcpRuntime {
         session?.names.resolve(pubkey, undefined, members) ??
         session?.profiles.snapshot().get(pubkey)?.name ??
         undefined,
+      ...(project ? { project } : {}),
     };
   }
 
@@ -503,6 +515,11 @@ export class AcpRuntime {
       const handle = entry.handle;
       const client = handle && {
         ...appClient(handle, {
+          relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
+          audienceAuthorityCommunity:
+            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
+          signingAuthority:
+            this.relay(pubkey)?.snapshot().session.workflowAuthority,
           spawn: this.spawn,
           cwd: entry.config.workspace,
           memories: (slug) => this.memories(pubkey, slug),
