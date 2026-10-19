@@ -1411,24 +1411,56 @@ where it falls on the 0-based scale (it can be fractional), with a confidence.
 Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
 
 `decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
-this build has no decision provider (`unavailable`), the chosen provider has no
-saved key (`missing_credentials`), the provider refused the key
+no decision provider is on (`unavailable`), the chosen provider has no
+saved key or sign-in (`missing_credentials`), the provider refused it
 (`unauthorized`), the questions are malformed (`invalid_request`), the request
 is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another provider.
 
-TypeSafe is the only provider. The user manages its key in Settings > Decisions
-API. `ctx.decisions.backend()` names the provider:
+### Decision providers
 
-| Provider | Credentials |
-|----------|-------------|
-| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+Providers are plugins too. A plugin offers one with
+`ctx.decisions.registerProvider`; it is listed under Settings > Decisions API
+while the plugin is on, and removed when the plugin stops:
 
-Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
-limits and the answer checks, so a plugin sees the same answers whichever
-provider runs. Plugins cannot choose the provider. `state` and every question go
-to the provider, so send only what the decision needs.
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export function apply(ctx: Context) {
+  ctx.decisions.registerProvider({
+    id: "example",
+    label: "Example",
+    description: "Use your Example account.",
+    status: () => "ready", // or "checking", "unconfirmed", "needs-setup"
+    subscribe: (listener) => () => {}, // call listener when status changes
+    async decide(request, { signal }) {
+      // request is already checked and has its timeoutMs; signal aborts at it.
+      return { outcome: "answered", model: "example-1", answers: {} };
+    },
+    Settings: ({ active }) => null, // shown while this provider is selected
+  });
+}
+```
+
+The host owns everything around the call, so every provider is held to the same
+rules: it checks the request against the limits before any provider sees it,
+stops waiting at the deadline, turns a throw into `service_error`, and checks
+the reply. An answer of the wrong type, an unknown choice, a value outside 0 to
+1 or a missing answer makes the call `invalid_response`; answers to questions
+that were not asked are dropped.
+
+The user chooses the provider in Settings > Decisions API, and the choice is
+kept on this device. Until they choose, or while their choice is not on, the
+first `ready` provider answers; with none ready, the first one does (lowest
+`order`, then key). `ctx.decisions.backend()` is the answering provider's key
+(`<plugin id>/<provider id>`), and `ctx.decisions.status()` its status.
+Plugins cannot choose the provider. `state` and every question go to the
+provider, so send only what the decision needs.
+
+| Provider | Plugin | Credentials |
+|----------|--------|-------------|
+| `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
 
 ## In-app keyboard shortcuts
 

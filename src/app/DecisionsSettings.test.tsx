@@ -1,144 +1,142 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
-import type { AgentsSnapshot } from "../features/agents/service";
+import { afterEach, expect, it } from "vitest";
+import type {
+  DecisionProviderStatus,
+  RegisteredProvider,
+} from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 
 afterEach(cleanup);
 
-/** Agents as far as the card uses it, with a key store that can fail. */
+/** The decisions service as Settings uses it, choosing as the service does:
+ * the saved choice, else the first ready provider, else the first. */
 function fake(
-  status: AgentsSnapshot["status"] = "ready",
-  classifierKey: AgentsSnapshot["classifierKey"] = "missing",
+  entries: { key: string; status: DecisionProviderStatus }[],
+  chosen?: string,
 ) {
-  let state: AgentsSnapshot = {
-    status,
-    classifier: "unavailable",
-    classifierKey,
-    agents: [],
-    running: [],
-    interrupted: [],
-    teams: [],
-  };
   const listeners = new Set<() => void>();
-  const set = (classifierKey: AgentsSnapshot["classifierKey"]) => {
-    state = { ...state, classifierKey };
-    for (const listener of listeners) listener();
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
   };
+  const statuses = new Map(entries.map((entry) => [entry.key, entry.status]));
+  const providers: RegisteredProvider[] = entries.map(({ key }) => ({
+    key,
+    id: key,
+    pluginId: key,
+    revision: "one",
+    label: `Provider ${key}`,
+    description: `About ${key}.`,
+    status: () => statuses.get(key) ?? "needs-setup",
+    subscribe: () => () => {},
+    decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+    Settings: () => <p>Settings for {key}</p>,
+  }));
+  const backend = () =>
+    providers.find((provider) => provider.key === chosen)?.key ??
+    providers.find((provider) => provider.status() === "ready")?.key ??
+    providers[0]?.key;
   return {
-    snapshot: () => state,
+    providers: () => providers,
+    backend,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => void listeners.delete(listener);
     },
-    setClassifierKey: vi.fn(async (_key: string) => set("saved")),
-    clearClassifierKey: vi.fn(async () => set("missing")),
+    setBackend(key: string) {
+      chosen = key;
+      notify();
+    },
+    chosen: () => chosen,
+    setStatus(key: string, status: DecisionProviderStatus) {
+      statuses.set(key, status);
+      notify();
+    },
   };
 }
 
-it("asks for the TypeSafe key, with no provider choice", () => {
-  render(<DecisionsSettings agents={fake()} active={() => true} />);
+it("says to turn a provider on when none is", () => {
+  render(<DecisionsSettings decisions={fake([])} active={() => true} />);
   expect(screen.getByRole("heading", { name: "Decisions API" })).toBeVisible();
-  expect(
-    screen.queryByRole("heading", { name: "Decisions API Provider" }),
-  ).toBeNull();
-  expect(screen.queryByRole("radio")).toBeNull();
-  expect(screen.getByLabelText("TypeSafe API key")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Settings > Plugins");
 });
 
-it("asks for the desktop app in the browser", () => {
+it("shows a lone provider's settings, with no provider choice", () => {
   render(
-    <DecisionsSettings agents={fake("unavailable")} active={() => true} />,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent("desktop app");
-  expect(screen.queryByLabelText("TypeSafe API key")).not.toBeInTheDocument();
-});
-
-it("saves a key without showing it again, and removes it", async () => {
-  const user = userEvent.setup();
-  const agents = fake();
-  render(<DecisionsSettings agents={agents} active={() => true} />);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
-  );
-  const input = screen.getByLabelText("TypeSafe API key");
-  expect(input).toHaveAttribute("type", "password");
-  expect(screen.getByRole("button", { name: "Save key" })).toBeDisabled();
-  await user.type(input, "  tk-secret  ");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
-  expect(agents.setClassifierKey).toHaveBeenCalledWith("tk-secret");
-  expect(input).toHaveValue("");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Your TypeSafe key is saved",
-  );
-  await user.click(screen.getByRole("button", { name: "Remove key" }));
-  expect(agents.clearClassifierKey).toHaveBeenCalledOnce();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
-  );
-});
-
-it("keeps the typed key and shows why a save failed", async () => {
-  const user = userEvent.setup();
-  const agents = fake();
-  agents.setClassifierKey.mockRejectedValueOnce(
-    new Error("That does not look like a TypeSafe API key"),
-  );
-  render(<DecisionsSettings agents={agents} active={() => true} />);
-  await user.type(screen.getByLabelText("TypeSafe API key"), "bad key");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "does not look like",
-  );
-  expect(screen.getByLabelText("TypeSafe API key")).toHaveValue("bad key");
-});
-
-it("does not call a key missing until its status is read, or when it cannot be", async () => {
-  const user = userEvent.setup();
-  const { rerender } = render(
     <DecisionsSettings
-      agents={fake("ready", "checking")}
+      decisions={fake([{ key: "typesafe", status: "needs-setup" }])}
       active={() => true}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Checking");
-  expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
-  const unreadable = fake("ready", "unreadable");
-  rerender(<DecisionsSettings agents={unreadable} active={() => true} />);
-  expect(screen.getByRole("status")).toHaveTextContent("could not read");
-  expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Remove key" }));
-  expect(unreadable.clearClassifierKey).toHaveBeenCalledOnce();
-  rerender(
-    <DecisionsSettings agents={fake("ready", "refused")} active={() => true} />,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "TypeSafe did not accept your key",
-  );
-  expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(
+    screen.getByRole("heading", { name: "Provider typesafe" }),
+  ).toBeVisible();
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
 });
 
-it("warns that other programs can read the key only off Apple platforms", () => {
-  const text = /Other programs you run, agent shells included, can read/;
-  const { unmount } = render(
-    <DecisionsSettings agents={fake()} active={() => true} apple={false} />,
+it("says once, above every provider's settings, that the provider receives message text", () => {
+  render(
+    <DecisionsSettings
+      decisions={fake([
+        { key: "a", status: "ready" },
+        { key: "b", status: "needs-setup" },
+      ])}
+      active={() => true}
+    />,
   );
-  expect(screen.getByText(text)).toBeVisible();
-  unmount();
-  render(<DecisionsSettings agents={fake()} active={() => true} apple />);
-  expect(screen.queryByText(text)).not.toBeInTheDocument();
-});
-
-it("says once, in the header, that the provider receives message text", () => {
-  render(<DecisionsSettings agents={fake()} active={() => true} />);
+  expect(
+    screen.getAllByText(/provider receives the message text/),
+  ).toHaveLength(1);
   const disclosure = screen.getByText(/provider receives the message text/);
   expect(disclosure).toHaveTextContent("private channels");
-  expect(disclosure).not.toHaveTextContent("TypeSafe");
   expect(
-    disclosure.compareDocumentPosition(
-      screen.getByLabelText("TypeSafe API key"),
-    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    disclosure.compareDocumentPosition(screen.getByText("Settings for a")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+});
+
+it("chooses a ready provider at once", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: "a", status: "ready" },
+    { key: "b", status: "ready" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(screen.getByRole("radio", { name: /Provider a/ })).toBeChecked();
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+  expect(screen.getByText("Settings for b")).toBeVisible();
+});
+
+it("shows the settings of one picked before it is ready, and saves the choice once it is", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: "a", status: "ready" },
+    { key: "b", status: "needs-setup" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // The working provider keeps answering until b is set up.
+  expect(decisions.chosen()).toBeUndefined();
+  expect(decisions.backend()).toBe("a");
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  act(() => decisions.setStatus("b", "ready"));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+});
+
+it("changes nothing while hidden", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: "a", status: "ready" },
+    { key: "b", status: "ready" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => false} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBeUndefined();
 });

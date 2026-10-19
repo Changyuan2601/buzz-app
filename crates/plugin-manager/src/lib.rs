@@ -302,6 +302,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/typesafe/manifest.json"))
+            .expect("typesafe manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -335,6 +337,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"
+            | "buzz.typesafe"
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.

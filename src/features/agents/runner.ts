@@ -41,7 +41,6 @@ import {
   show,
   watchSummaries,
   type ClassifierAvailability,
-  type ClassifierKey,
   type WatchFilter,
   type WriteOptions,
 } from "./attention-objects";
@@ -367,17 +366,6 @@ export type RunnerHost = {
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
   decisions(): Decisions | undefined;
-  /** Settles once the saved TypeSafe key's status is known; until then an
-   * event classified on the `typesafe` backend waits rather than pass
-   * unchecked. */
-  keyStatus(): Promise<void> | undefined;
-  /** What is known about the saved TypeSafe key. */
-  classifierKey(): ClassifierKey;
-  /** Changes each time the owner saves or removes the key. */
-  classifierKeyGeneration(): number;
-  /** What a classifier call that started under `generation` found out about
-   * the saved key; ignored once the key has changed since. */
-  setClassifierKey(key: ClassifierKey, generation: number): void;
   /** The event's surroundings for the classifier. */
   context(agent: Agent, event: RelayEvent): Promise<ClassifierContext>;
   /** A person's name as the agent's community shows it. */
@@ -1567,20 +1555,18 @@ export class AgentRunners {
   ): Promise<ClassifierOutcome | undefined> {
     const decisions = this.host.decisions();
     if (!decisions) return notRun();
-    // Only the `typesafe` backend needs the saved key, and it is not known to
-    // be missing until its status is read. While the key cannot be read,
-    // native is still asked: it may find one.
-    if (decisions.backend() === "typesafe") {
-      await this.host.keyStatus();
-      if (this.host.classifierKey() === "missing") return notRun();
-    }
+    // A provider still checking its setup, such as reading a saved key, is
+    // waited for rather than let the event pass unchecked. One that cannot
+    // confirm its setup is still asked: it may be able to answer.
+    await statusKnown(decisions);
+    const status = decisions.status();
+    if (status === "needs-setup" || status === "unavailable") return notRun();
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const context = await this.host.context(agent, event);
     // Stopped or changed while its context was looked up: nothing is sent.
     if (!live()) return undefined;
-    const generation = this.host.classifierKeyGeneration();
-    const { pass, result, backend } = await classify(decisions, {
+    const { pass, result } = await classify(decisions, {
       classifier,
       event,
       author: {
@@ -1589,16 +1575,6 @@ export class AgentRunners {
       },
       context,
     });
-    // On the `typesafe` backend: the key was removed outside the app since it
-    // was read, the service refused it, or native found one the failed status
-    // read could not. Other backends say nothing about the key.
-    if (backend !== "typesafe") return pass ? result : undefined;
-    if (result.outcome === "not-run")
-      this.host.setClassifierKey("missing", generation);
-    else if (result.outcome === "passed")
-      this.host.setClassifierKey("saved", generation);
-    else if (result.reason === "unauthorized")
-      this.host.setClassifierKey("refused", generation);
     return pass ? result : undefined;
   }
   /** What `event` wakes in the agent, or "held" while a watch it matches waits
@@ -2326,4 +2302,16 @@ async function standalone<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Resolves once the selected provider's status is not `checking`. */
+function statusKnown(decisions: Decisions): Promise<void> {
+  if (decisions.status() !== "checking") return Promise.resolve();
+  return new Promise((resolve) => {
+    const stop = decisions.subscribe(() => {
+      if (decisions.status() === "checking") return;
+      stop();
+      resolve();
+    });
+  });
 }
