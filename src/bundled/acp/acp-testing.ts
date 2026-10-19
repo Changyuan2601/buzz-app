@@ -52,6 +52,8 @@ export function fakeHarness(
     /** Prompts from the `from`th (0-based, default 0) are answered with
      * this error. */
     promptError?: { code: number; message: string; from?: number };
+    /** Text each prompt streams as an `agent_message_chunk` before it ends. */
+    chunk?: string;
   }> = {},
 ) {
   const harnesses: FakeHarness[] = [];
@@ -173,6 +175,17 @@ export function fakeHarness(
               finish: () => send({ id, result: { stopReason: "end_turn" } }),
             };
             fake.turns.push(turn);
+            if (options.chunk)
+              send({
+                method: "session/update",
+                params: {
+                  sessionId,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: options.chunk },
+                  },
+                },
+              });
             const failing = options.promptError;
             if (failing && fake.turns.length > (failing.from ?? 0)) {
               const { code, message } = failing;

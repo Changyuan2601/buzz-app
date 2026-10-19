@@ -310,10 +310,6 @@ export class AcpRuntime {
             login,
           );
         }
-        // An answer the harness wrote without `send` is posted for it, so the
-        // thread is not left waiting.
-        if (result.text)
-          return this.post(agent, channel, event, result.text, topLevel);
       })
       .catch((error) => console.warn("ACP agent turn failed", error))
       .finally(() => this.notify());
