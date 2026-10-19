@@ -1418,8 +1418,8 @@ is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another provider.
 
-The user chooses the provider in Settings > Decisions. `ctx.decisions.backend()`
-names it:
+TypeSafe is the only provider. The user manages its key in Settings > Decisions
+API. `ctx.decisions.backend()` names the provider:
 
 | Provider | Credentials |
 |----------|-------------|

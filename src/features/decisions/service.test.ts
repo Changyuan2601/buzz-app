@@ -80,6 +80,16 @@ it("never rejects: no native, refused arguments and a wrong reply are failures",
     backend: "typesafe",
     reason: "invalid_request",
   });
+  const broken = vi.fn<DecisionsNative>(async () => {
+    throw "decisions.decide not allowed. Permissions associated with this command: []";
+  });
+  await expect(
+    new DecisionsService(new Context(), broken, memory()).decide(request),
+  ).resolves.toEqual({
+    outcome: "failed",
+    backend: "typesafe",
+    reason: "service_error",
+  });
   for (const reply of [
     null,
     {},

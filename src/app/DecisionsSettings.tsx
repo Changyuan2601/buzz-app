@@ -70,10 +70,20 @@ export function DecisionsSettings({
         >
           <div className="flex w-full max-w-md flex-col items-start gap-3">
             <p role="status" className="text-body-sm text-secondary">
-              {KEY_STATUS[keyState]}{" "}
+              {KEY_STATUS[keyState]}
+            </p>
+            <p className="text-body-sm text-secondary">
               {apple
-                ? "It is kept in this Mac's Keychain."
-                : "It is kept in this device's credential store."}
+                ? "The key is kept in this Mac's Keychain, where only Buzz can read it."
+                : "The key is kept in this device's credential store. Other programs you run, agent shells included, can read it there."}
+            </p>
+            <p className="text-body-sm text-secondary">
+              Each decision is sent to TypeSafe (api.typesafe.ai). For each
+              event an agent's classified watch matches, Buzz sends the whole
+              event, with its text and tags; the author's display name and
+              whether they are the agent's owner; the channel name; the first
+              600 characters of the message it replies to; and who it mentions.
+              This includes events in private channels.
             </p>
             <form
               className="flex w-full flex-col items-start gap-3"

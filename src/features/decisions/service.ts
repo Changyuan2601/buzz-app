@@ -158,9 +158,14 @@ export class DecisionsService extends Service implements Decisions {
     let reply: unknown;
     try {
       reply = await this.native(backend, request);
-    } catch {
-      // Native refused the arguments before any call: a malformed request.
-      return failed("invalid_request");
+    } catch (error) {
+      // Tauri rejects arguments that do not deserialize before any call:
+      // a malformed request. Any other rejection is the IPC itself failing.
+      return failed(
+        String(error).startsWith("invalid args")
+          ? "invalid_request"
+          : "service_error",
+      );
     }
     return isResult(reply, backend) ? reply : failed("invalid_response");
   }

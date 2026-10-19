@@ -121,11 +121,26 @@ it("does not call a key missing until its status is read, or when it cannot be",
 });
 
 it.each([
-  [true, /this Mac's Keychain/],
-  [false, /this device's credential store/],
-])("says where the key is kept (Keychain: %s)", (apple, text) => {
-  render(
-    <DecisionsSettings agents={fake()} active={() => true} apple={apple} />,
-  );
-  expect(screen.getByText(text)).toBeInTheDocument();
+  [true, /this Mac's Keychain, where only Buzz can read it/],
+  [false, /Other programs you run, agent shells included, can read it/],
+])(
+  "says where the key is kept and who can read it (Keychain: %s)",
+  (apple, text) => {
+    render(
+      <DecisionsSettings agents={fake()} active={() => true} apple={apple} />,
+    );
+    expect(screen.getByText(text)).toBeInTheDocument();
+  },
+);
+
+it("says what is sent to TypeSafe before the key is saved", () => {
+  render(<DecisionsSettings agents={fake()} active={() => true} />);
+  const disclosure = screen.getByText(/sent to TypeSafe \(api\.typesafe\.ai\)/);
+  expect(disclosure).toHaveTextContent("private channels");
+  expect(disclosure).toHaveTextContent("first 600 characters");
+  expect(
+    disclosure.compareDocumentPosition(
+      screen.getByLabelText("TypeSafe API key"),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
