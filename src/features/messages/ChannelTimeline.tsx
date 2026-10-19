@@ -529,10 +529,25 @@ function Timeline({
       .at(-1)?.id,
     enabled: marksRead,
   });
+  // History can arrive after a retained opening row, leaving both edges
+  // unchanged. A growing list with the same tail is still older history.
+  const firstChanged = edges.current.first !== rows[0]?.id;
   const prepend =
     !!edges.current.first &&
-    edges.current.first !== rows[0]?.id &&
-    edges.current.last === rows.at(-1)?.id;
+    edges.current.last === rows.at(-1)?.id &&
+    (firstChanged || rows.length > edges.current.ids.size);
+  const readingAnchor = savedPosition.current?.anchor?.id;
+  const previousAnchorIndex = readingAnchor
+    ? [...edges.current.ids].indexOf(readingAnchor)
+    : -1;
+  // A reader on the retained prefix stays there; only compensate when the
+  // insertion moved their row. Ordinary prepends retain the existing policy.
+  const shift =
+    prepend &&
+    (firstChanged ||
+      (previousAnchorIndex >= 0 &&
+        rows.findIndex((row) => row.id === readingAnchor) >
+          previousAnchorIndex));
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -963,7 +978,7 @@ function Timeline({
           scrollRef={scroller}
           // Before Virtua measures its viewport there is no reading position
           // to preserve; shifting then can freeze its initial empty range.
-          shift={prepend && !!handle.current?.viewportSize}
+          shift={shift && !!handle.current?.viewportSize}
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
