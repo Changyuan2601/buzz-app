@@ -22,7 +22,12 @@ export type FakeHarness = {
   /** Each `session/new`'s params. */
   opened: Record<string, unknown>[];
   /** Each turn's prompt text, in order, with its session. */
-  turns: { sessionId: string; text: string; finish(): void }[];
+  turns: {
+    sessionId: string;
+    text: string;
+    finish(stopReason?: string): void;
+    fail(code: number, message: string): void;
+  }[];
   killed: boolean;
   sent(method: string): Message[];
   /** An MCP message for the Buzz tools from `sessionId`, sent to the server
@@ -172,7 +177,10 @@ export function fakeHarness(
             const turn = {
               sessionId,
               text,
-              finish: () => send({ id, result: { stopReason: "end_turn" } }),
+              finish: (stopReason = "end_turn") =>
+                send({ id, result: { stopReason } }),
+              fail: (code: number, message: string) =>
+                send({ id, error: { code, message } }),
             };
             fake.turns.push(turn);
             if (options.chunk)
@@ -188,8 +196,7 @@ export function fakeHarness(
               });
             const failing = options.promptError;
             if (failing && fake.turns.length > (failing.from ?? 0)) {
-              const { code, message } = failing;
-              send({ id, error: { code, message } });
+              turn.fail(failing.code, failing.message);
             } else if (!options.hold) turn.finish();
           } else if (method === "session/close") send({ id, result: {} });
           else
