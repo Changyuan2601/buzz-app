@@ -67,6 +67,7 @@ export class AgentSessions {
    * prompted for the old one. */
   private readonly had = new Set<string>();
   private disposed = false;
+  private readonly cancelledStarts = new WeakSet<Promise<Live>>();
 
   constructor(private readonly options: SessionsOptions) {}
 
@@ -134,12 +135,24 @@ export class AgentSessions {
     } finally {
       if (this.opening.get(key) === starting) this.opening.delete(key);
     }
+    if (this.cancelledStarts.has(starting)) {
+      await live.process.goose.close(live.session);
+      return { ok: false, error: "Conversation start was cancelled" };
+    }
     if (this.disposed) {
       void live.process.goose.close(live.session);
       return { ok: false, error: "goose was stopped" };
     }
     this.adopt(key, live, seen);
     return this.answer(key, live, text, activity);
+  }
+
+  /** Cancels only this conversation, including a session still opening. */
+  stop(key: string) {
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    const opening = this.opening.get(key);
+    if (opening) this.cancelledStarts.add(opening);
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the

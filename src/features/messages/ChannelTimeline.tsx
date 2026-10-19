@@ -133,6 +133,8 @@ export type ChannelTimelineProps = {
   /** Host-owned setup content around the messages, in the same scrollport. */
   beforeMessages?: ReactNode;
   afterMessages?: ReactNode;
+  /** Anchor host content after this exact loaded message, never the moving tail. */
+  afterMessageId?: string | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -189,6 +191,7 @@ function Timeline({
   chatPresentation = false,
   beforeMessages,
   afterMessages,
+  afterMessageId,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -204,8 +207,9 @@ function Timeline({
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () =>
+      `${geometrySignature(window.rows, profiles, resolveName)}:${afterMessageId ?? ""}`,
+    [window.rows, profiles, resolveName, afterMessageId],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   // Holders are counted per row: a report notice and an image viewer can hold
@@ -781,7 +785,9 @@ function Timeline({
       onFocus={(event) => {
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
-            .messageId,
+            .messageId ??
+            event.target.closest<HTMLElement>("[data-after-message-id]")
+              ?.dataset.afterMessageId,
         );
       }}
       onBlur={(event) => {
@@ -885,8 +891,15 @@ function Timeline({
                   />
                 ) : (
                   <MessageRow
-                    stackPrevious={continuesMessageGroup(rows[index - 1], row)}
-                    stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
+                    stackPrevious={
+                      rows[index - 1]?.id !== afterMessageId &&
+                      continuesMessageGroup(rows[index - 1], row)
+                    }
+                    stackNext={
+                      row.id !== afterMessageId &&
+                      !!nextRow &&
+                      continuesMessageGroup(row, nextRow)
+                    }
                     alignViewer={chatPresentation}
                     session={queries}
                     scope={scope}
@@ -906,9 +919,13 @@ function Timeline({
                     day={day}
                   />
                 )}
-                {index === rows.length - 1 && !afterMessages && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
+                {afterMessageId === row.id && afterMessages && (
+                  <div data-after-message-id={row.id}>{afterMessages}</div>
                 )}
+                {index === rows.length - 1 &&
+                  (!afterMessages || afterMessageId) && (
+                    <div className={styles.timelineEnd} aria-hidden="true" />
+                  )}
               </Fragment>
             );
           })}
@@ -917,7 +934,7 @@ function Timeline({
       {!rows.length && !window.hasMore && !afterMessages && (
         <p className={styles.empty}>No messages yet.</p>
       )}
-      {afterMessages}
+      {!afterMessageId && afterMessages}
     </section>
   );
 }

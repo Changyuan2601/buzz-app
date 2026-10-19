@@ -112,6 +112,7 @@ type Job = {
 type StartJob = {
   admitted?(): void;
   type: "conversation-start";
+  publicationId?: string;
   channelId: string;
   prompt: string;
   signal: AbortSignal;
@@ -199,6 +200,12 @@ export type RunnerHost = {
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
+  proposeInstructions(pubkey: string, text: string, channelId: string): void;
+  welcomeGuidance(
+    agent: Agent,
+    event: RelayEvent,
+    channelId: string,
+  ): string | undefined;
   /** Signs, reads and claims as each agent; absent where agents cannot run. */
   custody:
     | Pick<
@@ -333,6 +340,7 @@ export class AgentRunners {
     prompt: string,
     signal: AbortSignal,
     check: () => void,
+    publicationId?: string,
   ) {
     const runner = this.runners.get(pubkey);
     if (
@@ -346,6 +354,7 @@ export class AgentRunners {
     return new Promise<RelayEvent>((resolve, reject) => {
       const job: StartJob = {
         type: "conversation-start",
+        ...(publicationId ? { publicationId } : {}),
         channelId,
         prompt,
         signal,
@@ -678,7 +687,7 @@ export class AgentRunners {
         runner.activityClaimed = false;
         this.dropQueue(
           runner,
-          "Another copy of Buzz is running this agent. Start Welcome in that copy, or close it first.",
+          `Another copy of Buzz is running ${this.host.agent(runner.pubkey)?.name ?? agent.name}. Continue in that copy, or close it first.`,
         );
         break;
       }
@@ -722,12 +731,26 @@ export class AgentRunners {
         remember: (slug: string, body: string, after: number) =>
           this.require().remember(agent.pubkey, slug, body, after),
         templates: () => this.host.templates(agent),
+        proposeInstructions: (text: string, channelId: string) => {
+          signal.throwIfAborted();
+          this.host.proposeInstructions(agent.pubkey, text, channelId);
+        },
         attention: this.attention(agent.pubkey),
       });
       const working = this.working(runner, job, agent);
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
         const team = this.host.team(agent.pubkey);
+        const guidance =
+          job.trigger.type === "mention"
+            ? this.host.welcomeGuidance(
+                agent,
+                job.trigger.event,
+                job.channelId ??
+                  job.trigger.event.tags.find(([key]) => key === "h")?.[1] ??
+                  "",
+              )
+            : undefined;
         signal.throwIfAborted();
         const delivery = Object.freeze({
           trigger: job.trigger,
@@ -736,6 +759,7 @@ export class AgentRunners {
           config: agent.config,
           ...pick,
           ...(team ? { team } : {}),
+          ...(guidance ? { guidance } : {}),
           signal,
           workingUntil: working.hold,
           ignored: () => job.work?.remove(),
@@ -838,7 +862,18 @@ export class AgentRunners {
           return unavailable();
         if (publication)
           throw new Error("Welcome already submitted its introduction.");
-        publication = this.publish(runner, event);
+        publication = this.publish(
+          runner,
+          job.publicationId
+            ? {
+                ...event,
+                tags: [
+                  ...(event.tags ?? []).filter(([key]) => key !== "client-id"),
+                  ["client-id", job.publicationId],
+                ],
+              }
+            : event,
+        );
         const signed = await publication;
         reply = signed;
         return signed;
@@ -851,6 +886,10 @@ export class AgentRunners {
       media: unavailable,
       remember: unavailable,
       templates: () => [],
+      proposeInstructions: (text: string, channelId: string) => {
+        check();
+        this.host.proposeInstructions(agent.pubkey, text, channelId);
+      },
       attention: this.attention(agent.pubkey),
     });
     runner.working++;

@@ -220,6 +220,7 @@ function fixture(
 }
 it("keeps Welcome's composer disabled through customization and restores its existing draft only after confirmation", async () => {
   const f = fixture();
+
   const receipt = {
     channelId: id,
     agent: "a".repeat(64),
@@ -267,6 +268,7 @@ it("keeps Welcome's composer disabled through customization and restores its exi
     snapshot: () => snapshot,
     types: () => types,
     subscribe: () => () => {},
+    welcome: vi.fn(async () => ({ id: "d".repeat(64) })),
   } as unknown as Agents;
   render(
     <AgentsContext.Provider value={agents}>{f.page()}</AgentsContext.Provider>,
@@ -285,13 +287,24 @@ it("keeps Welcome's composer disabled through customization and restores its exi
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
-  act(() => saveWelcome(f.scope, { ...saved, complete: true }));
+  act(() =>
+    saveWelcome(f.scope, { ...saved, complete: true, greeting: "pending" }),
+  );
   expect(
     within(history).queryByRole("form", { name: "Make this agent yours" }),
   ).toBeNull();
+  await waitFor(() =>
+    expect(agents.welcome).toHaveBeenCalledWith(
+      receipt.agent,
+      id,
+      expect.any(AbortSignal),
+      "saved",
+    ),
+  );
+  // No greeting is loaded in this fixture: its card must not fall back to the tail.
   expect(
-    within(history).getByText("Your default agent for new Solo chats"),
-  ).toBeVisible();
+    within(history).queryByRole("region", { name: "Get started" }),
+  ).toBeNull();
   expect(
     await screen.findByRole("textbox", { name: "Message your agents" }),
   ).toHaveTextContent("My first question");

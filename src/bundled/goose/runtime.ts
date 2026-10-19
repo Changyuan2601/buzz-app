@@ -1,3 +1,8 @@
+import { withWelcomeGuidance } from "../../features/agents/onboarding";
+import {
+  conversationStartPrompt,
+  type ConversationStart,
+} from "../../features/agents/conversation-start";
 // Turns Agents deliveries into goose turns. Each agent of this type has its
 // own `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the ACP session for its conversation; a watch or timer wake runs as
@@ -187,6 +192,7 @@ export class GooseRuntime {
     step,
     acknowledged,
     superseded,
+    guidance,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -247,7 +253,10 @@ export class GooseRuntime {
             : where.id.slice(0, 8),
         text: this.review(
           entry,
-          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+          withWelcomeGuidance(
+            turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+            guidance,
+          ),
         ),
       };
     };
@@ -290,6 +299,71 @@ export class GooseRuntime {
       })
       .catch((error) => console.warn("goose turn failed", error))
       .finally(() => this.notify());
+  }
+
+  /** App input continues in the same channel session as subsequent Solo messages. */
+  async startConversation(input: ConversationStart): Promise<TurnResult> {
+    input.check();
+    const { agent, channelId, signal } = input;
+    const personal = await meChat(
+      () => this.relay(agent.pubkey),
+      agent.owner,
+      channelId,
+      signal,
+    );
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const channel =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((item) => item.id === channelId)
+        : undefined;
+    input.check();
+    if (
+      !personal ||
+      channel?.members?.length !== 2 ||
+      !channel.members.includes(agent.owner) ||
+      !channel.members.includes(agent.pubkey)
+    )
+      throw new Error(
+        "Welcome is no longer a conversation with just you and your agent.",
+      );
+    const entry = this.entry(agent.pubkey, config(input.config));
+    if (entry.sessions.snapshot().some((session) => session.busy))
+      throw new Error(
+        "The agent is already answering. Retry Welcome when it finishes.",
+      );
+    entry.handle = agent;
+    entry.name = agent.name;
+    entry.contexts.set(channelId, { channel: channelId, topLevel: true });
+    const abort = () => entry.sessions.stop(channelId);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      input.check();
+      const result = await entry.sessions.deliver(
+        channelId,
+        this.review(
+          entry,
+          conversationStartPrompt(agent.pubkey, channelId, input.prompt),
+        ),
+        0,
+        { title: sessionTitle(agent.name, channel?.name ?? "Welcome") },
+      );
+      // Like normal Goose turns, an actual model answer without send is published
+      // through the same restricted handle, never replaced with prepared UI text.
+      if (result.ok && result.text) {
+        input.check();
+        await agent.publish({
+          kind: 9,
+          content: result.text,
+          tags: [["h", channelId]],
+        });
+      }
+      return result;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      this.notify();
+    }
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off

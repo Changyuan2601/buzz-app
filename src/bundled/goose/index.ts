@@ -6,6 +6,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import { GooseProvider } from "./provider";
+import { suggestNames } from "./name-ideas";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
@@ -21,13 +23,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
-  const runtime = new GooseRuntime(host, agents.relay);
   const spawn = host.spawn?.bind(host);
-  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
-    setup: new GooseSetup(spawn),
-    runtime,
-    history: new GooseHistory(spawn),
-  });
+  const setup = new GooseSetup(spawn);
+  const provider = new GooseProvider(setup);
+  const runtime = new GooseRuntime(host, agents.relay);
+  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
+    createTabs({
+      setup,
+      provider,
+      runtime,
+      history: new GooseHistory(spawn),
+    });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -38,6 +44,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     sync();
     ctx.effect(() => () => {
       unsubscribe();
+      provider.dispose();
       runtime.dispose();
     });
   }
@@ -48,9 +55,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     icon: GooseLogoIcon,
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
-    defaults: () => ({ config: DEFAULT_CONFIG }),
+    defaults: () => ({ config: provider.resolve(DEFAULT_CONFIG) }),
     Create,
     CreateModel,
+    provider: {
+      snapshot: provider.snapshot,
+      subscribe: provider.subscribe,
+      check: provider.check,
+      DialogBody: ProviderDialogBody,
+    },
+    startConversation: (input) => runtime.startConversation(input),
+    suggestNames: (raw, exclude, signal) =>
+      suggestNames(spawn, provider.resolve(raw), exclude, signal),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

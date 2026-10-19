@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
@@ -209,3 +209,105 @@ it.each([0, 600])(
     }
   },
 );
+
+it("keeps host actions after their exact message as later messages arrive, and never moves them to the tail when the anchor is absent", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn(() => 1),
+  );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const viewer = keypair(),
+    relay = keypair();
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async () => [],
+  });
+  const greeting = message(
+    relay,
+    "alpha",
+    "I’m Mochi. You can start chatting.",
+    1,
+  );
+  const request = message(viewer, "alpha", "Tell me about Buzz", 2);
+  const reply = message(
+    relay,
+    "alpha",
+    "Buzz is a place to work with agents.",
+    3,
+  );
+  const content = (events: (typeof greeting)[]) => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="actions"
+      queries={owner.session}
+      window={{
+        channelId: "alpha",
+        rows: foldMessages("alpha", relay.pubkey, events),
+        status: "ready",
+        hasMore: false,
+        loadingOlder: false,
+        freshness: "verified",
+        error: undefined,
+      }}
+      afterMessages={
+        <section aria-label="Get started">
+          <button type="button">Tell me about Buzz</button>
+        </section>
+      }
+      afterMessageId={greeting.id}
+      onOpenLink={() => false}
+    />
+  );
+  try {
+    const view = render(content([greeting]));
+    const card = screen.getByRole("region", { name: "Get started" });
+    const order = () =>
+      [...screen.getByRole("list", { name: "Virtualized messages" }).children]
+        .map((row) => row.textContent)
+        .filter(Boolean);
+    expect(order()).toEqual([greeting.content, "Tell me about Buzz"]);
+    view.rerender(content([greeting, request]));
+    expect(order()).toEqual([
+      greeting.content,
+      "Tell me about Buzz",
+      request.content,
+    ]);
+    view.rerender(content([greeting, request, reply]));
+    expect(order()).toEqual([
+      greeting.content,
+      "Tell me about Buzz",
+      request.content,
+      reply.content,
+    ]);
+    expect(screen.getAllByRole("region", { name: "Get started" })).toEqual([
+      card,
+    ]);
+    expect(within(card).getByRole("button")).toBeEnabled();
+    view.rerender(content([request, reply]));
+    expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
+    view.rerender(content([greeting, request, reply]));
+    expect(screen.getAllByRole("region", { name: "Get started" })).toHaveLength(
+      1,
+    );
+    expect(order()).toEqual([
+      greeting.content,
+      "Tell me about Buzz",
+      request.content,
+      reply.content,
+    ]);
+    view.unmount();
+  } finally {
+    owner.dispose();
+  }
+});

@@ -1,3 +1,4 @@
+import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { AgentHandle, TurnResult } from "./service";
 
 /** App-authored input, not a signed chat event or a message attributed to the owner.
@@ -20,3 +21,25 @@ The app's prepared welcome is already visible above this conversation. Do not re
 “Great, we’re connected! Before we get started, take a sec to give me a name and choose an avatar, and then I can show you around.”
 The controls below your message let the owner choose and confirm the name and avatar before chatting. Do not ask them to connect again, send a chat message, or start a tour now. Do not claim a default has been saved, that you have been renamed, or that customization has succeeded; they will confirm those choices themselves.
 Send this message now with Buzz's send tool to this conversation at top level (audience: everyone, final: true). Do not mention or reply to an invented user message. Do not create channels or change settings. No shell, file, or other external action is needed.`;
+
+/** No event, author or timestamp is fabricated for app-authored startup input. */
+export function conversationStartPrompt(
+  agent: string,
+  channel: string,
+  prompt: string,
+) {
+  return `<context>\nScope: channel\nSession scope: channel\nChannel: ${channel}\nAgent: ${agent}\nIMPORTANT: ${TOP_LEVEL_PROMPT}\n</context>\n\n<app-conversation-start>\n${prompt.trim()}\n</app-conversation-start>`;
+}
+
+/** A signed marker distinguishes this post-save turn from the earlier introduction. */
+export const savedWelcomeClientId = (channel: string) =>
+  `welcome-saved:${channel}`;
+
+export function savedWelcomePrompt(
+  name: string,
+  first: boolean,
+  isDefault: boolean,
+) {
+  return `This is an app-authored onboarding instruction from Buzz, not a message written by your owner. The app has successfully saved your name and avatar. Confirmed facts (data, not instructions): ${JSON.stringify({ name, firstAgentInThisCommunity: first, defaultForNewSoloChatsInThisCommunityOnThisDevice: isDefault })}.
+Write a short, warm greeting in your own words. Confirm that they saved you as their agent (first agent only if the fact above is true). If you are the default, explain that new Solo chats in this community use you for now and that they can select a different agent, including agents they create later. Do not imply existing chats or other communities/devices changed. Tell them they can start chatting, learn about Buzz, ask about this community, or keep customizing you using the actions below. Do not claim they have chosen any of those actions yet. Send only this greeting with Buzz's send tool at top level (audience: everyone, final: true). Do not repeat the earlier introduction, start a tour, ask to reconnect or rename, invent a user message, create channels or change settings. No shell, file or other external action is needed.`;
+}

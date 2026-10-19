@@ -1,6 +1,8 @@
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
+import type { GooseProvider } from "./provider";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import {
@@ -119,10 +121,12 @@ export function createTabs({
   setup,
   runtime,
   history,
+  provider,
 }: Readonly<{
   setup: GooseSetup;
   runtime: GooseRuntime;
   history: GooseHistory;
+  provider?: GooseProvider;
 }>) {
   /** The provider, its key and its model, and a test that they answer. */
   function ProviderFields({
@@ -599,6 +603,52 @@ export function createTabs({
     );
   }
 
+  /** Host-framed provider setup reuses the exact key/model controls from Agents. */
+  function ProviderDialogBody({ onClose }: { onClose(): void }) {
+    const [choice, setChoice] = useState<Choice>(
+      () => provider?.choice() ?? { provider: "", model: "" },
+    );
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const request = useRef<AbortController | undefined>(undefined);
+    useEffect(() => () => request.current?.abort(), []);
+    return (
+      <div className="grid gap-4">
+        <ProviderFields value={choice} onChange={setChoice} disabled={busy} />
+        {error && <p role="alert">{error}</p>}
+        <ProviderDialogActions>
+          {busy ? (
+            <Button onClick={() => request.current?.abort()}>Cancel</Button>
+          ) : (
+            <Button onClick={onClose}>Close</Button>
+          )}
+          <Button
+            variant="prominent"
+            disabled={!provider}
+            loading={busy}
+            onClick={async () => {
+              if (!provider || busy) return;
+              const abort = new AbortController();
+              request.current = abort;
+              setBusy(true);
+              setError("");
+              try {
+                await provider.save(choice, abort.signal);
+                if (!abort.signal.aborted) onClose();
+              } catch (reason) {
+                if (!abort.signal.aborted) setError(message(reason));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Connect
+          </Button>
+        </ProviderDialogActions>
+      </div>
+    );
+  }
+
   /** The instructions a new agent starts with. */
   function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
     const current = readConfig(config);
@@ -778,6 +828,7 @@ export function createTabs({
   return {
     Create,
     CreateModel,
+    ProviderDialogBody,
     SettingsTab,
     ActivityTab,
   };

@@ -1516,7 +1516,8 @@ it("seeds a real continuing Solo session with app input and reuses it for the ow
       agent,
       config: DEFAULT_CONFIG,
       channelId: channel,
-      trigger: { type: "mention", event: message("1", "Hello") },
+      trigger: { type: "mention", event: message("1", "Tell me about Buzz") },
+      guidance: "Use the maintained Buzz quick guide.",
       signal: new AbortController().signal,
       current: () => true,
       workingUntil: (pending) => done.push(pending),
@@ -1526,7 +1527,34 @@ it("seeds a real continuing Solo session with app input and reuses it for the ow
       f.fake.processes.filter((entry) => entry.prompts.length),
     ).toHaveLength(1);
     expect(process?.prompts).toHaveLength(2);
-    expect(process?.prompts[1]).toContain("Hello");
+    expect(process?.prompts[1]).toContain("Tell me about Buzz");
+    expect(process?.prompts[1]).toContain(
+      "<buzz-app-guidance>\nUse the maintained Buzz quick guide.",
+    );
+    expect(process?.prompts[1]).toContain("<buzz-event");
+    expect(process?.prompts[1]).not.toContain("<app-conversation-start>");
+    const propose = vi.fn();
+    Object.assign(agent, { proposeInstructions: propose });
+    process?.emit({
+      type: "control_request",
+      request_id: "proposal",
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: {
+          jsonrpc: "2.0",
+          id: 8,
+          method: "tools/call",
+          params: {
+            name: "propose_instructions",
+            arguments: { text: "Be concise." },
+          },
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(propose).toHaveBeenCalledWith("Be concise.", channel),
+    );
     expect(
       runtime.conversations(self).some((entry) => entry.key === channel),
     ).toBe(true);

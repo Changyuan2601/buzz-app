@@ -10,9 +10,16 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { agentSections } from "../../features/agents/tabs";
+import type { Agents } from "../../features/agents/service";
 import type { Agent } from "../../features/agents/service";
 import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
+import { GooseProvider } from "./provider";
+import { ProviderDialog } from "../agents/ProviderDialog";
+import type { RegisteredAgentType } from "../../features/agents/service";
+import { createRef } from "react";
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
@@ -383,4 +390,120 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   );
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
+});
+
+it("connects Goose through the host provider dialog using real provider/key/model controls", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    reply: "OK",
+  });
+  const setup = new GooseSetup(fake.spawn);
+  const provider = new GooseProvider(setup, memoryStorage());
+  const { ProviderDialogBody } = createTabs({ setup, provider, ...unused });
+  const onClose = vi.fn();
+  const type = {
+    key: "buzz.goose/goose",
+    pluginId: "buzz.goose",
+    revision: "1",
+    title: "Goose",
+    provider: {
+      snapshot: provider.snapshot,
+      subscribe: provider.subscribe,
+      check: provider.check,
+      DialogBody: ProviderDialogBody,
+    },
+  } as RegisteredAgentType;
+  render(
+    <ProviderDialog type={type} finalFocus={createRef()} onClose={onClose} />,
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Provider" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Provider" })).toBeEnabled(),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(provider.snapshot().readiness).toBe("ready");
+  expect(
+    fake.geese.some((goose) =>
+      goose.turns.some((turn) => turn.text === "Reply with exactly: OK"),
+    ),
+  ).toBe(true);
+});
+
+it("applies an agent proposal to the real settings draft and saves only with the existing Save action", async () => {
+  const fake = fakeSpawn({ providers: PROVIDERS });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake.spawn),
+    ...unused,
+  });
+  const agent = {
+    pubkey: "c".repeat(64),
+    name: "Gander",
+    type: "buzz.goose/goose",
+    place: "here",
+    config: {
+      ...DEFAULT_CONFIG,
+      instructions: "Keep context.",
+      model: "chosen-model",
+    },
+  } as Agent<Config>;
+  const proposal = {
+    id: "proposal",
+    type: agent.type,
+    basedOn: "Keep context.",
+    text: "Keep context. Use concise answers.",
+  };
+  const listeners = new Set<() => void>();
+  let offered: typeof proposal | undefined = proposal;
+  const save = vi.fn(async (_key: string, _change: unknown) => {});
+  const agents = {
+    save,
+    instructionProposal: () => offered,
+    subscribeInstructionProposals: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dismissInstructionProposal: () => {
+      offered = undefined;
+      for (const listener of listeners) listener();
+    },
+  } as unknown as Agents;
+  const section = agentSections({
+    agents,
+    agent,
+    channels: [],
+    memories: undefined,
+    type: {
+      tabs: [
+        {
+          id: "settings",
+          role: "settings",
+          title: "Settings",
+          component: SettingsTab,
+        },
+      ],
+    } as unknown as RegisteredAgentType,
+    settingsHost: {},
+  })[0];
+  render(section?.render());
+  const user = userEvent.setup();
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Keep context.");
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Apply to draft" }));
+  expect(screen.getByLabelText("Instructions")).toHaveValue(proposal.text);
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith(agent.pubkey, {
+    config: expect.objectContaining({
+      instructions: proposal.text,
+      model: "chosen-model",
+      workspace: DEFAULT_CONFIG.workspace,
+    }),
+  });
+  expect(
+    screen.queryByRole("region", { name: "Suggested instructions" }),
+  ).toBeNull();
 });

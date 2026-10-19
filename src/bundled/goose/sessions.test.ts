@@ -190,3 +190,39 @@ describe("AgentSessions", () => {
     });
   });
 });
+
+it("cancels an opening Welcome before submitting input and permits a later explicit start", async () => {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fake = fakeSpawn();
+  const sessions = new AgentSessions({
+    spawn: fake.spawn,
+    serve: fake.serve,
+    tools,
+    launch: async () => {
+      await ready;
+      return { workspace: "/w", env: {}, systemPrompt: "" };
+    },
+    processFingerprint: () => "",
+    fingerprint: () => "",
+  });
+  const result = sessions.deliver("welcome", "app input", 0);
+  try {
+    sessions.stop("welcome");
+    release();
+    expect(await result).toMatchObject({
+      ok: false,
+      error: "Conversation start was cancelled",
+    });
+    expect(fake.geese.flatMap((goose) => goose.turns)).toEqual([]);
+    await sessions.deliver("welcome", "explicit later start", 0);
+    expect(
+      fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+    ).toEqual(["explicit later start"]);
+  } finally {
+    release();
+    sessions.dispose();
+  }
+});

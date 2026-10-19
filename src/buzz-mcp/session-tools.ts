@@ -21,7 +21,21 @@ export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
  * never needs replacing when attention is turned on or off: the attention
  * tools refuse calls while it is off, and `turnNote` says which it is. */
 export const BUZZ_SESSION: BuzzSession = Object.freeze({
-  tools: [...TOOLS, ...ATTENTION_TOOLS],
+  tools: [
+    ...TOOLS,
+    ...ATTENTION_TOOLS,
+    {
+      name: "propose_instructions",
+      description:
+        "Only available after the owner explicitly sends Finish setting up this agent in their Welcome Solo chat. Offers one complete editable instructions draft, never saves. Unavailable elsewhere. The owner must Apply to draft then Save in the agent profile.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+        additionalProperties: false,
+      },
+    },
+  ],
 });
 
 /** Text for the end of a turn's prompt, as the agent's attention is now. */
@@ -41,6 +55,18 @@ export async function callSessionTool(
   args: Record<string, unknown>,
 ): Promise<Reply> {
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
+  if (name === "propose_instructions") {
+    if (
+      !client.proposeInstructions ||
+      !context.channel ||
+      typeof args.text !== "string"
+    )
+      throw new Error(
+        "Instruction proposals are unavailable here. Use the agent's profile to edit instructions manually.",
+      );
+    client.proposeInstructions(args.text, context.channel);
+    return "Proposed for review in the agent's profile. Nothing was saved. The owner must choose Apply to draft, review/edit, then Save.";
+  }
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);

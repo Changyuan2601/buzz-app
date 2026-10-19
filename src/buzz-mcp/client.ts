@@ -63,6 +63,7 @@ export interface BuzzClient {
   /** The agent's attention, where its host keeps one. Without it the
    * attention tools have nothing to act on. */
   readonly attention?: AgentAttention;
+  proposeInstructions?(text: string, channelId: string): void;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

@@ -1,8 +1,8 @@
 import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
 import { respond } from "./rpc";
-import { ATTENTION_TOOLS } from "./attention";
-import { callTool, TOOLS } from "./tools";
+import { BUZZ_SESSION, callSessionTool } from "./session-tools";
+import { callTool } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -363,7 +363,7 @@ it("lists its tools before it can call them", async () => {
     },
   )) as { result: { tools: unknown[] } };
   // Every app session lists the same tools: the Buzz and attention tools.
-  expect(list.result.tools).toHaveLength(TOOLS.length + ATTENTION_TOOLS.length);
+  expect(list.result.tools).toEqual(BUZZ_SESSION.tools);
   await expect(
     respond(
       undefined,
@@ -1224,4 +1224,31 @@ it("keeps what it changed when a read after the change fails", async () => {
       topic: "x",
     }),
   ).rejects.toThrow("kind 39000 unavailable");
+});
+
+it("offers instruction proposals through the shared tool dispatcher without saving or publishing", async () => {
+  const { client, published } = fake();
+  const proposeInstructions = vi.fn();
+  const result = await callSessionTool(
+    { ...client, proposeInstructions },
+    { channel: "solo" },
+    "propose_instructions",
+    { text: "Be brief." },
+  );
+  expect(proposeInstructions).toHaveBeenCalledWith("Be brief.", "solo");
+  expect(result).toContain("Nothing was saved");
+  expect(published).toEqual([]);
+  await expect(
+    callSessionTool(client, { channel: "solo" }, "propose_instructions", {
+      text: "Be brief.",
+    }),
+  ).rejects.toThrow("unavailable");
+  await expect(
+    callSessionTool(
+      { ...client, proposeInstructions },
+      {},
+      "propose_instructions",
+      { text: "Be brief." },
+    ),
+  ).rejects.toThrow("unavailable");
 });

@@ -31,6 +31,14 @@ export function appClient(
   };
   return {
     pubkey: agent.pubkey,
+    ...(agent.proposeInstructions
+      ? {
+          proposeInstructions: (text: string, channelId: string) => {
+            check();
+            agent.proposeInstructions?.(text, channelId);
+          },
+        }
+      : {}),
     attention: agent.attention,
     query: (filters) => {
       check();

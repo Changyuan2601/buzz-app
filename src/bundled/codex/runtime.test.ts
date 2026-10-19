@@ -3,6 +3,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
+import { WELCOME_PROMPT } from "../../features/agents/conversation-start";
 import { ownerReads } from "../../features/agents/reads";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
@@ -483,6 +484,7 @@ function fixture(
   };
   return {
     runtime,
+    agent,
     wake: wakeTurn,
     tool,
     attention,
@@ -2526,7 +2528,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2563,7 +2565,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3076,4 +3078,99 @@ it("keeps Messages routing for a channel filed in someone else's Me", async () =
   await f.complete(0, "DONE");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("starts Codex Welcome with app input and resumes that saved Solo thread for the first owner message", async () => {
+  const f = fixture();
+  f.personal.add("channel");
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    channels: [
+      {
+        id: "channel",
+        name: "Welcome",
+        channelType: "session",
+        members: [owner, pubkey],
+      } as never,
+    ],
+  });
+  const controller = new AbortController();
+  const started = f.runtime.startConversation({
+    agent: f.agent as unknown as Delivery["agent"],
+    config: f.delivery("").config,
+    channelId: "channel",
+    prompt: WELCOME_PROMPT,
+    signal: controller.signal,
+    check: () => controller.signal.throwIfAborted(),
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(JSON.stringify(f.starts()[0]?.params)).toContain(
+    "<app-conversation-start>",
+  );
+  expect(JSON.stringify(f.starts()[0]?.params)).not.toContain("<buzz-event");
+  expect(f.publish).not.toHaveBeenCalled();
+  await f.complete(0, "Connected");
+  expect(await started).toMatchObject({ ok: true });
+  expect(f.publish).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: 9,
+      content: "Connected",
+      tags: [["h", "channel"]],
+    }),
+  );
+  await f.runtime.run({
+    ...f.delivery("Tell me about Buzz"),
+    guidance: "Use the maintained Buzz quick guide.",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const first = f.starts()[0]?.params as { threadId: string };
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: first.threadId });
+  expect(JSON.stringify(f.starts()[1]?.params)).toContain("Tell me about Buzz");
+  const followup = f.starts()[1]?.params as { input: { text: string }[] };
+  expect(followup.input[0]?.text).toContain(
+    "<buzz-app-guidance>\nUse the maintained Buzz quick guide.",
+  );
+  expect(inputText(f.starts()[1])).toContain("<buzz-event>");
+  const propose = vi.fn();
+  Object.assign(f.agent, { proposeInstructions: propose });
+  const result = await f.tool(
+    "propose_instructions",
+    { text: "Be concise." },
+    1,
+  );
+  expect(result?.result).toMatchObject({ success: true });
+  expect(propose).toHaveBeenCalledWith("Be concise.", "channel");
+  await f.complete(1);
+});
+
+it("interrupts Codex Welcome on cancellation without publishing a failure as its introduction", async () => {
+  const f = fixture();
+  f.personal.add("channel");
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    channels: [
+      {
+        id: "channel",
+        name: "Welcome",
+        channelType: "session",
+        members: [owner, pubkey],
+      } as never,
+    ],
+  });
+  const controller = new AbortController();
+  const started = f.runtime.startConversation({
+    agent: f.agent as unknown as Delivery["agent"],
+    config: f.delivery("").config,
+    channelId: "channel",
+    prompt: WELCOME_PROMPT,
+    signal: controller.signal,
+    check: () => controller.signal.throwIfAborted(),
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // Observe the turn's admission before cancelling, including its saved binding.
+  await vi.waitFor(() =>
+    expect(f.runtime.conversations(pubkey)).toHaveLength(1),
+  );
+  controller.abort();
+  expect(await started).toMatchObject({ ok: false });
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+  expect(f.publish).not.toHaveBeenCalled();
 });

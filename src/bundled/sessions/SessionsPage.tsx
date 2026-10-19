@@ -487,6 +487,8 @@ function SessionWork({
         signal={navigation?.signal ?? new AbortController().signal}
         receipt={welcomeReceipt}
         onSaved={() => selectAgent(welcomeReceipt.agent ?? "")}
+        onSend={setSent}
+        openProfile={(target) => canOpenLink(target) && openLink(target)}
       />
     ) : undefined;
   const welcomeType =
@@ -654,6 +656,9 @@ function SessionWork({
                     ) : undefined
                   }
                   afterMessages={welcomeControls}
+                  afterMessageId={
+                    welcomeControls ? welcomeReceipt?.greetingId : undefined
+                  }
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -664,7 +669,7 @@ function SessionWork({
                   revealMessageId={
                     sent ??
                     (welcomeReceipt?.channelId === channel.id
-                      ? welcomeReceipt.replyId
+                      ? (welcomeReceipt.greetingId ?? welcomeReceipt.replyId)
                       : undefined)
                   }
                   onOpenLink={openLink}

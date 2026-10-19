@@ -189,18 +189,3 @@ function eventBlock({ event, channel, thread, name }: TurnInput) {
 /** A turn for a session that is still working on an earlier one. */
 export const steerPrompt = (turn: string) =>
   `${section("new-message-arrived-while-you-were-working", turn)}\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.`;
-
-/** App-authored first turn. It has no event id, author or synthetic user message. */
-export function conversationStartPrompt(
-  agent: string,
-  channel: string,
-  prompt: string,
-) {
-  return [
-    section(
-      "context",
-      `Scope: channel\nSession scope: channel\nChannel: ${channel}\nAgent: ${agent}\nIMPORTANT: ${TOP_LEVEL_PROMPT}`,
-    ),
-    section("app-conversation-start", prompt),
-  ].join("\n\n");
-}

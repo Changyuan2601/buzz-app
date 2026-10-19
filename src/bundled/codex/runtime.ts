@@ -1,3 +1,8 @@
+import { withWelcomeGuidance } from "../../features/agents/onboarding";
+import {
+  conversationStartPrompt,
+  type ConversationStart,
+} from "../../features/agents/conversation-start";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
@@ -47,7 +52,6 @@ import { findConversation } from "./transcript";
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
-  event: EventData;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -55,6 +59,7 @@ type Request = {
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
   team: string;
+  guidance?: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -65,7 +70,10 @@ type Request = {
   acknowledged?: () => void;
   superseded?: () => void;
   failActivity(reason: string): void;
-};
+} & (
+  | { event: EventData; startup?: never }
+  | { event?: never; startup: ConversationStart }
+);
 /** `at` is when the binding last started a turn; bindings saved before it
  * existed have none. */
 type Saved = { threadId: string; workspace: string; at?: number };
@@ -439,8 +447,8 @@ export class CodexRuntime {
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools.
-    return `buzz.codex.sessions.v6:${scope}:${pubkey}`;
+    // added the shared session tools; v7 adds instruction proposals.
+    return `buzz.codex.sessions.v7:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -517,6 +525,7 @@ export class CodexRuntime {
         ...(topLevel ? { topLevel } : {}),
       },
       team: delivery.team ?? "",
+      ...(delivery.guidance ? { guidance: delivery.guidance } : {}),
       answered,
       failActivity,
       ...(delivery.step ? { step: delivery.step } : {}),
@@ -534,7 +543,7 @@ export class CodexRuntime {
       return;
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
-    const text = textOf(request.event, agent.name);
+    const text = textOf(trigger.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
     let lane = entry.lanes.get(key);
     if (!lane) {
@@ -580,7 +589,7 @@ export class CodexRuntime {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
+              `${context}${withWelcomeGuidance(turnInput(trigger.event, request.conversation, text, true, turnNote(request.agent)), request.guidance)}`,
             ),
           });
           active.reply = request;
@@ -612,6 +621,68 @@ export class CodexRuntime {
       return;
     }
     this.start(request, text, key, lane, entry);
+  }
+
+  /** A real saved channel thread, with app input instead of a viewer event. */
+  async startConversation(input: ConversationStart): Promise<TurnResult> {
+    input.check();
+    const { agent, channelId, signal } = input;
+    const reads = this.reads(agent.pubkey);
+    const channel = await reads?.channel(channelId);
+    const personal = await reads?.meChat(agent.owner, channelId, signal);
+    input.check();
+    if (
+      !reads ||
+      !personal ||
+      channel?.dm ||
+      channel?.members.length !== 2 ||
+      !channel.members.includes(agent.owner) ||
+      !channel.members.includes(agent.pubkey)
+    )
+      throw new Error(
+        "Welcome is no longer a conversation with just you and your agent.",
+      );
+    const settings = this.resolveConfig(input.config);
+    if (!validWorkspace(settings.workspace))
+      throw new Error("Choose a valid Codex workspace first.");
+    const key = JSON.stringify([channelId, "channel"]);
+    const entry = this.entry(agent.pubkey, reads.scope);
+    if (entry.lanes.get(key)?.active || entry.lanes.get(key)?.queued)
+      throw new Error(
+        "The agent is already answering. Retry Welcome when it finishes.",
+      );
+    const lane: Lane = { tail: entry.after, queued: 1 };
+    entry.lanes.set(key, lane);
+    const request: Request = {
+      scope: reads.scope,
+      agent,
+      settings,
+      startup: input,
+      conversation: {
+        channelId,
+        name: channel?.name ?? "Welcome",
+        topLevel: true,
+      },
+      team: "",
+      answered() {},
+      failActivity() {},
+    };
+    const done = entry.after.then(async () => {
+      input.check();
+      lane.queued--;
+      return this.execute(request, input.prompt, key, lane, entry);
+    });
+    const tail = done.then(
+      () => undefined,
+      () => undefined,
+    );
+    lane.tail = tail;
+    try {
+      return await done;
+    } finally {
+      if (entry.lanes.get(key) === lane && lane.tail === tail && !lane.active)
+        entry.lanes.delete(key);
+    }
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's: a new
@@ -735,7 +806,9 @@ export class CodexRuntime {
     if (!request.step) return;
     const scope = request.conversation.topLevel
       ? request.conversation.channelId
-      : rootOf(request.event);
+      : request.event
+        ? rootOf(request.event)
+        : request.conversation.channelId;
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -777,6 +850,7 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
+    if (!request.event) return "";
     return conversationHistory(request.event, request.conversation, (filters) =>
       reads.read(filters, signal),
     );
@@ -789,7 +863,7 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ...(request.conversation.topLevel
+        ...(request.conversation.topLevel || !request.event
           ? []
           : [["e", rootOf(request.event), "", "reply"]]),
         ["p", request.agent.owner],
@@ -815,6 +889,7 @@ export class CodexRuntime {
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
+      active?.reply.startup?.check();
       turn.signal.throwIfAborted();
       if (turn.finished) throw new Error("The Codex turn has ended");
     };
@@ -1012,13 +1087,17 @@ export class CodexRuntime {
     key: string,
     lane: Lane,
     entry: Entry,
-  ) {
+  ): Promise<TurnResult> {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
     const server = this.open();
     // No deadline of our own: a turn runs until Codex ends it.
-    const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
+    const signal = AbortSignal.any([
+      entry.abort.signal,
+      turnAbort.signal,
+      ...(request.startup ? [request.startup.signal] : []),
+    ]);
     const active: Active = {
       rpc: server.rpc,
       ready: new Promise((resolve, reject) => {
@@ -1054,6 +1133,7 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
+      request.startup?.check();
       // The process host expands ~/… and creates the directory; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
@@ -1067,6 +1147,8 @@ export class CodexRuntime {
         workspace,
         request,
       );
+      signal.throwIfAborted();
+      request.startup?.check();
       active.model = model;
       active.effort = effort;
       const resuming = existing?.workspace === workspace;
@@ -1110,7 +1192,13 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
+          request.startup
+            ? conversationStartPrompt(
+                agent.pubkey,
+                request.conversation.channelId,
+                text,
+              )
+            : `${context}${withWelcomeGuidance(turnInput(request.event, request.conversation, text, false, turnNote(request.agent)), request.guidance)}`,
         ),
         model,
         effort,
@@ -1131,6 +1219,8 @@ export class CodexRuntime {
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted") {
+        if (request.startup)
+          return { ok: false, error: "Codex’s turn was interrupted" };
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
@@ -1144,6 +1234,7 @@ export class CodexRuntime {
         for (const taken of active.requests) taken.answered();
         this.status(agent.pubkey, key, "Idle");
       }
+      return { ok: true };
     } catch (error) {
       for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
@@ -1163,13 +1254,14 @@ export class CodexRuntime {
           await server.rpc.close();
         }
       }
-      if (!entry.abort.signal.aborted) {
+      if (!entry.abort.signal.aborted && !request.startup) {
         const reason = `Codex could not finish: ${message(error)}.`;
         await this.publish(active.reply, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
         this.status(agent.pubkey, key, "Needs attention", reason);
       }
+      return { ok: false, error: message(error) };
     } finally {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");

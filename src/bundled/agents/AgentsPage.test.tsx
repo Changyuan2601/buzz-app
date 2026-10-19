@@ -328,6 +328,10 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    welcomeAction: vi.fn(async () => "c".repeat(64)),
+    instructionProposal: () => undefined,
+    subscribeInstructionProposals: () => () => {},
+    dismissInstructionProposal() {},
     welcome: vi.fn(async () => {
       throw new Error("Welcome is not exercised by agent-library tests");
     }),
