@@ -3,7 +3,7 @@ import type { Agents, AgentsSnapshot } from "../features/agents/service";
 import { isApplePlatform } from "../features/shortcuts/format";
 import { Button } from "../shared/design-system/ui/Button";
 import { Field } from "../shared/design-system/ui/Field";
-import { Header, InlineHeader } from "../shared/design-system/ui/Header";
+import { Header } from "../shared/design-system/ui/Header";
 import { Input } from "../shared/design-system/ui/Input";
 
 const KEY_STATUS: Record<AgentsSnapshot["classifierKey"], string> = {
@@ -16,7 +16,7 @@ const KEY_STATUS: Record<AgentsSnapshot["classifierKey"], string> = {
     "TypeSafe did not accept your key. Replace it to keep using TypeSafe.",
 };
 
-/** Shows the decisions API provider, TypeSafe, and sets or removes its key.
+/** Sets or removes the TypeSafe key that decisions use.
  * The key goes straight to native storage and is never shown again. */
 export function DecisionsSettings({
   agents,
@@ -58,7 +58,7 @@ export function DecisionsSettings({
   };
   return (
     <section aria-labelledby="decisions-settings-title">
-      <Header id="decisions-settings-title" title="Decisions" />
+      <Header id="decisions-settings-title" title="Decisions API" />
       {!desktop ? (
         <p role="status" className="mt-4 text-body-sm text-secondary">
           Open the Buzz desktop app to set up decisions.
@@ -69,7 +69,6 @@ export function DecisionsSettings({
           className="mt-section-gap flex flex-col items-start gap-section-gap"
         >
           <div className="flex w-full max-w-md flex-col items-start gap-3">
-            <InlineHeader title="Decisions API Provider" subtitle="TypeSafe" />
             <p role="status" className="text-body-sm text-secondary">
               {KEY_STATUS[keyState]}{" "}
               {apple

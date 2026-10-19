@@ -38,12 +38,12 @@ function fake(
   };
 }
 
-it("shows TypeSafe as the provider, with no choice, and asks for its key", () => {
+it("asks for the TypeSafe key, with no provider choice", () => {
   render(<DecisionsSettings agents={fake()} active={() => true} />);
+  expect(screen.getByRole("heading", { name: "Decisions API" })).toBeVisible();
   expect(
-    screen.getByRole("heading", { name: "Decisions API Provider" }),
-  ).toBeVisible();
-  expect(screen.getByText("TypeSafe")).toBeVisible();
+    screen.queryByRole("heading", { name: "Decisions API Provider" }),
+  ).toBeNull();
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.getByLabelText("TypeSafe API key")).toBeInTheDocument();
 });
