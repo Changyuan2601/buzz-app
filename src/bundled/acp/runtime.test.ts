@@ -47,15 +47,17 @@ function setup(
   {
     core = async () => null,
     added = () => [],
+    read = async () => [] as RelayEvent[],
   }: {
     core?: () => Promise<string | null | undefined>;
     added?: () => readonly AddedTool[];
+    read?: () => Promise<RelayEvent[]>;
   } = {},
 ) {
   const fake = fakeHarness(options);
   const host = { spawn: fake.spawn, serveMcp: fake.serve } as unknown as Host;
   const session = {
-    read: vi.fn(async () => []),
+    read: vi.fn(read),
     channels: {
       list: () => ({
         channels: [
@@ -335,6 +337,32 @@ describe("AcpRuntime", () => {
         );
       expect(fake.harnesses[0]?.sent("session/prompt")).toHaveLength(1);
     }
+  });
+
+  it("asks for the message again when the launch changes while its conversation loads", async () => {
+    const config = await confirmed();
+    let loaded!: (events: RelayEvent[]) => void;
+    const { fake, deliver, sync, published } = setup(
+      {},
+      { read: () => new Promise((resolve) => (loaded = resolve)) },
+    );
+    sync(config);
+    const root = message("1", "@Opal hello");
+    const reply = message("2", "@Opal again");
+    reply.tags.push(["e", root.id, "", "reply"]);
+    const { run } = deliver(reply, config);
+    await vi.waitFor(() => expect(loaded).toBeDefined());
+    const next = await confirmed({ args: ["acp", "--port", "0"] });
+    sync(next);
+    loaded([]);
+    await run;
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toContain("settings changed");
+    expect(published[0]?.content).toContain("Send your message again.");
+    expect(published[0]?.content).not.toContain("was stopped");
+    // Neither the old launch nor the new one was shown the message.
+    for (const harness of fake.harnesses)
+      expect(harness.sent("session/prompt")).toHaveLength(0);
   });
 
   it("leaves nothing running when a delivery is cancelled while the harness starts", async () => {
