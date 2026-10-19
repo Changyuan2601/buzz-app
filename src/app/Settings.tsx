@@ -1119,7 +1119,6 @@ export function Settings({
         {agents && decisions && (
           <div hidden={selected !== "decisions"}>
             <DecisionsSettings
-              decisions={decisions}
               agents={agents}
               active={() => selected === "decisions"}
             />

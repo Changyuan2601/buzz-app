@@ -4,7 +4,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentsSnapshot } from "../features/agents/service";
-import type { DecisionBackend } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 
 afterEach(cleanup);
@@ -39,45 +38,20 @@ function fake(
   };
 }
 
-/** The device's provider, as far as the section uses it. */
-function backends(initial: DecisionBackend = "typesafe") {
-  let backend = initial;
-  const listeners = new Set<() => void>();
-  return {
-    backend: () => backend,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    setBackend: vi.fn((next: DecisionBackend) => {
-      backend = next;
-      for (const listener of listeners) listener();
-    }),
-  };
-}
-/** The section on TypeSafe, where the key form shows. */
-function OnTypesafe(
-  props: Omit<Parameters<typeof DecisionsSettings>[0], "decisions"> & {
-    decisions?: ReturnType<typeof backends>;
-  },
-) {
-  return <DecisionsSettings decisions={backends()} {...props} />;
-}
-
-it("chooses TypeSafe and asks for its key", () => {
-  render(
-    <DecisionsSettings
-      decisions={backends()}
-      agents={fake()}
-      active={() => true}
-    />,
-  );
-  expect(screen.getByRole("radio", { name: /TypeSafe/ })).toBeChecked();
+it("shows TypeSafe as the provider, with no choice, and asks for its key", () => {
+  render(<DecisionsSettings agents={fake()} active={() => true} />);
+  expect(
+    screen.getByRole("heading", { name: "Decisions API Provider" }),
+  ).toBeVisible();
+  expect(screen.getByText("TypeSafe")).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.getByLabelText("TypeSafe API key")).toBeInTheDocument();
 });
 
 it("asks for the desktop app in the browser", () => {
-  render(<OnTypesafe agents={fake("unavailable")} active={() => true} />);
+  render(
+    <DecisionsSettings agents={fake("unavailable")} active={() => true} />,
+  );
   expect(screen.getByRole("status")).toHaveTextContent("desktop app");
   expect(screen.queryByLabelText("TypeSafe API key")).not.toBeInTheDocument();
 });
@@ -85,7 +59,7 @@ it("asks for the desktop app in the browser", () => {
 it("saves a key without showing it again, and removes it", async () => {
   const user = userEvent.setup();
   const agents = fake();
-  render(<OnTypesafe agents={agents} active={() => true} />);
+  render(<DecisionsSettings agents={agents} active={() => true} />);
   expect(screen.getByRole("status")).toHaveTextContent(
     "Add your TypeSafe API key",
   );
@@ -112,7 +86,7 @@ it("keeps the typed key and shows why a save failed", async () => {
   agents.setClassifierKey.mockRejectedValueOnce(
     new Error("That does not look like a TypeSafe API key"),
   );
-  render(<OnTypesafe agents={agents} active={() => true} />);
+  render(<DecisionsSettings agents={agents} active={() => true} />);
   await user.type(screen.getByLabelText("TypeSafe API key"), "bad key");
   await user.click(screen.getByRole("button", { name: "Save key" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -124,18 +98,21 @@ it("keeps the typed key and shows why a save failed", async () => {
 it("does not call a key missing until its status is read, or when it cannot be", async () => {
   const user = userEvent.setup();
   const { rerender } = render(
-    <OnTypesafe agents={fake("ready", "checking")} active={() => true} />,
+    <DecisionsSettings
+      agents={fake("ready", "checking")}
+      active={() => true}
+    />,
   );
   expect(screen.getByRole("status")).toHaveTextContent("Checking");
   expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
   const unreadable = fake("ready", "unreadable");
-  rerender(<OnTypesafe agents={unreadable} active={() => true} />);
+  rerender(<DecisionsSettings agents={unreadable} active={() => true} />);
   expect(screen.getByRole("status")).toHaveTextContent("could not read");
   expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Remove key" }));
   expect(unreadable.clearClassifierKey).toHaveBeenCalledOnce();
   rerender(
-    <OnTypesafe agents={fake("ready", "refused")} active={() => true} />,
+    <DecisionsSettings agents={fake("ready", "refused")} active={() => true} />,
   );
   expect(screen.getByRole("status")).toHaveTextContent(
     "TypeSafe did not accept your key",
@@ -147,6 +124,8 @@ it.each([
   [true, /this Mac's Keychain/],
   [false, /this device's credential store/],
 ])("says where the key is kept (Keychain: %s)", (apple, text) => {
-  render(<OnTypesafe agents={fake()} active={() => true} apple={apple} />);
+  render(
+    <DecisionsSettings agents={fake()} active={() => true} apple={apple} />,
+  );
   expect(screen.getByText(text)).toBeInTheDocument();
 });
