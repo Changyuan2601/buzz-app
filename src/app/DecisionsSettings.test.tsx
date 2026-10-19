@@ -120,19 +120,6 @@ it("does not call a key missing until its status is read, or when it cannot be",
   expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
 });
 
-it.each([
-  [true, /this Mac's Keychain, where only Buzz can read it/],
-  [false, /Other programs you run, agent shells included, can read it/],
-])(
-  "says where the key is kept and who can read it (Keychain: %s)",
-  (apple, text) => {
-    render(
-      <DecisionsSettings agents={fake()} active={() => true} apple={apple} />,
-    );
-    expect(screen.getByText(text)).toBeInTheDocument();
-  },
-);
-
 it("says once, in the header, that the provider receives message text", () => {
   render(<DecisionsSettings agents={fake()} active={() => true} />);
   const disclosure = screen.getByText(/provider receives the message text/);
