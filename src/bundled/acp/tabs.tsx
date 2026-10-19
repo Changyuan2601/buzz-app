@@ -1,6 +1,6 @@
 // An ACP agent's settings: a preset or a typed command, its args and env, and
 // the screen where the owner confirms the exact launch before it can run.
-import { useEffect, useRef, useState } from "react";
+import { type FocusEvent, useEffect, useRef, useState } from "react";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -42,9 +42,12 @@ const rowsOf = (env: Config["env"]): Row[] =>
   Object.entries(env).map(([name, value]) => ({ name, value }));
 const replaced = (rows: readonly Row[], at: number, row: Row) =>
   rows.map((old, index) => (index === at ? row : old));
-/** What an env row is called to a screen reader: its name, or its place. */
+/** What an env row is called to a screen reader: its place, and its name
+ * once it has one. Draft rows can share a name. */
 const rowLabel = ({ name }: Row, index: number) =>
-  name.trim() || `variable ${index + 1}`;
+  `variable ${index + 1}${name.trim() ? ` (${name.trim()})` : ""}`;
+/** The launch fields whose problems wait until the owner leaves them. */
+type Part = "command" | "args" | "env" | "workspace";
 const envOf = (rows: readonly Row[]) =>
   Object.fromEntries(
     rows.filter(({ name }) => name.trim()).map((r) => [r.name.trim(), r.value]),
@@ -114,8 +117,15 @@ export function createTabs({
     const [confirmError, setConfirmError] = useState("");
     const [checking, setChecking] = useState(false);
     const [checked, setChecked] = useState<{ ready: boolean; text: string }>();
-    // Problems in an edit wait until the owner leaves a field or saves.
-    const [touched, setTouched] = useState(false);
+    // An edited field's problems wait until the owner leaves it or saves.
+    const [left, setLeft] = useState<ReadonlySet<Part>>(new Set());
+    const [submitted, setSubmitted] = useState(false);
+    // Focus moving within a field's group doesn't leave it.
+    const leave = (part: Part) => (event: FocusEvent) => {
+      if (event.currentTarget.contains(event.relatedTarget as Node | null))
+        return;
+      if (!left.has(part)) setLeft(new Set([...left, part]));
+    };
     // The env control to focus once rows re-render, after Add or Remove.
     const env = useRef<HTMLFieldSetElement>(null);
     const [focusing, setFocusing] = useState<string>();
@@ -137,7 +147,15 @@ export function createTabs({
     const configChanged = JSON.stringify(edited) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const found = problems(edited);
-    const shown = touched || !configChanged ? found : [];
+    // Until then the field counts as saved, so stored problems show at once.
+    const counted = (part: Part) => submitted || left.has(part);
+    const shown = problems({
+      ...edited,
+      command: counted("command") ? edited.command : saved.command,
+      args: counted("args") ? edited.args : saved.args,
+      env: counted("env") ? edited.env : saved.env,
+      workspace: counted("workspace") ? edited.workspace : saved.workspace,
+    });
     const launchChanged =
       JSON.stringify([
         edited.command,
@@ -159,15 +177,17 @@ export function createTabs({
     };
     // Saving a launch the owner hasn't confirmed drops the approval.
     const submit = () => {
-      setTouched(true);
-      if (found.length > 0) return;
+      setSubmitted(true);
+      // A Check still running would report on a launch no longer saved.
+      if (found.length > 0 || checking) return;
       return run(async () => {
         await save(
           (await approved(edited)) ? edited : { ...edited, approval: "" },
         );
         setChecked(undefined);
         setReset(false);
-        setTouched(false);
+        setSubmitted(false);
+        setLeft(new Set());
       });
     };
     const closeDialog = () => {
@@ -211,9 +231,6 @@ export function createTabs({
     return (
       <form
         className="grid gap-4"
-        onBlur={(event) => {
-          if (event.target.matches("input, textarea")) setTouched(true);
-        }}
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -238,6 +255,7 @@ export function createTabs({
         >
           <Input
             value={draft.command}
+            onBlur={leave("command")}
             onValueChange={(command) =>
               setDraft({ ...draft, command, preset: CUSTOM })
             }
@@ -246,13 +264,14 @@ export function createTabs({
         <Field label="Arguments" description="One argument per line.">
           <Textarea
             value={args ?? saved.args.join("\n")}
+            onBlur={leave("args")}
             onChange={(event) => {
               setArgs(event.target.value);
               setDraft({ ...draft, preset: CUSTOM });
             }}
           />
         </Field>
-        <fieldset ref={env} className="grid gap-2">
+        <fieldset ref={env} className="grid gap-2" onBlur={leave("env")}>
           <legend>Environment</legend>
           <p>
             Extra variables for the harness. Values are hidden, except PATH.
@@ -303,6 +322,7 @@ export function createTabs({
         >
           <Input
             value={draft.workspace}
+            onBlur={leave("workspace")}
             onValueChange={(workspace) => setDraft({ ...draft, workspace })}
           />
         </Field>
@@ -342,7 +362,7 @@ export function createTabs({
             type="submit"
             variant="prominent"
             loading={busy}
-            disabled={!changed}
+            disabled={!changed || checking}
             focusableWhenDisabled
           >
             Save
@@ -364,6 +384,7 @@ export function createTabs({
         {confirming && (
           <Dialog
             open
+            preventClose={busy}
             onOpenChange={(open) => {
               if (!open) closeDialog();
             }}
@@ -371,7 +392,9 @@ export function createTabs({
             description="This agent runs exactly this, with your permissions, each time it starts."
             actions={
               <>
-                <Button onClick={closeDialog}>Cancel</Button>
+                <Button disabled={busy} onClick={closeDialog}>
+                  Cancel
+                </Button>
                 <Button variant="prominent" loading={busy} onClick={confirm}>
                   Confirm
                 </Button>

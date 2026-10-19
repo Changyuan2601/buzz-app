@@ -29,6 +29,8 @@ function mount(
   check = vi.fn(async (_: Config) => READY),
   initial = start,
   failing = 0,
+  /** Saves wait for it, when given. */
+  gate?: Promise<void>,
 ) {
   const { SettingsTab } = createTabs({ check });
   const saves: Config[] = [];
@@ -39,6 +41,7 @@ function mount(
       <SettingsTab
         agent={{ config } as Agent<Config>}
         save={async (next) => {
+          await gate;
           if (failures-- > 0) throw new Error("disk full");
           saves.push(next);
           setConfig(next);
@@ -94,7 +97,10 @@ it("won't save a reserved env name, and says so once the field is left", async (
   await userEvent.type(name, "BUZZ_PRIVATE_KEY");
   // Not while typing.
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  // Moving within the Environment group doesn't leave it.
   await userEvent.tab();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("textbox", { name: "Workspace" }));
   expect(screen.getByRole("alert")).toHaveTextContent("reserved for Buzz");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(saves).toHaveLength(0);
@@ -113,21 +119,26 @@ it("shows an edit's problem on Save without waiting for the field to be left", a
 it("names each env row by its variable and keeps focus on hand after Remove", async () => {
   mount();
   const removeKey = screen.getByRole("button", {
-    name: "Remove CURSOR_API_KEY",
+    name: "Remove variable 1 (CURSOR_API_KEY)",
   });
-  expect(screen.getByLabelText("Value of CURSOR_API_KEY")).toBeInTheDocument();
+  expect(
+    screen.getByLabelText("Value of variable 1 (CURSOR_API_KEY)"),
+  ).toBeInTheDocument();
   await userEvent.click(removeKey);
   // The row that moved up into its place.
-  expect(screen.getByRole("button", { name: "Remove PATH" })).toHaveFocus();
-  await userEvent.click(screen.getByRole("button", { name: "Remove PATH" }));
+  const path = screen.getByRole("button", { name: "Remove variable 1 (PATH)" });
+  expect(path).toHaveFocus();
+  await userEvent.click(path);
   expect(screen.getByRole("button", { name: "Add variable" })).toHaveFocus();
 });
 
 it("moves focus to the row before when the last row is removed", async () => {
   mount();
-  await userEvent.click(screen.getByRole("button", { name: "Remove PATH" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove variable 2 (PATH)" }),
+  );
   expect(
-    screen.getByRole("button", { name: "Remove CURSOR_API_KEY" }),
+    screen.getByRole("button", { name: "Remove variable 1 (CURSOR_API_KEY)" }),
   ).toHaveFocus();
 });
 
@@ -222,9 +233,85 @@ it.each([[["a\nb"]], [[""]]])(
     const args = screen.getByRole("textbox", { name: "Arguments" });
     await userEvent.clear(args);
     await userEvent.type(args, "acp");
+    await userEvent.tab();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await userEvent.click(save);
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toMatchObject({ args: ["acp"] });
   },
 );
+
+it("waits for Arguments to be left even after another field was", async () => {
+  mount();
+  await userEvent.click(screen.getByRole("textbox", { name: "Command" }));
+  await userEvent.tab();
+  const args = screen.getByRole("textbox", { name: "Arguments" });
+  expect(args).toHaveFocus();
+  await userEvent.type(args, "{End}\n");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await userEvent.tab();
+  expect(screen.getByRole("alert")).toHaveTextContent("can't be empty");
+});
+
+it("gives draft rows that share a name distinct accessible names", async () => {
+  mount();
+  await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Name of variable 3" }),
+    "PATH",
+  );
+  expect(
+    screen.getByRole("button", { name: "Remove variable 2 (PATH)" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Remove variable 3 (PATH)" }),
+  ).toBeInTheDocument();
+});
+
+it("won't save a new launch while Check runs, so its result stays current", async () => {
+  let finish!: (text: string) => void;
+  const check = vi.fn(
+    (_: Config) => new Promise<string>((resolve) => (finish = resolve)),
+  );
+  const { saves } = mount(check, await approve(start));
+  const button = screen.getByRole("button", { name: "Check" });
+  await waitFor(() => expect(button).toBeEnabled());
+  await userEvent.click(button);
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Arguments" }),
+    "{End}\n--force",
+  );
+  const save = screen.getByRole("button", { name: "Save" });
+  await userEvent.click(save);
+  fireEvent.submit(save.closest("form") as HTMLFormElement);
+  expect(saves).toHaveLength(0);
+  finish(READY);
+  expect(await screen.findByRole("status")).toHaveTextContent(READY);
+  await userEvent.click(save);
+  await waitFor(() => expect(saves).toHaveLength(1));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("keeps the dialog open while its save is pending, so a late failure shows", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const { saves } = mount(undefined, start, 1, gate);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Confirm command" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm" }),
+  );
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  release();
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "disk full",
+  );
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm" }),
+  );
+  await waitFor(() => expect(saves).toHaveLength(1));
+});
