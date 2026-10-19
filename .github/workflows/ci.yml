@@ -211,9 +211,10 @@ jobs:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
     # Playwright sizes file-level shards by test count, not duration, so costly
-    # files can share one. Nine shards keep the slowest WebKit shard well inside
-    # this deadline on slower runners, setup included.
-    timeout-minutes: 15
+    # files can share one. The slowest WebKit shard takes about 15 minutes on a
+    # busy runner, setup included, while most shards take 6-10. The deadline
+    # stops hung jobs; it is not a speed budget.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
