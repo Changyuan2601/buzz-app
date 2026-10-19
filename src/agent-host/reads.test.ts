@@ -49,7 +49,7 @@ function setup() {
       ],
     }),
   );
-  return { relay, owner, sibling, agent, client, query, mention };
+  return { relay, owner, sibling, agent, attestation, client, query, mention };
 }
 
 it("accepts a workflow mention from the owner's attested agent, as the app does", async () => {
@@ -131,4 +131,35 @@ it("answers a Solo chat at top level from its label, and threads it again once c
   expect(await solo()).toBe(false);
   f.query.mockRejectedValueOnce(new Error("offline"));
   await expect(solo()).rejects.toThrow("offline");
+});
+
+it("hands over a Solo chat's Canvas only from its owner's side, and says when there is none", async () => {
+  const f = setup();
+  const reads = agentReads(f.client, RELAY, async () => f.relay.pubkey);
+  const canvas = (author: ReturnType<typeof keypair>, tags: string[][] = []) =>
+    signed(author, {
+      kind: 40100,
+      content: `# By ${author.pubkey.slice(0, 4)}`,
+      tags: [["h", "chat"], ...tags],
+    });
+  const read = () => reads.canvas?.("chat", f.owner.pubkey);
+
+  f.query.mockResolvedValueOnce([canvas(f.owner)]);
+  expect(await read()).toBe(`# By ${f.owner.pubkey.slice(0, 4)}`);
+  expect(f.query).toHaveBeenLastCalledWith([
+    { kinds: [40100], "#h": ["chat"], limit: 1 },
+  ]);
+  // The owner's attested agent writes for the owner.
+  f.query.mockResolvedValueOnce([canvas(f.sibling, [f.attestation])]);
+  expect(await read()).toBe(`# By ${f.sibling.pubkey.slice(0, 4)}`);
+  // A member's head is not the owner's instructions.
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  f.query.mockResolvedValueOnce([canvas(keypair())]);
+  expect(await read()).toBeUndefined();
+  warn.mockRestore();
+  // No Canvas is a confirmed empty; a failed read rejects instead.
+  f.query.mockResolvedValueOnce([]);
+  expect(await read()).toBeUndefined();
+  f.query.mockRejectedValueOnce(new Error("offline"));
+  await expect(read()).rejects.toThrow("offline");
 });

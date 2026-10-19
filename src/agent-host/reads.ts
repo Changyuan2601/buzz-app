@@ -2,6 +2,7 @@
 // is made as the agent, through its own signed requests, so a turn sees only
 // what the agent may see.
 import type { BuzzClient, Filter } from "../buzz-mcp/client";
+import { ownerCanvas } from "../features/agent-harness/project";
 import type { AgentReads, ChannelFacts } from "../features/agents/reads";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import {
@@ -167,5 +168,30 @@ export function agentReads(
       );
       return !!metadata && soloChannelMetadata(metadata);
     },
+    // A Solo chat's Canvas, read fresh for each turn as the app does, and
+    // handed over only when the owner or an agent they attest wrote it. A
+    // failed read rejects, so the turn keeps the Canvas it knew.
+    canvas: (id: string, owner: string) =>
+      ownerCanvas(
+        {
+          available: true,
+          read: async (channel) =>
+            eventsDto([
+              ...(await client.query([
+                { kinds: [40100], "#h": [channel], limit: 1 },
+              ])),
+            ])
+              .filter(
+                (event) =>
+                  event.kind === 40100 && tagOf(event, "h") === channel,
+              )
+              .sort(
+                (a, b) =>
+                  b.created_at - a.created_at || a.id.localeCompare(b.id),
+              )[0],
+        },
+        owner,
+        id,
+      ),
   });
 }
