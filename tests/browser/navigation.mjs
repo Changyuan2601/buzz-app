@@ -16,6 +16,15 @@ export async function openPage(page, name, { connected = true } = {}) {
   await selectPage(page, name, { connected });
 }
 
+// Landing in a chat selects Solo; choose a scope to reach Team channels.
+export async function navigationScope(page, name) {
+  const tab = page
+    .getByRole("tablist", { name: "Navigation scope" })
+    .getByRole("tab", { name, exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
 // A Solo chat is not a page: New → New chat opens a Solo draft in Messages.
 export async function newChat(page) {
   // The community switcher appears after local startup has replaced the launch view.

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import { navigationScope, newChat, openPage } from "./navigation.mjs";
 
 // Browser-only boundaries: measured overflow/simulated native insets, keyboard focus on
 // resize, and real App wiring between Messages and Solo chats. Contract matrices stay in RTL.
@@ -53,6 +53,7 @@ test("shared navigation preserves drafts and history across Solo and header page
   await messages.click();
   // The header keeps the current Messages route, including a Solo draft.
   // Pick the original conversation from the shared sidebar to restore its draft.
+  await navigationScope(page, "All");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })

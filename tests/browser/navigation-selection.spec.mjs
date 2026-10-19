@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import { navigationScope, newChat, openPage } from "./navigation.mjs";
 import { virtuaIdle } from "./timeline.mjs";
 import { holdMenuExit, opened } from "./menu-motion.mjs";
 
@@ -47,6 +47,7 @@ test("navigation menus do not highlight labels while message text and editors re
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
+  await navigationScope(page, "All");
   const channels = page.getByRole("navigation", {
     name: "Subscribed channels",
   });
@@ -143,6 +144,7 @@ test("context menus appear immediately and retain their source highlight through
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
+  await navigationScope(page, "All");
   await page.locator('[data-channel-id="alpha"]').click();
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",

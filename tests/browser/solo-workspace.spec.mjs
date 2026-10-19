@@ -1,6 +1,6 @@
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import { navigationScope, newChat, openPage } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 const id = "33333333-3333-4333-8333-333333333333";
 const other = "44444444-4444-4444-8444-444444444444";
@@ -344,6 +344,7 @@ test.describe("personal recipients", () => {
       // who isn't in the owner's inventory. A Solo chat must reject that explicit recipient.
       await composer.fill("");
       await openPage(page, "Messages");
+      await navigationScope(page, "All");
       await page.locator('[data-channel-id="gamma"]').click();
       // Own Solo chats are listed in the Solo section, not the Team channel
       // list. A real conversation link still opens them in the Messages reader.
