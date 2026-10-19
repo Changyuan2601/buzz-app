@@ -11,6 +11,15 @@ import { fakeHarness } from "./acp-testing";
 import { approve, type Config, DEFAULT_CONFIG } from "./config";
 import { AcpRuntime } from "./runtime";
 
+const appClient = vi.hoisted(() => vi.fn());
+vi.mock("../../buzz-mcp/app-client", async (actual) => {
+  const real = await actual<typeof import("../../buzz-mcp/app-client")>();
+  return {
+    ...real,
+    appClient: appClient.mockImplementation(real.appClient),
+  };
+});
+
 const self = "c".repeat(64);
 const alice = "a".repeat(64);
 const mallory = "b".repeat(64);
@@ -48,7 +57,12 @@ function setup(
     core = async () => null,
     added = () => [],
     read = async () => [] as RelayEvent[],
+    solo = false,
+    canvas,
   }: {
+    solo?: boolean;
+    /** The channel's Canvas. */
+    canvas?: string;
     core?: () => Promise<string | null | undefined>;
     added?: () => readonly AddedTool[];
     read?: () => Promise<RelayEvent[]>;
@@ -61,9 +75,31 @@ function setup(
     channels: {
       list: () => ({
         channels: [
-          { id: channel, name: "general", channelType: "stream", members: [] },
+          {
+            id: channel,
+            name: "general",
+            channelType: solo ? "solo" : "stream",
+            members: [],
+          },
         ],
       }),
+    },
+    relayAuthor: "relay-author",
+    audienceAuthorityCommunity: "audience-community",
+    workflowAuthority: "workflow-authority",
+    canvas: {
+      available: canvas !== undefined,
+      read: vi.fn(async () =>
+        canvas === undefined
+          ? null
+          : {
+              pubkey: alice,
+              kind: 40100,
+              created_at: 1,
+              tags: [],
+              content: canvas,
+            },
+      ),
     },
     names: { resolve: (pubkey: string) => (pubkey === alice ? "Alice" : "") },
     profiles: { ensure: vi.fn(async () => {}), snapshot: () => new Map() },
@@ -136,6 +172,33 @@ describe("AcpRuntime", () => {
     const listed = await harness?.mcp(sessionId, "tools/list");
     const result = listed?.result as { tools?: { name: string }[] } | undefined;
     expect(result?.tools?.map((tool) => tool.name)).toContain("send");
+    // Shared-session tools act with the community's authorities, as Goose's do.
+    expect(appClient).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        relayAuthor: "relay-author",
+        audienceAuthorityCommunity: "audience-community",
+        signingAuthority: "workflow-authority",
+      }),
+    );
+  });
+
+  it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+    const config = await confirmed();
+    for (const solo of [true, false]) {
+      const { fake, deliver, sync } = setup(
+        {},
+        { solo, canvas: "Use tokens." },
+      );
+      sync(config);
+      await deliver(message("1", "@Opal hello"), config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+      const text = fake.harnesses[0]?.turns[0]?.text ?? "";
+      if (solo) {
+        expect(text).toContain("<workspace-canvas>");
+        expect(text).toContain("Use tokens.");
+      } else expect(text).not.toContain("workspace-canvas");
+    }
   });
 
   it("leads only a new session's first prompt with the instructions", async () => {
