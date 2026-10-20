@@ -157,8 +157,12 @@ async fn enrollment_needs_a_session_and_refuses_another_owner() {
 
     f.tokens.0.identity.state().session = None;
     assert_eq!(
-        f.tokens.grant(&f.agent, &f.key).await.err().as_deref(),
-        Some(SIGN_IN)
+        f.tokens
+            .grant(&f.agent, &f.key)
+            .await
+            .err()
+            .map(|e| e.message),
+        Some(SIGN_IN.into())
     );
 }
 
@@ -356,4 +360,72 @@ async fn concurrent_refusals_share_the_one_re_enrollment() {
     assert_eq!(a.err().as_deref(), Some(STOPPED));
     assert_eq!(b.err().as_deref(), Some(STOPPED));
     assert_eq!(served.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn an_unreachable_issuer_during_recovery_does_not_stop_the_agent() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let owner = "b".repeat(64);
+    let unavailable = || (503, serde_json::json!({ "error": "issuance_unavailable" }));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        unavailable(),
+        unavailable(),
+        unavailable(),
+        (200, enrolled(&owner)),
+        (200, issued(&probe, serde_json::json!({}))),
+    ])
+    .await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+    let failed = f.tokens.evidence(&f.agent, &f.key).await.unwrap_err();
+    assert_ne!(failed, STOPPED);
+    assert!(
+        f.grants.0.lock().unwrap().is_empty(),
+        "the refused grant is gone"
+    );
+    // The next request takes the ordinary lazy enrollment.
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    assert_eq!(served.await.unwrap().len(), 7);
+}
+
+#[tokio::test]
+async fn sign_out_retires_grants_and_a_new_sign_in_lifts_a_stop() {
+    let f = fixture("http://unused".into());
+    let at = f.tokens.grant_key(&f.agent);
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    f.grants.write(&at, &grant).unwrap();
+    f.tokens.slot(&f.agent.pubkey).lock().await.stopped = true;
+    let listed = (f.agent.owner.clone(), f.agent.pubkey.clone());
+    let agents = Arc::new(move || Ok(vec![listed.clone()]));
+
+    f.tokens.reset(false, agents.clone()).await.unwrap();
+    assert!(!f.tokens.slot(&f.agent.pubkey).lock().await.stopped);
+    assert!(
+        f.grants.0.lock().unwrap().contains_key(&at),
+        "refresh keeps grants"
+    );
+
+    f.tokens.reset(true, agents).await.unwrap();
+    assert!(f.grants.0.lock().unwrap().is_empty());
+
+    f.grants.write(&at, &grant).unwrap();
+    f.tokens
+        .forget(&f.agent.owner, &f.agent.pubkey)
+        .await
+        .unwrap();
+    assert!(
+        f.grants.0.lock().unwrap().is_empty(),
+        "deletion retires the grant"
+    );
 }
