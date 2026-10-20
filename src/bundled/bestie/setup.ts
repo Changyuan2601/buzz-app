@@ -3,6 +3,8 @@ import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
+import type { RelaySession } from "../../features/relay/session";
+import { ensureHeartbeat, unaddressable } from "./heartbeat";
 import { bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
@@ -21,6 +23,12 @@ type Record = {
   welcomeId?: string | undefined;
   welcomeFailed?: boolean | undefined;
   complete?: boolean;
+  /** The hourly wake workflow, once the relay confirmed it. */
+  heartbeatId?: string | undefined;
+  /** The display name the confirmed workflow wakes Bestie by. */
+  wakeName?: string | undefined;
+  /** Why the hourly wake can't reach Bestie, if it can't. */
+  wakeProblem?: string | undefined;
 };
 type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
@@ -56,6 +64,7 @@ function read(key: string, owner: string): Record | undefined {
     !HEX.test(owner) ||
     !UUID.test(record.channelId) ||
     (record.agent !== undefined && !HEX.test(record.agent)) ||
+    (record.heartbeatId !== undefined && !UUID.test(record.heartbeatId)) ||
     (record.complete && (!record.agent || !record.promptVersion)) ||
     [record.channelOperation, record.welcomeId].some(
       (id) => id !== undefined && !HEX.test(id),
@@ -73,6 +82,56 @@ function changed(record: Record) {
     record.promptVersion !==
     promptVersion(bestieInstructions(record.owner, record.channelId))
   );
+}
+
+/** The name the relay matches a mention against: kind 0 `display_name`, else `name`. */
+function displayName(session: RelaySession, pubkey: string) {
+  const profile = session.profiles.snapshot().get(pubkey);
+  return profile && !profile.nameIsFallback ? profile.name : undefined;
+}
+
+/** Saves or readdresses Bestie's hourly wake. A workflow problem is recorded
+ * for the page rather than failing setup; only a cancellation throws. */
+async function addressWake(
+  session: RelaySession,
+  key: string,
+  record: Record,
+  check: () => void,
+) {
+  const agent = record.agent;
+  if (!agent) return;
+  try {
+    await session.profiles.ensure([agent, record.owner]);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    // An unread profile is reported below as no name.
+  }
+  check();
+  const name = displayName(session, agent);
+  if (record.heartbeatId && name === record.wakeName) return;
+  record.wakeProblem = unaddressable(name, displayName(session, record.owner));
+  if (name && !record.wakeProblem) {
+    try {
+      record.heartbeatId = await ensureHeartbeat({
+        session,
+        channelId: record.channelId,
+        owner: record.owner,
+        agent,
+        name,
+        check,
+      });
+      record.wakeName = name;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError")
+        throw error;
+      record.wakeProblem =
+        error instanceof Error
+          ? error.message
+          : "Bestie's hourly wake could not be scheduled.";
+    }
+  }
+  localStorage.setItem(key, JSON.stringify(record));
 }
 
 /** Builderlab's gates surface as HTTP statuses on its client errors. */
@@ -139,6 +198,7 @@ export function createRemoteBestie(
         return;
       }
       const record = read(current.key, current.owner);
+      if (record?.complete) readdress(current, record);
       publish({
         status: record?.complete ? "ready" : "idle",
         message: record?.complete
@@ -152,7 +212,63 @@ export function createRemoteBestie(
       publish({ status: "error", message: explain(error) });
     }
   }
+  // A rename reaches the relay as the agent's new kind 0 profile.
+  let profiles: { session: RelaySession; stop(): void } | undefined;
+  function watchProfiles() {
+    const session = relay.snapshot().session;
+    if (profiles?.session === session) return;
+    profiles?.stop();
+    profiles = session && {
+      session,
+      stop: session.profiles.subscribe(() => {
+        if (!held) refresh();
+      }),
+    };
+  }
+  let waking: Promise<void> | undefined;
+  const lifetime = new AbortController();
+  // One attempt per session and pair of names, so a failure doesn't loop.
+  let tried: { session: RelaySession; names: string } | undefined;
+  /** Keeps the hourly wake addressed to Bestie's current display name. */
+  function readdress(
+    current: NonNullable<ReturnType<typeof scope>>,
+    record: Record,
+  ) {
+    if (waking || !record.agent) return;
+    const session = current.connection.session;
+    const name = displayName(session, record.agent);
+    if (record.heartbeatId && name === record.wakeName) return;
+    const names = `${name}\n${displayName(session, record.owner)}`;
+    if (tried?.session === session && tried.names === names) return;
+    tried = { session, names };
+    const check = () => {
+      if (disposed || relay.snapshot().session !== session || work)
+        throw new DOMException("Account or community changed.", "AbortError");
+    };
+    // Another window may be setting up or readdressing the same Bestie.
+    const attempt = async () => {
+      check();
+      const latest = read(current.key, current.owner);
+      if (latest?.complete)
+        await addressWake(session, current.key, latest, check);
+    };
+    waking = (
+      typeof navigator !== "undefined" && navigator.locks
+        ? navigator.locks.request(
+            current.key,
+            { signal: lifetime.signal },
+            attempt,
+          )
+        : attempt()
+    )
+      .catch(() => {})
+      .finally(() => {
+        waking = undefined;
+        if (!held) refresh();
+      });
+  }
   const stopRelay = relay.subscribe(() => {
+    watchProfiles();
     if (relay.snapshot().session !== state.connection?.session) {
       // A new connection invalidates setup in flight; its retry starts afresh.
       operation?.abort();
@@ -163,6 +279,7 @@ export function createRemoteBestie(
   const stopAgents = agents.subscribe(() => {
     if (!held) refresh();
   });
+  watchProfiles();
   refresh();
 
   async function provision(
@@ -447,6 +564,8 @@ export function createRemoteBestie(
       save();
     }
     await delivered("welcomeId", "welcomeFailed");
+    progress("Scheduling Bestie's hourly wake…");
+    await addressWake(session, key, record, check);
     record.complete = true;
     save();
     publish({
@@ -508,6 +627,8 @@ export function createRemoteBestie(
       operation?.abort();
       stopRelay();
       stopAgents();
+      profiles?.stop();
+      lifetime.abort();
       listeners.clear();
     },
   };

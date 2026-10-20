@@ -250,6 +250,11 @@ function Setup({
                 ? "Bestie's instructions have changed since setup."
                 : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
           </p>
+          {state.status === "ready" && state.record?.wakeProblem && (
+            <p className="m-0 text-body-sm text-muted" role="alert">
+              Hourly wake: {state.record.wakeProblem}
+            </p>
+          )}
           {(state.instructionsChanged || state.status === "busy") && (
             <Button
               size="sm"
