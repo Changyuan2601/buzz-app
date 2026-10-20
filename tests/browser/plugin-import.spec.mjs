@@ -1,15 +1,27 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
-import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  closeSettings,
+  openPage,
+  openSettings,
+  pageChoice,
+  pageChoices,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+// A closed plugin dialog returns to Settings, the only remaining modal.
+async function expectOnlySettings(page) {
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(settingsDialog(page)).toBeVisible();
+}
 async function openPlugins(page, origin) {
   await page.goto(origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
@@ -366,13 +378,17 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         path: info.outputPath(`appearance-${scale}-${width}-${mode}.png`),
       });
       // Icon buttons grow with the interface while keeping their square shape.
+      // The shell toolbar stays mounted, though hidden, behind the modal.
       await expect(
-        page.getByRole("button", { name: "Search Buzz", exact: true }),
+        page.getByRole("button", {
+          name: "Search Buzz",
+          exact: true,
+          includeHidden: true,
+        }),
       ).toHaveAttribute("data-icon-size", "sm");
       await expect
         .poll(() =>
-          page
-            .getByRole("region", { name: "Settings", exact: true })
+          settingsDialog(page)
             .locator("button[data-icon-size]")
             .evaluateAll(
               (buttons, scale) =>
@@ -554,7 +570,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   ).toBeChecked();
   await page.getByRole("switch", { name: "Enable plugin" }).uncheck();
   await button(page, "Install plugin").click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
@@ -629,7 +645,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     .getByRole("dialog")
     .screenshot({ path: info.outputPath("plugin-update-review.png") });
   await button(page, "Update plugin").click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Update Example two")).toBeFocused();
   await button(page, "View Example two details").click();
@@ -719,7 +735,7 @@ test("resizing over the catalog keeps focus in visible plugin details", async ({
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(close).toBeFocused();
 });
 
@@ -803,11 +819,12 @@ test("checked-in local examples activate and work independently", async ({
       .check();
     await button(page, "Continue").click();
     await button(page, "Install plugin").click();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expectOnlySettings(page);
     await expect(pluginAction(page, sample.manifest.name)).toHaveAccessibleName(
       `Disable ${sample.manifest.name}`,
     );
   }
+  await closeSettings(page);
   await openPage(page, "Counter playground");
   await button(page, "Clicked 0 times").click();
   await expect(button(page, "Clicked 1 times")).toBeVisible();
@@ -816,10 +833,10 @@ test("checked-in local examples activate and work independently", async ({
   await expect(page.getByRole("main").getByRole("status")).toHaveText(
     "12 characters",
   );
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Counter playground").click();
+  await closeSettings(page);
   const navigation = await pageChoices(page, "Counter playground");
   await expect(pageChoice(navigation, "Counter playground")).toHaveCount(0);
   await page
@@ -1094,7 +1111,7 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await dialog
     .getByRole("button", { name: "Install plugin", exact: true })
     .press("Enter");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(pluginAction(page, "Retry plugin")).toHaveAccessibleName(
     "Disable Retry plugin",
   );

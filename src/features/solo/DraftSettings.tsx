@@ -94,6 +94,7 @@ export function DraftSettings({
   return (
     <Dialog
       open
+      dismissOnOutsideClick={false}
       finalFocus={finalFocus}
       title="Chat settings"
       onOpenChange={(open) => {

@@ -1,5 +1,11 @@
 import { setPluginEnabled } from "./plugin-settings.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
 
@@ -565,11 +571,19 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await details.nth(2).press("Delete");
   await button(page, "Close Wrong panel tab").nth(0).click();
   await expect(profileDraft).toHaveValue("Keep instance state");
-  // Returning to the same routed thread must restore its profile/detail tabs.
+  // Settings covers the same routed thread: its profile/detail tabs stay
+  // mounted behind the modal, inert, and are restored when Settings closes.
   await openPage(page, "Settings");
-  await expect(dock).toHaveCount(0);
-  await button(page, "Go back").click();
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(dock).toHaveCount(1);
+  expect(
+    await dock.evaluate((el) => !!el.closest('[aria-hidden="true"], [inert]')),
+  ).toBe(true);
+  await expect(details).toHaveCount(0);
+  expect(await instanceInput.evaluate((el) => el.isConnected)).toBe(true);
+  await closeSettings(page);
   await expect(details).toHaveCount(1);
+  await expect(profileDraft).toHaveValue("Keep instance state");
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   await expect(details).toHaveAttribute("aria-selected", "true");
   await expect(threadTab).toHaveCount(1);
@@ -643,11 +657,10 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await expect(
     row.getByRole("link", { name: "Alpha", exact: true }).first(),
   ).toBeVisible();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Manage plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await setPluginEnabled(page, "Links", false);
-  await openPage(page, "Messages");
+  await closeSettings(page);
   await row.locator("a").first().click();
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);
   await expect(targetRow).toBeFocused();

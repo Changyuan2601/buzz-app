@@ -341,8 +341,9 @@ it.each([true, false])(
     const retry = await screen.findByRole("button", {
       name: "Retry navigation",
     });
-    const main = screen.getByRole("main");
-    const elsewhere = screen.getByRole("link", { name: "Skip to content" });
+    const main = document.getElementById("settings-content");
+    if (!main) throw new Error("Missing Settings content focus target");
+    const elsewhere = screen.getByRole("button", { name: "Close Settings" });
     (focused ? retry : elsewhere).focus();
     const before = fixture.rosterReads.length;
     expect(before).toBeGreaterThan(0);

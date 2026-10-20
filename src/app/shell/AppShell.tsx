@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type Ref,
 } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon, DotsThreeIcon } from "../../shared/design-system/icons";
@@ -30,7 +31,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
-import { WindowControls } from "./WindowControls";
+import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
@@ -42,6 +43,7 @@ export function AppShell({
   onSelect,
   tone,
   workspace,
+  workspaceRef,
   sidebar,
   communities,
   invite,
@@ -67,6 +69,8 @@ export function AppShell({
   ) => void;
   tone: string;
   workspace?: boolean;
+  /** Centered modal frame below window chrome. */
+  workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
   invite?: (InviteLink & { requestId: number }) | undefined;
@@ -265,6 +269,9 @@ export function AppShell({
       </a>
       <header
         ref={headerRef}
+        data-buzz-window-drag={
+          macDesktop || hasIntegratedWindowControls() || undefined
+        }
         data-compact-pages={compactPages || undefined}
         data-tauri-drag-region={macDesktop ? undefined : true}
         {...titleBarDragProps}
@@ -273,6 +280,9 @@ export function AppShell({
         <div
           ref={historyRef}
           className="shell-history"
+          data-buzz-window-drag={
+            macDesktop || hasIntegratedWindowControls() || undefined
+          }
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
@@ -423,70 +433,77 @@ export function AppShell({
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="shell-workspace">
+        <div
+          ref={workspaceRef}
+          className="shell-dialog-frame"
+          data-shell-dialog-frame=""
+        />
         <div
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
-          <div className="shell-content">
-            <div
-              id="shell-navigation"
-              className="shell-navigation"
-              data-sidebar-collapsible={
-                (collapsibleSidebar && !narrow) || undefined
-              }
-              data-sidebar-open={visibleSidebar || undefined}
-              aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
-              inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-              data-expanded={navigationOpen}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Escape" &&
-                  navigationOpen &&
-                  !event.defaultPrevented
-                ) {
-                  setNavigationOpen(false);
-                  navigationToggle.current?.focus();
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            <div className="shell-content">
+              <div
+                id="shell-navigation"
+                className="shell-navigation"
+                data-sidebar-collapsible={
+                  (collapsibleSidebar && !narrow) || undefined
                 }
-              }}
-            >
-              <div className="shell-navigation-content">{navigation}</div>
-            </div>
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className="min-h-0 min-w-0 flex-1"
-            >
-              <Panel as="div" joined>
-                <PanelFrame companion={companion}>
-                  <div
-                    id={`shell-page-${panelKey}`}
-                    {...(!compactPages && selectedTopbarPage
-                      ? {
-                          role: "tabpanel",
-                          "aria-labelledby": `shell-page-${panelKey}-tab`,
-                          tabIndex: 0,
-                          "data-focus-inset": "",
-                        }
-                      : {})}
-                    className={
-                      fillsWorkspace
-                        ? "buzz-tabs-panel h-full min-h-0"
-                        : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
-                    }
-                  >
+                data-sidebar-open={visibleSidebar || undefined}
+                aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+                inert={(collapsibleSidebar || narrow) && !visibleSidebar}
+                data-expanded={navigationOpen}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Escape" &&
+                    navigationOpen &&
+                    !event.defaultPrevented
+                  ) {
+                    setNavigationOpen(false);
+                    navigationToggle.current?.focus();
+                  }
+                }}
+              >
+                <div className="shell-navigation-content">{navigation}</div>
+              </div>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className="min-h-0 min-w-0 flex-1"
+              >
+                <Panel as="div" joined>
+                  <PanelFrame companion={companion}>
                     <div
+                      id={`shell-page-${panelKey}`}
+                      {...(!compactPages && selectedTopbarPage
+                        ? {
+                            role: "tabpanel",
+                            "aria-labelledby": `shell-page-${panelKey}-tab`,
+                            tabIndex: 0,
+                            "data-focus-inset": "",
+                          }
+                        : {})}
                       className={
                         fillsWorkspace
-                          ? "h-full min-h-0"
-                          : "mx-auto w-full max-w-4xl"
+                          ? "buzz-tabs-panel h-full min-h-0"
+                          : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
                       }
                     >
-                      {children}
+                      <div
+                        className={
+                          fillsWorkspace
+                            ? "h-full min-h-0"
+                            : "mx-auto w-full max-w-4xl"
+                        }
+                      >
+                        {children}
+                      </div>
                     </div>
-                  </div>
-                </PanelFrame>
-              </Panel>
-            </main>
+                  </PanelFrame>
+                </Panel>
+              </main>
+            </div>
           </div>
         </div>
       </div>

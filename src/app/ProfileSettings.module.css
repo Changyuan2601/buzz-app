@@ -22,3 +22,8 @@
   max-width: 32rem;
   white-space: pre-wrap;
 }
+
+/* Keep the actual form geometry, without showing another scope's default data. */
+.editor[data-placeholder] {
+  visibility: hidden;
+}

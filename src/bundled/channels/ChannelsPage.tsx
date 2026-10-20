@@ -261,6 +261,18 @@ function ChannelWorkspace({
     },
     [navigator, viewer, scope],
   );
+  // A send or open that finishes behind the Settings modal must not navigate
+  // away from Settings, which would discard its unsaved edits.
+  const behindSettings = () =>
+    navigator?.snapshot().entry.target.kind === "settings";
+  // A Solo start that finishes behind Settings stays put; a fresh draft
+  // replaces the submitted one so its prompt cannot be started again. The
+  // replacement never claims focus for the visit's original request, which
+  // would pull typing out of the modal into the hidden composer.
+  const [retiredSoloDraft, setRetiredSoloDraft] = useState<{
+    generation: number;
+    signal: AbortSignal | undefined;
+  }>({ generation: 0, signal: undefined });
   const select = useCallback(
     (id: string) => {
       navigate(id);
@@ -1514,29 +1526,50 @@ function ChannelWorkspace({
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
               onOpened={(channelId) => {
                 handoff?.clearPreparingDm();
-                select(channelId);
+                if (!behindSettings()) select(channelId);
               }}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
+                if (behindSettings()) return;
                 setSent({ channelId, id });
                 select(channelId);
               }}
             />
           ) : draft ? (
             <SoloDraft
-              key={JSON.stringify([draft.project, draft.agent])}
+              key={JSON.stringify([
+                draft.project,
+                draft.agent,
+                retiredSoloDraft.generation,
+              ])}
               focusRequest={
-                navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
+                navigation?.focus === "preserve" ||
+                (retiredSoloDraft.generation > 0 &&
+                  retiredSoloDraft.signal === navigation?.signal)
+                  ? 0
+                  : (navigation?.signal ?? 0)
               }
               agent={draft.agent}
               projectId={draft.project}
               session={queries}
               scope={scope}
               extensions={extensions}
-              onStarted={select}
+              onStarted={(channelId) => {
+                if (!behindSettings()) select(channelId);
+                else
+                  setRetiredSoloDraft(({ generation }) => ({
+                    generation: generation + 1,
+                    signal: navigation?.signal,
+                  }));
+              }}
               onFailed={(channelId, message) => {
                 notify(message, "error");
-                if (showing.current === channelId && navigator)
+                // A failure behind Settings must not navigate away from it.
+                if (
+                  showing.current === channelId &&
+                  navigator &&
+                  !behindSettings()
+                )
                   void navigator.open(soloDraftTarget(scope, draft));
               }}
             />

@@ -118,6 +118,8 @@ export function NewWorkspace({
         if (!open) close();
       }}
       preventClose={busy}
+      // A partly created workspace keeps its retry state; never drop it on a stray click.
+      dismissOnOutsideClick={false}
       title="New workspace"
       description="The chats you start in this workspace begin with its folders and instructions."
       initialFocus={input}

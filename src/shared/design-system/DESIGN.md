@@ -24,6 +24,7 @@ contain adoption gaps; it is not automatically an approved design example.
 | Existing tabbed pane navigation | `Tabs variant="navigation"` in that slot | New tab semantics for a static title or route destination |
 | Actions at the trailing edge of pane chrome | Small, ghost `IconButton`s; shared Menu for overflow | Text buttons, forms, filters, or a primary call-to-action banner |
 | Content introduction within a pane, such as a Settings page | `Header` | A second copy of the pane title with no additional purpose |
+| A compact sidebar or settings navigation | `SidebarNavigation` with NavigationSection / NavigationItem | Feature-owned row repaint, duplicate scrollports, or a new panel frame |
 | A named content group | `InlineHeader`; Settings groups use `SettingsGroup` | Another panel header or an arbitrary large heading |
 | A modal | `Dialog` / `AlertDialog` and their title, body, and action slots | Panel chrome or generic headings replacing dialog labelling |
 | Empty collection or setup state | `EmptyState` with a useful next action | Hiding the pane header, or calling a loading/error state empty |
@@ -158,7 +159,23 @@ close button, body padding, or footer with feature-specific markup.
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
+| Settings or another sectioned modal | `navigation={{ label, content }}` | Shared flush sidebar and detail scrollports; stacked navigation at narrow widths |
 | Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
+
+Centered navigated modals use direct viewport insets and settle at `transform: none`,
+so text does not remain inside a transformed surface. Starting styles must override
+the same settled placement selector, including portalled first paint. Their surface and contents
+enter together from 0.99 scale in one `duration-fast` fade with `easing-enter`,
+with no blank-card stage or delayed content. Scale is entry-only; exit stays a fade. The scrim retains its shared fade; exit uses `duration-fast`.
+Keyboard, reduced-motion and `motion="none"` stay immediate. Their header uses the shared
+panel-header minimum height, space-2 vertical padding and centered title/actions.
+Leading dialog padding keeps the title aligned with navigation content; trailing
+space-2 padding gives the Close control an even top, bottom and outer-edge gutter.
+`container` optionally fills a positioned host element instead of the viewport;
+pass null while that element is mounting. Keep query containment and transforms
+inside a sibling content region, not above this portal, so fixed backdrops still
+block the whole window. Other dialogs retain their existing motion; keyboard and
+reduced-motion preferences still suppress transitions.
 
 These are starting choices, not permission to combine every option. Default to
 content height; reserve stable height when changing results would otherwise make
@@ -169,6 +186,17 @@ of the shared padding. [`ChannelMembersDialog`](../../bundled/channels/ChannelMe
 shows bounded search/results; [`RemindDialog`](../../bundled/reminders/RemindDialog.tsx)
 shows a short form; [`DiffMessage`](../../bundled/diffs/DiffMessage.tsx) shows expanded
 reading. See [dialog behavior and geometry](#dialogs-and-supporting-compositions).
+
+Ordinary Dialogs dismiss on outside click by default. Use
+`dismissOnOutsideClick={false}` for an explicitly protected workflow; `preventClose`
+blocks outside click, Escape and Close while an operation cannot be abandoned.
+AlertDialog confirmations retain deliberate Cancel/confirm dismissal, never an
+outside-click shortcut. Every shared modal forwards backdrop presses over an
+empty desktop titlebar to the host’s native window-drag behavior only after a
+held mouse moves beyond the shared gesture threshold. A stationary click there
+remains an outside dismissal; actual dragging keeps the modal open without enabling
+blocked controls underneath. The host owns
+platform APIs and exact drag-region hit testing, not the design system.
 
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
@@ -232,6 +260,40 @@ state offers a next step only if that action is available.
 When discovery is partial, scope empty copy to the inspected collection. Missing
 or failed reads do not prove absence. Keep a focused create or retry control
 mounted when the body changes from loading to empty or populated.
+
+### Loading without flicker
+
+Delay progress feedback, not the work or its result. For initial reads and
+non-blocking refreshes, keep loading text/spinners silent for the first second.
+Use shared `LoadingRegion` for this timing and `aria-busy`; content appears as soon
+as it is ready, with no minimum spinner duration. User-triggered writes such as
+Save retain immediate pending feedback and repeat-action guards. Errors and
+permission refusals appear immediately, never behind the loading delay. A routine
+background check must not briefly repaint an otherwise usable control as disabled.
+Keep draft-only actions available when safe, and merge asynchronous results into
+the latest draft rather than a captured pre-refresh value. Use disabled treatment
+only for genuine unavailability or a necessary blocking operation; do not add a
+local color override to disguise a blocked action.
+
+Keep the surface header, content frame, focus and scroll anchor mounted. Reserve
+the content’s approximate final geometry on a first read rather than replacing a
+form with a one-line loading message. LoadingRegion keeps a reserved status line;
+its children own geometry. Unknown fields stay hidden/inert, not editable defaults
+from another scope. Avoid decorative shimmer or a skeleton of every control.
+
+Prefer already-verified content for the exact account/community/item while
+refreshing, using its existing owner instead of a second cache or retaining whole
+screens solely to avoid loading. Cached display is not fresh authorization. Gate
+Save and other sensitive actions on the current read; preserve edits while applying
+fresh values to untouched fields. A refresh failure keeps useful content and
+edits with inline Retry, not a blank replacement page. Closing Settings still
+discards unsaved drafts. Scope replacement retires stale reads and content.
+
+Check fast, sustained, failed and retried reads, reopening and scope changes.
+Tests control both operation completion and the feedback clock; DOM tests do not
+prove layout stability. Inspect narrow/wide, both themes and enlarged text in the
+actual host. Adopt this recipe surface by surface, not by delaying every spinner
+or keeping permission-dependent UI alive across account changes.
 
 Use `EmptyState` for a substantial settled empty/setup region. Use concise inline
 status for a small subsection or loading state. A huge icon-only creation tile is
@@ -309,6 +371,31 @@ detail, even when a role uses the same step in both themes. Add a role only for
 an actual use, document it in the registry and measure its intended pairings.
 Legacy utilities and host aliases remain while their callers migrate. Do not
 add new uses. Whole materials such as glass still travel as one shared recipe.
+
+Solo, Multiplayer and Settings compose `SidebarNavigation` with the existing
+NavigationItem and NavigationSection children. This component owns the appearance
+already shipped in main: `text-navigation` read labels, body-sm Regular type,
+28px rows at default scale, 2px block padding, 8px leading/6px trailing padding,
+6px icon gap, shared selection, quiet hover and unavailable states. Static section
+headings match the main sidebar's disclosure type/insets; rows sit 2px apart and
+named groups 16px apart. Do not substitute generic row defaults or invent a
+Settings-specific sidebar appearance.
+
+SidebarNavigation has no landmark, surface, padding, layout box or scrollport:
+its root uses `display: contents`, without a `data-buzz-ui` boundary that would
+suppress native product-content defaults. Hosts keep their nav/aside semantics,
+framing and scrolling. `wrapSections` lets Settings groups wrap in one shared
+responsive layout when their host becomes narrow; do not reproduce that grid or
+its margin reset in the modal or feature stylesheet. Shared selector rules live globally in the design system,
+never nested inside feature CSS Modules via `@apply` (which renames their targets).
+Features keep unread cues, branded headers, collapsible groups, drag targets and
+composite row/scrollbar geometry; their existing layout rules remain in charge.
+Top-bar pills and picker options are not sidebar rows and keep their own recipes.
+
+Omit NavigationSection’s `label` for a headingless reference group: it keeps
+ordinary section separation without an empty heading and spans the wrapped
+navigation grid. Settings places its community URL copy action there above
+“Community”; the action keeps its pointer Copy hint and never selects a destination.
 
 Panel navigation uses `affordance-panel-hover` for its quiet hover and the shared
 `affordance-selected` for persistent selection. In dark mode, the unfilled panel
@@ -591,7 +678,7 @@ node. Adding a scoped theme requires rebinding its dependent aliases too.
 Do not override upstream `--affordance-*` values on a wrapper to retint controls.
 The existing semantic exceptions have named shared recipes: `interaction-availability`
 on the status owner uses `data-status="online" | "away" | "offline"` (unknown stays
-neutral) for the documented status capsule fills, while `interaction-navigation`
+neutral) for the documented status capsule fills, while SidebarNavigation
 on the sidebar keeps channel rows and session selection equally quiet. Apply these
 only to their semantic owners, not as general styling escape hatches. Button and
 NavigationItem still do not accept caller-supplied `className`; popup portals keep
@@ -989,10 +1076,9 @@ Composer pickers reuse PopoverPopup and anchor above the whole composer with a
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
-close button agree. It retains the app's explicit dismissal behavior: outside
-clicks do not discard a form by default. Channel-management modals explicitly
-opt into `dismissOnOutsideClick` and reuse their Cancel/Close path, including
-nested confirmations that dismiss only their own layer. `preventClose` blocks
+close button agree. Ordinary dialogs dismiss on outside click through their
+Cancel/Close path, including nested confirmations that dismiss only their own
+layer; protected forms and one-time content set `dismissOnOutsideClick={false}`. `preventClose` blocks
 pointer dismissal as well as Escape and Close. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
 An explicit finalFocus applies only while focus is still in the closing popup
@@ -1019,6 +1105,18 @@ rather than only their text selection; bounded flex/expanded bodies keep their o
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
+
+An optional `navigation={{ label, content }}` composes an expanded modal with one
+integrated sidebar, a semantic divider and an independently scrolling detail.
+Supply SidebarNavigation containing NavigationSection and NavigationItem as its
+content, not a Panel or another nav element. Dialog owns the surface, insets and scrollports; do not add rounded
+inner frames or cancel its padding. At narrow dialog widths the navigation wraps
+above the detail in one scrollport. Dialog hands focus to content after a navigation click
+when the stacked navigation would otherwise leave it offscreen. Navigation opts
+into expanded geometry; do not combine it with stepped or side-inspector layouts.
+Settings is the first consumer. Its sections retain their existing immediate-save
+or explicit-save actions inside the content, rather than a modal-wide Save footer.
+
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
@@ -1077,7 +1175,16 @@ content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. For asynchronous action feedback (such as copying a
 channel ID), control `open` / `onOpenChange` and set `closeOnClick={false}` so the
 initiating click does not dismiss its result. Defaults retain ordinary hint behavior.
-Overlay layers keep menus and hints above dialogs.
+`follow="pointer"` attaches a compact, non-interactive hint below/right of the native
+pointer using Base UI cursor tracking and collision handling; keyboard focus uses
+its trigger anchor. Do not replace or hide the system cursor, spring the tracking,
+or include full URLs in the pointer chip. Clipboard actions show “Copy”, then a
+check and “Copied” while hovered/focused; keep screen-reader status and touch toast
+feedback with the action owner. Pointer offsets clear the physical cursor silhouette
+rather than following text-scale spacing. Real pointer geometry needs browser/native
+inspection; DOM tests do not establish placement.
+Overlay layers keep toasts, then menus and hints, above dialogs, so feedback a
+dialog raises stays visible.
 Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
 can consume Escape before a panel's Back handler; the existing PanelSubview
 controls expose this conflict. Preserve their accessible names and current Back
@@ -1216,7 +1323,7 @@ they apply. Keep the same control recognizable across those states.
 
 - Pressed changes the fill without moving the control.
 - Loading preserves the label’s space and blocks repeated activation in behavior, not just CSS.
-- For non-blocking background checks, delay progress feedback for about one second to avoid flicker. User-triggered actions such as Save still show immediate loading feedback.
+- For initial reads and non-blocking background checks, use [Loading without flicker](#loading-without-flicker): delay progress feedback for one second, never content. User-triggered writes such as Save still show immediate loading feedback.
 - Hover adds contrast appropriate to the surface: a light row darkens, while a dark chip may lighten.
 - Selection remains visible after the pointer leaves. A selected toggle-group item does nothing when selected again and has no hover treatment.
 - Disabled means unavailable. Do not use it as a quieter text-emphasis level.

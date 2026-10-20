@@ -20,6 +20,8 @@ export interface NavigationHistory {
   replace(target: OpenTarget): void;
   back(): void;
   forward(): void;
+  /** Return to a retained in-document visit, without creating another entry. */
+  returnTo(entryId: string): boolean;
   dispose(): void;
 }
 export const homeTarget = Object.freeze({ version: 1, kind: "home" } as const);
@@ -96,6 +98,13 @@ export function createMemoryHistory(
       if (disposed || index === entries.length - 1) return;
       index++;
       emit();
+    },
+    returnTo(entryId) {
+      const found = entries.findIndex((entry) => entry.id === entryId);
+      if (disposed || found < 0) return false;
+      index = found;
+      emit();
+      return true;
     },
     dispose() {
       disposed = true;

@@ -32,7 +32,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import styles from "./Communities.module.css";
-import { fetchCommunityIcon } from "./community-icon";
+import { communityIcons, fetchCommunityIcon } from "./community-icon";
 import { useCommunityRole } from "./useCommunityRole";
 
 const noSubscription = () => () => {};
@@ -108,7 +108,8 @@ export function CommunityPicker({
   );
   const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
-  const [icons, setIcons] = useState<Record<string, string>>({});
+  const icons = communityIcons(communities);
+  useSyncExternalStore(icons.subscribe, icons.snapshot);
   const membershipIds = client.memberships
     .map((membership) => membership.id)
     .join("\n");
@@ -128,7 +129,7 @@ export function CommunityPicker({
           try {
             const icon = await fetchCommunityIcon(id, controller.signal);
             if (icon !== undefined && !controller.signal.aborted)
-              setIcons((previous) => ({ ...previous, [id]: icon }));
+              icons.remember(id, icon);
           } catch {
             // Unreachable relay: retain saved icon or initials.
           }
@@ -137,7 +138,7 @@ export function CommunityPicker({
     );
     void Promise.all(workers);
     return () => controller.abort();
-  }, [client.status, client.relayAvailable, membershipIds]);
+  }, [client.status, client.relayAvailable, membershipIds, icons]);
   const select = (id: string | null) => {
     setSwitcherOpen(false);
     if (onSelect) onSelect(id);
@@ -227,7 +228,7 @@ export function CommunityPicker({
                       shape="squircle"
                       alt=""
                       fallback={active.name}
-                      src={icons[active.id] ?? active.icon}
+                      src={icons.resolve(active)}
                     />
                   ) : (
                     <GlobeIcon size={22} aria-hidden="true" />
@@ -284,7 +285,7 @@ export function CommunityPicker({
                 <CommunityPickerItem
                   key={membership.id}
                   membership={membership}
-                  icon={icons[membership.id] ?? membership.icon}
+                  icon={icons.resolve(membership)}
                   selected={selected}
                   viewer={client.viewer}
                   session={selected ? session : undefined}

@@ -190,13 +190,17 @@ export function PageSearch({
         onOpenChangeComplete={(open) => {
           if (!open && !openRef.current) setContentPresent(false);
           // Base UI otherwise chooses main's first tabbable child. Preserve a
-          // destination's own focus target if it already presented one.
+          // destination's own focus target if it already presented one, in
+          // main or in a modal destination such as Settings.
           const main = returnFocus.current;
+          const destination =
+            document.activeElement?.closest('[role="dialog"]');
           if (
             !open &&
             !openRef.current &&
             main?.id === "main-content" &&
-            !main.contains(document.activeElement)
+            !main.contains(document.activeElement) &&
+            !(destination && !destination.contains(input.current))
           )
             main.focus({ preventScroll: true });
         }}

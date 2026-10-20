@@ -1,5 +1,11 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  newChat,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { connect } from "node:net";
 import { once } from "node:events";
@@ -40,13 +46,17 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await button(page, "Close Companion fixture panel").click();
   await expect(draft).toHaveValue("Keep the page instance");
   await button(page, "Notes").click();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Manage plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Notes fixture").click();
+  // The workspace behind Settings is hidden; inspect it after closing.
+  await closeSettings(page);
   await expect(button(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Notes")).toHaveCount(0);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Notes fixture").click();
+  await closeSettings(page);
   await expect(button(page, "Notes")).toBeVisible();
   await expect(card(page, "Notes")).toHaveCount(0);
   await companionLauncher(page, "Companion fixture").click();
@@ -166,10 +176,10 @@ test("A new Solo chat places companion plugins in its draft state and removes di
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Companion fixture")).toHaveCount(1);
   await button(page, "Notes").click();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Manage plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Notes fixture").click();
+  await closeSettings(page);
   await newChat(page);
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(button(page, "Notes")).toHaveCount(0);

@@ -3,6 +3,7 @@ import { nativeCommunityRequest } from "./native-api";
 import { connectCommunityTransport, registerCommunity } from "./connection";
 import { settledRefusal, type SettledRefusal } from "./leave-protocol";
 import { registerBrokerCommunity } from "../relay/transport";
+import type { EventData } from "../relay/events";
 import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
@@ -74,6 +75,13 @@ export async function inspectProfile(id: string, session?: RelaySession) {
   const event = events
     .filter((e) => e.kind === 0 && e.pubkey === transport.viewer)
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
+  return profileFromEvent(event);
+}
+
+/** Parse a verified profile head consistently for fresh reads and same-session display. */
+export function profileFromEvent(
+  event: Pick<EventData, "content"> | undefined,
+) {
   const parsed: unknown = event ? JSON.parse(event.content) : {};
   const existing: Record<string, unknown> =
     parsed && typeof parsed === "object" && !Array.isArray(parsed)

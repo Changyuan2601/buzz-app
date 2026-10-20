@@ -41,9 +41,6 @@
 .sidebar {
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;
-  --size-row: var(--space-6);
-  @apply interaction-navigation;
-  --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
   --sidebar-padding-end: var(--sidebar-padding);
   --channel-row-radius: var(--radius-control);
@@ -78,23 +75,6 @@
 .sidebarFilter > .destinations {
   margin-bottom: calc(var(--space-3) + var(--space-2));
 }
-/* Scope compact navigation to this sidebar; top-bar destinations keep their sizing. */
-.sidebar [data-variant="row"] {
-  --space-row-gap: calc(var(--space-1) + var(--space-half));
-  color: var(--text-navigation);
-  min-height: calc(var(--space-6) + var(--space-1));
-  height: calc(var(--space-6) + var(--space-1));
-  padding: var(--space-half) calc(var(--space-1) + var(--space-half))
-    var(--space-half) var(--space-2);
-  border-radius: var(--radius-row);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
-  font-weight: var(--type-weight-normal);
-}
-.sidebar [data-variant="row"]:hover:not([data-selected], [data-disabled]) {
-  background: var(--affordance-panel-hover);
-}
 @media (hover: hover) and (pointer: fine) {
   .sidebar [data-icon-variant="ghost"]:hover:not([data-disabled]) {
     background: var(--affordance-panel-hover);
@@ -106,21 +86,9 @@
   ) {
   background: var(--affordance-panel-hover);
 }
-.sidebar [data-variant="row"][data-inset] {
-  padding-inline-start: calc(var(--space-2) + var(--space-6));
-}
-/* Unavailable destinations must not advertise an enabled hover action. */
-.sidebar [data-variant="row"][data-disabled] {
-  color: var(--text-unavailable);
-  cursor: default;
-  background: transparent;
-}
 .sidebarIcon > :is(svg, img) {
   max-width: 100%;
   max-height: 100%;
-}
-.sidebar [data-variant="row"] > :is(svg, img) {
-  flex-shrink: 0;
 }
 .sidebarIcon {
   display: inline-grid;

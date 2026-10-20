@@ -323,6 +323,29 @@
     padding-inline: var(--space-panel-gap);
     padding-bottom: var(--space-panel-gap);
   }
+  /* Keep the modal portal outside the query container so its fixed backdrop
+     still blocks the whole window, including the header. */
+  .shell-workspace {
+    @apply relative flex min-h-0 min-w-0 flex-1;
+  }
+  .shell-dialog-frame {
+    position: absolute;
+    inset: 0 var(--space-panel-gap) var(--space-panel-gap);
+    pointer-events: none;
+  }
+  .shell-dialog-frame > * {
+    pointer-events: auto;
+  }
+  /* A wrapped narrow header would leave Settings a sliver; cover all but the
+     titlebar row, which keeps window controls clear. */
+  @media (max-width: 650px) {
+    .shell-dialog-frame {
+      position: fixed;
+      /* Fixed positioning creates a stacking context; raise it with the dialog. */
+      z-index: var(--layer-dialog);
+      inset: var(--size-topbar) var(--space-panel-gap) var(--space-panel-gap);
+    }
+  }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0 flex-1;
     container-type: inline-size;

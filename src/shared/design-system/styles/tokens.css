@@ -844,6 +844,8 @@
   --space-chip-gap: var(--space-1);
   --layer-dialog-backdrop: 1000;
   --layer-dialog: 1001;
+  /* Feedback raised from a dialog must stay visible above it. */
+  --layer-toast: 1050;
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;

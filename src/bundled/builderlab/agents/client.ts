@@ -74,6 +74,14 @@ export function createAgentClient(
   // dev broker, which has no binding signer, so linking is skipped.
   owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
+  function remoteCredential() {
+    const credential = session.credential();
+    if (!credential.account.canUseRemoteAgents)
+      throw new Error(
+        "Builderlab remote agents are coming soon for your account.",
+      );
+    return credential;
+  }
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
     if (
@@ -96,7 +104,7 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = session.credential();
+    const credential = remoteCredential();
     let response: HostResponse;
     try {
       response = await host.request({
@@ -371,7 +379,7 @@ export function createAgentClient(
         throw new Error(
           "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
         );
-      const credential = session.credential();
+      const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),

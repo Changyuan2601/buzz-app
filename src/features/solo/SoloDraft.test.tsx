@@ -403,6 +403,15 @@ it("edits draft settings before creation, restores them, and applies Canvas once
   expect(canvas).toHaveValue("");
   await user.clear(canvas);
   await user.type(canvas, "Keep the change small");
+  // A stray outside click keeps the dialog and the typed instructions.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "Keep the change small",
+  );
   await user.click(screen.getByRole("radio", { name: /^Temporary/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() =>

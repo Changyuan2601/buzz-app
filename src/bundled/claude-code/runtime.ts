@@ -6,10 +6,11 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
-import { respond } from "../../buzz-mcp/rpc";
+import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
   addedKey,
+  sessionHint,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
@@ -126,6 +127,17 @@ const where = ({ workspace, model, effort }: Config) => ({
   ...(effort ? { effort } : {}),
 });
 
+/** How Claude lists the session tools: in full up front only those marked
+ * `alwaysLoad`, and the rest by name until its tool search loads them, with
+ * the server's instructions saying what they are. */
+const listing = (added: readonly AddedTool[]): Listing => ({
+  instructions: sessionHint(added),
+  tool: ({ load, ...tool }) =>
+    load === "always"
+      ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
+      : tool,
+});
+
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly memoryReads = new MemoryReads();
@@ -141,7 +153,8 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    (_conversation, message) =>
+      respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
     () => addedKey(this.added()),
   );
@@ -689,7 +702,13 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, this.added());
+        return respond(
+          client,
+          context,
+          message,
+          this.added(),
+          listing(this.added()),
+        );
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),

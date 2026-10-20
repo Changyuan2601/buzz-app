@@ -1,4 +1,9 @@
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
@@ -10,9 +15,8 @@ test("settings share a centered, bounded column and keep controls contained acro
   app,
 }, info) => {
   await page.goto(app.origin);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("main")).toBeFocused();
+  await openSettings(page);
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.
   const profile = page.getByRole("region", {
@@ -93,10 +97,17 @@ test("settings share a centered, bounded column and keep controls contained acro
                   getComputedStyle(document.documentElement).fontSize,
                 );
                 const failures = [];
-                const pageStyle = getComputedStyle(
-                  root.closest(".buzz-settings-page"),
+                // The Settings modal's detail scrollport owns the page inset.
+                const detailStyle = getComputedStyle(
+                  root.closest(".buzz-dialog-navigation-detail"),
                 );
-                if (parseFloat(pageStyle.paddingTop) !== 2 * rem)
+                const inset = getComputedStyle(
+                  root.closest(".buzz-dialog"),
+                ).getPropertyValue("--dialog-padding");
+                if (
+                  !inset.endsWith("rem") ||
+                  parseFloat(detailStyle.paddingTop) !== parseFloat(inset) * rem
+                )
                   failures.push("settings page lost its top inset");
                 if (bounds.width > 48 * rem)
                   failures.push("content exceeds 48rem");
@@ -132,7 +143,7 @@ test("settings share a centered, bounded column and keep controls contained acro
               section.evaluate((root) => {
                 const bounds = root.getBoundingClientRect();
                 const panel = root
-                  .closest("[data-buzz-surface]")
+                  .closest(".buzz-dialog-navigation-detail")
                   .getBoundingClientRect();
                 return (
                   bounds.left +
@@ -273,15 +284,13 @@ test.describe("settings empty collections", () => {
           .toBe(true);
         await expect
           .poll(() =>
-            page
-              .getByRole("main")
-              .evaluate(
-                (root) =>
-                  root
-                    .getAnimations({ subtree: true })
-                    .filter((animation) => animation.playState === "running")
-                    .length,
-              ),
+            settingsDialog(page).evaluate(
+              (root) =>
+                root
+                  .getAnimations({ subtree: true })
+                  .filter((animation) => animation.playState === "running")
+                  .length,
+            ),
           )
           .toBe(0);
         await page.screenshot({
@@ -317,15 +326,13 @@ test.describe("settings empty collections", () => {
           .toBe(true);
         await expect
           .poll(() =>
-            page
-              .getByRole("main")
-              .evaluate(
-                (root) =>
-                  root
-                    .getAnimations({ subtree: true })
-                    .filter((animation) => animation.playState === "running")
-                    .length,
-              ),
+            settingsDialog(page).evaluate(
+              (root) =>
+                root
+                  .getAnimations({ subtree: true })
+                  .filter((animation) => animation.playState === "running")
+                  .length,
+            ),
           )
           .toBe(0);
         await page.screenshot({

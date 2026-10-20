@@ -2870,7 +2870,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   await f.complete();
 });
 
-it("always offers the attention tools and guidance, keeps the thread when attention goes off, and says so in the turn", async () => {
+it("always offers the attention tools, on search, keeps the thread when attention goes off, and says so in the turn", async () => {
   const f = fixture();
   f.attention.on = true;
   f.objects.set("interest/ops", {
@@ -2882,12 +2882,23 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   const thread = (index: number) =>
     f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as {
       developerInstructions: string;
-      dynamicTools: { tools: { name: string }[] }[];
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
     };
   const names = (index: number) =>
     thread(index)?.dynamicTools[0]?.tools.map((tool) => tool.name) ?? [];
   expect(names(0)).toEqual(expect.arrayContaining(["send", "interest_show"]));
-  expect(thread(0)?.developerInstructions).toContain("## Attention");
+  // The Buzz tools are listed up front, and the attention tools, with their
+  // guidance, once the model searches for them.
+  const deferred = (name: string) =>
+    thread(0)?.dynamicTools[0]?.tools.find((tool) => tool.name === name)
+      ?.deferLoading;
+  expect(deferred("send")).toBe(undefined);
+  expect(deferred("interest_show")).toBe(true);
+  expect(thread(0)?.dynamicTools[0]?.description).toContain("attention");
+  expect(thread(0)?.developerInstructions).not.toContain("## Attention");
   const start = f.starts()[0]?.params as { input: { text: string }[] };
   expect(start.input[0]?.text).toMatch(
     /<attention>\nHandle the work that caused this turn/,
@@ -2941,10 +2952,20 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   const names = (index: number) =>
     (
       f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
-        | { dynamicTools: { tools: { name: string }[] }[] }
+        | {
+            dynamicTools: {
+              tools: { name: string; deferLoading?: boolean }[];
+            }[];
+          }
         | undefined
-    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
-  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+    )?.dynamicTools[0]?.tools;
+  expect(names(0)?.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["send", "tasks_create"]),
+  );
+  // A plugin's tool loads on search.
+  expect(
+    names(0)?.find((tool) => tool.name === "tasks_create")?.deferLoading,
+  ).toBe(true);
   const reply = await f.tool("tasks_create", { title: "Ship it" });
   expect(JSON.stringify(reply?.result)).toContain("created");
   expect(call).toHaveBeenCalledWith(
@@ -2979,7 +3000,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
     1,
   );
-  expect(names(1)).not.toContain("tasks_create");
+  expect(names(1)?.map((tool) => tool.name)).not.toContain("tasks_create");
   const gone = await f.tool("tasks_create", { title: "Late" });
   expect(JSON.stringify(gone)).toContain("No active Buzz tool");
   expect(call).toHaveBeenCalledTimes(1);

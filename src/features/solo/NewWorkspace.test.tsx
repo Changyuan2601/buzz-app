@@ -95,6 +95,16 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
   expect(screen.getByRole("status")).toHaveTextContent(
     "Name, folders and instructions are kept for the retry.",
   );
+  // A stray outside click keeps the retry state and its workspace identity.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(close).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "Keep changes small",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledOnce();

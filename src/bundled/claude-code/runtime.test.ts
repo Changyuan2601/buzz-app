@@ -1125,7 +1125,7 @@ it("gives up a one-off turn that runs past its deadline", async () => {
   }
 });
 
-it("always offers attention tools and guidance, and says in each turn whether attention is on", async () => {
+it("always offers attention tools, on search, and says in each turn whether attention is on", async () => {
   const { runtime, claudes, deliver, attention } = setup();
   const agent = {
     pubkey: self,
@@ -1146,18 +1146,32 @@ it("always offers attention tools and guidance, and says in each turn whether at
     claudes().find((process) =>
       process.prompts[0]?.includes(`Content: @Claude ${id}`),
     );
-  const names = async (claude: FakeClaude | undefined, id: number) =>
+  const tools = async (claude: FakeClaude | undefined, id: number) =>
     (
       ((await mcp(claude, id, "tools/list")) as unknown as {
-        tools: { name: string }[];
+        tools: { name: string; _meta?: unknown }[];
       }) ?? { tools: [] }
-    ).tools.map((tool) => tool.name);
+    ).tools;
+  const names = async (claude: FakeClaude | undefined, id: number) =>
+    (await tools(claude, id)).map((tool) => tool.name);
   runtime.sync([agent as Agent]);
   await mention("6");
   await flush(10);
   const on = asked("6");
-  expect(await names(on, 1)).toContain("watch_add");
-  expect(systemPromptOf(on)).toContain("## Attention");
+  // Listed, but loaded only when the model searches for them, with their
+  // guidance in their descriptions rather than the system prompt.
+  const listed = await tools(on, 1);
+  const watchAdd = listed.find((tool) => tool.name === "watch_add");
+  expect(watchAdd).toBeDefined();
+  expect(watchAdd?._meta).toBe(undefined);
+  expect(listed.find((tool) => tool.name === "send")?._meta).toEqual({
+    "anthropic/alwaysLoad": true,
+  });
+  const initialized = (await mcp(on, 8, "initialize")) as unknown as {
+    instructions?: string;
+  };
+  expect(initialized?.instructions).toContain("your attention");
+  expect(systemPromptOf(on)).not.toContain("## Attention");
   expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
   // Turned off, the session keeps its tools and prompt: nothing restarts.
   attention.on = false;
@@ -1168,7 +1182,7 @@ it("always offers attention tools and guidance, and says in each turn whether at
   await flush(10);
   const off = asked("7");
   expect(await names(off, 2)).toContain("watch_add");
-  expect(systemPromptOf(off)).toContain("## Attention");
+  expect(systemPromptOf(off)).toBe(systemPromptOf(on));
   // Only the turn says that attention is off, and the tools refuse.
   expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
   expect(off?.prompts[0]).not.toContain("Handle the work");

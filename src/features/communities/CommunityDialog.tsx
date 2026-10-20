@@ -254,6 +254,7 @@ export function CommunityDialog({
   return (
     <Dialog
       open
+      dismissOnOutsideClick={false}
       onOpenChange={(next) => {
         if (!next) close();
       }}

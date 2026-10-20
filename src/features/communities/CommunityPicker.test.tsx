@@ -18,6 +18,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CommunityPicker } from "./CommunityPicker";
+import { CommunityAddress } from "../../app/CommunityAddress";
 import { MEMBERSHIP_SECTION } from "./CommunityPickerItem";
 import type { PurgeFailure } from "./device-state";
 import { MEMBERSHIP_KIND, type Role } from "./roster";
@@ -1130,4 +1131,53 @@ it("shows only the active community until opened and routes creation through Hos
       screen.queryByRole("dialog", { name: "Switch community" }),
     ).toBeNull(),
   );
+});
+
+it("shares discovered community artwork with an already-open Settings address without another read", async () => {
+  const h = harness();
+  let finish!: (response: Response) => void;
+  const pendingIcon = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const artwork = "https://images.example/bee.png";
+  h.fetch.mockImplementation(async (url: string) => {
+    if (url === "/api/relay/register") return Response.json({});
+    if (url === `/api/relay/${encodeURIComponent(primary)}/icon-info`)
+      return pendingIcon;
+    return Response.json({}, { status: 404 });
+  });
+  render(
+    <>
+      <CommunityPicker communities={h.communities} />
+      <CommunityAddress
+        communities={h.communities}
+        community={{ id: primary, name: "Primary" }}
+      />
+    </>,
+  );
+  try {
+    await waitFor(() =>
+      expect(h.fetch).toHaveBeenCalledWith(
+        `/api/relay/${encodeURIComponent(primary)}/icon-info`,
+        expect.anything(),
+      ),
+    );
+    await act(async () => finish(Response.json({ icon: artwork })));
+    await waitFor(() =>
+      expect(switcher().querySelector("img")).toHaveAttribute("src", artwork),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Copy community URL, primary.example" })
+        .querySelector("img"),
+    ).toHaveAttribute("src", artwork);
+    expect(
+      h.fetch.mock.calls.filter(
+        ([url]) =>
+          url === `/api/relay/${encodeURIComponent(primary)}/icon-info`,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await act(async () => finish(Response.json({ icon: artwork })));
+  }
 });

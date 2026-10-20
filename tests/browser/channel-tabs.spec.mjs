@@ -2,7 +2,12 @@ import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage, settlePanelMotion } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  settingsDialog,
+  settlePanelMotion,
+} from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -173,15 +178,26 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await account
     .getByRole("button", { name: "Close Companion fixture panel", exact: true })
     .click();
+  // Settings covers the retained channel: its tabs stay mounted behind the
+  // modal, inert, and are restored when Settings closes.
   await openPage(page, "Settings");
-  await openPage(page, "Messages");
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(workspace).toContainText("Beta draft");
+  expect(
+    await workspace.evaluate(
+      (el) => !!el.closest('[aria-hidden="true"], [inert]'),
+    ),
+  ).toBe(true);
+  await closeSettings(page);
   await expect(composer).toHaveText("Beta draft");
   await expect(
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await split.click();
   await openPage(page, "Settings");
-  await openPage(page, "Messages");
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(workspace).toHaveCount(1);
+  await closeSettings(page);
   await expect(workspace).toBeHidden();
   await expect(split).toHaveAttribute("aria-expanded", "false");
   await split.click();

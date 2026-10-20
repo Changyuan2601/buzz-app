@@ -16,6 +16,7 @@ export function Tooltip({
   closeOnClick = true,
   disableHoverablePopup = false,
   side = "top",
+  follow = "trigger",
   open: controlledOpen,
   onOpenChange,
 }: {
@@ -27,6 +28,8 @@ export function Tooltip({
   closeOnClick?: boolean;
   disableHoverablePopup?: boolean;
   side?: "top" | "right";
+  /** Attach a non-interactive hint below/right of the native pointer. */
+  follow?: "trigger" | "pointer";
   /** Action feedback may open a hint after an asynchronous result. */
   open?: boolean;
   onOpenChange?(open: boolean): void;
@@ -49,7 +52,8 @@ export function Tooltip({
         onOpenChange?.(next);
       }}
       disabled={expanded}
-      disableHoverablePopup={disableHoverablePopup}
+      disableHoverablePopup={follow === "pointer" || disableHoverablePopup}
+      trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
         delay={delay}
@@ -60,8 +64,11 @@ export function Tooltip({
       />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner
-          side={side}
-          sideOffset={4}
+          side={follow === "pointer" ? "bottom" : side}
+          align={follow === "pointer" ? "start" : "center"}
+          // Clear the physical pointer silhouette; these offsets are not layout spacing.
+          sideOffset={follow === "pointer" ? 18 : 4}
+          alignOffset={follow === "pointer" ? 10 : 0}
           // Fixed hints never add page scroll width, even while WebKit keeps
           // one open across a resize.
           positionMethod="fixed"
@@ -72,6 +79,7 @@ export function Tooltip({
             id={id}
             data-buzz-ui=""
             className="buzz-tooltip"
+            data-follow={follow}
           >
             {content}
           </BaseTooltip.Popup>

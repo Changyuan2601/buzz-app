@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import { handoffBackupSession } from "../../features/identity/backup";
 import { nativeIdentityEnabled } from "../../features/identity/service";
@@ -59,7 +60,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const state = session.snapshot();
       providerState = Object.freeze(
         state.status === "signed-in"
-          ? { readiness: "ready" }
+          ? state.account?.canUseRemoteAgents
+            ? { readiness: "ready" }
+            : { readiness: "attention", attentionLabel: "Coming soon" }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -70,17 +73,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       for (const listener of providerListeners) listener();
     };
     const stopProvider = session.subscribe(updateProvider);
-    const ProviderDialogBody = () => (
-      <div className="grid gap-3">
-        <InlineHeader level={3} title="Connection" />
-        <Login
-          session={session}
-          available={loginAvailable}
-          active={() => true}
-          showHeading={false}
-        />
-      </div>
-    );
+    const ProviderDialogBody = () => {
+      const state = useSyncExternalStore(session.subscribe, session.snapshot);
+      return (
+        <div className="grid gap-3">
+          <InlineHeader level={3} title="Connection" />
+          <Login
+            session={session}
+            available={loginAvailable}
+            active={() => true}
+            showHeading={false}
+          />
+          {state.status === "signed-in" &&
+            !state.account?.canUseRemoteAgents && (
+              <p role="status" className="text-body-sm text-secondary">
+                Builderlab remote agents are coming soon for your account.
+              </p>
+            )}
+        </div>
+      );
+    };
     ctx.agents.register({
       ...builderlabType(agents, session, ctx.relay),
       provider: {

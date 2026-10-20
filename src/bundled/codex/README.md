@@ -159,8 +159,9 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 ## Limits and boundaries
 
 - Only the owner's mentions start conversation work. The agent always has the
-  attention tools and guidance. Each turn ends with the attention review, or,
-  when attention is off, a note that those tools refuse. Its watches and timers run
+  attention tools, loaded on search, with their guidance in their descriptions.
+  Each turn ends with the attention review, a line that there are no Interests,
+  or, when attention is off, a note that those tools refuse. Its watches and timers run
   as one-off turns on an ephemeral Codex thread of their own, queued per
   Interest by the Agents runner; a watch's event can come from
   anyone and is framed as observed data. These turns save no binding, have no

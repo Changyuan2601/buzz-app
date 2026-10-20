@@ -24,13 +24,14 @@ it("retains hover hints and click dismissal by default", async () => {
   );
 });
 
-function Feedback() {
+function Feedback({ follow = "trigger" }: { follow?: "trigger" | "pointer" }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   return (
     <>
       <span id="original">Original description</span>
       <Tooltip
+        follow={follow}
         open={open}
         onOpenChange={setOpen}
         closeOnClick={false}
@@ -51,16 +52,19 @@ function Feedback() {
   );
 }
 
-it("shows controlled feedback without losing descriptions and dismisses with Escape", async () => {
-  const user = userEvent.setup();
-  render(<Feedback />);
-  const action = screen.getByRole("button", { name: "Copy" });
-  await user.click(action);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent("Copied");
-  expect(action).toHaveAccessibleDescription("Original description Copied");
-  await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
-  );
-  expect(action).toHaveAccessibleDescription("Original description");
-});
+it.each(["trigger", "pointer"] as const)(
+  "shows %s feedback without losing descriptions and dismisses with Escape",
+  async (follow) => {
+    const user = userEvent.setup();
+    render(<Feedback follow={follow} />);
+    const action = screen.getByRole("button", { name: "Copy" });
+    await user.click(action);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Copied");
+    expect(action).toHaveAccessibleDescription("Original description Copied");
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(action).toHaveAccessibleDescription("Original description");
+  },
+);

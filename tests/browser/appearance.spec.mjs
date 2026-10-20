@@ -1,6 +1,10 @@
 import {
   chooseColorMode,
+  closeSettings,
+  openSettings,
   selectSettingsSection,
+  settingsDialog,
+  settingsSections,
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -11,10 +15,14 @@ test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  // Finish the menu-to-page focus handoff before testing keyboard controls.
-  await expect(page.getByRole("main")).toBeFocused();
+  await openSettings(page);
+  // Finish the menu-to-dialog focus handoff before testing keyboard controls.
+  await expect(button(settingsDialog(page), "Close Settings")).toBeFocused();
+  await selectSettingsSection(page, "Appearance");
+}
+// Reload restores the Settings visit; its modal reopens with its own focus.
+async function reopenedSettings(page) {
+  await expect(button(settingsDialog(page), "Close Settings")).toBeFocused();
   await selectSettingsSection(page, "Appearance");
 }
 async function expectMode(page, mode, inSettings = false) {
@@ -36,20 +44,19 @@ async function expectMode(page, mode, inSettings = false) {
     "background-image",
     /radial-gradient/,
   );
+  // Settings keeps its sections inside the modal at every width.
+  if (inSettings) {
+    await expect(settingsSections(page)).toBeVisible();
+    return;
+  }
   await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
   await expect(
     page
-      .getByRole("complementary", {
-        name: inSettings ? "Settings sidebar" : "Sidebar",
-        exact: true,
-      })
-      .getByRole("navigation", {
-        name: inSettings ? "Settings sections" : "Subscribed channels",
-        exact: true,
-      }),
+      .getByRole("complementary", { name: "Sidebar", exact: true })
+      .getByRole("navigation", { name: "Subscribed channels", exact: true }),
   ).toBeVisible();
   if (collapsed) await button(page, "Hide navigation").click();
 }
@@ -192,6 +199,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // Narrow Settings stacks its sections above the detail; choosing a
+      // section brings that detail into view.
+      await selectSettingsSection(page, "Appearance");
       await expect(
         page.getByRole("region", { name: "Appearance", exact: true }),
       ).toBeInViewport();
@@ -202,6 +212,8 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
         path: testInfo.outputPath(`appearance-${mode}-${width}.png`),
       });
     }
+    // The workspace behind Settings is inert; search from the workspace.
+    await closeSettings(page);
     await button(page, "Search Buzz").click();
     const dialog = page.getByRole("dialog", { name: "Search Buzz" });
     await expect(dialog).toBeVisible();
@@ -211,6 +223,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     );
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
+    await settings(page);
   }
   for (const hostMode of ["Dark", "Light"]) {
     await chooseColorMode(page, hostMode);
@@ -256,7 +269,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await chooseColorMode(page, "Dark");
   await page.reload();
   await expectMode(page, "dark", true);
-  await settings(page);
+  await reopenedSettings(page);
   await expect(dark).toBeChecked();
 });
 
@@ -340,7 +353,7 @@ test("System appearance follows computer changes and keeps the selected choice a
   await expectMode(page, "dark", true);
   await page.reload();
   await expectMode(page, "dark", true);
-  await settings(page);
+  await reopenedSettings(page);
   await expect(system).toBeChecked();
   await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
   await page.emulateMedia({ colorScheme: "light" });
@@ -604,5 +617,6 @@ test("compiled host preserves compatibility utility meanings", async ({
       "font-family",
       /JetBrains Mono/,
     );
+    await closeSettings(page);
   }
 });

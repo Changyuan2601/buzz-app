@@ -2,6 +2,20 @@
 @import "./tab-drag.css";
 
 @layer components {
+  .buzz-loading-region {
+    position: relative;
+    min-width: 0;
+  }
+  .buzz-loading-region-feedback {
+    min-block-size: var(--size-row);
+    padding-inline: var(--space-4);
+  }
+  .buzz-loading-region-status {
+    @apply text-body-sm;
+    margin: 0;
+    color: var(--text-subtle);
+  }
+
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -1030,7 +1044,14 @@
   }
 
   .navigation-section-label {
+    @apply text-body;
+    color: var(--text-subtle);
     margin: 0;
+  }
+
+  /* A headingless reference stays above the named groups when navigation wraps. */
+  .navigation-section[data-headingless] {
+    grid-column: 1 / -1;
   }
 
   .navigation-section-heading .buzz-button[data-icon-size="compact"] {
@@ -1059,7 +1080,7 @@
     border-radius: var(--radius-row);
     padding: var(--space-1) var(--space-control-inset);
     background: transparent;
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -1079,7 +1100,7 @@
       --text-subtle: var(--interaction-row-text);
       --text-metadata: var(--interaction-row-metadata);
       background: var(--interaction-row-hover);
-      color: var(--text-standard);
+      color: var(--navigation-item-text, var(--text-standard));
     }
   }
 
@@ -1091,14 +1112,14 @@
     --text-subtle: var(--interaction-row-text);
     --text-metadata: var(--interaction-row-metadata);
     background: var(--interaction-row-hover);
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
   }
 
   .navigation-item[data-selected] {
     --text-subtle: var(--interaction-selected-text);
     --text-metadata: var(--interaction-selected-metadata);
     background: var(--interaction-selected);
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
   }
 
   /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
@@ -1177,6 +1198,69 @@
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
+  }
+
+  /* SidebarNavigation copies main's compact sidebar appearance. Keep this global:
+     applying nested shared selectors inside CSS Modules would rename their targets. */
+  .buzz-sidebar-navigation {
+    display: contents;
+    @apply interaction-navigation;
+    --size-row: var(--space-6);
+    --affordance-panel-hover: var(--affordance-navigation-quiet);
+    --interaction-row-hover: var(--affordance-navigation-quiet);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"] {
+    --space-row-gap: calc(var(--space-1) + var(--space-half));
+    --navigation-item-text: var(--text-navigation);
+    @apply text-body-sm;
+    min-height: calc(var(--space-6) + var(--space-1));
+    height: calc(var(--space-6) + var(--space-1));
+    padding: var(--space-half) calc(var(--space-1) + var(--space-half))
+      var(--space-half) var(--space-2);
+    border-radius: var(--radius-row);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-inset] {
+    padding-inline-start: calc(var(--space-2) + var(--space-6));
+  }
+  .buzz-sidebar-navigation
+    .navigation-item[data-variant="row"]:is([data-disabled], :disabled) {
+    --navigation-item-text: var(--text-unavailable);
+    cursor: default;
+    background: transparent;
+  }
+  .buzz-sidebar-navigation
+    .navigation-item[data-variant="row"]
+    > :is(svg, img) {
+    flex-shrink: 0;
+  }
+  /* Named static groups use main's disclosure-heading type and leading inset.
+     Disclosure, chevron and action behavior stay with their feature owner. */
+  .buzz-sidebar-navigation .navigation-section-heading {
+    min-height: var(--size-control-sm);
+    padding: var(--space-half) var(--space-2);
+  }
+  .buzz-sidebar-navigation .navigation-section-label {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+  .buzz-sidebar-navigation .navigation-section + .navigation-section {
+    margin-top: var(--space-4);
+  }
+  .buzz-sidebar-navigation .navigation-section-rows {
+    gap: var(--space-half);
+  }
+
+  @container (max-width: 36rem) {
+    .buzz-sidebar-navigation[data-wrap-sections] {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+      gap: var(--space-4);
+    }
+    .buzz-sidebar-navigation[data-wrap-sections]
+      > .navigation-section
+      + .navigation-section {
+      margin-top: 0;
+    }
   }
 
   /* Compose the sidebar's NavigationItem as a tab; the sibling close action

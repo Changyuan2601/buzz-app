@@ -20,6 +20,7 @@ import {
   type AddedTool,
   addedKey,
   callSessionTool,
+  sessionHint,
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
@@ -1358,15 +1359,19 @@ function follow(
     },
   };
 }
-/** The Buzz tools, with those plugins add, that a new thread gets. */
+/** The Buzz tools, with those plugins add, that a new thread gets. Codex
+ * keeps a deferred tool from the model until its tool search finds it. Every
+ * model in Codex's catalog has tool search (supports_search_tool); one
+ * without it would not see deferred tools. */
 const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
-    description: "Read and act in Buzz as this agent.",
-    tools: sessionTools(added).map((tool) => ({
+    description: sessionHint(added),
+    tools: sessionTools(added).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
+      ...(load === "search" ? { deferLoading: true } : {}),
     })),
   },
 ];

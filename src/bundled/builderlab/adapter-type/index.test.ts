@@ -33,7 +33,7 @@ afterEach(() => {
 async function fixture(subject = "account-a") {
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com" },
+    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>();
@@ -219,7 +219,11 @@ it("does not stop a turn for an agent outside the signed-in account", async () =
 it("rejects a stop at once when signed out, without signing in or reaching Builderlab", async () => {
   const acquire = vi.fn(async () => ({
     value: "credential",
-    account: { subject: "account-a", email: "a@example.com" },
+    account: {
+      subject: "account-a",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+    },
   }));
   const session = createOAuthSession(acquire);
   const request = vi.fn<Host["request"]>();

@@ -6652,6 +6652,14 @@ it("adds an HTTP link in the dialog and reports unsafe destinations accurately",
   fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
     target: { value: "http://user:pw@example.com" },
   });
+  // A stray outside click keeps the dialog and the typed URL.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  expect(screen.getByRole("textbox", { name: "URL" })).toHaveValue(
+    "http://user:pw@example.com",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Use an HTTP(S) URL or a valid buzz:// link.",
