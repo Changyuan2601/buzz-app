@@ -202,6 +202,10 @@ pub(crate) async fn relay_socket_connect(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
+        // A policy close may end an expired or refused assertion: never reuse it.
+        if closing.as_ref().is_some_and(|(code, _)| *code == 1008) {
+            host.reject_assertion(&assertion).await;
+        }
         let (code, reason) = match closing {
             Some((code, reason)) => (Some(code), Some(reason)),
             None => (None, None),

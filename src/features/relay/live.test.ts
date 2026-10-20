@@ -2433,3 +2433,82 @@ it("carries verified workflow attribution from live admission to notification ca
     h.owner.dispose();
   }
 });
+describe("policy close (1008) recovery", () => {
+  const deny = async (socket: Socket) => {
+    await socket.receive(["NOTICE", "auth-required: authorization denied"]);
+    (
+      socket.onclose as unknown as (event: {
+        code: number;
+        reason: string;
+      }) => void
+    )?.({
+      code: 1008,
+      reason: "authorization denied",
+    });
+  };
+  const status = (h: ReturnType<typeof setup>) =>
+    h.callbacks.state.mock.lastCall?.[0].status;
+  it("stops when the fresh-evidence reconnect is denied after NIP-42", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      await h.first.auth();
+      await deny(h.first);
+      expect(status(h)).toBe("retrying");
+      await vi.advanceTimersByTimeAsync(2000);
+      const second = h.sockets[1];
+      assert.exists(second);
+      // The relay checks the deny set after the upgrade and the AUTH frame.
+      await second.receive(["AUTH", "challenge"]);
+      expect(second.sent.some((entry) => entry[0] === "AUTH")).toBe(true);
+      await deny(second);
+      expect(status(h)).toBe("error");
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(h.sockets).toHaveLength(2);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("keeps recovering ordinary expiry once each admission succeeds", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      for (let i = 0; i < 3; i++) {
+        const socket = h.sockets[i];
+        assert.exists(socket);
+        await socket.auth();
+        expect(status(h)).toBe("connected");
+        await deny(socket);
+        expect(status(h)).toBe("retrying");
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+      expect(h.sockets).toHaveLength(4);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("stops on a repeated policy close before AUTH", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      await deny(h.first);
+      expect(status(h)).toBe("retrying");
+      await vi.advanceTimersByTimeAsync(2000);
+      const second = h.sockets[1];
+      assert.exists(second);
+      await deny(second);
+      expect(status(h)).toBe("error");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("does not reconnect a disposed subscription", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    await h.first.auth();
+    h.owner.dispose();
+    await deny(h.first);
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(h.sockets).toHaveLength(1);
+  });
+});

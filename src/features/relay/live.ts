@@ -236,6 +236,9 @@ export function subscribeRelayTraffic(
   let generation = 0,
     serial = 0;
   let authenticated = false;
+  // A policy close (1008) gets one fresh-evidence reconnect; only NIP-42
+  // admission restores it, so a post-admission denial cannot loop.
+  let policyRecovery = true;
   let connection: LiveSnapshot["status"] = "connecting";
   let connectionError: string | undefined;
   let interests: string[] = [];
@@ -741,6 +744,7 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
+        policyRecovery = true;
         connection = "connected";
         recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
         pump();
@@ -891,14 +895,17 @@ export function subscribeRelayTraffic(
       else reconnect("Live connection interrupted");
     };
     // Keep the relay's close detail. A 1008 also ends a normally expired
-    // assertion, so it reconnects with fresh evidence; a confirmed refusal
-    // then stops at the upgrade (403) instead of looping.
-    ws.onclose = (event) =>
-      reconnect(
-        event?.code
-          ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
-          : "Live connection closed",
-      );
+    // assertion, so the first reconnects with fresh evidence. The relay denies
+    // after the upgrade and NIP-42, so a second 1008 before admission stops.
+    ws.onclose = (event) => {
+      const reason = event?.code
+        ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
+        : "Live connection closed";
+      if (event?.code !== 1008) return reconnect(reason);
+      if (!policyRecovery) return terminal(reason);
+      policyRecovery = false;
+      reconnect(reason);
+    };
   }
   connect();
   return {
