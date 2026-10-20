@@ -258,55 +258,34 @@ mod tests {
 
     #[test]
     fn bundled_builderlab_uses_native_grants_for_exact_request_origins() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager =
-            buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
-        let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
-        let origin = grants
-            .network_origins
-            .first()
-            .map(String::as_str)
-            .unwrap_or("https://app.builderlab.xyz");
-        let (url, _, _) = validate_request(&request(&format!(
-            "{origin}/api/goose/v1/auth/login/exchange"
-        )))
-        .unwrap();
-        assert_eq!(
-            allows_origin(&grants, &url),
-            !grants.network_origins.is_empty()
-        );
-        let mut other = url;
-        other
-            .set_port(Some(if other.port() == Some(8443) {
-                9443
-            } else {
-                8443
-            }))
+        for plugin in ["block.builderlab", "block.hosted-communities"] {
+            let temp = tempfile::tempdir().unwrap();
+            let manager =
+                buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
+            let grants = manager.host_grants(plugin, "bundled").unwrap();
+            let origin = grants
+                .network_origins
+                .first()
+                .map(String::as_str)
+                .unwrap_or("https://unconfigured.example");
+            let (url, _, _) = validate_request(&request(&format!(
+                "{origin}/api/goose/v1/auth/login/exchange"
+            )))
             .unwrap();
-        let (url, _, _) = validate_request(&request(other.as_str())).unwrap();
-        assert!(!allows_origin(&grants, &url));
-    }
-
-    #[test]
-    fn bundled_hosted_communities_reach_only_the_builderlab_origin() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager =
-            buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
-        let grants = manager
-            .host_grants("block.hosted-communities", "bundled")
-            .unwrap();
-        assert_eq!(grants.network_origins, ["https://app.builderlab.xyz"]);
-        assert!(grants.commands.is_empty());
-        for (url, allowed) in [
-            ("https://app.builderlab.xyz/api/goose/v1/auth/me", true),
-            ("https://builderlab.xyz/api/goose/v1/auth/me", false),
-            (
-                "https://app.builderlab.xyz:8443/api/goose/v1/auth/me",
-                false,
-            ),
-        ] {
-            let (url, _, _) = validate_request(&request(url)).unwrap();
-            assert_eq!(allows_origin(&grants, &url), allowed, "{url}");
+            assert_eq!(
+                allows_origin(&grants, &url),
+                !grants.network_origins.is_empty()
+            );
+            let mut other = url;
+            other
+                .set_port(Some(if other.port() == Some(8443) {
+                    9443
+                } else {
+                    8443
+                }))
+                .unwrap();
+            let (url, _, _) = validate_request(&request(other.as_str())).unwrap();
+            assert!(!allows_origin(&grants, &url));
         }
     }
 

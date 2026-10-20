@@ -1,10 +1,13 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostRequest } from "../../features/host/service";
 import { createNativeBackend } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-const API = "https://app.builderlab.xyz/api/goose";
+const BUILDERLAB_URL = "https://hosting.example:8443/deployment/";
+const API = "https://hosting.example:8443/deployment/api/goose";
+beforeEach(() => vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", BUILDERLAB_URL));
+afterEach(() => vi.unstubAllEnvs());
 type Reply = { status?: number; body: unknown };
 
 function setup(
@@ -86,6 +89,7 @@ it("keeps the credential out of results and forwards only allowlisted fields", a
     },
   });
   expect(JSON.stringify(value)).not.toContain("token");
+  expect(backend.url).toBe(API);
   await backend.send("archive", { community_id: "c", extra: "dropped" });
   expect(requests.at(-1)).toEqual({
     url: `${API}/v1/buzz/communities/archive`,
@@ -93,7 +97,7 @@ it("keeps the credential out of results and forwards only allowlisted fields", a
     headers: {
       "Content-Type": "application/json",
       "X-BB-Session-Credential": "token",
-      Origin: "https://app.builderlab.xyz",
+      Origin: "https://hosting.example:8443",
     },
     body: JSON.stringify({ community_id: "c" }),
   });
@@ -353,7 +357,7 @@ const challenge = {
   challenge_id: "x",
   nonce: "n",
   verification_code: "123456",
-  origin: "https://app.builderlab.xyz",
+  origin: "https://hosting.example:8443",
   expires_at: "2030",
 };
 
@@ -436,3 +440,19 @@ it.each([
     source: "hosted",
   });
 });
+
+it.each(["", "http://hosting.example", "https://user:secret@hosting.example"])(
+  "refuses unconfigured or unsafe hosting URL %s before opening sign-in",
+  async (url) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
+    const { backend, requests, invoke } = setup(signedIn);
+    await expect(login(backend)).rejects.toThrow(
+      /not configured|does not support/,
+    );
+    expect(requests).toEqual([]);
+    expect(invoke).not.toHaveBeenCalledWith(
+      "oauth_callback_begin",
+      expect.anything(),
+    );
+  },
+);

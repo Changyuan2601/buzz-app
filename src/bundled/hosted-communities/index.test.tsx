@@ -14,11 +14,15 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 
 const local = "a".repeat(64);
-const API = "https://app.builderlab.xyz/api/goose";
+const API = "https://hosting.example:8443/deployment/api/goose";
 const UNSUPPORTED =
   "Hosted communities need the Buzz development broker and are unavailable in this build.";
 
 beforeEach(() => {
+  vi.stubEnv(
+    "VITE_BUZZ_BUILDERLAB_URL",
+    "https://hosting.example:8443/deployment/",
+  );
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   vi.stubGlobal(
     "fetch",
@@ -83,7 +87,7 @@ it("signs in and connects the identity natively in a desktop build", async () =>
     challenge_id: "550e8400-e29b-41d4-a716-446655440000",
     nonce: "n".repeat(43),
     verification_code: "123456",
-    origin: "https://app.builderlab.xyz",
+    origin: "https://hosting.example:8443",
     expires_at: "2999-01-01T00:00:00Z",
   };
   const replies: Record<string, () => unknown> = {
@@ -173,7 +177,7 @@ it("signs in and connects the identity natively in a desktop build", async () =>
     expect(verify.headers).toEqual({
       "Content-Type": "application/json",
       "X-BB-Session-Credential": "private-token",
-      Origin: "https://app.builderlab.xyz",
+      Origin: "https://hosting.example:8443",
     });
     expect(JSON.parse(verify.body)).toEqual({
       challenge_id: challenge.challenge_id,

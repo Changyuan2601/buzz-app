@@ -1,3 +1,5 @@
+import { oauthTarget } from "../builderlab/url";
+
 // Block-hosted community accounts through a Builderlab account backend.
 export const HOST_SUFFIX = "communities.buzz.xyz";
 export const VALID_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -37,6 +39,7 @@ export type DeletionAttempt = "fresh" | "recovery";
 export type PendingDeletion = {
   version: 1;
   owner_pubkey: string;
+  /** Canonical API URL; legacy v1 records contain only an origin. */
   backend_origin: string;
   request: DeletionRequest;
 };
@@ -110,8 +113,8 @@ export function quotaLimitMessage(limit?: number | null) {
 
 /** A Builderlab account backend: the development broker or the packaged-app adapter. */
 export type Backend = Readonly<{
-  /** Identifies this backend in persisted deletion requests. */
-  origin: string;
+  /** Identifies this API deployment, including its path, in saved deletions. */
+  url: string;
   auth(): Promise<Account | null>;
   send(
     action: string,
@@ -127,8 +130,8 @@ export class Unsupported extends Error {}
 
 /** The development broker's /api/builderlab routes keep the credential in Node. */
 export const broker: Backend = {
-  get origin() {
-    return window.location.origin;
+  get url() {
+    return oauthTarget();
   },
   async auth() {
     const response = await fetch("/api/builderlab/auth");
@@ -195,7 +198,17 @@ export const broker: Backend = {
 /** Account operations over one backend. */
 export function createApi(backend: Backend) {
   return {
-    origin: () => backend.origin,
+    backendUrl: () => backend.url,
+    matchesBackend: (address: string) => {
+      // Only the historical native origin identifies a known legacy backend.
+      // Browser origins never identified their upstream deployment.
+      return (
+        backend.url ===
+        (address === "https://app.builderlab.xyz"
+          ? `${address}/api/goose`
+          : address)
+      );
+    },
     getAuth: () => backend.auth(),
     localKey: () => backend.localKey(),
     login: (signal: AbortSignal) =>
@@ -284,7 +297,7 @@ function validDeletionRequest(value: unknown): value is DeletionRequest {
 export function makePendingDeletion(
   ownerPubkey: string,
   community: Community,
-  backendOrigin: string,
+  backendUrl: string,
 ): PendingDeletion {
   if (
     !/^[0-9a-f]{64}$/.test(ownerPubkey) ||
@@ -295,7 +308,7 @@ export function makePendingDeletion(
   return {
     version: 1,
     owner_pubkey: ownerPubkey,
-    backend_origin: backendOrigin,
+    backend_origin: backendUrl,
     request: {
       community_id: community.id,
       host: community.normalized_host,
@@ -309,6 +322,8 @@ function validPendingDeletion(value: unknown): value is PendingDeletion {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const pending = value as Record<string, unknown>;
   try {
+    if (typeof pending.backend_origin !== "string") return false;
+    const address = new URL(pending.backend_origin);
     return (
       exactKeys(pending, [
         "version",
@@ -319,8 +334,13 @@ function validPendingDeletion(value: unknown): value is PendingDeletion {
       pending.version === 1 &&
       typeof pending.owner_pubkey === "string" &&
       /^[0-9a-f]{64}$/.test(pending.owner_pubkey) &&
-      typeof pending.backend_origin === "string" &&
-      pending.backend_origin === new URL(pending.backend_origin).origin &&
+      (pending.backend_origin === address.origin ||
+        (address.protocol === "https:" &&
+          !address.username &&
+          !address.password &&
+          !address.href.includes("?") &&
+          !address.href.includes("#") &&
+          pending.backend_origin === address.href)) &&
       validDeletionRequest(pending.request)
     );
   } catch {

@@ -15,6 +15,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
 import { brokerApi, DELETION_PENDING_KEY } from "./api";
 
+const BACKEND_URL = "https://hosting.example/deployment/api/goose";
 const local = "a".repeat(64);
 const other = "b".repeat(64);
 type Handler = (body: Record<string, string | number>) => unknown;
@@ -22,6 +23,7 @@ let routes: Record<string, Handler>;
 let calls: [string, Record<string, string | number>][];
 
 beforeEach(() => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://hosting.example/deployment/");
   localStorage.clear();
   calls = [];
   routes = {
@@ -59,6 +61,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 // The dev app renders under StrictMode, which remounts effects once.
@@ -1172,7 +1175,7 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
   const bytes = JSON.stringify({
     version: 1,
     owner_pubkey: local,
-    backend_origin: window.location.origin,
+    backend_origin: BACKEND_URL,
     request: {
       community_id: archived.id,
       host: archived.normalized_host,
@@ -1211,7 +1214,7 @@ it("clears stale blocked-owner and deletion notices on unauthorized Refresh", as
     JSON.stringify({
       version: 1,
       owner_pubkey: other,
-      backend_origin: window.location.origin,
+      backend_origin: BACKEND_URL,
       request: {
         community_id: archived.id,
         host: archived.normalized_host,
@@ -1441,7 +1444,7 @@ it("replays an aborted 202 with the stored UUID and restores the archived row", 
     JSON.stringify({
       version: 1,
       owner_pubkey: local,
-      backend_origin: window.location.origin,
+      backend_origin: BACKEND_URL,
       request,
     }),
   );
@@ -1520,59 +1523,64 @@ it("preserves one UUID across an ambiguous response and manual same-UUID replay"
   expect(admissions[1]?.[1].request_id).toBe(requestId);
 });
 
-it("shows a stored request for explicit manual checking without background recovery", async () => {
-  const request = {
-    community_id: archived.id,
-    host: archived.normalized_host,
-    request_id: "22222222-2222-4222-8222-222222222222",
-    acknowledgement_version: 1,
-  };
-  localStorage.setItem(
-    DELETION_PENDING_KEY,
-    JSON.stringify({
-      version: 1,
-      owner_pubkey: local,
-      backend_origin: window.location.origin,
-      request,
-    }),
-  );
-  routes["/api/builderlab/auth"] = () => ({
-    auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
-  });
-  routes["/api/builderlab/list"] = () => ({ communities: [] });
-  routes["/api/builderlab/delete"] = (body) =>
-    Response.json({ ...body, status: "submitted" }, { status: 202 });
-  const view = renderCard();
-  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
-  expect(screen.getByText(request.request_id)).toHaveClass("select-all");
-  expect(screen.getByText(/will not check automatically/i)).toBeVisible();
-  expect(screen.getByText(/contact support/i)).toBeVisible();
-  expect(
-    screen.getByText(
-      "Community deletion is unavailable right now, so this request can't be checked. It stays saved on this device.",
-    ),
-  ).toBeVisible();
-  expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
-  expect(
-    screen.getByRole("button", { name: "Check deletion status" }),
-  ).toBeDisabled();
-  view.unmount();
-  routes["/api/builderlab/auth"] = () => ({
-    auth: {
-      email: "a@example.com",
-      expiresAt: "2030",
-      capabilities: { can_delete_buzz_communities: true },
-    },
-  });
-  renderCard();
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Check deletion status" }),
-  );
-  expect(await screen.findByText("Deletion started")).toBeVisible();
-  expect(calls.filter(([url]) => url === "/api/builderlab/delete")).toEqual([
-    ["/api/builderlab/delete", request],
-  ]);
-});
+it.each([false, true])(
+  "shows a stored request (legacy origin=%s) for explicit manual checking without background recovery",
+  async (legacy) => {
+    if (legacy)
+      vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+    const request = {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    localStorage.setItem(
+      DELETION_PENDING_KEY,
+      JSON.stringify({
+        version: 1,
+        owner_pubkey: local,
+        backend_origin: legacy ? "https://app.builderlab.xyz" : BACKEND_URL,
+        request,
+      }),
+    );
+    routes["/api/builderlab/auth"] = () => ({
+      auth: { email: "a@example.com", expiresAt: "2030", capabilities: {} },
+    });
+    routes["/api/builderlab/list"] = () => ({ communities: [] });
+    routes["/api/builderlab/delete"] = (body) =>
+      Response.json({ ...body, status: "submitted" }, { status: 202 });
+    const view = renderCard();
+    expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+    expect(screen.getByText(request.request_id)).toHaveClass("select-all");
+    expect(screen.getByText(/will not check automatically/i)).toBeVisible();
+    expect(screen.getByText(/contact support/i)).toBeVisible();
+    expect(
+      screen.getByText(
+        "Community deletion is unavailable right now, so this request can't be checked. It stays saved on this device.",
+      ),
+    ).toBeVisible();
+    expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
+    expect(
+      screen.getByRole("button", { name: "Check deletion status" }),
+    ).toBeDisabled();
+    view.unmount();
+    routes["/api/builderlab/auth"] = () => ({
+      auth: {
+        email: "a@example.com",
+        expiresAt: "2030",
+        capabilities: { can_delete_buzz_communities: true },
+      },
+    });
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Check deletion status" }),
+    );
+    expect(await screen.findByText("Deletion started")).toBeVisible();
+    expect(calls.filter(([url]) => url === "/api/builderlab/delete")).toEqual([
+      ["/api/builderlab/delete", request],
+    ]);
+  },
+);
 
 it("retains another owner's recovery envelope without showing or dispatching it", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
@@ -1581,7 +1589,7 @@ it("retains another owner's recovery envelope without showing or dispatching it"
     JSON.stringify({
       version: 1,
       owner_pubkey: other,
-      backend_origin: window.location.origin,
+      backend_origin: BACKEND_URL,
       request: {
         community_id: archived.id,
         host: "Private.communities.buzz.xyz",
@@ -1621,7 +1629,7 @@ it("does not reveal another owner's blocked notice when deletion is unavailable"
     JSON.stringify({
       version: 1,
       owner_pubkey: other,
-      backend_origin: window.location.origin,
+      backend_origin: BACKEND_URL,
       request: {
         community_id: archived.id,
         host: archived.normalized_host,
@@ -1660,7 +1668,7 @@ it("rejects a newly occupied slot at final confirmation without claiming a stora
   const original = JSON.stringify({
     version: 1,
     owner_pubkey: other,
-    backend_origin: window.location.origin,
+    backend_origin: BACKEND_URL,
     request: {
       community_id: archived.id,
       host: archived.normalized_host,
@@ -1697,7 +1705,7 @@ it("explains a same-owner slot occupied at final confirmation", async () => {
   const bytes = JSON.stringify({
     version: 1,
     owner_pubkey: local,
-    backend_origin: window.location.origin,
+    backend_origin: BACKEND_URL,
     request: {
       community_id: archived.id,
       host: archived.normalized_host,
@@ -1731,7 +1739,7 @@ it("explains when another context cleared the blocked slot before final confirma
   const bytes = JSON.stringify({
     version: 1,
     owner_pubkey: other,
-    backend_origin: window.location.origin,
+    backend_origin: BACKEND_URL,
     request: {
       community_id: archived.id,
       host: archived.normalized_host,
@@ -1770,36 +1778,49 @@ it("explains when another context cleared the blocked slot before final confirma
   expect(deletionPosts()).toHaveLength(1);
 });
 
-it("explains a same-owner envelope saved for another origin without asking to switch identity", async () => {
-  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
-  localStorage.setItem(
-    DELETION_PENDING_KEY,
-    JSON.stringify({
-      version: 1,
-      owner_pubkey: local,
-      backend_origin: "https://other.example",
-      request: {
-        community_id: archived.id,
-        host: archived.normalized_host,
-        request_id: "33333333-3333-4333-8333-333333333333",
-        acknowledgement_version: 1,
-      },
-    }),
-  );
-  const original = localStorage.getItem(DELETION_PENDING_KEY);
-  renderCard();
-  expect(
-    await screen.findByText(
-      "This identity has a deletion request saved from a different app address on this device. It can't be checked here, so contact support before starting another deletion.",
-    ),
-  ).toBeVisible();
-  expect(
-    screen.queryByText(/Switch to that Buzz identity/),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
-  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
-  expect(deletionPosts()).toHaveLength(0);
-});
+it.each([
+  ["legacy browser address", window.location.origin, "deployment/"],
+  ["another host", "https://other.example/api/goose", "deployment/"],
+  [
+    "another deployment path",
+    "https://hosting.example/other/api/goose",
+    "deployment/",
+  ],
+  ["legacy custom root", "https://hosting.example", ""],
+])(
+  "blocks a saved deletion for %s without dispatching it",
+  async (_label, backend, path) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", `https://hosting.example/${path}`);
+    routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+    localStorage.setItem(
+      DELETION_PENDING_KEY,
+      JSON.stringify({
+        version: 1,
+        owner_pubkey: local,
+        backend_origin: backend,
+        request: {
+          community_id: archived.id,
+          host: archived.normalized_host,
+          request_id: "33333333-3333-4333-8333-333333333333",
+          acknowledgement_version: 1,
+        },
+      }),
+    );
+    const original = localStorage.getItem(DELETION_PENDING_KEY);
+    renderCard();
+    expect(
+      await screen.findByText(
+        "This identity has a deletion request saved from a different app address on this device. It can't be checked here, so contact support before starting another deletion.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/Switch to that Buzz identity/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+    expect(deletionPosts()).toHaveLength(0);
+  },
+);
 
 it("explains a same-owner other-origin slot occupied at final confirmation", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
@@ -1939,7 +1960,7 @@ it("terminates pending recovery on a bound aborted 202", async () => {
     JSON.stringify({
       version: 1,
       owner_pubkey: local,
-      backend_origin: window.location.origin,
+      backend_origin: BACKEND_URL,
       request,
     }),
   );

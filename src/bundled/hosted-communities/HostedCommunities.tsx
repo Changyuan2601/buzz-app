@@ -145,13 +145,13 @@ export function HostedCommunities({
       setBlockedOwner(
         stored &&
           (stored.owner_pubkey !== nextOwner ||
-            stored.backend_origin !== api.origin())
+            !api.matchesBackend(stored.backend_origin))
           ? stored.owner_pubkey
           : null,
       );
       setPendingDeletion(
         stored?.owner_pubkey === nextOwner &&
-          stored.backend_origin === api.origin()
+          api.matchesBackend(stored.backend_origin)
           ? stored
           : null,
       );
@@ -336,7 +336,7 @@ export function HostedCommunities({
         !snapshot ||
         !stored ||
         JSON.stringify(stored) !== JSON.stringify(pending) ||
-        stored.backend_origin !== api.origin() ||
+        !api.matchesBackend(stored.backend_origin) ||
         boundKey(snapshot.identity) !== pending.owner_pubkey
       )
         throw new Error(
@@ -889,7 +889,7 @@ export function HostedCommunities({
             if (blockedOwner || occupied) {
               if (
                 occupied?.owner_pubkey === bound &&
-                occupied.backend_origin === api.origin()
+                api.matchesBackend(occupied.backend_origin)
               ) {
                 setPendingDeletion(occupied);
                 setError(
@@ -907,13 +907,17 @@ export function HostedCommunities({
             }
             let pending: PendingDeletion;
             try {
-              pending = makePendingDeletion(bound, deleteTarget, api.origin());
+              pending = makePendingDeletion(
+                bound,
+                deleteTarget,
+                api.backendUrl(),
+              );
               persistPendingDeletion(pending);
             } catch {
               const stored = readPendingDeletion();
               if (
                 stored?.owner_pubkey === bound &&
-                stored.backend_origin === api.origin()
+                api.matchesBackend(stored.backend_origin)
               )
                 setPendingDeletion(stored);
               setError(

@@ -350,6 +350,10 @@ default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission. A fresh request can
 terminate on a known structured pre-admission code and HTTP status pair;
 ambiguous first responses stay pending until an explicit same-UUID delete replay.
+Saved deletion requests identify the configured API URL, including its deployment
+path, so changing hosting deployments cannot replay a deletion against another
+backend. Legacy native production-origin records match the production root API;
+other origin-only records stay saved and blocked because their backend is unknown.
 Only a tuple-bound non-aborted 202 confirms progress; an aborted 202 ends recovery
 without claiming deletion. The card displays valid server quota when available;
 without it, Create remains available and the server enforces its owner limit.
@@ -362,8 +366,9 @@ stays in the existing Add a community dialog; the card only copies the new relay
 account backend follows the same split as `HostService`: live development uses the
 broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
-over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
-`https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
+over the shared `oauth_callback` sign-in, host HTTP to the exact origin configured
+by [`BUZZ_BUILDERLAB_URL`](configuration.md#builderlab-url-build-input), and
+`identity_sign_builderlab_binding`, which
 validates the challenge and signs only the fixed kind 24243 binding. The desktop
 credential lives in plugin memory for the plugin's lifetime and is never persisted,
 so restarting the app signs out. Other browser builds show the unavailable notice.

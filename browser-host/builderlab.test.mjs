@@ -1,11 +1,14 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import {
-  BUILDERLAB_ORIGIN,
   bindingEvent,
   builderlabResponseStatus,
   createBuilderlab,
 } from "./builderlab.mjs";
+
+const BUILDERLAB_ORIGIN = "https://hosting.example:8443";
+const BUILDERLAB_URL = `${BUILDERLAB_ORIGIN}/deployment/`;
+const API = `${BUILDERLAB_URL}api/goose`;
 
 const challenge = {
   challenge_id: "0b7e3c1e-7a51-4c4a-9d3e-2f0b8a6c1d22",
@@ -18,7 +21,7 @@ const now = Date.parse("2029-12-31T23:59:00Z");
 
 it("signs the kind 24243 binding challenge with the desktop tag set", () => {
   const key = generateSecretKey();
-  const event = bindingEvent(key, challenge, now);
+  const event = bindingEvent(key, challenge, BUILDERLAB_ORIGIN, now);
   expect(verifyEvent(event)).toBe(true);
   expect(event).toMatchObject({
     kind: 24243,
@@ -47,7 +50,12 @@ it.each([
   ["expiry", { expires_at: "2029-12-31T23:00:00Z" }],
 ])("refuses to sign a challenge with an invalid %s", (_label, patch) => {
   expect(() =>
-    bindingEvent(generateSecretKey(), { ...challenge, ...patch }, now),
+    bindingEvent(
+      generateSecretKey(),
+      { ...challenge, ...patch },
+      BUILDERLAB_ORIGIN,
+      now,
+    ),
   ).toThrow("Invalid Nostr identity challenge");
 });
 
@@ -55,8 +63,8 @@ function account(responses = {}) {
   const requests = [];
   let opened;
   const fetch = async (url, init = {}) => {
-    const path = new URL(url).pathname.replace("/api/goose", "");
-    requests.push({ path, init });
+    const path = url.slice(API.length);
+    requests.push({ path, init, url });
     const reply = responses[path];
     if (reply) return reply(init);
     if (path === "/v1/auth/login/exchange")
@@ -75,6 +83,7 @@ function account(responses = {}) {
   const key = generateSecretKey();
   let signs = 0;
   const builderlab = createBuilderlab({
+    url: BUILDERLAB_URL,
     key: () => {
       signs += 1;
       return key;
@@ -111,10 +120,13 @@ it("completes browser sign-in through a loopback callback without exposing the c
     capabilities: { can_delete_buzz_communities: false },
   });
   expect(JSON.stringify(auth)).not.toContain("secret");
-  expect(h.opened().pathname).toBe("/api/goose/v1/auth/login");
+  expect(`${h.opened().origin}${h.opened().pathname}`).toBe(
+    `${API}/v1/auth/login`,
+  );
   expect(h.opened().searchParams.get("product")).toBe("buzz");
   expect(JSON.parse(h.requests[0].init.body)).toEqual({ code: "one-time" });
   await h.builderlab.call("list", {});
+  expect(h.requests.at(-1).url).toBe(`${API}/v1/buzz/communities/list`);
   expect(h.requests.at(-1).init.headers).toMatchObject({
     "X-BB-Session-Credential": "secret",
     Origin: BUILDERLAB_ORIGIN,
@@ -394,3 +406,22 @@ it("rejects malformed and wrong callbacks without ending the listener", async ()
   await globalThis.fetch(`${returnTo}?code=one-time`);
   expect(await pending).toMatchObject({ email: "a@example.com" });
 });
+
+it.each(["", "http://hosting.example", "https://user:secret@hosting.example"])(
+  "refuses unconfigured or unsafe hosting URL %s before opening sign-in",
+  async (url) => {
+    const open = vi.fn();
+    const fetch = vi.fn();
+    const backend = createBuilderlab({
+      url,
+      key: generateSecretKey,
+      open,
+      fetch,
+    });
+    await expect(backend.login(new AbortController().signal)).rejects.toThrow(
+      /not configured|does not support/,
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);

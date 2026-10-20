@@ -5,9 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Host, HostRequest } from "../../features/host/service";
 import { boundKey, type Account, type Backend } from "./api";
 import { handoffBackupSession } from "../../features/identity/backup";
+import { oauthTarget } from "../builderlab/url";
 
-export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
-const API = `${BUILDERLAB_ORIGIN}/api/goose`;
+const builderlabOrigin = () => new URL(oauthTarget()).origin;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
 /** Account routes forwarded with allowlisted string fields only. */
@@ -50,7 +50,7 @@ const command = <T>(
 /** Waits for one loopback redirect carrying `code`, through the native listener. */
 async function awaitCode(bridge: Native, signal: AbortSignal) {
   signal.throwIfAborted();
-  const login = new URL(`${API}/v1/auth/login`);
+  const login = new URL(`${oauthTarget()}/v1/auth/login`);
   login.search = new URLSearchParams({
     type: "cli",
     product: "buzz",
@@ -109,12 +109,12 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
   ): Promise<{ status: number; value: object }> => {
     if (!session) throw new Error("Sign in to Builderlab first");
     const response = await http({
-      url: `${API}${path}`,
+      url: `${oauthTarget()}${path}`,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-BB-Session-Credential": session,
-        Origin: BUILDERLAB_ORIGIN,
+        Origin: builderlabOrigin(),
       },
       body: JSON.stringify(body),
     });
@@ -132,7 +132,7 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
   };
   const me = async (session: string, signal: AbortSignal): Promise<Account> => {
     const response = await http({
-      url: `${API}/v1/auth/me`,
+      url: `${oauthTarget()}/v1/auth/me`,
       headers: { "X-BB-Session-Credential": session },
     });
     signal.throwIfAborted();
@@ -178,7 +178,7 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
     const attempt = AbortSignal.any([signal, session.signal]);
     const code = await awaitCode(bridge, attempt);
     const response = await http({
-      url: `${API}/v1/auth/login/exchange`,
+      url: `${oauthTarget()}/v1/auth/login/exchange`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
@@ -211,7 +211,7 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
     const started = generation;
     const challenge = await request(
       "/v1/buzz/nostr-identities/challenge",
-      { origin: BUILDERLAB_ORIGIN },
+      { origin: builderlabOrigin() },
       current,
     );
     if ((challenge.value as { error?: unknown }).error) return challenge;
@@ -272,7 +272,9 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
     return request(path, body);
   };
   const backend: Backend = {
-    origin: BUILDERLAB_ORIGIN,
+    get url() {
+      return oauthTarget();
+    },
     async auth() {
       const current = credential;
       if (!current) return null;

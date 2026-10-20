@@ -1196,3 +1196,54 @@ async fn login_session_changes_leave_recovery_and_selected_installation_alive() 
         }
     }
 }
+
+#[test]
+fn plugin_sessions_only_reach_the_configured_builderlab_backup_origin() {
+    use tauri::Manager;
+    let configured = buzzodz_plugins::BUILDERLAB_ORIGIN;
+    let origin = if configured.is_empty() {
+        "https://hosting.example"
+    } else {
+        configured
+    };
+    let mut other = url::Url::parse(origin).unwrap();
+    other
+        .set_port(Some(if other.port() == Some(8443) {
+            9443
+        } else {
+            8443
+        }))
+        .unwrap();
+    for source in [Source::Hosted, Source::Builderlab] {
+        for (service, allowed) in [
+            (format!("{origin}/api/goose"), !configured.is_empty()),
+            (format!("{}api/goose", other.as_str()), false),
+        ] {
+            let host = NsecBackupHost {
+                state: Default::default(),
+                root: None,
+                config: Arc::new(Some(Config {
+                    service_url: service,
+                    namespace: "backup/test".into(),
+                })),
+            };
+            let app = tauri::test::mock_builder()
+                .manage(host.clone())
+                .manage(IdentityHost::fixture())
+                .build(crate::app_context())
+                .unwrap();
+            nsec_backup_session(
+                app.state(),
+                app.state(),
+                source,
+                1,
+                Some("fixture-session".into()),
+            )
+            .unwrap();
+            assert_eq!(
+                host.state.lock().unwrap().sessions.len(),
+                usize::from(allowed)
+            );
+        }
+    }
+}

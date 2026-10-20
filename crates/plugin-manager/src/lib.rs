@@ -219,15 +219,21 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         "../../../src/bundled/builderlab/manifest.json"
     ))
     .expect("builderlab manifest");
+    let mut hosted: Manifest = serde_json::from_str(include_str!(
+        "../../../src/bundled/hosted-communities/manifest.json"
+    ))
+    .expect("hosted communities manifest");
     let origin = BUILDERLAB_ORIGIN;
-    builderlab.host = Some(HostGrants {
-        network_origins: if origin.is_empty() {
-            vec![]
-        } else {
-            vec![origin.into()]
-        },
-        ..HostGrants::default()
-    });
+    for plugin in [&mut builderlab, &mut hosted] {
+        plugin.host = Some(HostGrants {
+            network_origins: if origin.is_empty() {
+                vec![]
+            } else {
+                vec![origin.into()]
+            },
+            ..HostGrants::default()
+        });
+    }
     vec![
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
@@ -292,10 +298,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/hosted-communities/manifest.json"
-        ))
-        .expect("hosted communities manifest"),
+        hosted,
         serde_json::from_str(include_str!(
             "../../../src/bundled/moderation/manifest.json"
         ))
@@ -1907,6 +1910,12 @@ mod tests {
             } else {
                 vec![env!("BUZZ_BUILDERLAB_ORIGIN").to_owned()]
             }
+        );
+        assert_eq!(
+            manager
+                .host_grants("block.hosted-communities", "bundled")
+                .unwrap(),
+            grants
         );
         assert!(grants.commands.is_empty());
         assert!(manager

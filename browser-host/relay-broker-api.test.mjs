@@ -157,6 +157,7 @@ test.each([
     };
     const upstream = [];
     const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      url: "https://hosting.example/deployment/",
       open: async (url) => openLogin(url),
       fetch: async (url, init) => {
         const path = new URL(url).pathname;

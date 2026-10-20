@@ -5,10 +5,7 @@ import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { finalizeEvent } from "nostr-tools";
-
-const API = "https://app.builderlab.xyz/api/goose";
-// Builderlab checks Origin on identity binding; it also seeds the challenge origin.
-export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
+import { oauthTarget } from "../src/bundled/builderlab/url.ts";
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RESPONSE_STATUS = Symbol("builderlabResponseStatus");
@@ -40,7 +37,7 @@ export const builderlabResponseStatus = (value) =>
   value?.[RESPONSE_STATUS] ?? 200;
 
 /** Signs the kind 24243 challenge exactly as block/buzz desktop does, after the same checks. */
-export function bindingEvent(key, challenge, now = Date.now()) {
+export function bindingEvent(key, challenge, expectedOrigin, now = Date.now()) {
   const { challenge_id, nonce, verification_code, origin, expires_at } =
     challenge ?? {};
   if (
@@ -52,7 +49,7 @@ export function bindingEvent(key, challenge, now = Date.now()) {
     !/^[A-Za-z0-9_-]{43}$/.test(nonce) ||
     typeof verification_code !== "string" ||
     !/^\d{6}$/.test(verification_code) ||
-    origin !== BUILDERLAB_ORIGIN ||
+    origin !== expectedOrigin ||
     typeof expires_at !== "string" ||
     !(Date.parse(expires_at) > now)
   )
@@ -88,7 +85,7 @@ const openBrowser = (url) =>
   );
 
 /** Waits for one loopback redirect carrying `code`, like the desktop callback listener. */
-function awaitCallback(signal, open) {
+function awaitCallback(signal, open, api) {
   return new Promise((resolve, reject) => {
     const nonce = randomUUID().replaceAll("-", "");
     let settle;
@@ -143,7 +140,7 @@ function awaitCallback(signal, open) {
     server.once("error", (error) => settle(error));
     server.listen(0, "127.0.0.1", () => {
       const returnTo = `http://127.0.0.1:${server.address().port}/callback/${nonce}`;
-      const login = new URL(`${API}/v1/auth/login`);
+      const login = new URL(`${api}/v1/auth/login`);
       login.searchParams.set("type", "cli");
       login.searchParams.set("product", "buzz");
       login.searchParams.set("returnTo", returnTo);
@@ -154,18 +151,21 @@ function awaitCallback(signal, open) {
 
 export function createBuilderlab({
   key,
+  url = "",
   fetch = globalThis.fetch,
   open = openBrowser,
 }) {
+  const api = () => oauthTarget(url);
+  const origin = () => new URL(api()).origin;
   let credential;
   const request = async (path, body, session = credential) => {
     if (!session) throw new Error("Sign in to Builderlab first");
-    const response = await fetch(`${API}${path}`, {
+    const response = await fetch(`${api()}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-BB-Session-Credential": session,
-        Origin: BUILDERLAB_ORIGIN,
+        Origin: origin(),
       },
       body: JSON.stringify(body),
       redirect: "error",
@@ -191,7 +191,7 @@ export function createBuilderlab({
     throw new Error(`Builderlab request failed (HTTP ${response.status}).`);
   };
   const me = async (session, signal) => {
-    const response = await fetch(`${API}/v1/auth/me`, {
+    const response = await fetch(`${api()}/v1/auth/me`, {
       headers: { "X-BB-Session-Credential": session },
       redirect: "error",
       signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
@@ -241,8 +241,8 @@ export function createBuilderlab({
       revoke();
       const started = generation;
       const attempt = AbortSignal.any([signal, session.signal]);
-      const code = await awaitCallback(attempt, open);
-      const response = await fetch(`${API}/v1/auth/login/exchange`, {
+      const code = await awaitCallback(attempt, open, api());
+      const response = await fetch(`${api()}/v1/auth/login/exchange`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
@@ -277,14 +277,14 @@ export function createBuilderlab({
       const started = generation;
       const challenge = await request(
         "/v1/buzz/nostr-identities/challenge",
-        { origin: BUILDERLAB_ORIGIN },
+        { origin: origin() },
         session,
       );
       if (challenge.error) return challenge;
       // A sign-out or new sign-in while the challenge was pending must not let the
       // old credential claim this device's key.
       if (started !== generation) throw new Error("Builderlab session changed");
-      const event = bindingEvent(key(), challenge);
+      const event = bindingEvent(key(), challenge, origin());
       return request(
         "/v1/buzz/nostr-identities/verify",
         {

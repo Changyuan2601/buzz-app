@@ -52,6 +52,7 @@ export default defineConfig(async ({ command, mode }) => {
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
+        builderlab: { url: env.BUZZ_BUILDERLAB_URL ?? "" },
       }),
     );
   const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;

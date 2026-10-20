@@ -8,7 +8,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 
 | Input | Consumer and boundary |
 | --- | --- |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login/API URL and both bundled Builderlab plugins' exact HTTPS host grants; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
@@ -70,7 +70,10 @@ credentials, query parameters and fragments are rejected by the native build.
 The desktop's native plugin catalog supplies the effective manifest, granting
 only the configured URL's exact origin. Never put credentials in this input.
 
-The bundled Builderlab login consumes this public URL and appends `/api/goose`.
+The Builderlab agents and Hosted communities plugins consume this public URL and
+append `/api/goose`. The live development broker uses the same Vite-resolved value.
+Both native plugins receive only its exact origin grant. Backup login credentials
+are accepted only when the backup service matches this configured origin.
 
 Restart desktop development after changing this input so Vite and the native
 grant rebuild together; browser-only development needs a Vite restart. Production

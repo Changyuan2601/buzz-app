@@ -183,19 +183,15 @@ impl NsecBackupHost {
             Ok(())
         }
     }
-    fn source_allowed(&self, source: Source) -> bool {
-        let Some(config) = self.config.as_ref() else {
-            return false;
-        };
-        match source {
-            Source::Hosted => config.service_url == "https://app.builderlab.xyz/api/goose",
-            Source::Builderlab => url::Url::parse(&config.service_url)
+    fn source_allowed(&self) -> bool {
+        self.config.as_ref().as_ref().is_some_and(|config| {
+            url::Url::parse(&config.service_url)
                 .ok()
                 .is_some_and(|url| {
                     !buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty()
                         && url.origin().ascii_serialization() == buzzodz_plugins::BUILDERLAB_ORIGIN
-                }),
-        }
+                })
+        })
     }
     fn session(
         &self,
@@ -204,11 +200,7 @@ impl NsecBackupHost {
         credential: Option<String>,
         identity: IdentityHost,
     ) -> Result<()> {
-        // Reject a foreign service before copying a caller's already-held credential.
         let credential = credential.map(Zeroizing::new);
-        if !self.source_allowed(source) {
-            return Ok(());
-        }
         if credential.as_ref().is_some_and(|c| !valid_credential(c)) {
             return Err("Invalid backup session".into());
         }
@@ -867,6 +859,12 @@ pub(crate) fn nsec_backup_session(
     generation: u64,
     credential: Option<String>,
 ) -> Result<()> {
+    // Both login owners use the configured Builderlab origin. Never forward their
+    // credentials to a backup service on a different deployment.
+    if !host.source_allowed() {
+        drop(credential.map(Zeroizing::new));
+        return Ok(());
+    }
     host.session(source, generation, credential, identity.inner().clone())
 }
 #[tauri::command]
