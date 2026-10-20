@@ -12,6 +12,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
+| `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native build: federated identity authority, adapter prefix and community hosts. See below. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. Desktop preview release runs supply both for every platform (see [releases](releases.md)); candidate-only and local builds report automatic updates as unavailable. |
@@ -49,11 +50,29 @@ the normal connection error/retry flow applies. No legacy preferences are copied
 
 ## Builderlab URL build input
 
-Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
-the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+This legacy public URL input remains accepted by the existing frontend/native
+build loaders during transition. Process presence overrides repository-root
+`.env.local`, including an empty value. It grants the old exact network origin
+when FI is absent, but the migrated bundled plugins no longer use it for native
+sign-in or authenticated API calls. Use the FI descriptor below for native
+sign-in, and remove this input when configuring FI; nonempty conflicts fail the
+build. No deployment default is supplied.
 
-```sh
-BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
+## Federated identity build input
+
+`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is a public JSON descriptor supplied to
+Cargo through the build environment. It is validated and compiled into native
+code, with no runtime override or credential field:
+
+```json
+{
+  "version": 1,
+  "id": "example",
+  "identityOrigin": "https://identity.example",
+  "communityHosts": ["*.communities.example", "custom.example:8443"],
+  "adapterBase": "https://identity.example/nip-fa/",
+  "apiBasePath": "/api/goose/"
+}
 ```
 
 Vite uses its existing environment loader; the native plugin-manager build reads

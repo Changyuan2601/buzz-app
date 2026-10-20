@@ -38,7 +38,11 @@ const filters = [
   { value: "team", label: "Team", panelId: "sidebar-team" },
 ] as const;
 
+import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
+
 type Props = {
+  federatedIdentity?: FederatedIdentity;
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
@@ -254,7 +258,14 @@ function ScopedSidebar({
                   : (connection.error ?? "Choose a community to see channels.")}
               </p>
               {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
+                <>
+                  <CommunitySignIn
+                    identity={props.federatedIdentity}
+                    error={connection.error}
+                    retry={props.relay.retry}
+                  />
+                  <Button onClick={props.relay.retry}>Retry channels</Button>
+                </>
               )}
             </SidebarList>
           </SidebarFrame>

@@ -281,6 +281,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             workspaceRef={setWorkspaceElement}
             sidebar={(pageNavigation) => (
               <PrimarySidebar
+                federatedIdentity={services.federatedIdentity}
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}

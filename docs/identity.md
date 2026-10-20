@@ -232,7 +232,8 @@ too: one that can't look fails the attempt, keeping the marker. If renaming or t
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
-with the same key finds it. Builderlab and hosted-community logins live only in
+with the same key finds it. Native federated sessions are removed by the same
+sign-out owner across indexed profiles and configurations. Builderlab and hosted-community logins live only in
 memory and end with the restart. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
@@ -262,6 +263,102 @@ app copies. Saving a choice reports busy while such a lease is held. Disabling
 automatic backup governs future uploads and does not delete existing backups.
 The consent hooks are the base of the draft stack:
 #1137 consent hooks → #1106 gated uploader → #1107 recovery → #1101 restore UI.
+
+## Native federated session module
+
+Federated identity ([NIP-FI](https://github.com/block/buzz/blob/main/docs/nips/NIP-FI.md),
+[NIP-FA](https://github.com/block/buzz/blob/main/docs/nips/NIP-FA.md)) adds a native
+owner separate from the human Nostr key. Its deployment descriptor is documented
+in [configuration](configuration.md#federated-identity-build-input).
+The native commands return status, authority, revision, optional email, and fixed
+failure codes. Session tokens and assertion headers are native-only.
+
+Sign-in uses the existing native loopback callback owner with NIP-FA `return_to`
+and an S256 handoff challenge, exchanges the code natively, and verifies the
+fixed session expiry before persistence. Restore checks the stored credential
+against `/v1/session`; failed reads and unrecognized refusals do not authorize
+replacement. Local expiry, cancellation, and sign-out fence stale work.
+
+FI records use the OS secure-store service
+`dev.local.buzz.foundation.federated-session` (with `.debug` for Rust debug
+builds), keyed by profile and deployment fingerprint. Account indices and
+revision-specific refusal markers contain no credential and live outside wiped
+Buzz data. Failed removal of a known record leaves refusal durable before any
+secure-store access, so that revision cannot restore until cleanup succeeds.
+Sign out of Buzz removes indexed FI records across profiles/configurations in
+its debug/release namespace before deleting the human key or opening a WebView.
+
+The shared `federatedIdentity` SDK exposes this public state and scoped requests.
+Builderlab settings and native Hosted Communities share its session; unloading a
+plugin retires only its request registration. Session record revision survives
+restore and scopes account caches without inventing a NIP-FA subject.
+
+NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
+false FI flags retain ordinary Nostr transport. A true flag requires the supported
+client-attached/offline-jwt descriptor and compiled authority mapping. Assertions
+are acquired with native same-key NIP-98 proof and checked for exact audience,
+key, and lifetime. Native HTTP, media, repository Git reads/imports, and socket
+upgrades attach the assertion beside their existing possession proof. Protected
+socket workers stop by assertion expiry; the existing live owner reconnects and
+performs fresh NIP-42. Retirement fences protected reads and results.
+
+API-backed remote-agent and hosted-community controls remain unavailable until
+the agreed same-origin NIP-FA extension and API authentication contract exist.
+The native SDK checks distinct authority/operation grants, enabled artifact
+revision, and live registration, then returns an explicit unavailable error;
+it never forwards the adapter credential under a legacy header. No Buzz-managed
+CLI listener or provisioning is advertised without the companion CLI contract.
+The Node development host retains its supported broker flow.
+
+Fake secure-store tests and a loopback HTTP adapter fixture exercise native
+exchange, cryptographic assertion proof, expiry agreement, persistence/restart,
+stale-result fencing, and request grant enforcement. They do not establish OS
+consent, deployed adapter compatibility, TLS socket upgrade, or all protected
+transport paths. Use a configured staging build in a disposable OS account for
+attended browser/adapter, restart/sign-out, HTTP/write, WSS/NIP-42, media/range,
+and repository read/import acceptance before live use. Windows/Linux need
+separate acceptance; do not substitute a profile or HOME override for OS isolation.
+
+For the shared sign-in and community recovery UI alone, run the environment-free
+fixture server documented below and open `/tests/fixtures/federated-identity.html`.
+Click **Sign in**, then **Cancel sign-in** or **Complete** in fixture controls;
+verify both consumers observe the shared status and optional-email confirmation.
+**Binding mismatch** shows existing identity-link guidance; **Storage failure**
+shows recovery without claiming success. This fixture uses Header, SettingsGroup,
+Button, and the Settings content column. It does not exercise the running app's
+full navigation or native credentials.
+
+### Implementation validation, 9 October 2026
+
+Checked the uncommitted FI implementation against base
+`fcb3c655ee5ff13c2dcdf20698de7479eba1833b` with pinned tools:
+
+- Full Vitest: 653 files, 9,147 tests passed, no unhandled errors.
+- Native foundation, credential-store, and plugin-manager suites: 559 tests
+  passed; eight existing native tests ignored. This includes a fake-store
+  exchange → persistence → restart restore → same-key assertion flow, real
+  loopback callback handling, and native plugin registration enforcement.
+- Unconfigured native tests and a configured, compile-only build both passed.
+  TypeScript, design typechecking/static checks, Biome, Rust formatting, release
+  YAML parsing, and diff whitespace checks passed. The pre-push script had no
+  committed JavaScript inputs; the full Vitest gate was run explicitly instead.
+- Deliberately breaking the body-bound NIP-98 hash and explicit transaction
+  unlock made their owner-boundary regressions fail; both repairs then passed.
+  Extracted React snapshot/subscription callbacks failed before binding and
+  passed after the service repair.
+- Shared Header, SettingsGroup, Button, and Settings-column integration was
+  inspected in the isolated UI fixture in both themes, narrow/wide widths,
+  enlarged text, and keyboard/pointer operation. No browser journey was added
+  or removed. Independent native/SDK review found no remaining blockers.
+
+Earlier broad runs exposed intermittent failures in unchanged reminder,
+shortcode, browser-host Git, app-agent lock, and command-timeout tests. Focused
+runs and the final full suites passed; this does not establish those flakes are
+eliminated. Review size is approximately +3,579/−739 production/tooling lines
+and +1,797/−1,144 test/support lines, separating colocated Rust test modules.
+This evidence predates publication and does not establish deployed acceptance.
+Attended native acceptance, human product feedback, the API protocol extension,
+and the companion CLI remain the gaps described above.
 
 ## Packaged connection
 
@@ -353,8 +450,8 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+and other broker-only helpers are not claimed by this adapter. NIP-FI acquisition and attachment are implemented, with deployed transport
+acceptance still pending as described above.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 
