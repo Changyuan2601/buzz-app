@@ -18,7 +18,7 @@ import { PageTabs } from "../channels/PageTabs";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { archiveKey, readArchives } from "./archive";
-import { viewRevision } from "../../shared/view-state";
+import { viewRevision, writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
@@ -3405,6 +3405,13 @@ it.each([true, false])(
   "Inbox activity replies preserve shared recipient policy (solo=%s)",
   async (soloChannel) => {
     const h = fixture({ withWriter: true, soloChannel, memberAgents: 1 });
+    if (soloChannel)
+      writeView(h.owner.session.scope, "draft:room", {
+        text: "@Scout Respond to this",
+        recipients: [
+          { pubkey: h.agent.pubkey, name: "Scout", start: 0, end: 6 },
+        ],
+      });
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
@@ -3414,7 +3421,8 @@ it.each([true, false])(
     const editor = await screen.findByRole("textbox", {
       name: soloChannel ? "Message your agents" : "Reply to thread",
     });
-    fireEvent.change(editor, { target: { value: "Respond to this" } });
+    if (!soloChannel)
+      fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Send message" }),
@@ -3460,14 +3468,13 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
     name: "Message your agents",
   });
   fireEvent.change(editor, { target: { value: "Choose someone first" } });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  fireEvent.keyDown(editor, { key: "Enter" });
   expect(
-    await screen.findByText(
-      "There are multiple agents in this chat. @mention who should respond.",
-    ),
+    await screen.findByText("Tag a person or agent to send"),
   ).toBeInTheDocument();
   expect(h.published).toEqual([]);
   expect(editor).toHaveValue("Choose someone first");

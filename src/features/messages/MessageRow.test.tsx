@@ -2297,7 +2297,7 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Session: PR 45 fixes",
+        name: "Open Chat: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
       expect(card.closest("[data-solo-cards]")).not.toBeNull();
@@ -2358,7 +2358,7 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Session: Fix" })
+        .getByRole("link", { name: "Open Chat: Fix" })
         .closest("[class*=messageBubble]"),
     ).toBeNull();
   } finally {
