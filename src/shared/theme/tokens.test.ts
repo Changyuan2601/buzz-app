@@ -1,10 +1,4 @@
-import {
-  ACCENTS,
-  COLOR_LEVELS,
-  DEFAULT_ACCENT,
-  type Accent,
-  type ColorLevel,
-} from "./accent";
+import { ACCENTS, DEFAULT_ACCENT, type Accent } from "./accent";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
@@ -23,7 +17,7 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 function resolvedPalette(
   mode: "light" | "dark",
   accent: Accent = DEFAULT_ACCENT,
-  level: ColorLevel | "neutral" = "neutral",
+  contrastMode: "quiet" | "low" | "high" = "low",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -42,7 +36,9 @@ function resolvedPalette(
       continue;
     if (
       selector.includes('data-color-level="') &&
-      !selector.includes(`data-color-level="${level}"`)
+      !selector.includes(
+        `data-color-level="${contrastMode === "low" ? "touch" : contrastMode}"`,
+      )
     )
       continue;
     const dark =
@@ -194,20 +190,20 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    // At the neutral level, own and received bubbles are authored grays.
+    // Received bubbles stay neutral; own bubbles use the soft accent pair.
     expect(palette["--surface-message"]).toBe(palette["--bubble-received"]);
-    expect(palette["--surface-message-own"]).toBe(palette["--bubble-neutral"]);
-    expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
+    expect(palette["--surface-message-own"]).toBe(palette["--accent-4"]);
+    expect(palette["--text-message-own"]).toBe(palette["--accent-12"]);
   },
 );
 
 it.each(ACCENTS)(
-  "%s message fill keeps text and send icons readable at every level",
+  "%s message fill keeps text and send icons readable in both modes",
   (color) => {
-    for (const level of COLOR_LEVELS)
-      for (const mode of ["light", "dark"] as const) {
-        const palette = resolvedPalette(mode, color, level);
-        const where = `${color}/${level}/${mode}`;
+    for (const mode of ["light", "dark"] as const)
+      for (const contrastMode of ["quiet", "low", "high"] as const) {
+        const palette = resolvedPalette(mode, color, contrastMode);
+        const where = `${color}/${mode}`;
         // Highlights come from the family's tint, never a mixed bubble color.
         expect(palette["--surface-message-highlight"], where).toBe(
           palette["--affordance-accent"],
@@ -217,6 +213,9 @@ it.each(ACCENTS)(
           ["--text-message-own", "--surface-message-own"],
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],
+          ["--text-navigation-selected", "--surface-navigation-selected"],
+          ["--text-control-selected", "--surface-control-selected"],
+          ["--text-navigation-selected", "--bg-chrome-selected"],
           // Supported legacy/plugin markup must keep the same paired ink.
           ["--on-primary", "--primary"],
           ["--text-standard", "--surface-message"],
@@ -229,63 +228,60 @@ it.each(ACCENTS)(
   },
 );
 
-it("the default brand fill takes its darkest olive as ink, and A touch keeps own bubbles pale", () => {
+it("the default Citrus accent keeps its strong fill and paired black ink", () => {
   for (const mode of ["light", "dark"] as const) {
-    const touch = resolvedPalette(mode, "chartreuse", "touch");
-    // Strong controls take the brand fill with black ink; reading text on
-    // the fill (own messages from Swarmin') uses the darkest olive.
-    expect(touch["--affordance-prominent"]).toBe("#d7d72e");
-    expect(touch["--text-on-prominent"]).toBe("#000000");
-    // Hummin' keeps your own messages neutral; Swarmin' colors them.
-    expect(touch["--surface-message-own"]).toBe(touch["--bubble-neutral"]);
-    expect(
-      resolvedPalette(mode, "chartreuse", "more")["--surface-message-own"],
-    ).toBe("#d7d72e");
-    expect(
-      resolvedPalette(mode, "chartreuse", "full")["--surface-message-own"],
-    ).toBe("#d7d72e");
+    const palette = resolvedPalette(mode);
+    expect(palette["--affordance-prominent"]).toBe("#beda36");
+    expect(palette["--text-on-prominent"]).toBe("#000000");
   }
 });
 
-it.each(ACCENTS)(
-  "%s keeps the shell neutral until Buzzin’, so Swarmin’ adds only your messages",
-  (color) => {
-    const shell = [
-      "--bg-app",
-      "--texture-dots-color",
-      "--affordance-chrome",
-      "--affordance-chrome-hover",
-      "--text-chrome-subtle",
-      "--bg-chrome-selected",
-    ];
-    for (const mode of ["light", "dark"] as const) {
-      const neutral = resolvedPalette(mode, color, "neutral");
-      const more = resolvedPalette(mode, color, "more");
-      const full = resolvedPalette(mode, color, "full");
-      for (const role of shell) expect(more[role], role).toBe(neutral[role]);
-      expect(more["--surface-message-own"]).toBe(more["--accent-9"]);
-      expect(more["--text-message-own"]).toBe(more["--accent-ink"]);
-      expect(full["--bg-app"]).not.toBe(neutral["--bg-app"]);
+it.each(["light", "dark"] as const)(
+  "%s reading surfaces stay neutral across accents",
+  (mode) => {
+    const baseline = resolvedPalette(mode);
+    for (const accent of ACCENTS) {
+      const palette = resolvedPalette(mode, accent, "high");
+      for (const role of [
+        "--bg-app",
+        "--surface-panel",
+        "--surface-popover",
+        "--surface-message",
+        "--text-standard",
+        "--text-subtle",
+        "--border-standard",
+      ]) {
+        expect(palette[role], `${accent}: ${role}`).toBe(baseline[role]);
+      }
     }
   },
 );
 
 it.each(ACCENTS)(
-  "%s links are blue at Snoozin’ and take the family’s link partner from Hummin’",
-  (color) => {
+  "%s high contrast uses solid accent on messages and selected navigation",
+  (accent) => {
     for (const mode of ["light", "dark"] as const) {
-      const neutral = resolvedPalette(mode, color, "neutral");
-      for (const level of COLOR_LEVELS) {
-        const palette = resolvedPalette(mode, color, level);
-        const where = `${color}/${level}/${mode}`;
-        expect(palette["--text-link"], where).toBe(
-          level === "neutral" ? neutral["--blue-11"] : palette["--accent-link"],
-        );
-        expect(palette["--affordance-link-hover"], where).toBe(
-          level === "neutral"
-            ? neutral["--blue-3"]
-            : palette["--accent-link-hover"],
-        );
+      const high = resolvedPalette(mode, accent, "high");
+      const low = resolvedPalette(mode, accent, "low");
+      const quiet = resolvedPalette(mode, accent, "quiet");
+      expect(quiet["--surface-message-own"]).toBe(quiet["--bubble-neutral"]);
+      expect(quiet["--surface-control-selected"]).toBe(
+        quiet["--surface-panel"],
+      );
+      expect(quiet["--text-control-selected"]).toBe(quiet["--text-standard"]);
+      // Ghost buttons sit directly on panels; segmented indicators sit on inset tracks.
+      expect(quiet["--surface-navigation-selected"]).not.toBe(
+        quiet["--surface-panel"],
+      );
+      for (const role of [
+        "--surface-message-own",
+        "--surface-navigation-selected",
+        "--surface-control-selected",
+        "--bg-chrome-selected",
+      ]) {
+        expect(high[role]).toBe(high["--accent-9"]);
+        expect(low[role]).toBe(low["--accent-4"]);
+        expect(low[role]).not.toBe(high[role]);
       }
     }
   },
@@ -294,7 +290,7 @@ it.each(ACCENTS)(
 it.each(ACCENTS)(
   "%s mention chips stay readable and apart from every bubble",
   (color) => {
-    for (const level of COLOR_LEVELS)
+    for (const level of ["quiet", "low", "high"] as const)
       for (const mode of ["light", "dark"] as const) {
         const palette = resolvedPalette(mode, color, level);
         const where = `${color}/${level}/${mode}`;
@@ -321,7 +317,7 @@ it.each(ACCENTS)(
         // Ordinary mentions stay neutral at every level; a mention of you
         // takes the strong group (a fill in light, the mark as ink in dark).
         expect(palette["--affordance-mention"], where).toBe(
-          resolvedPalette(mode, color, "neutral")["--affordance-mention"],
+          resolvedPalette(mode, color, "quiet")["--affordance-mention"],
         );
         if (mode === "light")
           expect(palette["--affordance-mention-self"], where).toBe(
@@ -332,77 +328,5 @@ it.each(ACCENTS)(
             palette["--affordance-prominent-mark"],
           );
       }
-  },
-);
-
-it.each(ACCENTS)(
-  "%s dark rows keep neutral fills and give the accent to the selected label",
-  (color) => {
-    const neutral = resolvedPalette("dark", color, "neutral");
-    for (const level of COLOR_LEVELS) {
-      const palette = resolvedPalette("dark", color, level);
-      const where = `${color}/${level}/dark`;
-      // Light level blocks also match a dark root; none may leak into dark rows.
-      for (const role of [
-        "--affordance-row-hover",
-        "--affordance-panel-hover",
-        "--affordance-navigation-quiet",
-        "--affordance-selected",
-        "--affordance-floating-hover",
-        "--affordance-popover-selected",
-        "--affordance-floating-selected",
-        "--affordance-navigation-selected",
-      ])
-        expect(palette[role], `${role} in ${where}`).toBe(neutral[role]);
-      // Supporting ink on the selected row follows the level's supporting text.
-      expect(palette["--text-row-selected-subtle"], where).toBe(
-        palette["--text-subtle"],
-      );
-      expect(palette["--text-row-selected-metadata"], where).toBe(
-        palette["--text-metadata"],
-      );
-      // Hover ink is the level's navigation text (accent only at Buzzin’).
-      expect(palette["--text-row"], where).toBe(palette["--text-navigation"]);
-      expect(palette["--text-row-selected"], where).toBe(
-        level === "neutral" ? neutral["--text-row"] : palette["--accent-11"],
-      );
-    }
-  },
-);
-
-it.each(ACCENTS)(
-  "%s light sidebar selection takes the brand fill while other selection and hover stay neutral",
-  (color) => {
-    const neutral = resolvedPalette("light", color, "neutral");
-    for (const level of COLOR_LEVELS) {
-      const palette = resolvedPalette("light", color, level);
-      const where = `${color}/${level}/light`;
-      if (level === "neutral") continue;
-      expect(palette["--affordance-navigation-selected"], where).toBe(
-        palette["--accent-9"],
-      );
-      for (const role of [
-        "--text-row-selected",
-        "--text-row-selected-subtle",
-        "--text-row-selected-metadata",
-      ])
-        expect(palette[role], `${role} in ${where}`).toBe(
-          palette["--accent-contrast"],
-        );
-      if (level === "full")
-        expect(palette["--affordance-navigation-quiet"], where).toBe(
-          palette["--accent-2"],
-        );
-      // Hover is transient, so it stays neutral until Buzzin’ tints everything.
-      if (level !== "full")
-        for (const role of [
-          "--affordance-row-hover",
-          "--affordance-panel-hover",
-          "--affordance-navigation-quiet",
-          "--affordance-selected",
-          "--text-row",
-        ])
-          expect(palette[role], `${role} in ${where}`).toBe(neutral[role]);
-    }
   },
 );

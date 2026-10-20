@@ -1,5 +1,10 @@
 import { test, expect } from "./fixture.mjs";
-import { chooseColorMode } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  closeSettings,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
@@ -104,6 +109,7 @@ test("shared tokens reach app controls without history or chip overrides", async
     const override = await page.addStyleTag({
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
+        --affordance-floating-control: rgb(13, 35, 57);
         --scrollbar-thumb-quiet: rgb(34, 56, 78);
         --text-standard: rgb(10, 20, 30);
         --text-label-sm: 19px;
@@ -131,7 +137,11 @@ test("shared tokens reach app controls without history or chip overrides", async
         page.locator("#probe-threadHistoryControls"),
         page.locator("#probe-mediaReviewUnavailable"),
       ]) {
-        await expect(control).toHaveCSS("background-color", "rgb(12, 34, 56)");
+        // Settings is a Dialog, whose controls use the floating-control fill.
+        await expect(control).toHaveCSS(
+          "background-color",
+          control === increase ? "rgb(13, 35, 57)" : "rgb(12, 34, 56)",
+        );
         await expect(control).toHaveCSS("color", "rgb(10, 20, 30)");
         await expect(control).toHaveCSS("padding-left", "29px");
         await expect(control).toHaveCSS("font-size", "19px");
@@ -176,6 +186,8 @@ test("shared tokens reach app controls without history or chip overrides", async
     } finally {
       await override.evaluate((node) => node.remove());
     }
+    // The account menu lives in the workspace, which is inert behind Settings.
+    await closeSettings(page);
     await page
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
@@ -189,5 +201,7 @@ test("shared tokens reach app controls without history or chip overrides", async
     );
     await page.screenshot({ path: info.outputPath(`popover-${mode}.png`) });
     await page.keyboard.press("Escape");
+    await openSettings(page);
+    await selectSettingsSection(page, "Appearance");
   }
 });

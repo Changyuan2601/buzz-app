@@ -719,7 +719,7 @@ it("keeps Huddle rooms out of the sidebar before and after metadata arrives", as
   expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
 });
 
-it("keeps unproven trial rooms ordinary despite signed expiry metadata", async () => {
+it("hides generated legacy rooms while keeping ordinary expiring channels visible", async () => {
   const h = fixture();
   const relay = keypair(),
     viewer = keypair();
@@ -735,8 +735,8 @@ it("keeps unproven trial rooms ordinary despite signed expiry metadata", async (
     {
       id: legacy,
       name: `huddle-${legacy.slice(0, 8)}`,
-      tags: [["private"], ["ttl", "60"], ["archived", "true"]],
-      hidden: false,
+      tags: [["private"], ["ttl", "60"]],
+      hidden: true,
     },
     { id: "ordinary", name: "Huddle", tags: [["private"]], hidden: false },
     {
@@ -784,9 +784,7 @@ it("keeps unproven trial rooms ordinary despite signed expiry metadata", async (
       name: /^Huddle(?:Temporary channel\. Cleans up after 1 hour without activity\.)?$/,
     }),
   ).toHaveLength(4);
-  expect(
-    screen.queryByRole("button", { name: `huddle-${legacy.slice(0, 8)}` }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: /^huddle-33333333/ })).toBeNull();
 });
 
 it("rejects a deferred header Create section after its navigation origin retires", async () => {

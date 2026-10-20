@@ -1,14 +1,10 @@
 // The attention prompts every harness shows its agent, so a watch or timer
-// turn reads the same in Claude, Codex or any other agent type: the guidance
-// for a session with the attention tools, Janet's end-of-turn review, and the
-// one-off turn a watch or timer starts.
+// turn reads the same in Claude, Codex or any other agent type: Janet's
+// end-of-turn review, and the one-off turn a watch or timer starts. How to use
+// the attention tools is in their own descriptions (buzz-mcp/attention), which
+// a harness that loads tools on demand shows only once the agent needs them.
 import type { ClassifierOutcome } from "../agents/service";
 import type { EventData } from "../relay/events";
-import attentionPrompt from "./attention_prompt.md?raw";
-
-/** How to use the attention tools; part of the base prompt of a session that
- * has them. */
-export const ATTENTION_PROMPT = attentionPrompt.trim();
 
 const section = (tag: string, body: string, attributes = "") =>
   `<${tag}${attributes}>\n${body.trim()}\n</${tag}>`;
@@ -17,6 +13,12 @@ const section = (tag: string, body: string, attributes = "") =>
 export const ATTENTION_REVIEW = section(
   "attention",
   "Handle the work that caused this turn. Before finishing, review your Interests and watches and maintain them as needed: update instructions, arrange useful future wakes, remove obsolete watches, and retire completed Interests after removing their watches. You may create Interests for new responsibilities within your authority. Use the attention tools. An unchanged attention is a valid outcome. No completion acknowledgement or extra report is required; publish only useful outcomes, questions, or blockers. Watches do not grant membership, permissions, or authority to act.",
+);
+
+/** The end-of-turn note for an agent with attention and no Interests. */
+export const ATTENTION_NONE = section(
+  "attention",
+  "You have no Interests, so there is nothing to review. If this turn gave you an ongoing responsibility within your authority, you may create an Interest for it with the attention tools.",
 );
 
 /** Said at the end of every turn while the owner has attention off. */
@@ -182,7 +184,7 @@ function observedMessage(
 }
 
 const NOT_YOURS =
-  "Do not take work assigned to someone else. Do not answer or decline that assignment. Send a message only when the Interest instructions require a report.";
+  "Do not take work assigned to someone else. Do not answer or decline that assignment. A match is permission to process, not to reply: unless the event is addressed to you or the Interest instructions require a report, process silently.";
 /** The observed event as JSON, escaped even inside JSON strings, so observed
  * text cannot close its section or open a request section of its own. */
 function eventJson(event: EventData & { sig?: string }) {

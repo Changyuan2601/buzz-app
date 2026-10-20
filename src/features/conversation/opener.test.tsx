@@ -53,6 +53,7 @@ function Surfaces() {
         scope="scope"
         channelId="channel"
         disabled={false}
+        recipients={[]}
         insertText={() => false}
         insertMention={() => false}
         insertMentions={() => false}

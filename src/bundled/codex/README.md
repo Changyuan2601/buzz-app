@@ -88,7 +88,7 @@ To inspect a saved session, see [View a Codex session](../../../docs/view-codex-
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
-`mem_set`, `canvas`, and `media_get`, which saves the file and gives its path, and answers with an image itself. These run inside Buzz through the agent's native-backed
+`mem_set`, `notes_get`, `notes_set`, `notes_rm`, `canvas`, and `media_get`, which saves the file and gives its path, and answers with an image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
 reads use the owner's encrypted-memory view; writes use the agent handle.
@@ -101,7 +101,7 @@ follow-up before its final reply.
 
 ## Conversation storage
 
-Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history, and desktop, which holds a writer lock on each recent thread it reopens, can't block their turns: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared. Relative paths in `config.toml` resolve against Buzz's home, so use absolute ones. Codex hooks aren't shared: their trust is keyed by the path of `hooks.json`, so Buzz agents run without them. To sign Buzz out, sign out of Codex desktop or the terminal: signing out inside Buzz's home only removes its link, which the next run restores. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. A file already in the way of a link stops setup rather than being replaced.
+Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history, and desktop, which holds a writer lock on each recent thread it reopens, can't block their turns: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared. Relative paths in `config.toml` resolve against Buzz's home, so use absolute ones. Codex hooks aren't shared: their trust is keyed by the path of `hooks.json`, so Buzz agents run without them. To sign Buzz out, sign out of Codex desktop or the terminal: signing out inside Buzz's home only removes its link, which the next run restores. Signing in there writes the new sign-in in place of the link, because `codex login` signs out first; the next run writes it through to the shared `auth.json`, unless that one is newer, and restores the link. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. Any other file in the way of a link stops setup rather than being replaced.
 
 A conversation saved before Buzz had its own home continues from a copy: when its thread isn't in Buzz's home, the runtime has `codex.sh adopt` copy the rollout from `~/.codex` once, then resumes it. The copy never replaces one Buzz already continued, and the original stays in `~/.codex`. If there's no rollout to copy, the runtime starts a new thread.
 
@@ -159,8 +159,9 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 ## Limits and boundaries
 
 - Only the owner's mentions start conversation work. The agent always has the
-  attention tools and guidance. Each turn ends with the attention review, or,
-  when attention is off, a note that those tools refuse. Its watches and timers run
+  attention tools, loaded on search, with their guidance in their descriptions.
+  Each turn ends with the attention review, a line that there are no Interests,
+  or, when attention is off, a note that those tools refuse. Its watches and timers run
   as one-off turns on an ephemeral Codex thread of their own, queued per
   Interest by the Agents runner; a watch's event can come from
   anyone and is framed as observed data. These turns save no binding, have no

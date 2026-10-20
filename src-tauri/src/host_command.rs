@@ -83,33 +83,36 @@ pub(crate) mod windows_job {
             })
         }
 
-        pub(super) fn spawn(&self, command: &mut Command) -> Option<Child> {
+        pub(super) fn spawn(&self, command: &mut Command) -> std::io::Result<Child> {
             self.spawn_with_check(command, 0, |_, _| {})
         }
 
-        pub(crate) fn spawn_hidden(&self, command: &mut Command) -> Option<Child> {
+        pub(crate) fn spawn_hidden(&self, command: &mut Command) -> std::io::Result<Child> {
             self.spawn_with_check(command, CREATE_NO_WINDOW, |_, _| {})
         }
 
+        /// Fails with the operating system's reason when the program cannot
+        /// start, such as a missing file.
         pub(super) fn spawn_with_check(
             &self,
             command: &mut Command,
             flags: u32,
             check: impl FnOnce(&Child, &OwnedHandle),
-        ) -> Option<Child> {
+        ) -> std::io::Result<Child> {
             command
                 .creation_flags(CREATE_SUSPENDED | flags)
                 .kill_on_drop(true);
-            let child = command.spawn().ok()?;
-            let primary_thread = primary_thread(child.id()?)?;
+            let child = command.spawn()?;
+            let unjobbed = || std::io::Error::other("it could not join its job");
+            let primary_thread = child.id().and_then(primary_thread).ok_or_else(unjobbed)?;
             check(&child, &primary_thread);
             if !self.assign(&child) {
-                return None;
+                return Err(unjobbed());
             }
             if unsafe { ResumeThread(primary_thread.as_raw_handle()) } != 1 {
-                return None;
+                return Err(unjobbed());
             }
-            Some(child)
+            Ok(child)
         }
     }
 
@@ -325,7 +328,7 @@ async fn run_output_with_input(
     #[cfg(windows)]
     let _job = windows_job::WindowsJob::new()?;
     #[cfg(windows)]
-    let mut child = _job.spawn(&mut command)?;
+    let mut child = _job.spawn(&mut command).ok()?;
     #[cfg(not(windows))]
     let mut child = command.spawn().ok()?;
     #[cfg(unix)]

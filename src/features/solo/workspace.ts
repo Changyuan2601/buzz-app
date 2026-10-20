@@ -250,10 +250,15 @@ export function parseChatSetup(raw: unknown): ChatSetup {
     agents: lineup.agents,
   };
 }
+/** Which saved defaults a setup was read from: it changes whenever any
+ * saved kit record does. */
+export function defaultsRevision(kit: { entries: readonly KitEntry[] }) {
+  return kit.entries.map((entry) => entry.eventId).join();
+}
 export async function loadChatSetup(
   session: RelaySession,
   projectId: string,
-): Promise<ChatSetup> {
+): Promise<ChatSetup & { revision: string }> {
   const store = session.soloPreferences;
   await store.refresh();
   const preferences = store.snapshot();
@@ -271,13 +276,14 @@ export async function loadChatSetup(
       kit.error ??
         "Workspace defaults couldn’t load. Retry before starting the chat.",
     );
+  const revision = defaultsRevision(kit);
   const template = projectDefault(
     kit.entries,
     projectId,
     await projectTemplateId(projectId),
     true,
   );
-  if (!template) return { projectId, canvas: "", agents: [] };
+  if (!template) return { projectId, canvas: "", agents: [], revision };
   if (template.agents.length || template.teamIds.length) {
     await session.agentChoices.refresh("templates");
     const choices = session.agentChoices.snapshot();
@@ -314,49 +320,7 @@ export async function loadChatSetup(
       kit.entries,
       templateAgentChoices(choices, roster),
     ).map((agent) => agent.pubkey);
-    return { projectId, canvas: template.canvas, agents };
+    return { projectId, canvas: template.canvas, agents, revision };
   }
-  return { projectId, canvas: template.canvas, agents: [] };
-}
-
-export const removedProjectMessage =
-  "The workspace was removed. Continue without a workspace to retry.";
-
-export async function applyChatSetup(
-  session: RelaySession,
-  channelId: string,
-  setup: ChatSetup,
-  active: () => boolean,
-) {
-  if (!active()) return;
-  const head = await session.canvas.read(channelId);
-  if (!active()) return;
-  if (head && head.content !== setup.canvas)
-    throw new Error(
-      "This chat already has a different Canvas. Review it before retrying setup.",
-    );
-  if (!head && setup.canvas)
-    await session.canvas.save(channelId, setup.canvas, undefined);
-  if (!active()) return;
-  if (setup.projectId) {
-    const store = session.soloPreferences;
-    await store.refresh();
-    if (!active()) return;
-    const preferences = store.snapshot();
-    if (preferences.status !== "ready" || !preferences.data)
-      throw new Error(
-        "Workspaces couldn’t load. Retry before continuing setup.",
-      );
-    if (
-      !preferences.data.sections.some(
-        (project) => project.id === setup.projectId,
-      )
-    )
-      throw new Error(removedProjectMessage);
-    if (store.snapshot().data?.assignments[channelId] !== setup.projectId)
-      await store.assign(channelId, setup.projectId);
-  }
-  if (!active()) return;
-  if (setup.agents.length)
-    await session.channelWrites.addAgents(channelId, setup.agents, active);
+  return { projectId, canvas: template.canvas, agents: [], revision };
 }

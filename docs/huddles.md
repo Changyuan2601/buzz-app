@@ -1,6 +1,6 @@
 # Huddles plugin
 
-**Huddles** is enabled by default on macOS desktop and can be turned off in
+**Huddles** is enabled by default on desktop (macOS, Linux and Windows) and can be turned off in
 Settings → Plugins. Click the headphone button immediately after members in a
 channel or DM header to join the latest available Huddle or start one when none
 is found. The Huddle window opens and receives focus by default once connected. The mini
@@ -164,12 +164,14 @@ opens the saved Huddle conversation in a side panel. Archived rooms remain
 read-only. The display is bounded to the latest 200 visible messages (excluding membership and Huddle notices) and says when history
 is limited; it does not delete earlier messages.
 
-New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay
+New rooms carry a parent marker in their signed creation record. Verified rooms stay
 out of ordinary sidebar destinations; destinations without metadata are withheld
 until they can be classified, preventing temporary unnamed room rows. The discussion reader verifies that
-marker before reading or sending. Older trial rooms named `Huddle` or
+marker before reading or sending. Older trial rooms named exactly
 `huddle-<first eight room-ID characters>` are also hidden when relay-signed metadata
 identifies them as private, expiring streams. Names alone never hide a channel.
+This legacy presentation rule does not establish a parent relationship; an ordinary
+channel configured with that same name, visibility and lifetime is also hidden.
 This only changes presentation: membership and messages remain intact. Unmarked
 rooms can open when one of the latest 500 relay-signed join/leave/end events in
 the parent identifies that exact room. User-authored cards and room names do not
@@ -252,9 +254,9 @@ still rechecks current room access on the relay.
 ## Room classification
 
 Only a signed kind-9007 creation receipt with the exact room ID, matching the
-creator recorded in relay-signed metadata, establishes a Huddle. The receipt
+creator recorded in relay-signed metadata, establishes a verified Huddle parent relationship. The receipt
 must declare a private stream with the Huddle parent marker. Later edits to the
-name, description or lifetime cannot turn an ordinary channel into a Huddle or
+name, description or lifetime cannot establish that relationship or
 change an established Huddle's parent. Receipts are retained with signed discovery
 metadata in the local cache. Strong exact-channel resolution awaits creation
 proof from the writer, even after an earlier replica lookup found no receipt.
@@ -262,6 +264,10 @@ Proof-read failures reject that resolution so invitation recovery can use its
 existing bounded retries; newer accepted metadata remains the proof source.
 
 Rooms without that evidence, including legacy Huddles whose creation events did
-not include their room ID, remain accessible as ordinary channels. A missing or
-failed receipt lookup never removes channel access. Relays without creator
-identity metadata also use this fallback.
+not include their room ID, retain ordinary channel access. For presentation only,
+relay-signed metadata identifying a private, expiring stream named exactly
+`huddle-<first eight room-ID characters>` hides that room from ordinary navigation.
+This legacy exception assigns no parent relationship; parent verification still
+requires independent signed evidence. Other unproven rooms remain ordinary
+navigation destinations. A missing or failed receipt lookup never removes channel
+access. Relays without creator identity metadata also use this fallback.

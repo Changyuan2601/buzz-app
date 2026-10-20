@@ -6,7 +6,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { agents, navigation } = ctx;
   ctx.pages.register({
     id: "usage",
-    title: "Usage",
+    title: "Usage & costs",
     layout: "workspace",
     primary: true,
     component: () => <UsagePage agents={agents} open={navigation.open} />,

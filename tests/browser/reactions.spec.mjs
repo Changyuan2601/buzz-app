@@ -395,7 +395,9 @@ test("standalone message gallery hosts clipboard success and failure toasts", as
     });
   });
   await page.goto("/tests/fixtures/message-gallery.html");
-  const row = page.locator("[data-message-id]").first();
+  const row = page
+    .getByRole("region", { name: "Plain text", exact: true })
+    .locator('[data-message-id="text"]');
   const notifications = page.getByRole("region", {
     name: "App notifications",
   });

@@ -24,7 +24,12 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
 /** A community with `events` in it, answering filters by kind and a few tags,
  * newest first and a page at a time, as the relay does. */
-function fake(events: readonly BuzzEvent[] = []) {
+function fake(
+  events: readonly BuzzEvent[] = [],
+  { keep = false }: { keep?: boolean } = {},
+) {
+  // With keep, a publication joins the community as a fresh event.
+  const kept: BuzzEvent[] = [];
   const published: Template[] = [];
   const matches = (filter: Filter, item: BuzzEvent) => {
     const tag = (name: string) =>
@@ -50,7 +55,7 @@ function fake(events: readonly BuzzEvent[] = []) {
   const client: BuzzClient = {
     pubkey: me,
     query: vi.fn(async (filters: readonly Filter[]) => {
-      const newest = [...events].sort(
+      const newest = [...events, ...kept].sort(
         (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
       );
       const found = filters.map((filter) =>
@@ -62,7 +67,16 @@ function fake(events: readonly BuzzEvent[] = []) {
     }),
     publish: vi.fn(async (template: Template) => {
       published.push(template);
-      return event({ ...template, pubkey: me, id: "e".repeat(64) });
+      const signed = keep
+        ? event({
+            ...template,
+            pubkey: me,
+            id: `${published.length}`.padStart(64, "e"),
+            created_at: Math.floor(Date.now() / 1000),
+          })
+        : event({ ...template, pubkey: me, id: "e".repeat(64) });
+      if (keep) kept.push(signed);
+      return signed;
     }),
     upload: vi.fn(async (_data: Uint8Array, mime: string) => ({
       url: "https://relay/media/x.png",
@@ -1064,6 +1078,33 @@ it("waits past the existing canvas timestamp before publishing", async () => {
   }
 });
 
+it("keeps waiting when the timer fires a moment early", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client } = fake([event({ kind: 40100, content: "old" })]);
+    const timer = globalThis.setTimeout;
+    const early = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((run: () => void, ms: number) =>
+        timer(run, Math.max(0, ms - 1))) as typeof setTimeout);
+    const publish = client.publish;
+    client.publish = vi.fn(async (template) => {
+      expect(Date.now()).toBe(101_000);
+      return publish(template);
+    });
+    const write = callTool(client, { channel: "chan" }, "canvas", {
+      text: "new",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    early.mockRestore();
+    await expect(write).resolves.toBe("saved");
+    expect(client.publish).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("publishes the first canvas only after finding visible channel metadata", async () => {
   const { client, published } = fake([
     event({ kind: 39000, tags: [["d", "chan"]] }),
@@ -1625,4 +1666,337 @@ it("reads users by id without the name search", async () => {
     `${bob} Bob`,
   );
   expect(client.searchProfiles).not.toHaveBeenCalled();
+});
+
+const note = (
+  pubkey: string,
+  name: string,
+  created_at: number,
+  extra: string[][] = [],
+  content = `${name} by ${pubkey.slice(0, 1)}`,
+) =>
+  event({
+    id: `${pubkey.slice(0, 1)}${created_at}`.padEnd(64, "0"),
+    kind: 30023,
+    pubkey,
+    created_at,
+    content,
+    tags: [["d", name], ["title", `${name} title`], ...extra],
+  });
+
+it("reads a shared note by name, from whichever author has it", async () => {
+  const { client } = fake([
+    ...community,
+    note(alice, "pr-recipe", 200, [
+      ["summary", "how to open a PR"],
+      ["t", "git"],
+    ]),
+    note(alice, "pr-recipe", 150),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "pr-recipe" }),
+  ).resolves.toBe(
+    [
+      `30023:${alice}:pr-recipe by Alice Smith, 1970-01-01T00:03Z`,
+      "title: pr-recipe title",
+      "summary: how to open a PR",
+      "tags: git",
+      "",
+      "pr-recipe by a",
+    ].join("\n"),
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { name: "missing" }),
+  ).resolves.toBe("No note missing.");
+  await expect(
+    callTool(client, {}, "notes_get", { name: "Bad Name" }),
+  ).rejects.toThrow("Bad note name Bad Name");
+});
+
+it("asks which author's note when several share a name", async () => {
+  const { client } = fake([
+    ...community,
+    profile(me, "Bob"),
+    note(alice, "recipe", 200),
+    note(bob, "recipe", 300),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe" }),
+  ).rejects.toThrow(
+    `2 authors have a note recipe; give author or latest.\n${bob} Bob`,
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", latest: true }),
+  ).resolves.toMatch(/\nrecipe by b$/);
+  // An author by display name, pubkey or npub.
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: "alice smith",
+    }),
+  ).resolves.toMatch(/\nrecipe by a$/);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: bob }),
+  ).resolves.toMatch(/\nrecipe by b$/);
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: npubEncode(bob),
+    }),
+  ).resolves.toMatch(/\nrecipe by b$/);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: "Carol" }),
+  ).rejects.toThrow("No one is named Carol.");
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: "Bob" }),
+  ).rejects.toThrow(
+    /^2 people are named Bob; give their npub\.\nnpub1\w+\nnpub1\w+$/,
+  );
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: bob,
+      latest: true,
+    }),
+  ).rejects.toThrow("Give author or latest, not both.");
+});
+
+it("lists your notes by default, or everyone's, newest first", async () => {
+  const { client } = fake([
+    ...community,
+    note(me, "mine", 200, [["t", "ops"]]),
+    note(me, "older", 100),
+    note(alice, "hers", 300, [["t", "ops"]]),
+  ]);
+  await expect(callTool(client, {}, "notes_get", {})).resolves.toBe(
+    `mine ${me}  1970-01-01T00:03Z mine title\nolder ${me}  1970-01-01T00:01Z older title`,
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { author: "all", tag: "ops" }),
+  ).resolves.toBe(
+    `hers ${alice} Alice Smith 1970-01-01T00:05Z hers title\nmine ${me}  1970-01-01T00:03Z mine title`,
+  );
+  expect(vi.mocked(client.query).mock.calls.at(-2)?.[0]).toEqual([
+    { kinds: [30023], "#t": ["ops"], limit: 50 },
+  ]);
+  const { client: empty } = fake(community);
+  await expect(callTool(empty, {}, "notes_get", {})).resolves.toBe("No notes.");
+});
+
+it("publishes a note in the CLI's shape, keeping what an update leaves out", async () => {
+  const { client, published } = fake(community, { keep: true });
+  await expect(
+    callTool(client, {}, "notes_set", { name: "plan", text: "draft" }),
+  ).rejects.toThrow("title is required for a new note.");
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      text: " ",
+    }),
+  ).rejects.toThrow("A note needs text.");
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      summary: "the plan",
+      tags: ["ops", "q4"],
+      path: "plan.md",
+    }),
+  ).resolves.toBe(`saved 30023:${me}:plan`);
+  expect(published).toEqual([
+    {
+      kind: 30023,
+      content: "# plan.md",
+      tags: [
+        ["d", "plan"],
+        ["title", "Plan"],
+        ["summary", "the plan"],
+        ["t", "ops"],
+        ["t", "q4"],
+        ["published_at", expect.stringMatching(/^\d+$/)],
+      ],
+    },
+  ]);
+
+  const prior = note(me, "plan", 100, [
+    ["summary", "the plan"],
+    ["t", "ops"],
+    ["published_at", "90"],
+  ]);
+  vi.useFakeTimers();
+  vi.setSystemTime(200_000);
+  const { client: again, published: updates } = fake([...community, prior], {
+    keep: true,
+  });
+  try {
+    await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
+    // The next version waits for the second after v2.
+    const v3 = callTool(again, {}, "notes_set", {
+      name: "plan",
+      text: "v3",
+      title: "New",
+      summary: "",
+      tags: [],
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(v3).resolves.toBe(`saved 30023:${me}:plan`);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(updates).toEqual([
+    {
+      kind: 30023,
+      content: "v2",
+      tags: [
+        ["d", "plan"],
+        ["title", "plan title"],
+        ["summary", "the plan"],
+        ["t", "ops"],
+        ["published_at", "90"],
+      ],
+    },
+    {
+      kind: 30023,
+      content: "v3",
+      tags: [
+        ["d", "plan"],
+        ["title", "New"],
+        ["summary", ""],
+        ["published_at", "90"],
+      ],
+    },
+  ]);
+  // Only your own note is the one an update replaces.
+  expect(vi.mocked(again.query).mock.calls[0]?.[0]).toEqual([
+    {
+      kinds: [30023],
+      authors: [me],
+      "#d": ["plan"],
+      limit: 1,
+      consistency: "strong",
+    },
+  ]);
+});
+
+it("reports a conflict when another write of the same second wins", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client, published } = fake([...community, note(me, "plan", 100)], {
+      keep: true,
+    });
+    // Both read version 100 and wait for second 101. The relay keeps the
+    // lower id of the two and accepts the other as a duplicate.
+    const first = callTool(client, {}, "notes_set", {
+      name: "plan",
+      text: "mine",
+    });
+    const second = callTool(client, {}, "notes_set", {
+      name: "plan",
+      text: "theirs",
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(first).resolves.toBe(`saved 30023:${me}:plan`);
+    expect(await second).toBeInstanceOf(Error);
+    expect(((await second) as Error).message).toBe(
+      `conflict: note plan now holds another version (${"1".padStart(64, "e")}, 1970-01-01T00:01Z), not this text. Read it with notes_get, then write again.`,
+    );
+    expect(published.map((template) => template.content)).toEqual([
+      "mine",
+      "theirs",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("checks a note write against the writer, not a lagging replica", async () => {
+  const { client } = fake([...community, note(me, "plan", 100)], {
+    keep: true,
+  });
+  // A replica still holds version 100; only the writer has the new one.
+  const writer = client.query;
+  const stale = note(me, "plan", 100);
+  client.query = vi.fn(async (filters: readonly Filter[]) =>
+    filters.every((filter) => filter.consistency === "strong")
+      ? writer(filters)
+      : [stale],
+  );
+  await expect(
+    callTool(client, {}, "notes_set", { name: "plan", text: "v2" }),
+  ).resolves.toBe(`saved 30023:${me}:plan`);
+  expect(client.query).toHaveBeenCalledTimes(2);
+});
+
+it("reports a conflict when the note is gone after a write", async () => {
+  const { client } = fake(community);
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      text: "v1",
+    }),
+  ).rejects.toThrow(
+    "conflict: note plan was not found after this write. Read it with notes_get, then write again.",
+  );
+});
+
+it("dates a note deletion after the note it deletes", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    // Another writer of this key, with its clock ahead, saved second 102.
+    const { client, published } = fake([...community, note(me, "plan", 102)]);
+    let done = false;
+    const deleting = callTool(client, {}, "notes_rm", { name: "plan" }).then(
+      (result) => {
+        done = true;
+        return result;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(done).toBe(false);
+    expect(published).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(deleting).resolves.toBe(`deleted 30023:${me}:plan`);
+    expect(published).toHaveLength(1);
+    expect(vi.mocked(client.query).mock.calls[0]?.[0]).toEqual([
+      {
+        kinds: [30023],
+        authors: [me],
+        "#d": ["plan"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ]);
+    // A note dated too far ahead is not waited out.
+    const { client: ahead, published: none } = fake([
+      ...community,
+      note(me, "plan", 200),
+    ]);
+    await expect(
+      callTool(ahead, {}, "notes_rm", { name: "plan" }),
+    ).rejects.toThrow("The note was just changed; try again.");
+    expect(none).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("deletes only your own note, by its address", async () => {
+  const { client, published } = fake([
+    ...community,
+    note(me, "plan", 100),
+    note(alice, "hers", 100),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_rm", { name: "hers" }),
+  ).rejects.toThrow("You have no note hers.");
+  await expect(
+    callTool(client, {}, "notes_rm", { name: "plan" }),
+  ).resolves.toBe(`deleted 30023:${me}:plan`);
+  expect(published).toEqual([
+    { kind: 5, content: "", tags: [["a", `30023:${me}:plan`]] },
+  ]);
 });

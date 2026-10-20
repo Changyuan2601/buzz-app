@@ -25,16 +25,16 @@
 }
 .frame {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
   height: 100%;
   min-height: 0;
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
-.frame:has(> [data-panel-dock]:not([hidden])) {
+.frame:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(0, 1fr) minmax(
-      18.75rem,
-      var(--secondary-panel-width, 26.25rem)
+      0,
+      max(18.75rem, var(--secondary-panel-width, 26.25rem))
     );
 }
 .page {
@@ -42,6 +42,7 @@
   min-height: 0;
 }
 .dock {
+  width: max(18.75rem, var(--secondary-panel-width, 26.25rem));
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
   display: grid;
@@ -50,8 +51,10 @@
   min-height: 0;
 }
 @media (max-width: 62.5rem) {
-  .frame:has(> [data-panel-dock]:not([hidden])) {
+  .frame,
+  .frame:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .dock > [data-panel-resize] {
     display: none;
@@ -74,6 +77,23 @@
   }
 }
 
+/* Animate the divider with the dock, not just content over a snapped grid.
+   Stable dock width prevents its text rewrapping during the reveal. */
+:has(> .motion) {
+  transition: grid-template-columns var(--duration-fast) var(--easing-enter);
+}
+:has(> .motion:not([hidden], [data-closing])) {
+  transition-duration: var(--duration-panel-enter);
+}
+html:is([data-keyboard-input], [data-sidebar-resizing]) :has(> .motion) {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :has(> .motion) {
+    transition: none;
+  }
+}
+
 /* Short desktop travel; overlay layouts use the full panel width. */
 .motion {
   opacity: 1;
@@ -90,7 +110,7 @@
     --panel-motion-offset,
     translateX(var(--panel-motion-distance, var(--space-3)))
   );
-  transition-duration: var(--panel-motion-exit-duration, 0s);
+  transition-duration: var(--panel-motion-exit-duration, var(--duration-fast));
   pointer-events: none;
 }
 @starting-style {

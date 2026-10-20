@@ -9,6 +9,7 @@ import {
   type CommunityInfo,
 } from "./api";
 import { keypair, signed } from "../relay/testing";
+import { fetchCommunityPresentation } from "./community-icon";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -394,4 +395,15 @@ it("routes exact owner setup confirmation through native commands, not the broke
     }),
   ).rejects.toThrow("Explicit owner community resolution required");
   expect(requests).toEqual([]);
+});
+
+it("projects native public community presentation without a join-policy read or broker", async () => {
+  expect(
+    await fetchCommunityPresentation(community, new AbortController().signal),
+  ).toEqual({
+    publishedName: "Native community",
+    publishedIcon: undefined,
+  });
+  expect(requests).toEqual([{ path: "/", body: undefined }]);
+  expect(fetch).not.toHaveBeenCalled();
 });

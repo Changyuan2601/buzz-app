@@ -232,6 +232,16 @@ export class AppServer {
   }
 }
 
+/** Whether Codex lacks an OpenAI sign-in that its model provider needs. A provider set with
+ * `requires_openai_auth = false` brings its own credentials, so Codex asks for no sign-in. */
+export async function needsSignIn(rpc: AppServer) {
+  const { account, requiresOpenaiAuth } = await rpc.request<{
+    account: unknown;
+    requiresOpenaiAuth?: boolean;
+  }>("account/read");
+  return !account && requiresOpenaiAuth !== false;
+}
+
 export async function listModels(rpc: AppServer) {
   const models: Model[] = [];
   let cursor: string | null = null;

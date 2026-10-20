@@ -161,7 +161,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     page.getByRole("tab", { name: "GIF", exact: true }),
   ).toBeVisible();
   await expect(picker).toBeVisible();
-  await expect(picker).toHaveCSS("border-radius", "16px");
+  await expect(picker).toHaveCSS("border-radius", "24px");
   await expect(picker).toHaveCSS("border-top-width", "1px");
   await expect(picker).not.toHaveCSS("box-shadow", "none");
   const emojiTab = page.getByRole("tab", { name: "Emoji", exact: true });
@@ -227,7 +227,15 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   ).toHaveCount(0);
   const tabIndicator = picker.locator(".buzz-tabs-indicator");
   await expect(tabIndicator).toHaveCSS("height", "2px");
-  await expect(tabIndicator).toHaveCSS("background-color", "rgb(15, 15, 15)");
+  const indicatorColor = await tabIndicator.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--affordance-prominent-mark)";
+    element.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(tabIndicator).toHaveCSS("background-color", indicatorColor);
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");

@@ -9,7 +9,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import { type GooseProcess, REQUEST_TIMEOUT_MS, type Spawn } from "./goose";
+import { type GooseHost, type GooseProcess, REQUEST_TIMEOUT_MS } from "./goose";
 import { absolute, abortable } from "./sessions";
 import { briefly } from "./setup";
 
@@ -367,13 +367,13 @@ export type Lookup = Readonly<{
 
 /** goose's history for an agent, each read in its own short-lived `goose-acp`. */
 export class GooseHistory {
-  constructor(private readonly spawn: Spawn | undefined) {}
+  constructor(private readonly host: GooseHost | undefined) {}
 
   /** The agent's latest sessions in `workspace`, newest first: those whose
    * first prompt names its pubkey, `agent`. */
   recent(agent: string, workspace: string, signal: AbortSignal) {
-    return this.with(signal, async (goose, spawn) => {
-      const cwd = await absolute(spawn, workspace);
+    return this.with(signal, async (goose, { resolveDirectory }) => {
+      const cwd = await absolute(resolveDirectory, workspace);
       const rows: GooseSessionRow[] = [];
       for (const row of await list(goose, cwd, agent)) {
         if (rows.length >= RECENT_LIMIT) break;
@@ -393,8 +393,8 @@ export class GooseHistory {
     since: number,
     signal: AbortSignal,
   ) {
-    return this.with(signal, async (goose, spawn) => {
-      const cwd = await absolute(spawn, workspace);
+    return this.with(signal, async (goose, { resolveDirectory }) => {
+      const cwd = await absolute(resolveDirectory, workspace);
       const found: { sessionId: string; messages: Message[] }[] = [];
       for (const row of await all(goose, cwd)) {
         if (row.at < since) continue;
@@ -410,8 +410,8 @@ export class GooseHistory {
   /** The agent's newest session for `place`, or undefined when goose has none
    * for it in this workspace. */
   find(agent: string, workspace: string, place: Place, signal: AbortSignal) {
-    return this.with(signal, async (goose, spawn) => {
-      const cwd = await absolute(spawn, workspace);
+    return this.with(signal, async (goose, { resolveDirectory }) => {
+      const cwd = await absolute(resolveDirectory, workspace);
       for (const row of await candidates(goose, cwd, place))
         if (startedFor(await messages(goose, row.sessionId), agent, place))
           return row;
@@ -425,10 +425,10 @@ export class GooseHistory {
     lookup: Lookup,
     signal: AbortSignal,
   ): Promise<GooseTranscript | undefined> {
-    return this.with(signal, async (goose, spawn) => {
+    return this.with(signal, async (goose, { resolveDirectory }) => {
       const ids = new Set(lookup.sessionId ? [lookup.sessionId] : []);
       if (lookup.place) {
-        const cwd = await absolute(spawn, lookup.workspace);
+        const cwd = await absolute(resolveDirectory, lookup.workspace);
         for (const row of await candidates(goose, cwd, lookup.place))
           ids.add(row.sessionId);
       }
@@ -470,12 +470,12 @@ export class GooseHistory {
 
   private async with<T>(
     signal: AbortSignal,
-    run: (goose: GooseProcess, spawn: Spawn) => Promise<T>,
+    run: (goose: GooseProcess, host: GooseHost) => Promise<T>,
   ) {
-    const { spawn } = this;
-    if (!spawn) throw new Error("goose runs only in the desktop app");
+    const { host } = this;
+    if (!host) throw new Error("goose runs only in the desktop app");
     // Cancelling rejects at once, and `briefly` then stops goose.
-    return briefly(spawn, (goose) => abortable(run(goose, spawn), signal));
+    return briefly(host, (goose) => abortable(run(goose, host), signal));
   }
 }
 

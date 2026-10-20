@@ -1,3 +1,5 @@
+import { SidebarNavigation } from "../../../../src/shared/design-system/ui/SidebarNavigation";
+import { LoadingRegion } from "../../../../src/shared/design-system/ui/LoadingRegion";
 import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
@@ -51,6 +53,7 @@ import {
   PlusIcon,
   SmileyIcon,
   SquaresFourIcon,
+  GlobeIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
@@ -303,6 +306,18 @@ function AvatarStackSpecimen() {
         aria-label="Thread with Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} size="small" /> 4 replies
+      </Button>
+      <Button variant="ghost" aria-label="Seven agents to import">
+        <AvatarStack
+          items={[
+            ...items,
+            { id: "dana", name: "Dana", shape: "squircle" },
+            { id: "eli", name: "Eli", shape: "squircle" },
+            { id: "fern", name: "Fern", shape: "squircle" },
+          ]}
+          size="hero"
+          max={5}
+        />
       </Button>
     </div>
   );
@@ -1166,6 +1181,60 @@ function NavigationSectionSpecimen() {
   );
 }
 
+function SidebarNavigationSpecimen() {
+  return (
+    <div className="component-specimen-stack">
+      <SpecimenGroup
+        label="Main’s compact sidebar appearance — one composition in every host"
+        code={`<SidebarNavigation>
+  <NavigationSection>
+    <NavigationItem label="community.example" />
+  </NavigationSection>
+  <NavigationSection label="Community">
+    <NavigationItem label="Messages" selected />
+    <NavigationItem label="Agents" />
+    <NavigationItem label="Unavailable" disabled />
+  </NavigationSection>
+  <NavigationSection label="App">
+    <NavigationItem label="Appearance" />
+  </NavigationSection>
+</SidebarNavigation>`}
+      >
+        <div className="component-navigation-section-demo">
+          <SidebarNavigation>
+            <NavigationSection>
+              <NavigationItem
+                label="community.example"
+                aria-label="Copy community URL, community.example"
+                icon={<GlobeIcon size={18} aria-hidden="true" />}
+              />
+            </NavigationSection>
+            <NavigationSection label="Community">
+              <NavigationItem
+                label="Messages"
+                selected
+                icon={<HashIcon size={16} />}
+              />
+              <NavigationItem label="Agents" icon={<HashIcon size={16} />} />
+              <NavigationItem
+                label="Unavailable"
+                disabled
+                icon={<HashIcon size={16} />}
+              />
+            </NavigationSection>
+            <NavigationSection label="App">
+              <NavigationItem
+                label="Appearance"
+                icon={<HashIcon size={16} />}
+              />
+            </NavigationSection>
+          </SidebarNavigation>
+        </div>
+      </SpecimenGroup>
+    </div>
+  );
+}
+
 function NavigationItemSpecimen() {
   const [selected, setSelected] = useState("buzz-design");
   const [selectedPill, setSelectedPill] = useState("Notes");
@@ -1896,20 +1965,51 @@ function RadioGroupSpecimen() {
   );
 }
 
+function LoadingRegionSpecimen() {
+  const [pending, setPending] = useState(false);
+  return (
+    <SpecimenFrame
+      code={`<LoadingRegion pending={pending} label="Refreshing…">
+  <Input aria-label="Existing name" defaultValue="Saved name" />
+</LoadingRegion>`}
+    >
+      <Button onClick={() => setPending((value) => !value)}>
+        {pending ? "Complete read" : "Begin read"}
+      </Button>
+      <LoadingRegion pending={pending} label="Refreshing…">
+        <Input aria-label="Existing name" defaultValue="Saved name" />
+      </LoadingRegion>
+    </SpecimenFrame>
+  );
+}
+
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  "loading-region": LoadingRegionSpecimen,
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
   toast: ToastSpecimens,
   tooltip: () => (
-    <SpecimenFrame
-      code={`<Tooltip content="Create a note">
+    <div className="component-specimen-stack">
+      <SpecimenFrame
+        code={`<Tooltip content="Create a note">
   <IconButton aria-label="Create note" icon={<PlusIcon size={16} />} />
 </Tooltip>`}
-    >
-      <Tooltip content="Create a note">
-        <IconButton aria-label="Create note" icon={<PlusIcon size={16} />} />
-      </Tooltip>
-    </SpecimenFrame>
+      >
+        <Tooltip content="Create a note">
+          <IconButton aria-label="Create note" icon={<PlusIcon size={16} />} />
+        </Tooltip>
+      </SpecimenFrame>
+      <SpecimenGroup
+        label="Pointer-attached hint — keeps the native cursor"
+        code={`<Tooltip follow="pointer" content="Copy">
+  <Button variant="ghost">community.example</Button>
+</Tooltip>`}
+      >
+        <Tooltip follow="pointer" content="Copy">
+          <Button variant="ghost">community.example</Button>
+        </Tooltip>
+      </SpecimenGroup>
+    </div>
   ),
   field: () => (
     <SpecimenFrame
@@ -2211,6 +2311,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchExamples,
   composer: ComposerSpecimen,
+  "sidebar-navigation": SidebarNavigationSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

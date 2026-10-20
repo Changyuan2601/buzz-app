@@ -314,11 +314,13 @@ test("failed upload survives disabling the plugin and switching conversations", 
 test("rejected voice messages retry through the outbox without reuploading", {
   tag: "@media-recorder",
 }, async ({ page }) => {
+  // Keep one clock across recording, attachment entrance, and outbox expiry.
+  // Installing it during an entrance changes the animation's time origin.
+  await page.clock.install();
   await record(page);
   await page.evaluate(() => {
     window.voiceFixture.report.failSend = true;
   });
-  await page.clock.install();
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.voiceFixture.report.published))

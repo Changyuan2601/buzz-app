@@ -48,7 +48,7 @@ const setup = (
     providers: [{ providerId: "openai", defaultModel: "gpt-default" }],
   });
   const process = new SharedProcess(
-    fake.spawn,
+    fake,
     serve ? serve(fake.serve) : fake.serve,
   );
   /** Another agent in the same goose. */
@@ -64,7 +64,7 @@ const setup = (
     };
     let choice: Choice = { provider: "", model: "" };
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools: agentTools,
       process,
       pool,
@@ -451,9 +451,9 @@ describe("AgentSessions", () => {
     });
     const store = new Map<string, SavedConversation>();
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       store: { set: (key, saved) => void store.set(key, saved) },
       launch: async () => {
@@ -480,9 +480,9 @@ describe("AgentSessions", () => {
   it("reports why goose could not start", async () => {
     const fake = fakeSpawn({ http: false });
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch: async () => ({ workspace: "/w", systemPrompt: "" }),
       choice: () => ({ provider: "", model: "" }),
@@ -505,9 +505,9 @@ describe("AgentSessions", () => {
       return { workspace: "/w", systemPrompt: "" };
     });
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch,
       choice: () => ({ provider: "", model: "" }),

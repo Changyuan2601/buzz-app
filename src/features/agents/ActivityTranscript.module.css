@@ -49,7 +49,8 @@
   cursor: pointer;
   list-style: none;
 }
-.tool[data-status="failed"] > summary {
+.tool[data-status="failed"] > summary,
+.tool[data-status="terminated"] > summary {
   color: var(--text-danger);
 }
 .summary {
@@ -70,7 +71,8 @@
 .status {
   color: var(--text-subtle);
 }
-.tool[data-status="failed"] .status {
+.tool[data-status="failed"] .status,
+.tool[data-status="terminated"] .status {
   color: var(--text-danger);
 }
 .reply {

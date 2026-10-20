@@ -52,11 +52,14 @@ function fixture({
   placed = true,
   type = "solo",
   target,
+  behindSettings = false,
 }: {
   /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "solo" | "stream";
   target?: (scope: string) => OpenTarget;
+  /** Settings is open over this retained page. */
+  behindSettings?: boolean;
 } = {}) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -200,23 +203,25 @@ function fixture({
     channelWrites: {
       ...owner.session.channelWrites,
       available: true,
-      create: vi.fn<RelaySession["channelWrites"]["create"]>(() =>
-        "c".repeat(64),
-      ),
+      // A new chat joins the owner's list once its creation is requested.
+      create: vi.fn((chat: string) => {
+        list = {
+          ...list,
+          channels: [...list.channels, { ...channel, id: chat, name: "" }],
+        };
+        emitList();
+        return "c".repeat(64);
+      }),
+      // Starts through the create above; the relay accepts it at once.
+      start: vi.fn((chat: string) => ({
+        create: session.channelWrites.create(chat),
+        ready: Promise.resolve(),
+      })),
       delivered: vi.fn<RelaySession["channelWrites"]["delivered"]>(
         async () => {},
       ),
-      refresh: vi.fn(async (channelId: string) => {
-        list = {
-          ...list,
-          channels: [...list.channels, { ...channel, id: channelId }],
-        };
-        emitList();
-      }),
-      addAgents: vi.fn<RelaySession["channelWrites"]["addAgents"]>(async () => {
-        list = { ...list, channels: [...list.channels] };
-        emitList();
-      }),
+      refresh: vi.fn(async () => {}),
+      addAgents: vi.fn(async () => {}),
       refreshMembership: vi.fn(async () => channel),
     },
   };
@@ -249,7 +254,12 @@ function fixture({
     open,
     retry() {},
     snapshot: () => ({
-      entry: { id: navigation.entryId, target: navigation.target },
+      entry: {
+        id: navigation.entryId,
+        target: behindSettings
+          ? { version: 1, kind: "settings", scope: null }
+          : navigation.target,
+      },
       attempt: { signal: abort.signal },
     }),
   } as unknown as Navigation;
@@ -449,6 +459,44 @@ it("tags a Solo draft route's agent in the new chat", async () => {
   ).toBeVisible();
 });
 
+it("a new Solo chat finishing behind Settings stays put and retires its draft", async () => {
+  const f = fixture({ behindSettings: true, target: soloDraftTarget });
+  writeView(f.scope, "solo:new-draft", {
+    text: "@Scout Started behind Settings",
+    recipients: [{ pubkey: agent, name: "Scout", start: 0, end: 6 }],
+  });
+  f.mount();
+  // Stands in for a field in the Settings modal that owns focus.
+  const settingsField = document.createElement("input");
+  document.body.append(settingsField);
+  const region = await screen.findByRole("region", { name: "New chat" });
+  try {
+    // The start runs while Settings owns focus.
+    settingsField.focus();
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(f.session.channelWrites.create).toHaveBeenCalledOnce(),
+    );
+    expect(f.open).not.toHaveBeenCalled();
+    // A fresh draft replaces the submitted one, so it cannot start again.
+    const composer = () =>
+      within(screen.getByRole("region", { name: "New chat" })).getByRole(
+        "textbox",
+        { name: "Message your agents" },
+      );
+    await waitFor(() =>
+      expect(composer()).not.toHaveTextContent("Started behind Settings"),
+    );
+    // The replacement never pulls focus out of Settings.
+    expect(settingsField).toHaveFocus();
+    expect(f.open).not.toHaveBeenCalled();
+  } finally {
+    settingsField.remove();
+  }
+});
+
 it("gives the owner's Solo chat its tag requirement and project", async () => {
   const f = fixture();
   f.mount();
@@ -488,7 +536,7 @@ it("requires a guest to address someone explicitly in a shared Solo chat", async
 });
 
 it.each([
-  ["archive", "Archive chat", "Archive chat: Planning"],
+  ["archive", "Archive", "Archive chat: Planning"],
   ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
@@ -501,7 +549,11 @@ it.each([
     );
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", { name: title });
-    await user.click(within(dialog).getByRole("button", { name: label }));
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: action === "archive" ? "Archive chat" : label,
+      }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,
@@ -526,9 +578,7 @@ it.each([
     await user.click(
       await screen.findByRole("button", { name: "Actions for Planning" }),
     );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Archive chat" }),
-    );
+    await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Archive chat: Planning",
     });
@@ -564,13 +614,14 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Share…",
+    "Share",
+    "Rename",
     "Convert to channel",
     "Move to",
     "Copy",
-    "Chat settings…",
-    "Archive chat",
+    "Archive",
     "Delete chat",
+    "Chat settings…",
   ]);
   expect(await items("Actions for Planning")).toEqual(header);
 });
@@ -660,9 +711,7 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const user = userEvent.setup();
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Archive chat" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
@@ -716,7 +765,7 @@ it("finishes a linked chat across roster updates without appending source prose"
   await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
   expect(screen.queryByText("Draft unavailable")).toBeNull();
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
-  expect(f.session.channelWrites.create.mock.calls[0]).toHaveLength(4);
+  expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
 });
 
@@ -762,4 +811,15 @@ it("a failed first message retires the automatic gate so later manual sharing is
     await screen.findByRole("dialog", { name: "Share chat" }),
   ).toBeVisible();
   expect(f.session.channelWrites.delivered).toHaveBeenCalledOnce();
+});
+
+it("opens the existing chat name editor from Rename", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Chat settings" }),
+  ).toBeVisible();
 });

@@ -5,17 +5,22 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
+import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
-import { applyChatSetup, loadChatSetup, parseChatSetup } from "./workspace";
+import {
+  defaultsRevision,
+  loadChatSetup,
+  parseChatSetup,
+  type ChatSetup,
+} from "./workspace";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
   writeView,
-  replaceView,
   subscribeView,
   viewRevision,
 } from "../../shared/view-state";
@@ -24,7 +29,6 @@ import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
-import { ownSolo } from "./labels";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
@@ -85,6 +89,7 @@ export function SoloDraft({
   session,
   scope,
   onStarted,
+  onFailed,
   projectId,
   extensions,
   focusRequest = 0,
@@ -101,6 +106,9 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
+  /** The started chat `id` was never made, and what was sent in it is lost;
+   * `message` says why. */
+  onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
   const draftKey = linkedId
@@ -163,13 +171,22 @@ export function SoloDraft({
   }, [focusRequest]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
-  // A retry in this view confirms the channel it already requested instead of
-  // creating another. Nothing about a start is saved: once the chat exists,
-  // its ordinary composer draft holds anything not yet sent.
-  const creation = useRef<string>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
+  // A workspace's defaults load as soon as it is picked, so starting a chat
+  // in it does not wait for them. A start uses them up, or loads them again
+  // if that load failed or the saved defaults have changed since.
+  const workspace = useRef<{
+    id: string;
+    setup: ReturnType<typeof loadChatSetup>;
+  }>(undefined);
+  useEffect(() => {
+    if (!selectedProject || workspace.current?.id === selectedProject) return;
+    const setup = loadChatSetup(session, selectedProject);
+    setup.catch(() => {});
+    workspace.current = { id: selectedProject, setup };
+  });
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -194,7 +211,8 @@ export function SoloDraft({
         ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
         : draftSettings.name;
     const { ttlSeconds } = draftSettings;
-    let opened = false;
+    const project = selectedProject;
+    const canvas = draftCanvas;
     try {
       if (typeof name !== "string")
         throw new Error("The chat name could not be verified.");
@@ -206,116 +224,122 @@ export function SoloDraft({
       });
       if (errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
-      let setup = selectedProject
-        ? await loadChatSetup(session, selectedProject)
-        : undefined;
+      const loaded =
+        workspace.current?.id === project
+          ? await workspace.current.setup.catch(() => undefined)
+          : undefined;
+      workspace.current = undefined;
+      let setup: ChatSetup | undefined;
+      if (project) {
+        const kit = session.channelKit.snapshot();
+        setup =
+          kit.status === "ready" && loaded?.revision === defaultsRevision(kit)
+            ? loaded
+            : await loadChatSetup(session, project);
+      }
       if (!mounted.current) return;
-      if (draftCanvas !== undefined)
+      if (canvas !== undefined)
         setup = parseChatSetup({
           ...(setup ?? {
-            ...(selectedProject ? { projectId: selectedProject } : {}),
+            ...(project ? { projectId: project } : {}),
             agents: [],
           }),
-          canvas: draftCanvas,
+          canvas,
         });
-      await session.agentChoices.refresh();
-      if (!mounted.current) return;
-      if (
-        [...recipients, ...(setup?.agents ?? [])].some(
-          (key) =>
-            !session.agentChoices
-              .snapshot()
-              .selectable.some((agent) => agent.pubkey === key),
-        )
-      )
-        throw new Error(
-          "Solo chats can only use your available agents. Check mentions and workspace defaults.",
+      // The workspace's agents join in the create with the tagged ones.
+      const members = [...new Set([...recipients, ...(setup?.agents ?? [])])];
+      // The agents already listed decide at once; only an unknown one waits
+      // for a fresh list.
+      const selectable = () =>
+        members.every((key) =>
+          session.agentChoices
+            .snapshot()
+            .selectable.some((agent) => agent.pubkey === key),
         );
+      if (!selectable()) {
+        await session.agentChoices.refresh();
+        if (!mounted.current) return;
+        if (!selectable())
+          throw new Error(
+            "Solo chats can only use your available agents. Check mentions and workspace defaults.",
+          );
+      }
       // Finish uploads before anything is created, so a failed file blocks
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
-      creation.current ??= session.channelWrites.create(
+      // The chat lists at once, in its workspace, and its message goes out
+      // behind the create, so the agents start on it without waiting for the
+      // relay. Its Canvas is saved once the chat exists; until then local
+      // agents read it from the start.
+      if (setup?.projectId)
+        void session.soloPreferences
+          .assign(channelId, setup.projectId)
+          .catch((reason) =>
+            console.warn("Solo chat could not join its workspace", reason),
+          );
+      const { ready } = session.channelWrites.start(
         channelId,
         name,
+        members,
         ttlSeconds,
         named,
+        setup?.canvas
+          ? {
+              canvas: setup.canvas,
+              apply: () =>
+                session.canvas.save(channelId, setup.canvas, undefined),
+            }
+          : undefined,
       );
-      // Once requested, the chat finishes starting even if this view closes.
-      await session.channelWrites.delivered(creation.current);
-      await session.channelWrites.refresh(channelId);
-      // The chat exists. From here its own composer keeps the text, so an
-      // interruption leaves an ordinary chat to send from.
-      if (replaceView(scope, `draft:${channelId}`, null, draft) === "failed")
-        throw new Error(
-          "Your message couldn’t be saved on this device. Retry to finish opening the chat.",
+      try {
+        const firstMessageId = session.messages.send(
+          channelId,
+          text,
+          recipients,
+          ...(uploaded.length ? [uploaded] : []),
         );
-      opened = true;
-      // Creation now hands off to an ordinary chat instead of a pending-start route.
+        const shareSaved =
+          !source?.share ||
+          writeView(scope, shareBackKey(channelId), {
+            ...source,
+            firstMessageId,
+          });
+        files.clear();
+        writeView(
+          scope,
+          `draft:${channelId}`,
+          rememberedMentions(session, draft, recipients),
+        );
+        if (!shareSaved)
+          notify(
+            "Your message was queued, but sharing couldn’t be saved. Open Share to finish sharing this chat.",
+            "error",
+          );
+      } catch (reason) {
+        // The chat still starts; its own composer keeps the message to send.
+        console.warn("Solo first message waits in its chat", reason);
+        writeView(scope, `draft:${channelId}`, draft);
+        transferAttachmentDraft(
+          files,
+          attachmentDraft(session, `${scope}:draft:${channelId}`, channelId),
+        );
+      }
       if (source) writeView(scope, draftKey, null);
-      // Its composer keeps the uploaded files too, until they are sent.
-      const chatFiles = attachmentDraft(
-        session,
-        `${scope}:draft:${channelId}`,
-        channelId,
-      );
-      if (uploaded.length) transferAttachmentDraft(files, chatFiles);
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
-      if (setup) {
-        try {
-          await applyChatSetup(session, channelId, setup, () => true);
-        } catch (reason) {
-          // Missing project setup leaves a working chat; never hold the message.
-          console.warn("Solo project setup did not finish", reason);
-        }
-      }
-      await session.channelWrites.addAgents(channelId, recipients, () => true);
-      const created = session.channels
-        .list()
-        .channels.find((item) => item.id === channelId);
-      if (!ownSolo(created, session.viewer))
-        throw new Error(
-          "This conversation is no longer in Solo. Open it in Team.",
-        );
-      const firstMessageId = session.messages.send(
-        channelId,
-        text,
-        recipients,
-        ...(uploaded.length ? [uploaded] : []),
-      );
-      const shareSaved =
-        !source?.share ||
-        writeView(scope, shareBackKey(channelId), {
-          ...source,
-          firstMessageId,
-        });
-      chatFiles.clear();
-      writeView(
-        scope,
-        `draft:${channelId}`,
-        rememberedMentions(session, draft, recipients),
-      );
-      if (!shareSaved)
-        notify(
-          "Your message was queued, but sharing couldn’t be saved. Open Share to finish sharing this chat.",
-          "error",
-        );
-      if (mounted.current) onStarted(channelId);
+      onStarted(channelId);
+      // Only a start that made no chat ends here; the chat and its messages
+      // are dropped (see channelWrites.start). Any other miss leaves the chat
+      // listed, with its messages' own Retry.
+      void ready.catch((reason: unknown) => {
+        if (!(reason instanceof ChatNotStarted)) return;
+        writeView(scope, `draft:${channelId}`, null);
+        if (source?.share) writeView(scope, shareBackKey(channelId), null);
+        onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
+      });
     } catch (reason) {
-      if (!mounted.current) return;
-      // The chat exists with the text in its composer; finish sending there.
-      if (opened) {
-        onStarted(channelId);
-        return;
-      }
-      // A rejected creation made no chat: drop it so a retry requests anew.
-      const failed = creation.current;
-      if (failed && session.channelWrites.failed(failed)) {
-        creation.current = undefined;
-        await session.channelWrites.discardFailed(failed).catch(() => {});
-      }
       if (mounted.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {

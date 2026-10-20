@@ -123,11 +123,11 @@
   max-height: 12rem;
   min-height: 0;
 }
-.uploadIcon {
+.customIcon {
   display: grid;
   place-items: center;
 }
-.imageEditor {
+.customEditor {
   align-self: center;
   width: 100%;
   max-height: 100%;
@@ -207,7 +207,7 @@
   .collections {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .imageEditor {
+  .customEditor {
     width: 100%;
   }
 }

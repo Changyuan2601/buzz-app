@@ -1,5 +1,10 @@
 [advisories]
 ignore = [
+    # webpki-roots 0.26.11 only re-exports 1.x TLS_SERVER_ROOTS, locked to
+    # patched 1.0.10. The advisory also flags this root-free compatibility
+    # crate. The bans below reject every other affected version; remove this
+    # exception when tokio-tungstenite stops using the compatibility crate.
+    { id = "RUSTSEC-2026-0381", reason = "webpki-roots 0.26.11 re-exports patched 1.0.10; bans reject all other affected versions" },
     # Match the pinned buzz-audio-client's audit: NetEQ =0.8.3 declares ringbuf
     # but its published Rust sources never use it. Consumer::skip/clear and
     # their panic-unsafe Drop path are therefore unreachable. NetEQ 0.9.1 still
@@ -62,5 +67,7 @@ ignore = true
 multiple-versions = "warn"
 wildcards = "allow"
 deny = [
+    { name = "webpki-roots", version = "<0.26.11", reason = "RUSTSEC-2026-0381: vulnerable root bundle" },
+    { name = "webpki-roots", version = ">0.26.11, <1.0.10", reason = "RUSTSEC-2026-0381: only the 0.26.11 re-export shim may use an older version" },
     { name = "ringbuf", version = "<0.5.2", wrappers = ["neteq"], reason = "only audited NetEQ may declare this unused vulnerable dependency; all other consumers must use a patched release" },
 ]

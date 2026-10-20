@@ -20,7 +20,6 @@ export class MessageProjection {
     private channelId: string,
     private relayAuthor: string,
     private profiling: RelayProfiler,
-    private includeReplies: () => boolean = () => false,
     private clock = new MessageClock(),
     private signingAuthority?: string,
   ) {}
@@ -113,7 +112,6 @@ export class MessageProjection {
                       ...[...overlayIds].flatMap((ref) => next.get(ref) ?? []),
                     ],
                     {
-                      includeReplies: this.includeReplies(),
                       collapseHuddles: false,
                       signingAuthority: this.signingAuthority,
                     },

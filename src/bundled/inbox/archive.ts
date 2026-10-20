@@ -125,7 +125,8 @@ export function updateArchive(
     archives.push({
       id: item.id,
       channelId: item.channelId,
-      through: Math.max(at, item.createdAt),
+      // The row's time may come from a newer message that is not evidence.
+      through: Math.max(at, ...item.messages.map(({ createdAt }) => createdAt)),
       messageIds: [...item.messageIds],
     });
   if (archives.length > 1000 || JSON.stringify(archives).length > maxBytes)

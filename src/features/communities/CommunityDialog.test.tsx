@@ -64,8 +64,9 @@ it("publishes a description-only edit to an existing community profile", async (
     }),
     joined: vi.fn(),
   } as unknown as Communities;
+  const close = vi.fn();
   render(
-    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+    <CommunityDialog communities={communities} mode="join" close={close} />,
   );
   expect(
     screen.getByRole("dialog", { name: "Add a community" }),
@@ -79,6 +80,14 @@ it("publishes a description-only edit to an existing community profile", async (
   );
   await user.clear(description);
   await user.type(description, "After");
+  // A stray outside click keeps the dialog and the typed profile.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(close).not.toHaveBeenCalled();
+  expect(description).toHaveValue("After");
   await user.click(
     screen.getByRole("button", { name: "Publish profile & open" }),
   );
@@ -508,4 +517,74 @@ it("renews policy acceptance after an expired receipt instead of replaying it", 
     ),
   ).toHaveLength(2);
   expect(screen.queryByText(/current policy acceptance/)).toBeNull();
+});
+
+it("opens a checked connection address separately without replacing or removing the original", async () => {
+  const viewer = "e".repeat(64);
+  const original = "https://old.example";
+  const ctx = new Context();
+  const profile = { name: "You", picture: "", about: "" };
+  api.inspectProfile.mockResolvedValueOnce({
+    exists: true,
+    existing: profile,
+    profile,
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({});
+      if (route === "info")
+        return Response.json({ name: "New community", policy: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = createCommunities(
+    ctx,
+    false,
+    undefined,
+    "",
+    undefined,
+    Promise.resolve(viewer),
+  );
+  try {
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    communities.joined({ id: original, name: "Original" }, profile);
+    const connected = {
+      ...communities,
+      snapshot: () => ({ ...communities.snapshot(), relayAvailable: true }),
+    };
+    const user = userEvent.setup();
+    render(
+      <CommunityDialog
+        communities={connected}
+        mode="join"
+        connectionFrom={original}
+        close={() => {}}
+      />,
+    );
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community.",
+    );
+    const address = screen.getByLabelText("Relay URL");
+    expect(address).toHaveValue(original);
+    fireEvent.change(address, { target: { value: "wss://new.example" } });
+    expect(address).toHaveValue("wss://new.example");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(communities.snapshot().selected).toBe(original);
+    await user.click(
+      await screen.findByRole("button", { name: "Open community" }),
+    );
+    await waitFor(() =>
+      expect(communities.snapshot().selected).toBe("https://new.example"),
+    );
+    expect(communities.snapshot().memberships.map((entry) => entry.id)).toEqual(
+      [original, "https://new.example"],
+    );
+    expect(api.publishProfile).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    await ctx.fiber.dispose();
+    localStorage.clear();
+  }
 });

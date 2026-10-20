@@ -9,6 +9,8 @@ import {
   useReducedMotion,
   type HTMLMotionProps,
 } from "motion/react";
+import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
+import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -54,6 +56,7 @@ import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 import { IdentitySettings } from "./IdentitySettings";
+import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -579,6 +582,7 @@ export function Settings({
   onSection,
   navigationPane = false,
   onDeparturePending,
+  onUnsavedChange,
 }: {
   agents?: Agents | undefined;
   cards: SettingsCards;
@@ -597,6 +601,7 @@ export function Settings({
   onSection?: (section: string) => void;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
+  onUnsavedChange?: (unsaved: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
   useEffect(() => adminAccess?.ensure(), [adminAccess]);
@@ -612,6 +617,7 @@ export function Settings({
     plugin.manifest.id === "buzz.moderation"
       ? membershipAccess
       : moderationAccess;
+  useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -639,8 +645,10 @@ export function Settings({
   useLayoutEffect(() => {
     if (selected !== "profile" || !departureFocus.current) return;
     departureFocus.current = false;
-    document.getElementById("main-content")?.focus({ preventScroll: true });
-  }, [selected]);
+    document
+      .getElementById(navigationPane ? "settings-content" : "main-content")
+      ?.focus({ preventScroll: true });
+  }, [selected, navigationPane]);
   useEffect(() => {
     if (
       departure &&
@@ -772,13 +780,16 @@ export function Settings({
     const element = layout.current;
     if (!showingDetails || !element) return;
     // Resizing can hide the focused catalog control; keep focus in details.
+    // A hidden control's focus falls back to a container: the page, or the
+    // Settings modal that hosts this layout.
     const observer = new ResizeObserver(() => {
       const active = document.activeElement;
       const details = detailsClose.current?.closest("aside");
       if (
         covered(pluginSection.current) &&
-        (active === document.body ||
-          (!!active && element.contains(active) && !details?.contains(active)))
+        active &&
+        (active.contains(element) ||
+          (element.contains(active) && !details?.contains(active)))
       )
         detailsClose.current?.focus();
     });
@@ -1057,25 +1068,328 @@ export function Settings({
       ? ((await connection.session.authorizeGit?.(repository)) ?? null)
       : null;
   };
-  return (
+  // Keep announcements outside filtered rows and the covered narrow catalog.
+  const announcement = (
     <div
-      className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
+      role={selected === "plugins" ? "alert" : undefined}
+      className="sr-only"
     >
-      <Panel
-        aria-label={navigationPane ? "Settings" : undefined}
-        aria-labelledby={navigationPane ? undefined : "settings-title"}
+      {selected === "plugins" && activationFailure && attemptedPlugin
+        ? `${attemptedPlugin.manifest.name}: ${activationFailure}`
+        : selected === "plugins" && selectedFailure && selectedPlugin
+          ? `${selectedPlugin.manifest.name}: ${selectedFailure}`
+          : null}
+    </div>
+  );
+  const detail = (
+    <>
+      <div
+        className={`${styles.detail} buzz-settings-page`}
+        data-integrated={navigationPane || undefined}
       >
-        {/* Keep announcements outside filtered rows and the covered narrow catalog. */}
-        <div
-          role={selected === "plugins" ? "alert" : undefined}
-          className="sr-only"
-        >
-          {selected === "plugins" && activationFailure && attemptedPlugin
-            ? `${attemptedPlugin.manifest.name}: ${activationFailure}`
-            : selected === "plugins" && selectedFailure && selectedPlugin
-              ? `${selectedPlugin.manifest.name}: ${selectedFailure}`
-              : null}
+        <div hidden={selected !== "notifications"}>
+          <NotificationSettings
+            notifications={notifications}
+            active={selected === "notifications"}
+          />
         </div>
+        <div hidden={selected !== "appearance"}>
+          <AppearanceSettings
+            appearance={appearance}
+            active={selected === "appearance"}
+          />
+        </div>
+        <div hidden={selected !== "shortcuts"}>
+          <ShortcutSettings
+            shortcuts={shortcuts}
+            bindings={shortcutBindings}
+            plugins={plugins}
+          />
+        </div>
+        <div hidden={selected !== "agents"}>
+          <AgentSettings agents={agents} active={selected === "agents"} />
+        </div>
+        <div hidden={selected !== "updates"}>
+          <UpdateSettings updates={updates} active={selected === "updates"} />
+        </div>
+        {contributed.map(
+          (card) =>
+            selected === card.key && (
+              <OwnedContribution key={card.key} entry={card} registry={cards}>
+                {(entry, active) => {
+                  const Card = entry.component;
+                  return (
+                    <Card
+                      active={active}
+                      {...(!card.group && selectedCommunity
+                        ? { community: selectedCommunity }
+                        : {})}
+                    />
+                  );
+                }}
+              </OwnedContribution>
+            ),
+        )}
+        {departureCommunity && selected === "leave-community" && (
+          <CommunityDepartureSettings
+            key={`${client.viewer}:${departureCommunity.id}`}
+            communities={communities}
+            community={departureCommunity}
+            onPending={(pending) => {
+              onDeparturePending?.(pending);
+              setDeparture(
+                pending
+                  ? { community: departureCommunity, viewer: client.viewer }
+                  : null,
+              );
+            }}
+            onRemoved={() => {
+              departureFocus.current = true;
+              if (onSection) onSection("profile");
+              else setSelected("profile");
+            }}
+          />
+        )}
+        <div hidden={selected !== "profile"}>
+          <ProfileSettings
+            key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
+            communities={communities}
+            community={selectedCommunity}
+            onUnsavedChange={onUnsavedChange}
+          />
+        </div>
+        {selectedCommunity && (
+          <div hidden={selected !== "local-settings"}>
+            <CommunityLocalSettings
+              key={`${client.viewer}:${selectedCommunity.id}`}
+              communities={communities}
+              community={selectedCommunity}
+              viewer={client.viewer}
+            />
+          </div>
+        )}
+        {selected === "identity" && (
+          <IdentitySettings
+            key={client.viewer}
+            viewer={client.viewer}
+            identity={identity}
+          />
+        )}
+        {developerMode && (
+          <div hidden={selected !== "developer"}>
+            <DeveloperSettings relay={communities.relay} />
+          </div>
+        )}
+        <div hidden={selected !== "plugins"}>
+          <section
+            ref={pluginSection}
+            tabIndex={-1}
+            aria-labelledby="plugin-settings-title"
+          >
+            <motion.div {...layoutMotion} className={styles.pluginHeading}>
+              <Header
+                id="plugin-settings-title"
+                title="Manage plugins"
+                actions={
+                  plugins.imports && catalog ? (
+                    <span ref={setPluginImportActions} />
+                  ) : undefined
+                }
+              />
+            </motion.div>
+            <AnimatePresence initial={false} mode="popLayout">
+              {coreGroup && renderPluginGroup(coreGroup)}
+            </AnimatePresence>
+            {catalog && (
+              <motion.div {...layoutMotion} className={styles.pluginToolbar}>
+                <motion.div {...layoutMotion}>
+                  <Tabs
+                    variant="panel"
+                    label="Plugin filters"
+                    items={[
+                      {
+                        value: "all",
+                        label: "All plugins",
+                        panelId: "plugin-results-all",
+                      },
+                      {
+                        value: "essentials",
+                        label: "Essentials",
+                        panelId: "plugin-results-essentials",
+                      },
+                    ]}
+                    value={pluginFilter}
+                    onValueChange={setPluginFilter}
+                  />
+                </motion.div>
+                <motion.div {...layoutMotion} className={styles.pluginSearch}>
+                  <SearchField
+                    inputRef={pluginSearch}
+                    label="Search plugins"
+                    placeholder="Search plugins…"
+                    value={pluginQuery}
+                    onValueChange={setPluginQuery}
+                  />
+                </motion.div>
+              </motion.div>
+            )}
+            {catalog ? (
+              <PluginImport
+                actionTarget={pluginImportActions}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                authorizeGit={authorizePluginGit}
+                returnFocus={() => visibleReturn(null)}
+              />
+            ) : configuration.status === "recovery" ? (
+              <RecoveryScreen plugins={plugins} />
+            ) : (
+              <p role="status">
+                Plugin settings are unavailable. Profile and Appearance still
+                work.
+              </p>
+            )}
+            {catalog && updatingPluginId && (
+              <PluginImport
+                updateId={updatingPluginId}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                authorizeGit={authorizePluginGit}
+                onClosed={() => setUpdatingPluginId(undefined)}
+                returnFocus={() =>
+                  visibleReturn(
+                    Array.from(
+                      pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                        "[data-plugin-update-id]",
+                      ) ?? [],
+                    ).find(
+                      (button) =>
+                        button.dataset.pluginUpdateId === updatingPluginId,
+                    ) ?? pluginSection.current,
+                  )
+                }
+              />
+            )}
+            <div>
+              <div>
+                {externalPluginsPaused && (
+                  <p role="status" className="text-body-sm text-subtle">
+                    External plugins are paused for this launch. Your saved
+                    enabled settings are unchanged; you can still manage plugins
+                    here.
+                  </p>
+                )}
+                {selected === "plugins" && refreshError && (
+                  <ToastNotice
+                    title="Plugin settings couldn’t refresh"
+                    description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
+                  />
+                )}
+                {selected === "plugins" && error && (
+                  <ToastNotice
+                    title="Plugin change wasn’t confirmed"
+                    description={`Check the current settings before trying again. ${error}`}
+                    onDismiss={plugins.dismissError}
+                    closeLabel="Dismiss"
+                  />
+                )}
+              </div>
+              {catalog &&
+                (["all", "essentials"] as const).map((filter) => (
+                  <div
+                    key={filter}
+                    hidden={filter !== pluginFilter}
+                    className={
+                      filter === pluginFilter
+                        ? styles.pluginCategories
+                        : undefined
+                    }
+                    role="tabpanel"
+                    id={`plugin-results-${filter}`}
+                    aria-labelledby={`plugin-results-${filter}-tab`}
+                  >
+                    {filter === pluginFilter && (
+                      <>
+                        {pluginGroups.length === 0 && (
+                          <EmptyState
+                            icon={<SquaresFourIcon size={24} />}
+                            title={
+                              pluginFiltersActive
+                                ? coreGroup
+                                  ? "No other plugins match"
+                                  : "No plugins match"
+                                : coreGroup
+                                  ? "No other plugins"
+                                  : "No plugins yet"
+                            }
+                            description={
+                              pluginFiltersActive
+                                ? "Try another search or show all plugins."
+                                : "Additional plugins will appear here."
+                            }
+                            action={
+                              pluginFiltersActive ? (
+                                <Button
+                                  variant="subtle"
+                                  onClick={() => {
+                                    setPluginQuery("");
+                                    setPluginFilter("all");
+                                    pluginSearch.current?.focus();
+                                  }}
+                                >
+                                  Clear filters
+                                </Button>
+                              ) : undefined
+                            }
+                          />
+                        )}
+                        <AnimatePresence initial={false} mode="popLayout">
+                          {pluginGroups.map(renderPluginGroup)}
+                        </AnimatePresence>
+                      </>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </section>
+        </div>
+      </div>
+      {showingDetails && selectedPlugin && (
+        <PluginDetails
+          key={selectedPlugin.manifest.id}
+          plugin={selectedPlugin}
+          failure={selectedFailure}
+          busy={busy}
+          access={pluginAccess(selectedPlugin)}
+          onCheckAccess={() => adminAccess?.retry(selectedPlugin.manifest.id)}
+          plugins={plugins}
+          onToggle={() => togglePlugin(selectedPlugin)}
+          close={detailsClose}
+          onClose={closePluginDetails}
+        />
+      )}
+    </>
+  );
+  // The Settings modal supplies its own frame, title and section navigation.
+  if (navigationPane)
+    return (
+      <div className={styles.navigationPane}>
+        {announcement}
+        <div
+          ref={layout}
+          className={styles.layout}
+          data-plugin-detail={showingDetails ? "" : undefined}
+        >
+          {detail}
+        </div>
+      </div>
+    );
+  return (
+    <div className={styles.root}>
+      <Panel aria-labelledby="settings-title">
+        {announcement}
         <div
           ref={layout}
           className={styles.layout}
@@ -1088,316 +1402,38 @@ export function Settings({
               </h1>
             </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              {groups.map((group) => (
-                <NavigationSection key={group.id} label={group.label}>
-                  {group.sections.map(({ id, label, icon: Icon }) => (
-                    <NavigationItem
-                      label={label}
-                      icon={Icon && <Icon aria-hidden="true" size={18} />}
-                      selected={selected === id}
-                      type="button"
-                      key={id}
-                      aria-current={selected === id ? "page" : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        if (onSection) onSection(id);
-                        else setSelected(id);
-                      }}
+              <SidebarNavigation wrapSections>
+                {departureCommunity && (
+                  <NavigationSection>
+                    <CommunityAddress
+                      communities={communities}
+                      community={departureCommunity}
                     />
-                  ))}
-                </NavigationSection>
-              ))}
+                  </NavigationSection>
+                )}
+                {groups.map((group) => (
+                  <NavigationSection key={group.id} label={group.label}>
+                    {group.sections.map(({ id, label, icon: Icon }) => (
+                      <NavigationItem
+                        label={label}
+                        icon={Icon && <Icon aria-hidden="true" size={18} />}
+                        selected={selected === id}
+                        type="button"
+                        key={id}
+                        aria-current={selected === id ? "page" : undefined}
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          if (onSection) onSection(id);
+                          else setSelected(id);
+                        }}
+                      />
+                    ))}
+                  </NavigationSection>
+                ))}
+              </SidebarNavigation>
             </nav>
           </aside>
-          <div className={`${styles.detail} buzz-settings-page`}>
-            {navigationPane && <h1 className="sr-only">Settings</h1>}
-            <div hidden={selected !== "notifications"}>
-              <NotificationSettings
-                notifications={notifications}
-                active={selected === "notifications"}
-              />
-            </div>
-            <div hidden={selected !== "appearance"}>
-              <AppearanceSettings
-                appearance={appearance}
-                active={selected === "appearance"}
-              />
-            </div>
-            <div hidden={selected !== "shortcuts"}>
-              <ShortcutSettings
-                shortcuts={shortcuts}
-                bindings={shortcutBindings}
-                plugins={plugins}
-              />
-            </div>
-            <div hidden={selected !== "agents"}>
-              <AgentSettings agents={agents} active={selected === "agents"} />
-            </div>
-            <div hidden={selected !== "updates"}>
-              <UpdateSettings
-                updates={updates}
-                active={selected === "updates"}
-              />
-            </div>
-            {contributed.map(
-              (card) =>
-                selected === card.key && (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
-                    {(entry, active) => {
-                      const Card = entry.component;
-                      return (
-                        <Card
-                          active={active}
-                          {...(!card.group && selectedCommunity
-                            ? { community: selectedCommunity }
-                            : {})}
-                        />
-                      );
-                    }}
-                  </OwnedContribution>
-                ),
-            )}
-            {departureCommunity && selected === "leave-community" && (
-              <CommunityDepartureSettings
-                key={`${client.viewer}:${departureCommunity.id}`}
-                communities={communities}
-                community={departureCommunity}
-                onPending={(pending) => {
-                  onDeparturePending?.(pending);
-                  setDeparture(
-                    pending
-                      ? { community: departureCommunity, viewer: client.viewer }
-                      : null,
-                  );
-                }}
-                onRemoved={() => {
-                  departureFocus.current = true;
-                  if (onSection) onSection("profile");
-                  else setSelected("profile");
-                }}
-              />
-            )}
-            <div hidden={selected !== "profile"}>
-              <ProfileSettings
-                key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
-                communities={communities}
-                community={selectedCommunity}
-              />
-            </div>
-            {selected === "identity" && (
-              <IdentitySettings
-                key={client.viewer}
-                viewer={client.viewer}
-                identity={identity}
-              />
-            )}
-            {developerMode && (
-              <div hidden={selected !== "developer"}>
-                <DeveloperSettings relay={communities.relay} />
-              </div>
-            )}
-            <div hidden={selected !== "plugins"}>
-              <section
-                ref={pluginSection}
-                tabIndex={-1}
-                aria-labelledby="plugin-settings-title"
-              >
-                <motion.div {...layoutMotion} className={styles.pluginHeading}>
-                  <Header
-                    id="plugin-settings-title"
-                    title="Manage plugins"
-                    actions={
-                      plugins.imports && catalog ? (
-                        <span ref={setPluginImportActions} />
-                      ) : undefined
-                    }
-                  />
-                </motion.div>
-                <AnimatePresence initial={false} mode="popLayout">
-                  {coreGroup && renderPluginGroup(coreGroup)}
-                </AnimatePresence>
-                {catalog && (
-                  <motion.div
-                    {...layoutMotion}
-                    className={styles.pluginToolbar}
-                  >
-                    <motion.div {...layoutMotion}>
-                      <Tabs
-                        variant="panel"
-                        label="Plugin filters"
-                        items={[
-                          {
-                            value: "all",
-                            label: "All plugins",
-                            panelId: "plugin-results-all",
-                          },
-                          {
-                            value: "essentials",
-                            label: "Essentials",
-                            panelId: "plugin-results-essentials",
-                          },
-                        ]}
-                        value={pluginFilter}
-                        onValueChange={setPluginFilter}
-                      />
-                    </motion.div>
-                    <motion.div
-                      {...layoutMotion}
-                      className={styles.pluginSearch}
-                    >
-                      <SearchField
-                        inputRef={pluginSearch}
-                        label="Search plugins"
-                        placeholder="Search plugins…"
-                        value={pluginQuery}
-                        onValueChange={setPluginQuery}
-                      />
-                    </motion.div>
-                  </motion.div>
-                )}
-                {catalog ? (
-                  <PluginImport
-                    actionTarget={pluginImportActions}
-                    plugins={plugins}
-                    catalog={catalog}
-                    busy={busy}
-                    authorizeGit={authorizePluginGit}
-                    returnFocus={() => visibleReturn(null)}
-                  />
-                ) : configuration.status === "recovery" ? (
-                  <RecoveryScreen plugins={plugins} />
-                ) : (
-                  <p role="status">
-                    Plugin settings are unavailable. Profile and Appearance
-                    still work.
-                  </p>
-                )}
-                {catalog && updatingPluginId && (
-                  <PluginImport
-                    updateId={updatingPluginId}
-                    plugins={plugins}
-                    catalog={catalog}
-                    busy={busy}
-                    authorizeGit={authorizePluginGit}
-                    onClosed={() => setUpdatingPluginId(undefined)}
-                    returnFocus={() =>
-                      visibleReturn(
-                        Array.from(
-                          pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                            "[data-plugin-update-id]",
-                          ) ?? [],
-                        ).find(
-                          (button) =>
-                            button.dataset.pluginUpdateId === updatingPluginId,
-                        ) ?? pluginSection.current,
-                      )
-                    }
-                  />
-                )}
-                <div>
-                  <div>
-                    {externalPluginsPaused && (
-                      <p role="status" className="text-body-sm text-subtle">
-                        External plugins are paused for this launch. Your saved
-                        enabled settings are unchanged; you can still manage
-                        plugins here.
-                      </p>
-                    )}
-                    {selected === "plugins" && refreshError && (
-                      <ToastNotice
-                        title="Plugin settings couldn’t refresh"
-                        description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
-                      />
-                    )}
-                    {selected === "plugins" && error && (
-                      <ToastNotice
-                        title="Plugin change wasn’t confirmed"
-                        description={`Check the current settings before trying again. ${error}`}
-                        onDismiss={plugins.dismissError}
-                        closeLabel="Dismiss"
-                      />
-                    )}
-                  </div>
-                  {catalog &&
-                    (["all", "essentials"] as const).map((filter) => (
-                      <div
-                        key={filter}
-                        hidden={filter !== pluginFilter}
-                        className={
-                          filter === pluginFilter
-                            ? styles.pluginCategories
-                            : undefined
-                        }
-                        role="tabpanel"
-                        id={`plugin-results-${filter}`}
-                        aria-labelledby={`plugin-results-${filter}-tab`}
-                      >
-                        {filter === pluginFilter && (
-                          <>
-                            {pluginGroups.length === 0 && (
-                              <EmptyState
-                                icon={<SquaresFourIcon size={24} />}
-                                title={
-                                  pluginFiltersActive
-                                    ? coreGroup
-                                      ? "No other plugins match"
-                                      : "No plugins match"
-                                    : coreGroup
-                                      ? "No other plugins"
-                                      : "No plugins yet"
-                                }
-                                description={
-                                  pluginFiltersActive
-                                    ? "Try another search or show all plugins."
-                                    : "Additional plugins will appear here."
-                                }
-                                action={
-                                  pluginFiltersActive ? (
-                                    <Button
-                                      variant="subtle"
-                                      onClick={() => {
-                                        setPluginQuery("");
-                                        setPluginFilter("all");
-                                        pluginSearch.current?.focus();
-                                      }}
-                                    >
-                                      Clear filters
-                                    </Button>
-                                  ) : undefined
-                                }
-                              />
-                            )}
-                            <AnimatePresence initial={false} mode="popLayout">
-                              {pluginGroups.map(renderPluginGroup)}
-                            </AnimatePresence>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                </div>
-              </section>
-            </div>
-          </div>
-          {showingDetails && selectedPlugin && (
-            <PluginDetails
-              key={selectedPlugin.manifest.id}
-              plugin={selectedPlugin}
-              failure={selectedFailure}
-              busy={busy}
-              access={pluginAccess(selectedPlugin)}
-              onCheckAccess={() =>
-                adminAccess?.retry(selectedPlugin.manifest.id)
-              }
-              plugins={plugins}
-              onToggle={() => togglePlugin(selectedPlugin)}
-              close={detailsClose}
-              onClose={closePluginDetails}
-            />
-          )}
+          {detail}
         </div>
       </Panel>
     </div>

@@ -27,6 +27,9 @@ export type ComposerToolProps = Readonly<{
   /** Sessions may offer library agents; the host confirms channel admission before sending. */
   inviteAgents?: boolean | undefined;
   disabled: boolean;
+  /** Read-only: who the draft mentions, in draft order. The tool re-renders when
+   * this changes; the array keeps its identity while only the prose changes. */
+  recipients: readonly Readonly<{ pubkey: string; name: string }>[];
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.

@@ -13,11 +13,16 @@ import {
   UserIcon,
   UsersIcon,
   WrenchIcon,
+  GearIcon,
 } from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
 
-type Community = { name: string };
+type Community = {
+  name: string;
+  localName?: string | undefined;
+  publishedName?: string | undefined;
+};
 export type SettingsSection = {
   id: string;
   label: string;
@@ -68,6 +73,11 @@ const identity: SettingsSection = {
   label: "Identity",
   icon: ShieldIcon,
 };
+const local: SettingsSection = {
+  id: "local-settings",
+  label: "Local settings",
+  icon: GearIcon,
+};
 // Keep frequent destinations first, regardless of plugin activation order.
 // Other community contributions stay together before pairing.
 const communityOrder: Readonly<Record<string, number>> = {
@@ -78,6 +88,7 @@ const builtIn = new Set(
   [
     profile,
     identity,
+    local,
     departure,
     plugins,
     ...app,
@@ -113,9 +124,10 @@ export function settingsSections(
       ? [
           {
             id: "community",
-            label: community.name,
+            label: "Community",
             sections: [
               profile,
+              local,
               ...[
                 ...cards
                   .filter((card) => !card.group && !card.section)

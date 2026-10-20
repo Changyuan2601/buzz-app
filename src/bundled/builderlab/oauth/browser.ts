@@ -33,6 +33,7 @@ export type Credential = Readonly<{
   account: Readonly<{
     subject: string;
     email: string;
+    canUseRemoteAgents: boolean;
   }>;
 }>;
 
@@ -158,6 +159,8 @@ export async function browserCredential(
       account: Object.freeze({
         subject: account.subject,
         email: typeof account.email === "string" ? account.email.trim() : "",
+        canUseRemoteAgents:
+          account.capabilities?.can_use_remote_agents === true,
       }),
     });
   } catch (error) {

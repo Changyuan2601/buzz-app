@@ -70,7 +70,7 @@ function ReadyNewMenu({
               disabled={!available}
               aria-label="New"
               title="New"
-              variant="ghost"
+              variant="chrome"
               shape="round"
               size="sm"
               icon={<PlusIcon className={styles.createIcon} size={18} />}

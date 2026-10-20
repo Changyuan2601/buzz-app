@@ -104,6 +104,14 @@ it("uses independent explicit channel routes and self-p globals; equal interests
       limit: 500,
     },
   ]);
+  // NIP-CL: system channel notices reach only a filter with #t:["system"].
+  expect(h.first.requests()[1]?.[3]).toEqual({
+    kinds: [44100, 44101],
+    "#p": [h.key.pubkey],
+    "#t": ["system"],
+    since: expect.any(Number),
+    limit: 500,
+  });
   const before = h.first.sent.length;
   h.owner.update(["b", "a", "a"]);
   expect(h.first.sent).toHaveLength(before);

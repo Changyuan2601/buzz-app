@@ -65,14 +65,18 @@ function setup(
     core?: string | null;
     /** The channel's Canvas. */
     canvas?: string;
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn({
     hold: options.hold ?? false,
     ...(options.reply ? { reply: options.reply } : {}),
   });
+  const readFile = vi.fn<NonNullable<Host["readFile"]>>();
   const host = {
     spawn: fake.spawn,
+    resolveDirectory: fake.resolveDirectory,
+    readFile,
     serveMcp: fake.serve,
     request: vi.fn(),
   } as unknown as Host;
@@ -103,6 +107,7 @@ function setup(
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: options.canvas !== undefined,
       read: vi.fn(async () =>
@@ -119,7 +124,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://goose.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -127,7 +137,14 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new GooseRuntime(host, () => relay, core, storage);
+  const runtime = new GooseRuntime(
+    host,
+    () => relay,
+    core,
+    storage,
+    undefined,
+    options.repositories,
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -173,12 +190,31 @@ function setup(
     goose,
     published,
     read,
+    readFile,
     runtime,
     memoryOpen: session.agentMemories.open,
   };
 }
 
 describe("GooseRuntime", () => {
+  it("reads a file a tool names from the agent's workspace through the host", async () => {
+    const { deliver, goose, published, readFile } = setup({ hold: true });
+    readFile.mockResolvedValueOnce(new TextEncoder().encode("From a file"));
+    await deliver(message("1", "@Gander post my notes"));
+    await flush(100);
+    const process = goose();
+    const reply = await process?.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      { name: "send", arguments: { audience: "everyone", path: "notes.md" } },
+    );
+    expect(reply?.result).not.toMatchObject({ isError: true });
+    expect(readFile).toHaveBeenCalledWith("notes.md", {
+      cwd: DEFAULT_CONFIG.workspace,
+    });
+    expect(published.at(-1)?.content).toBe("From a file");
+  });
+
   it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
     const earlier = message("1", "Earlier in the chat", {
       tags: [["h", channel]],
@@ -580,4 +616,22 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await shared.deliver(message("1", "@Gander hi"));
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});
+
+it("hands Goose its own community repositories while retaining the session workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/goose</community-repositories>",
+  );
+  const { runtime, deliver, goose } = setup({ repositories });
+  try {
+    await deliver(message("1", "@Gander work"));
+    await flush(100);
+    expect(repositories).toHaveBeenCalledWith(`https://goose.example:${alice}`);
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      "/code/goose",
+    );
+    expect(goose()?.opened[0]).toMatchObject({ cwd: "/home/test/.buzz" });
+  } finally {
+    runtime.dispose();
+  }
 });

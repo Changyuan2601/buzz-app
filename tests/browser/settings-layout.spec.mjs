@@ -1,4 +1,9 @@
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
@@ -10,9 +15,8 @@ test("settings share a centered, bounded column and keep controls contained acro
   app,
 }, info) => {
   await page.goto(app.origin);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("main")).toBeFocused();
+  await openSettings(page);
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.
   const profile = page.getByRole("region", {
@@ -60,6 +64,7 @@ test("settings share a centered, bounded column and keep controls contained acro
       await page.setViewportSize({ width, height: 900 });
       for (const name of [
         "Profile",
+        "Local settings",
         "Identity",
         "Appearance",
         "Notifications",
@@ -93,10 +98,17 @@ test("settings share a centered, bounded column and keep controls contained acro
                   getComputedStyle(document.documentElement).fontSize,
                 );
                 const failures = [];
-                const pageStyle = getComputedStyle(
-                  root.closest(".buzz-settings-page"),
+                // The Settings modal's detail scrollport owns the page inset.
+                const detailStyle = getComputedStyle(
+                  root.closest(".buzz-dialog-navigation-detail"),
                 );
-                if (parseFloat(pageStyle.paddingTop) !== 2 * rem)
+                const inset = getComputedStyle(
+                  root.closest(".buzz-dialog"),
+                ).getPropertyValue("--dialog-padding");
+                if (
+                  !inset.endsWith("rem") ||
+                  parseFloat(detailStyle.paddingTop) !== parseFloat(inset) * rem
+                )
                   failures.push("settings page lost its top inset");
                 if (bounds.width > 48 * rem)
                   failures.push("content exceeds 48rem");
@@ -132,7 +144,7 @@ test("settings share a centered, bounded column and keep controls contained acro
               section.evaluate((root) => {
                 const bounds = root.getBoundingClientRect();
                 const panel = root
-                  .closest("[data-buzz-surface]")
+                  .closest(".buzz-dialog-navigation-detail")
                   .getBoundingClientRect();
                 return (
                   bounds.left +
@@ -156,7 +168,7 @@ test("settings share a centered, bounded column and keep controls contained acro
   await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
     "200%",
   );
-  for (const name of ["Appearance", "Agent setup"]) {
+  for (const name of ["Appearance", "Agent setup", "Local settings"]) {
     await selectSettingsSection(page, name);
     const agents = page.getByRole("region", {
       name,
@@ -247,6 +259,32 @@ test.describe("settings empty collections", () => {
       for (const width of [1440, 800, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await selectSettingsSection(page, "Custom emoji");
+        await page.getByRole("tab", { name: "Community emoji (0)" }).click();
+        const community = page.getByRole("group", {
+          name: "Community emoji",
+          exact: true,
+        });
+        const search = community.getByRole("searchbox", { name: "Search" });
+        await search.fill("unmatched");
+        await expect(
+          community.getByRole("heading", { name: "No results" }),
+        ).toBeVisible();
+        await community.getByRole("button", { name: "Clear search" }).click();
+        await expect(search).toBeFocused();
+        await expect(search).toHaveValue("");
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() =>
+            community.evaluate(
+              (root) =>
+                root.scrollWidth <= root.clientWidth &&
+                document.documentElement.scrollWidth <= innerWidth,
+            ),
+          )
+          .toBe(true);
+        await page.screenshot({
+          path: info.outputPath(`emoji-community-${mode}-${width}.png`),
+        });
         await page.getByRole("tab", { name: "My emojis", exact: true }).click();
         const card = page.locator(".buzz-empty-state").filter({
           has: page.getByRole("heading", {
@@ -273,15 +311,13 @@ test.describe("settings empty collections", () => {
           .toBe(true);
         await expect
           .poll(() =>
-            page
-              .getByRole("main")
-              .evaluate(
-                (root) =>
-                  root
-                    .getAnimations({ subtree: true })
-                    .filter((animation) => animation.playState === "running")
-                    .length,
-              ),
+            settingsDialog(page).evaluate(
+              (root) =>
+                root
+                  .getAnimations({ subtree: true })
+                  .filter((animation) => animation.playState === "running")
+                  .length,
+            ),
           )
           .toBe(0);
         await page.screenshot({
@@ -317,15 +353,13 @@ test.describe("settings empty collections", () => {
           .toBe(true);
         await expect
           .poll(() =>
-            page
-              .getByRole("main")
-              .evaluate(
-                (root) =>
-                  root
-                    .getAnimations({ subtree: true })
-                    .filter((animation) => animation.playState === "running")
-                    .length,
-              ),
+            settingsDialog(page).evaluate(
+              (root) =>
+                root
+                  .getAnimations({ subtree: true })
+                  .filter((animation) => animation.playState === "running")
+                  .length,
+            ),
           )
           .toBe(0);
         await page.screenshot({

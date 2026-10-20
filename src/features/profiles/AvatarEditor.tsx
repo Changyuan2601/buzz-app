@@ -29,8 +29,6 @@ import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 type Props = {
   triggerStyle?: "dotted-squircle";
   inlinePicker?: boolean;
-  /** Offers only an uploaded image, not an emoji avatar. */
-  imageOnly?: boolean;
   triggerLabel?: string;
   actionTarget?: HTMLElement | null | undefined;
   value: string;
@@ -38,6 +36,8 @@ type Props = {
   community?: string | undefined;
   shape?: "circle" | "squircle";
   size?: "compact" | "default";
+  /** Reuse the active session's already-authorized cached thumbnail in compact previews. */
+  thumbnailMedia?: (url: string, size: "small") => string | undefined;
   disabled?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
@@ -80,11 +80,13 @@ const colors = [
 export function AvatarEditor(props: Props) {
   const [open, setOpen] = useState(!!props.inlinePicker);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
-  // The 12 rem frame exceeds the relay's 320 px thumbnail, so this is one of
-  // the two avatar surfaces that request the original (see avatar-source.grit).
+  // Compact profile previews reuse the header's cached thumbnail; full-size
+  // editors still request original artwork (see avatar-source.grit).
   const preview = useAvatarPreview(
     draftPreview?.picture ?? props.value,
     props.community,
+    props.size === "compact" ? "small" : undefined,
+    props.size === "compact" ? props.thumbnailMedia : undefined,
   );
   const pictureError = avatarPictureError(props.value);
   const errorId = useId();
@@ -109,19 +111,17 @@ export function AvatarEditor(props: Props) {
     <div
       className={props.inlinePicker ? styles.inlineEditor : undefined}
       data-editing={open || undefined}
-      data-empty-image={
-        props.inlinePicker && props.imageOnly && !preview ? "" : undefined
-      }
     >
       <Popover.Root
         open={open}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          // An inline picker stays open, so Escape belongs to its dialog.
+          if (props.inlinePicker && details.reason === "escape-key")
+            details.allowPropagation();
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >
-        {props.inlinePicker &&
-        props.imageOnly &&
-        !preview ? null : props.triggerStyle === "dotted-squircle" ? (
+        {props.triggerStyle === "dotted-squircle" ? (
           <Popover.Trigger
             render={
               <button
@@ -201,6 +201,7 @@ export function AvatarEditor(props: Props) {
                   alt={open ? "Avatar preview" : "Avatar"}
                   fallback={props.name}
                   size="fill"
+                  loading="eager"
                   shape={props.shape ?? "circle"}
                 />
               )}
@@ -291,7 +292,6 @@ function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
 function AvatarDraft({
   actionTarget,
   inlinePicker,
-  imageOnly = false,
   value,
   community,
   onPreview,
@@ -330,6 +330,7 @@ function AvatarDraft({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  const droppable = !disabled && !busy && !!community;
   useEffect(() => {
     onPreview({
       picture,
@@ -396,7 +397,7 @@ function AvatarDraft({
     tab === "image" ? (
       <div
         className={styles.imagePanel}
-        data-surface={inlinePicker && imageOnly ? "panel" : undefined}
+        data-surface={inlinePicker ? "panel" : undefined}
       >
         <button
           type="button"
@@ -433,7 +434,7 @@ function AvatarDraft({
           error={pictureError}
         >
           <InputGroup
-            surface={inlinePicker && imageOnly ? "panel" : "inset"}
+            surface={inlinePicker ? "panel" : "inset"}
             leading={<LinkIcon size={18} aria-hidden="true" />}
           >
             <Input
@@ -510,13 +511,7 @@ function AvatarDraft({
         className={styles.picker}
         data-dragging={dragging || undefined}
         onDragEnter={(event) => {
-          if (
-            !event.dataTransfer.types.includes("Files") ||
-            disabled ||
-            busy ||
-            !community
-          )
-            return;
+          if (!event.dataTransfer.types.includes("Files") || !droppable) return;
           event.preventDefault();
           dragDepth.current += 1;
           setDragging(true);
@@ -525,8 +520,7 @@ function AvatarDraft({
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
-          event.dataTransfer.dropEffect =
-            disabled || busy || !community ? "none" : "copy";
+          event.dataTransfer.dropEffect = droppable ? "copy" : "none";
         }}
         onDragLeave={() => {
           dragDepth.current = Math.max(0, dragDepth.current - 1);
@@ -538,34 +532,30 @@ function AvatarDraft({
           dragDepth.current = 0;
           setDragging(false);
           const file = event.dataTransfer.files[0];
-          if (file && !disabled && !busy && community) {
+          if (file && droppable) {
             setMode("image");
             void upload(async () => file);
           }
         }}
       >
-        {imageOnly ? (
-          renderPanel("image")
-        ) : (
-          <Tabs
-            value={mode}
-            label="Avatar source"
-            variant="panel"
-            items={[
-              { value: "image", label: "Image" },
-              { value: "emoji", label: "Emoji" },
-              { value: "background", label: "Background" },
-            ]}
-            onValueChange={(next) => {
-              if (!busy && !disabled) {
-                setMode(next);
-                setCustomColorOpen(false);
-                setError("");
-              }
-            }}
-            renderPanel={renderPanel}
-          />
-        )}
+        <Tabs
+          value={mode}
+          label="Avatar source"
+          variant="panel"
+          items={[
+            { value: "image", label: "Image" },
+            { value: "emoji", label: "Emoji" },
+            { value: "background", label: "Background" },
+          ]}
+          onValueChange={(next) => {
+            if (!busy && !disabled) {
+              setMode(next);
+              setCustomColorOpen(false);
+              setError("");
+            }
+          }}
+          renderPanel={renderPanel}
+        />
         {busy && (
           <p role="status" className="text-body-sm">
             Uploading avatar…
@@ -584,7 +574,7 @@ function AvatarDraft({
         )}
         {!(mode === "background" && customColorOpen) && (
           <div className="flex flex-wrap justify-between gap-2">
-            {!imageOnly && !inlinePicker && (
+            {!inlinePicker && (
               <Button
                 variant="destructive"
                 disabled={(!value && !picture) || disabled || busy}

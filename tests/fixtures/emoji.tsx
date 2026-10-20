@@ -42,6 +42,7 @@ const viewer = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
 const long = new URLSearchParams(location.search).has("long");
+const coordination = new URLSearchParams(location.search).has("coordination");
 const participantProfiles = new Map([
   [viewer.pubkey, { name: "Fixture Reader" }],
   [member.pubkey, { name: "Fixture Member" }],
@@ -389,7 +390,7 @@ function Fixture() {
           <MessageRow
             extensions={extensions}
             key={row.id}
-            row={row}
+            row={coordination ? { ...row, audience: "agents" } : row}
             session={item.session}
             scope={item.community}
             profile={{ name: "Fixture Reader" }}

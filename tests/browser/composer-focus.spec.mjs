@@ -1,5 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+import { openPage } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ productionBroker: true, dmLabels: true, developmentReact: true });
@@ -78,16 +79,9 @@ test("a conversation mounting behind an open menu keeps the menu open", async ({
     name: "Message #Alpha",
     exact: true,
   });
-  await page.evaluate(() => {
-    location.hash =
-      "#buzz=" +
-      encodeURIComponent(
-        JSON.stringify({ version: 1, kind: "settings", section: "appearance" }),
-      );
-  });
-  await expect(
-    page.getByRole("heading", { name: "Appearance", exact: true }),
-  ).toBeVisible();
+  // Settings is a modal over the retained conversation, so leave through a
+  // page that replaces the conversation instead.
+  await openPage(page, "Repository");
   await expect(input).toHaveCount(0);
   const trigger = page.getByRole("button", {
     name: "Your profile",

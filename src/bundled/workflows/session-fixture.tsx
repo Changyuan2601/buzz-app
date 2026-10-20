@@ -68,7 +68,7 @@ function session(scope: string) {
           : `Channel ${index + 1}`,
     ),
     // The second channel exercises the real session's read-only empty state.
-    ...(index
+    ...(index || fixtureParams.has("empty")
       ? []
       : [
           signed(viewer, {

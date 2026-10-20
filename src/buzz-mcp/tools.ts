@@ -1,7 +1,7 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
-import { decode } from "nostr-tools/nip19";
+import { decode, npubEncode } from "nostr-tools/nip19";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -177,6 +177,24 @@ export const TOOLS: readonly Tool[] = [
   tool("mem_set", "Write memory.", { slug: str, text: str, path: str }, [
     "slug",
   ]),
+  tool(
+    "notes_get",
+    "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
+    {
+      name: str,
+      author: str,
+      latest: { type: "boolean" },
+      tag: str,
+      limit: { type: "integer" },
+    },
+  ),
+  tool(
+    "notes_set",
+    "Publish your note under name, replacing your earlier one. title is needed the first time; title, summary and tags carry over when left out.",
+    { name: str, title: str, summary: str, tags: strs, text: str, path: str },
+    ["name"],
+  ),
+  tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
   tool("canvas", "Read a channel's canvas, or replace it.", {
     channel: str,
     text: str,
@@ -204,6 +222,8 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** A NIP-23 long-form note, as `buzz notes` writes it. */
+const NOTE = 30023;
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -795,6 +815,173 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "saved";
   },
 
+  async notes_get(tools, args) {
+    const { client } = tools;
+    const name = args.name === undefined ? undefined : noteSlug(args.name);
+    const author = optional(args, "author");
+    if (name === undefined) {
+      if (args.latest !== undefined)
+        throw new Error("latest is for reading a note by name.");
+      const who = author || "me";
+      const topic = optional(args, "tag");
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      const notes = latestNotes(
+        await client.query([
+          {
+            kinds: [NOTE],
+            ...(who === "all" ? {} : { authors: [await tools.author(who)] }),
+            ...(topic ? { "#t": [topic] } : {}),
+            limit: bound(limit, 50, 200),
+          },
+        ]),
+      );
+      if (!notes.length) return "No notes.";
+      const names = await tools.names(notes.map((note) => note.pubkey));
+      return notes
+        .map(
+          (note) =>
+            `${tag(note, "d")} ${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+        )
+        .join("\n");
+    }
+    if (args.tag !== undefined || args.limit !== undefined)
+      throw new Error("tag and limit are for listing notes, without name.");
+    if (author === "all")
+      throw new Error("author all is for listing; leave author out instead.");
+    if (author && args.latest === true)
+      throw new Error("Give author or latest, not both.");
+    const notes = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          "#d": [name],
+          ...(author ? { authors: [await tools.author(author)] } : {}),
+          limit: 50,
+        },
+      ]),
+    );
+    const names = await tools.names(notes.map((note) => note.pubkey));
+    if (!notes.length) return `No note ${name}.`;
+    if (notes.length > 1 && args.latest !== true)
+      throw new Error(
+        `${notes.length} authors have a note ${name}; give author or latest.\n${notes
+          .map(
+            (note) =>
+              `${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+          )
+          .join("\n")}`,
+      );
+    const note = notes[0] as BuzzEvent;
+    const topics = note.tags.filter((t) => t[0] === "t" && t[1]);
+    return [
+      `${NOTE}:${note.pubkey}:${name} by ${names.get(note.pubkey) ?? note.pubkey}, ${time(note.created_at)}`,
+      `title: ${tag(note, "title") ?? ""}`,
+      ...(has(note, "summary") ? [`summary: ${tag(note, "summary")}`] : []),
+      ...(topics.length ? [`tags: ${topics.map((t) => t[1]).join(", ")}`] : []),
+      "",
+      note.content,
+    ].join("\n");
+  },
+
+  async notes_set(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    const body = (await tools.body(args, true)) as string;
+    if (!body.trim()) throw new Error("A note needs text.");
+    const given = (key: string) => {
+      const value = args[key];
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${key} must be text.`);
+      return value;
+    };
+    const title = given("title");
+    const summary = given("summary");
+    if (
+      args.tags !== undefined &&
+      (!Array.isArray(args.tags) ||
+        !args.tags.every((item) => typeof item === "string" && item.trim()))
+    )
+      throw new Error("tags must be a list of words.");
+    // Read from the writer, so a lagging replica cannot hide the version
+    // this write replaces or the one it saved.
+    const own = {
+      kinds: [NOTE],
+      authors: [client.pubkey],
+      "#d": [name],
+      limit: 1,
+      consistency: "strong",
+    };
+    const [prior] = latestNotes(await client.query([own]));
+    if (title === undefined && !prior)
+      throw new Error("title is required for a new note.");
+    const kept = (key: string) =>
+      prior?.tags.filter((t) => t[0] === key && t[1]).map((t) => t[1]) ?? [];
+    const topics =
+      args.tags === undefined
+        ? kept("t")
+        : (args.tags as string[]).map((t) => t.trim());
+    const about = summary ?? (prior && tag(prior, "summary"));
+    // The newest version wins, so a write must be dated after the one it
+    // replaces.
+    const after = prior ? (prior.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const saved = await client.publish({
+      kind: NOTE,
+      content: body,
+      tags: [
+        ["d", name],
+        ["title", title ?? tag(prior as BuzzEvent, "title") ?? ""],
+        ...(about === undefined ? [] : [["summary", about]]),
+        ...topics.map((topic) => ["t", topic as string]),
+        [
+          "published_at",
+          kept("published_at")[0] ?? String(Math.floor(Date.now() / 1000)),
+        ],
+      ],
+    });
+    // The community accepts a write that loses to another version of the
+    // same second, so only a read shows whether this one is the note now.
+    const [current] = latestNotes(await client.query([own]));
+    if (!current)
+      throw new Error(
+        `conflict: note ${name} was not found after this write. Read it with notes_get, then write again.`,
+      );
+    if (current.id !== saved.id)
+      throw new Error(
+        `conflict: note ${name} now holds another version (${current.id}, ${time(current.created_at)}), not this text. Read it with notes_get, then write again.`,
+      );
+    return `saved ${NOTE}:${client.pubkey}:${name}`;
+  },
+
+  async notes_rm(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    // Read from the writer, so a lagging replica cannot hide a new note.
+    const [mine] = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          authors: [client.pubkey],
+          "#d": [name],
+          limit: 1,
+          consistency: "strong",
+        },
+      ]),
+    );
+    if (!mine) throw new Error(`You have no note ${name}.`);
+    // A deletion removes only versions dated at or before it, so it must be
+    // dated after the note, even one from a writer whose clock runs ahead.
+    const after = (mine.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const coordinate = `${NOTE}:${client.pubkey}:${name}`;
+    await client.publish({ kind: 5, content: "", tags: [["a", coordinate]] });
+    return `deleted ${coordinate}`;
+  },
+
   async canvas(tools, args) {
     const { client, context } = tools;
     const channel = text(args.channel) ?? context.channel;
@@ -806,9 +993,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!head && !(await tools.metadata(channel))) throw unseen(channel);
     if (content === undefined) return head?.content || "No canvas.";
     // The newest canvas wins, so a write must be dated after the current one.
-    const wait = head ? (head.created_at + 1) * 1000 - Date.now() : 0;
-    if (wait > 5000) throw new Error("The canvas was just changed; try again.");
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    const after = head ? (head.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The canvas was just changed; try again.");
+    await waitUntil(after);
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
   },
@@ -1163,6 +1351,33 @@ class Tools {
     };
   }
 
+  /** The author `value` names: me, a pubkey or npub, or one display name. */
+  async author(value: string) {
+    if (value === "me") return this.client.pubkey;
+    try {
+      return pubkey(value);
+    } catch {}
+    const q = value.toLowerCase();
+    const named =
+      [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await this.client.query([{ kinds: [0], search: q, limit: 100 }]));
+    const found = newest(profiles).filter(
+      (event) => profileName(parse(event.content))?.toLowerCase() === q,
+    );
+    if (found.length > 1)
+      throw new Error(
+        `${found.length} people are named ${value}; give their npub.\n${found
+          .map((event) => npubEncode(event.pubkey))
+          .join("\n")}`,
+      );
+    if (!found[0]) throw new Error(`No one is named ${value}.`);
+    return found[0].pubkey;
+  }
+
   /** Display names of `pubkeys` that have a profile. */
   async names(pubkeys: readonly string[]) {
     const wanted = [...new Set(pubkeys)];
@@ -1362,6 +1577,41 @@ function memorySlug(slug: string) {
       `Bad slug ${slug}: use lowercase parts like notes or team/plan.`,
     );
   return key;
+}
+
+/** A note's name, as the CLI allows it. */
+function noteSlug(value: unknown) {
+  if (typeof value !== "string" || !/^[a-z0-9._-]{1,80}$/.test(value))
+    throw new Error(
+      `Bad note name ${String(value)}: use up to 80 of a-z, 0-9, - _ and .`,
+    );
+  return value;
+}
+
+/** Waits until `at`. A timer can fire a moment early, which would date the
+ * write in the second it must follow. */
+async function waitUntil(at: number) {
+  while (Date.now() < at)
+    await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+}
+
+/** Each author's newest version of each note, newest first. */
+function latestNotes(events: readonly BuzzEvent[]) {
+  const latest = new Map<string, BuzzEvent>();
+  for (const event of events) {
+    const name = tag(event, "d");
+    if (event.kind !== NOTE || name === undefined) continue;
+    const key = `${event.pubkey}:${name}`;
+    const seen = latest.get(key);
+    // Of two versions from the same second, the lower id is kept.
+    if (
+      !seen ||
+      seen.created_at < event.created_at ||
+      (seen.created_at === event.created_at && event.id < seen.id)
+    )
+      latest.set(key, event);
+  }
+  return [...latest.values()].sort((a, b) => b.created_at - a.created_at);
 }
 
 function pubkey(value: string) {

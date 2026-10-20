@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -23,7 +24,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
-const scope = "https://relay.test:owner";
+const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -46,6 +47,7 @@ function fixture(
   termination?: Promise<void>,
   plugin = false,
   configured: { model?: string; model_reasoning_effort?: string } = {},
+  repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -270,6 +272,7 @@ function fixture(
           ],
         }),
       },
+      channelWrites: { startingCanvas: () => undefined },
       canvas: {
         available: false,
         read: vi.fn(
@@ -285,12 +288,13 @@ function fixture(
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  const store = {
+  const local = {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => {
       storage.set(key, value);
     },
   } as Storage;
+  const store = localStore(local);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -308,6 +312,7 @@ function fixture(
     store,
     config,
     () => added,
+    repositories,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -422,7 +427,7 @@ function fixture(
     runtime.run(delivery);
   let pluginDispose = () => {};
   if (plugin) {
-    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       host: { spawn },
@@ -1694,7 +1699,10 @@ it("starts no work when the agent stops while its channel is read", async () => 
       );
     },
     async () => undefined,
-    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+    localStore({
+      getItem: () => null,
+      setItem: () => {},
+    } as unknown as Storage),
   );
   runtimes.push(runtime);
   runtime.sync([{ pubkey } as Agent]);
@@ -2109,7 +2117,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3", "v5"])(
+it.each(["v2", "v3", "v5", "v6"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();
@@ -2129,8 +2137,13 @@ it.each(["v2", "v3", "v5"])(
     ).toHaveLength(0);
     const thread = f.sent.find((wire) => wire.method === "thread/start")
       ?.params as { dynamicTools: { tools: { name: string }[] }[] };
-    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
-      "media_get",
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "media_get",
+        "notes_get",
+        "notes_set",
+        "notes_rm",
+      ]),
     );
     f.complete();
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -2820,7 +2833,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2857,14 +2870,14 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
   await f.complete();
 });
 
-it("always offers the attention tools and guidance, keeps the thread when attention goes off, and says so in the turn", async () => {
+it("always offers the attention tools, on search, keeps the thread when attention goes off, and says so in the turn", async () => {
   const f = fixture();
   f.attention.on = true;
   f.objects.set("interest/ops", {
@@ -2876,12 +2889,23 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   const thread = (index: number) =>
     f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as {
       developerInstructions: string;
-      dynamicTools: { tools: { name: string }[] }[];
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
     };
   const names = (index: number) =>
     thread(index)?.dynamicTools[0]?.tools.map((tool) => tool.name) ?? [];
   expect(names(0)).toEqual(expect.arrayContaining(["send", "interest_show"]));
-  expect(thread(0)?.developerInstructions).toContain("## Attention");
+  // The Buzz tools are listed up front, and the attention tools, with their
+  // guidance, once the model searches for them.
+  const deferred = (name: string) =>
+    thread(0)?.dynamicTools[0]?.tools.find((tool) => tool.name === name)
+      ?.deferLoading;
+  expect(deferred("send")).toBe(undefined);
+  expect(deferred("interest_show")).toBe(true);
+  expect(thread(0)?.dynamicTools[0]?.description).toContain("attention");
+  expect(thread(0)?.developerInstructions).not.toContain("## Attention");
   const start = f.starts()[0]?.params as { input: { text: string }[] };
   expect(start.input[0]?.text).toMatch(
     /<attention>\nHandle the work that caused this turn/,
@@ -2935,10 +2959,20 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   const names = (index: number) =>
     (
       f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
-        | { dynamicTools: { tools: { name: string }[] }[] }
+        | {
+            dynamicTools: {
+              tools: { name: string; deferLoading?: boolean }[];
+            }[];
+          }
         | undefined
-    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
-  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+    )?.dynamicTools[0]?.tools;
+  expect(names(0)?.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["send", "tasks_create"]),
+  );
+  // A plugin's tool loads on search.
+  expect(
+    names(0)?.find((tool) => tool.name === "tasks_create")?.deferLoading,
+  ).toBe(true);
   const reply = await f.tool("tasks_create", { title: "Ship it" });
   expect(JSON.stringify(reply?.result)).toContain("created");
   expect(call).toHaveBeenCalledWith(
@@ -2957,7 +2991,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -2973,7 +3007,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
     1,
   );
-  expect(names(1)).not.toContain("tasks_create");
+  expect(names(1)?.map((tool) => tool.name)).not.toContain("tasks_create");
   const gone = await f.tool("tasks_create", { title: "Late" });
   expect(JSON.stringify(gone)).toContain("No active Buzz tool");
   expect(call).toHaveBeenCalledTimes(1);
@@ -3540,4 +3574,24 @@ const canvasHead = (content: string, author = owner) => ({
   created_at: 1,
   tags: [],
   content,
+});
+
+it("updates Codex repository context from the agent’s captured community, including default restoration", async () => {
+  let folder = "/code/codex";
+  const repositories = vi.fn(
+    () => `<community-repositories>${folder}</community-repositories>`,
+  );
+  const f = fixture([], undefined, false, {}, repositories);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(repositories).toHaveBeenCalledWith(scope);
+  expect(
+    JSON.stringify(f.sent.filter((wire) => wire.method === "turn/start")),
+  ).toContain("/code/codex");
+  folder = "REPOS in your own workspace";
+  await f.runtime.run(f.delivery("second", "d".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turns = f.sent.filter((wire) => wire.method === "turn/start");
+  expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
+  expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });

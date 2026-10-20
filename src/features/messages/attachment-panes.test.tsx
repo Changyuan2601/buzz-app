@@ -18,7 +18,7 @@ import type { PageNavigation } from "../navigation/service";
 import { conversationTarget } from "../channel-navigation/routes";
 import { SOLO_LABEL } from "../solo/labels";
 import { createRelaySession } from "../relay/session";
-import { keypair, message, roster, signed } from "../relay/testing";
+import { bounds, keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { composerDOMFixture } from "./composer-testing";
@@ -112,6 +112,14 @@ async function fixture(archived = false) {
             return [root, comment].filter((event) =>
               filter.ids?.includes(event.id),
             );
+          if (filter.top_level)
+            return [
+              root,
+              bounds(relay, "11111111-1111-4111-8111-111111111111", "head", {
+                has_more: false,
+                next_cursor: null,
+              }),
+            ];
           if (filter.depth_limit)
             return filter.thread_cursor === undefined ||
               filter.thread_cursor < comment.created_at

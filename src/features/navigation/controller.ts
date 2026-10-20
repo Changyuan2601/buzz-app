@@ -318,6 +318,10 @@ export function createNavigationController(
         return true;
       });
     },
+    /** Host-only return from a modal destination to its retained workspace visit. */
+    returnTo(entryId: string) {
+      return transaction(() => !disposed && history.returnTo(entryId));
+    },
     cancel() {
       transaction(() => {
         ingressRetry = undefined;

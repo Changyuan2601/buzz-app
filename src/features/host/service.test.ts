@@ -223,6 +223,39 @@ it("routes HTTPS requests with plugin identity and rejects browser requests", as
   await expect(plugin.host.request(request)).rejects.toThrow(/desktop plugin/);
 });
 
+it("reads files and resolves directories as the calling plugin", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke)
+    .mockResolvedValueOnce(new Uint8Array([0, 255]).buffer)
+    .mockResolvedValueOnce("/home/me/.buzz")
+    .mockRejectedValueOnce("notes.md: No such file");
+  await expect(
+    plugin.host.readFile?.("./a.png", { cwd: "~/.buzz" }),
+  ).resolves.toEqual(new Uint8Array([0, 255]));
+  expect(invoke).toHaveBeenCalledWith("plugin_host_read_file", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "./a.png",
+    cwd: "~/.buzz",
+  });
+  await expect(plugin.host.resolveDirectory?.("~/.buzz")).resolves.toBe(
+    "/home/me/.buzz",
+  );
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_resolve_directory", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "~/.buzz",
+  });
+  // Callers tell a missing file by its message, so it arrives as an Error.
+  await expect(plugin.host.readFile?.("/notes.md")).rejects.toThrow(
+    /No such file/,
+  );
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(plugin.host.readFile?.("/notes.md")).rejects.toThrow(
+    /desktop plugin/,
+  );
+});
+
 it("starts a declared process as the calling plugin and streams it", async () => {
   const { plugin } = pluginContext();
   vi.mocked(invoke).mockResolvedValueOnce(7);

@@ -112,7 +112,7 @@ impl HostProcesses {
         #[cfg(windows)]
         let mut child = job
             .spawn_hidden(&mut command)
-            .ok_or_else(|| format!("Could not start {program}"))?;
+            .map_err(|error| format!("Could not start {program}: {error}"))?;
         #[cfg(not(windows))]
         let mut child = command
             .spawn()
@@ -427,10 +427,16 @@ fn program_path(
     Ok(resources.join("bin").join(&declared.program))
 }
 
-fn expand_home(directory: &str) -> Result<PathBuf, String> {
+/// The rest of a path written `~/…`, or on Windows also `~\…`.
+pub(crate) fn under_home(path: &str) -> Option<&str> {
+    path.strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\").filter(|_| cfg!(windows)))
+}
+
+pub(crate) fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?
-    } else if let Some(rest) = directory.strip_prefix("~/") {
+    } else if let Some(rest) = under_home(directory) {
         home()?.join(rest)
     } else {
         PathBuf::from(directory)
@@ -441,8 +447,15 @@ fn expand_home(directory: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    // Windows' own profile folder, never a `HOME` another tool set, such as
+    // Git for Windows' `/c/Users/…`.
+    #[cfg(windows)]
+    let order = ["USERPROFILE", "HOME"];
+    #[cfg(not(windows))]
+    let order = ["HOME", "USERPROFILE"];
+    order
+        .into_iter()
+        .find_map(std::env::var_os)
         .map(PathBuf::from)
         .ok_or_else(|| "No home directory".into())
 }

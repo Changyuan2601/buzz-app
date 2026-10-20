@@ -485,7 +485,8 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
   const config =
     fake.options.args?.[fake.options.args.indexOf("--mcp-config") + 1];
   expect(JSON.parse(config ?? "{}")).toEqual({
-    mcpServers: { buzz: { type: "sdk", name: "buzz", alwaysLoad: true } },
+    // Each tool says whether it loads up front, not the server.
+    mcpServers: { buzz: { type: "sdk", name: "buzz" } },
   });
   expect(fake.received[0]).toMatchObject({
     request: {

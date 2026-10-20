@@ -347,7 +347,7 @@ test.describe("DM archive delivery", () => {
     );
     await choose(page, inbox, "Activity type", "DMs");
     await expect(dmRows).toHaveCount(1);
-    await expect(dmRows).toContainText("New ordinary DM message");
+    await expect(dmRows).toContainText("Fresh explicit DM mention");
     await page.reload();
     await openPage(page, "Inbox");
     await expect(dmRows).toHaveCount(1);

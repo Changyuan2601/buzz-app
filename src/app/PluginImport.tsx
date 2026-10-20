@@ -128,6 +128,24 @@ function hostDeclarations(manifest: PluginManifest) {
           },
         ]
       : []),
+    ...(manifest.host?.files
+      ? [
+          {
+            signature:
+              "Files: read any file and resolve folders · full user access",
+            title: "Files:",
+            label: "Read your files",
+            hint: "Can read any file your account can, and create folders it resolves.",
+            icon: FolderOpenIcon,
+            details: (
+              <p className="m-0">
+                Reads files and resolves folders with your account’s full
+                access.
+              </p>
+            ),
+          },
+        ]
+      : []),
   ];
 }
 

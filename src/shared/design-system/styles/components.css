@@ -2,6 +2,20 @@
 @import "./tab-drag.css";
 
 @layer components {
+  .buzz-loading-region {
+    position: relative;
+    min-width: 0;
+  }
+  .buzz-loading-region-feedback {
+    min-block-size: var(--size-row);
+    padding-inline: var(--space-4);
+  }
+  .buzz-loading-region-status {
+    @apply text-body-sm;
+    margin: 0;
+    color: var(--text-subtle);
+  }
+
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -57,6 +71,11 @@
   .buzz-button[data-size="xs"] .buzz-button-spinner {
     width: var(--space-4);
     height: var(--space-4);
+  }
+  .buzz-button[data-size="caption"] {
+    @apply text-caption;
+    min-height: var(--size-control-sm);
+    padding: var(--space-2) var(--space-3);
   }
   /* A leading icon sits as close to the leading edge as to the top and bottom. */
   .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
@@ -133,6 +152,9 @@
   }
   .buzz-button[data-icon-variant] .buzz-button-attention rect {
     ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="inset"] {
+    border-radius: var(--control-inset-radius, var(--radius-icon-button));
   }
   .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
     ry: 50%;
@@ -285,6 +307,15 @@
     border-radius: var(--radius-pill);
   }
 
+  .buzz-button[data-color-swatch] .buzz-button-label {
+    color: var(--text-on-accent);
+  }
+
+  .buzz-button[data-color-swatch] .buzz-button-label > svg {
+    width: var(--space-6);
+    height: var(--space-6);
+  }
+
   /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
      interactive wrapper's keyboard focus indicator remains visible. */
   .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
@@ -349,11 +380,15 @@
     );
   }
 
-  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:not(
+    [data-disabled],
+    :disabled
+  ),
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--interaction-selected);
+    background: var(--surface-navigation-selected);
+    color: var(--text-navigation-selected);
   }
 
   /* Bare controls stay unfilled. Glyph-state toggles keep their larger
@@ -375,6 +410,36 @@
     background: var(--affordance-accent);
     color: var(--text-accent);
   }
+  .buzz-button[data-muted]:not([data-disabled]) {
+    color: var(--text-subtle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-muted]:hover:not([data-disabled]) {
+      background: var(--affordance-subtle-pressed);
+      color: var(--text-standard);
+    }
+  }
+  .buzz-button[data-muted]:is(:active, :focus-visible):not([data-disabled]) {
+    color: var(--text-standard);
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"] {
+    background: transparent;
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="destructive-quiet"]:hover:not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-danger-hover);
+      color: var(--text-danger);
+    }
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"]:active:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-danger-pressed);
+    color: var(--text-danger);
+  }
   .buzz-button[data-icon-variant="chrome"] {
     background: transparent;
   }
@@ -384,6 +449,15 @@
         [aria-current="page"]
       ) {
       background: var(--affordance-backdrop-hover);
+    }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .chrome-navigation
+      .buzz-button[data-icon-variant="chrome"]:hover:not(
+        [data-disabled],
+        [aria-current="page"]
+      ) {
+      background: var(--affordance-chrome-hover);
     }
   }
   .buzz-button[data-icon-variant="chrome"]:is(
@@ -780,7 +854,7 @@
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
@@ -803,7 +877,7 @@
     gap: var(--space-1);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
     min-height: var(--space-8);
     padding: var(--space-1) var(--space-2);
@@ -816,12 +890,12 @@
     color: var(--text-standard);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-control-selected);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
     inset-block: 0;
     border-radius: var(--radius-pill);
-    background: var(--surface-panel);
+    background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -872,7 +946,7 @@
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-accent);
   }
 
   /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
@@ -883,7 +957,7 @@
     bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
-    background: var(--text-standard);
+    background: var(--affordance-prominent-mark);
   }
 
   .buzz-tabs-item[data-closable] .buzz-tabs-tab {
@@ -907,6 +981,12 @@
     gap: var(--space-2);
     padding-block: 0;
     padding-inline: var(--space-1);
+  }
+
+  /* The painted band includes the outer rim above and excludes the separator
+     below. Center its controls one hairline above the layout box's center. */
+  .panel-header > * {
+    translate: 0 -1px;
   }
 
   .panel-header::after {
@@ -1021,7 +1101,14 @@
   }
 
   .navigation-section-label {
+    @apply text-body;
+    color: var(--text-subtle);
     margin: 0;
+  }
+
+  /* A headingless reference stays above the named groups when navigation wraps. */
+  .navigation-section[data-headingless] {
+    grid-column: 1 / -1;
   }
 
   .navigation-section-heading .buzz-button[data-icon-size="compact"] {
@@ -1050,7 +1137,7 @@
     border-radius: var(--radius-row);
     padding: var(--space-1) var(--space-control-inset);
     background: transparent;
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -1070,7 +1157,7 @@
       --text-subtle: var(--interaction-row-text);
       --text-metadata: var(--interaction-row-metadata);
       background: var(--interaction-row-hover);
-      color: var(--text-standard);
+      color: var(--navigation-item-text, var(--text-standard));
     }
   }
 
@@ -1082,14 +1169,14 @@
     --text-subtle: var(--interaction-row-text);
     --text-metadata: var(--interaction-row-metadata);
     background: var(--interaction-row-hover);
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
   }
 
   .navigation-item[data-selected] {
     --text-subtle: var(--interaction-selected-text);
     --text-metadata: var(--interaction-selected-metadata);
     background: var(--interaction-selected);
-    color: var(--text-standard);
+    color: var(--navigation-item-text, var(--text-standard));
   }
 
   /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
@@ -1100,6 +1187,12 @@
     padding: var(--space-1);
     border-radius: var(--radius-pill);
     height: 2.5rem;
+  }
+  /* A shell action group supplies the single outer track around its tabs. */
+  .chrome-navigation .buzz-tabs[data-variant="chrome"] {
+    background: transparent;
+    padding: 0;
+    height: auto;
   }
   .chrome-navigation .navigation-item[data-variant="pill"] {
     width: auto;
@@ -1118,7 +1211,7 @@
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
   .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
     background: var(--bg-chrome-selected);
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1162,6 +1255,72 @@
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
+  }
+
+  /* SidebarNavigation copies main's compact sidebar appearance. Keep this global:
+     applying nested shared selectors inside CSS Modules would rename their targets. */
+  .buzz-sidebar-navigation {
+    display: contents;
+    @apply interaction-navigation;
+    --size-row: var(--space-6);
+    --affordance-panel-hover: var(--affordance-navigation-quiet);
+    --interaction-row-hover: var(--affordance-navigation-quiet);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"] {
+    --space-row-gap: calc(var(--space-1) + var(--space-half));
+    --navigation-item-text: var(--text-navigation);
+    @apply text-body-sm;
+    min-height: calc(var(--space-6) + var(--space-1));
+    height: calc(var(--space-6) + var(--space-1));
+    padding: var(--space-half) calc(var(--space-1) + var(--space-half))
+      var(--space-half) var(--space-2);
+    border-radius: var(--radius-row);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-selected] {
+    --navigation-item-text: var(--text-row-selected);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-inset] {
+    padding-inline-start: calc(var(--space-2) + var(--space-6));
+  }
+  .buzz-sidebar-navigation
+    .navigation-item[data-variant="row"]:is([data-disabled], :disabled) {
+    --navigation-item-text: var(--text-unavailable);
+    cursor: default;
+    background: transparent;
+  }
+  .buzz-sidebar-navigation
+    .navigation-item[data-variant="row"]
+    > :is(svg, img) {
+    flex-shrink: 0;
+  }
+  /* Named static groups use main's disclosure-heading type and leading inset.
+     Disclosure, chevron and action behavior stay with their feature owner. */
+  .buzz-sidebar-navigation .navigation-section-heading {
+    min-height: var(--size-control-sm);
+    padding: var(--space-half) var(--space-2);
+  }
+  .buzz-sidebar-navigation .navigation-section-label {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+  .buzz-sidebar-navigation .navigation-section + .navigation-section {
+    margin-top: var(--space-4);
+  }
+  .buzz-sidebar-navigation .navigation-section-rows {
+    gap: var(--space-half);
+  }
+
+  @container (max-width: 36rem) {
+    .buzz-sidebar-navigation[data-wrap-sections] {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+      gap: var(--space-4);
+    }
+    .buzz-sidebar-navigation[data-wrap-sections]
+      > .navigation-section
+      + .navigation-section {
+      margin-top: 0;
+    }
   }
 
   /* Compose the sidebar's NavigationItem as a tab; the sibling close action

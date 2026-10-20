@@ -1,3 +1,4 @@
+import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
@@ -22,14 +23,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const providerController = new CodexProvider(start, localStorage, setup);
+  const providerController = new CodexProvider(
+    start,
+    ctx.agents.storage,
+    setup,
+  );
   const runtime = new CodexRuntime(
     start,
     (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
     (pubkey, signal) => ctx.agents.core(pubkey, signal),
-    localStorage,
+    ctx.agents.storage,
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
+    repositoriesContext,
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the

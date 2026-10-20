@@ -26,6 +26,20 @@ export function validChannelCommand(event) {
   if (h?.length !== 2 || h[0] !== "h" || !uuid.test(h[1])) return false;
   if (event.kind === 9007) {
     const expected = ["h", "name", "visibility", "channel_type"];
+    // block/buzz#8421: up to 32 distinct `p` tags after the labels name the
+    // first members.
+    const firstMember = tags.findIndex(([name]) => name === "p");
+    const members = firstMember < 0 ? [] : tags.slice(firstMember);
+    if (
+      members.length > 32 ||
+      members.some(
+        (tag) =>
+          tag.length !== 2 || tag[0] !== "p" || !/^[0-9a-f]{64}$/.test(tag[1]),
+      ) ||
+      new Set(members.map(([, key]) => key)).size !== members.length
+    )
+      return false;
+    if (members.length) tags = tags.slice(0, firstMember);
     // NIP-CL: up to 8 distinct label `t` tags end the command.
     const firstLabel = tags.findIndex(([name]) => name === "t");
     const labels = firstLabel < 0 ? [] : tags.slice(firstLabel);

@@ -222,20 +222,11 @@ async function live() {
   return { goose, cwd, tools, calls, requests, results, sends };
 }
 
-/** Setup on the real goose; it resolves `~` with the workspace process,
- * which prints the folder. */
+/** Setup on the real goose, with `~` as the home folder. */
 const homeSetup = () =>
-  new GooseSetup(async (id, options = {}) => {
-    if (id !== "workspace") return spawn(id, options);
-    queueMicrotask(() =>
-      options.onStdout?.(`${String(options.cwd).replace(/^~/, homedir())}\n`),
-    );
-    return {
-      write: async () => undefined,
-      end: async () => undefined,
-      kill: async () => undefined,
-      exited: Promise.resolve(0),
-    };
+  new GooseSetup({
+    spawn,
+    resolveDirectory: async (path) => path.replace(/^~/, homedir()),
   });
 
 describe.skipIf(!BIN)("goose-acp", () => {

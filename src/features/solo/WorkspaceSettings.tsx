@@ -35,12 +35,14 @@ export function WorkspaceSettings({
   close,
   signal,
   finalFocus,
+  focusName = false,
 }: {
   session: RelaySession;
   scope: string;
   target: Target;
   close(): void;
   signal?: AbortSignal | undefined;
+  focusName?: boolean | undefined;
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
@@ -322,6 +324,7 @@ export function WorkspaceSettings({
         {lifetime.available && lifetime.base && (
           <Field label="Chat name" error={lifetime.nameError}>
             <Input
+              autoFocus={focusName}
               value={lifetime.name}
               placeholder={lifetime.base.name}
               disabled={busy || lifetime.busy || lifetime.blocked}

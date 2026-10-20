@@ -1123,7 +1123,7 @@ it("row Share conversion retains its captured visit when the sidebar survives na
   );
   const mounted = render(view(visit.signal));
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Share…" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Share" }));
   await user.click(
     within(screen.getByRole("dialog", { name: "Share chat" })).getByRole(
       "button",

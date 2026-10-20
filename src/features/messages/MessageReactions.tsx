@@ -441,7 +441,8 @@ export function MessageReactions(
           );
         })}
       {active &&
-        (reactions.length > 0 || row.audience === "agents") &&
+        reactions.length > 0 &&
+        row.audience !== "agents" &&
         !props.disabled && (
           <span
             className={styles.inlineReactionTool}

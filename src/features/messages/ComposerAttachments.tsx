@@ -49,7 +49,13 @@ export function ComposerAttachments({
   });
   const [selected, setSelected] = useState<string>();
   const restoreFocus = useRef<HTMLElement | null>(null);
-  const instant = useReducedMotion();
+  const reducedMotion = useReducedMotion();
+  const instant =
+    reducedMotion ||
+    document.documentElement.hasAttribute("data-keyboard-navigation");
+  // Items present when the composer mounts are a returning draft, not new picks.
+  const [restored, setRestored] = useState(items.length > 0);
+  if (restored && !items.length) setRestored(false);
   if (selected && (!active || !items.some((item) => item.id === selected)))
     setSelected(undefined);
   return (
@@ -63,11 +69,20 @@ export function ComposerAttachments({
             key="attachments"
             aria-label="Attachments"
             className={styles.attachments}
-            initial={false}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
+            initial={instant ? false : { height: 0, overflow: "hidden" }}
+            animate={{
+              height: "auto",
+              opacity: 1,
+              transitionEnd: { overflow: "visible" },
+            }}
+            exit={{
+              height: 0,
+              opacity: 0,
+              overflow: "hidden",
+              transition: { duration: instant ? 0 : 0.15 },
+            }}
             transition={{
-              duration: instant ? 0 : 0.18,
+              duration: instant ? 0 : 0.22,
               ease: [0.23, 1, 0.32, 1],
             }}
           >
@@ -75,7 +90,7 @@ export function ComposerAttachments({
               className={`${styles.list} buzz-thin-scrollbar`}
               data-compact-media={mixed || undefined}
             >
-              <AnimatePresence initial={false} propagate>
+              <AnimatePresence initial={!instant && !restored} propagate>
                 {items.map((item) => (
                   <AttachmentItem
                     renderers={renderers}
@@ -129,7 +144,28 @@ function AttachmentItem({
   retry(id: string): void;
 }) {
   const present = useIsPresent();
-  const instant = useReducedMotion();
+  const reducedMotion = useReducedMotion();
+  const instant =
+    reducedMotion ||
+    document.documentElement.hasAttribute("data-keyboard-navigation");
+  const appearance = {
+    initial: instant
+      ? (false as const)
+      : { opacity: 0, transform: "translateY(6px)" },
+    animate: { opacity: 1, transform: "translateY(0px)" },
+    exit: {
+      opacity: 0,
+      transform: instant ? "translateY(0px)" : "translateY(6px)",
+      transition: { duration: instant ? 0 : 0.15 },
+    },
+    transition: {
+      duration: instant ? 0 : 0.22,
+      ease: [0.23, 1, 0.32, 1] as const,
+      opacity: { duration: instant ? 0 : 0.15 },
+    },
+    inert: !present,
+    "aria-hidden": !present || undefined,
+  };
   const { source, image, video } = useDraftAttachmentSource(item, media);
   const [failedSource, setFailedSource] = useState<string>();
   const element = useMediaElementSource(video ? source : undefined);
@@ -158,7 +194,7 @@ function AttachmentItem({
     item.status === "uploading";
   if (item.voice && source && renderers)
     return (
-      <li className={styles.voiceItem} data-voice-draft>
+      <motion.li {...appearance} className={styles.voiceItem} data-voice-draft>
         <AttachmentView
           registry={renderers}
           attachment={{
@@ -196,16 +232,12 @@ function AttachmentItem({
             </button>
           </>
         )}
-      </li>
+      </motion.li>
     );
   return (
     <motion.li
-      layout
-      initial={false}
-      exit={{ scale: instant ? 1 : 0.75, y: instant ? 0 : 12, opacity: 0 }}
-      transition={{ duration: instant ? 0 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-      inert={!present}
-      aria-hidden={!present || undefined}
+      layout={!instant}
+      {...appearance}
       className={styles.item}
       data-media={image || video ? "" : undefined}
     >

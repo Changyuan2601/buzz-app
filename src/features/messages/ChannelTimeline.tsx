@@ -138,6 +138,8 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
+  /** False: rows open existing threads but offer none to start; see MessageRow. */
+  startsThreads?: boolean | undefined;
   /** A following composer shows conversation activity; the jump button leaves it a lane. */
   activityLane?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
@@ -197,6 +199,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
+  startsThreads = true,
   activityLane = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
@@ -1198,6 +1201,7 @@ function Timeline({
                       onOpenLink={onOpenLink}
                       canOpenLink={canOpenLink}
                       onOpenThread={onOpenThread}
+                      startsThreads={startsThreads}
                       {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                       retry={queries.outbox?.retry}
                       keepMounted={keepRowMounted}

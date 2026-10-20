@@ -33,14 +33,12 @@ import {
  * including the Solo policy, so no view can open a chat under other rules. */
 type Conversation = Pick<
   ThreadPanelProps,
-  | "session"
-  | "scope"
-  | "channelId"
-  | "channelName"
-  | "extensions"
-  | "ownSoloConversation"
+  "session" | "scope" | "channelId" | "channelName" | "extensions"
 > &
-  ConversationInteractions & { soloConversation: boolean };
+  ConversationInteractions & {
+    soloConversation: boolean;
+    ownSoloConversation: boolean;
+  };
 type Shared = keyof Conversation;
 /** Pages supply only their own policy, and may relabel the channel. */
 type Own<P> = Omit<P, Shared> &
@@ -249,14 +247,16 @@ export function ConversationTimeline(
 ) {
   const {
     session,
-    soloConversation: _,
-    ownSoloConversation: __,
+    soloConversation,
+    ownSoloConversation: _,
     ...shared
   } = useConversation();
+  // Solo agents answer at top level: show existing threads, start none.
   return (
     <ChannelTimeline
       queries={session}
       viewer={session.viewer}
+      startsThreads={!soloConversation}
       {...shared}
       {...props}
     />
@@ -265,7 +265,7 @@ export function ConversationTimeline(
 
 export function ConversationComposer(props: Own<MessageComposerProps>) {
   const { onOpenMediaReview: _, ...shared } = useConversation();
-  // Solo chats are flat agent conversations; the owner's also start tagged.
+  // Solo chats address agents; the owner's also start tagged.
   return (
     <MessageComposer
       {...shared}

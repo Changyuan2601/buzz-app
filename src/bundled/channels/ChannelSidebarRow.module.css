@@ -30,8 +30,14 @@
 )::before {
   background: var(--affordance-panel-hover);
 }
+.row[data-selected] {
+  --text-row: var(--text-navigation-selected);
+  --text-subtle: var(--text-navigation-selected);
+  --text-metadata: var(--text-navigation-selected);
+  color: var(--text-navigation-selected);
+}
 .row[data-selected]::before {
-  background: var(--interaction-selected);
+  background: var(--surface-navigation-selected);
 }
 .row .select [data-buzz-ui][data-variant="row"] {
   background: transparent;
@@ -41,13 +47,14 @@
   min-width: 0;
 }
 .row .select [data-variant="row"] {
+  display: flex;
   width: 100%;
   margin-inline: 0;
   padding-inline: var(--space-2)
     calc(var(--channel-row-fill-end, 0%) + var(--space-1) + var(--space-half));
 }
 .row .select [data-variant="row"][data-working] {
-  padding-inline-end: calc(var(--channel-row-fill-end, 0%) + var(--space-1));
+  padding-inline-end: calc(var(--channel-row-fill-end, 0%) + var(--space-2));
 }
 .select [class~="navigation-item-label"] {
   text-overflow: clip;
@@ -81,7 +88,6 @@
   gap: var(--space-2);
 }
 .badges[data-working] {
-  padding-block: var(--space-1);
   padding-inline-end: 0;
 }
 .nameContent {

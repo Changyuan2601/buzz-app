@@ -285,9 +285,13 @@ export function ChannelInventory({
     const trigger = lifecycleTrigger.current;
     lifecycleTrigger.current = undefined;
     // The pending operation is nonmodal; keep focus where the user moved it.
-    if (document.activeElement && document.activeElement !== document.body)
+    if (
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.closest("[inert]")
+    )
       return;
-    if (trigger?.isConnected) {
+    if (trigger?.isConnected && !trigger.closest("[inert]")) {
       trigger.focus({ preventScroll: true });
       return;
     }

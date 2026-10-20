@@ -2168,20 +2168,6 @@ it.each(["markMessageRead", "markMessageUnread"] as const)(
   },
 );
 
-it("bottom catch-up can end at a reply in a timeline that shows replies", async () => {
-  const h = setup();
-  h.grant("room");
-  const root = message(h.alice, "room", "root", 11);
-  const later = message(h.alice, "room", "later", 12);
-  const reply = message(h.alice, "room", "reply", 13, [
-    ["e", root.id, "", "reply"],
-  ]);
-  h.emit([root, later, reply]);
-  await h.session.unread.reading("room").catchUp(reply.id);
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 13 });
-  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
-});
-
 it("bottom catch-up preserves mentions, broadcasts, participating threads and later activity", async () => {
   const h = setup();
   h.grant("room");
@@ -2635,7 +2621,7 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
     latestMessageId: newer.id,
     mentioned: true,
     unreadCount: 2,
-    preview: "First reply",
+    preview: "Mentioned reply",
   });
   expect(before.items[0]).toMatchObject({
     channelId: "dm",
@@ -2718,6 +2704,147 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
     await h.session.unread.markThrough(step.target, step.messageId);
   expect(chat().map((item) => item.unreadCount)).toEqual([1, 0]);
 });
+
+it("inbox describes a Solo chat row by its newest top-level message, not only its Inbox evidence", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const ping = message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]);
+  const update = message(h.alice, "chat", "Later update", 21);
+  h.emit([
+    ping,
+    update,
+    message(h.viewer, "chat", "My answer", 22),
+    message(h.alice, "chat", "Side reply", 23, [["e", ping.id, "", "reply"]]),
+    message(h.alice, "chat", "Agent note", 24, [["audience", "agents"]]),
+  ]);
+  const item = h.session.unread
+    .inbox()
+    .items.find((item) => item.id === "chat:chat");
+  expect(item).toMatchObject({
+    messageId: ping.id,
+    messageIds: [ping.id],
+    unreadCount: 1,
+    authorId: h.alice.pubkey,
+    preview: "Later update",
+    createdAt: 21,
+  });
+  expect(item?.mention).toMatchObject({ preview: "Ping", createdAt: 20 });
+});
+
+it("inbox describes a row by its newest message within the same second", () => {
+  const h = setup();
+  h.grant("chat");
+  h.grant("dm");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+    metadata(h.relay, "dm", "DM", 11, [["t", "dm"]]),
+  ]);
+  // Done follows Working by its ms offset alone; its id sorts first.
+  const pair = (channel: string) => {
+    const done = message(h.alice, channel, "Done", 20, [["ms", "900"]]);
+    for (let i = 0; ; i++) {
+      const working = message(h.alice, channel, `Working${"!".repeat(i)}`, 20, [
+        ["ms", "100"],
+      ]);
+      if (working.id > done.id) return [working, done];
+    }
+  };
+  h.emit([
+    message(h.alice, "chat", "Ping", 19, [["p", h.viewer.pubkey]]),
+    ...pair("chat"),
+    ...pair("dm"),
+  ]);
+  const items = h.session.unread.inbox().items;
+  for (const id of ["chat:chat", "dm:dm"])
+    expect(items.find((item) => item.id === id)).toMatchObject({
+      preview: "Done",
+    });
+});
+
+it("inbox leaves a Solo chat message its attributed author deleted out of the row's preview", () => {
+  const h = setup({}, true, undefined, true);
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const agent = keypair();
+  const deleted = signed(h.relay, {
+    kind: 9,
+    content: "Deleted body",
+    created_at: 21,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "chat"],
+    ],
+  });
+  h.emit([
+    message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]),
+    deleted,
+    signed(agent, {
+      kind: 9005,
+      content: "",
+      created_at: 22,
+      tags: [
+        ["h", "chat"],
+        ["e", deleted.id],
+      ],
+    }),
+  ]);
+  expect(
+    h.session.unread.inbox().items.find((item) => item.id === "chat:chat"),
+  ).toMatchObject({ preview: "Ping", createdAt: 20 });
+});
+
+it.each([true, false])(
+  "inbox leaves a Solo chat root that has its own thread row out of the timeline row's preview (mentioned root: %s)",
+  (mentioned) => {
+    const h = setup();
+    h.grant("chat");
+    h.emit([
+      metadata(h.relay, "chat", "Solo chat", 11, [
+        ["t", "stream"],
+        ["private"],
+        ["t", SOLO_LABEL],
+      ]),
+    ]);
+    const root = message(
+      h.alice,
+      "chat",
+      "Question",
+      20,
+      mentioned ? [["p", h.viewer.pubkey]] : [],
+    );
+    const reply = (author: typeof h.alice, content: string, at: number) =>
+      message(author, "chat", content, at, [["e", root.id, "", "reply"]]);
+    h.emit([
+      message(h.alice, "chat", "Ping", 19, [["p", h.viewer.pubkey]]),
+      root,
+      reply(h.viewer, "Answer", 21),
+      reply(h.alice, "Follow-up", 22),
+    ]);
+    const items = h.session.unread.inbox().items;
+    expect(items.find((item) => item.id === "chat:chat")).toMatchObject({
+      preview: "Ping",
+      createdAt: 19,
+    });
+    expect(items.find((item) => item.id === `chat:${root.id}`)).toBeDefined();
+  },
+);
 
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
+import { openSettings, selectSettingsSection } from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 
@@ -54,6 +55,9 @@ async function nativeUpdater(
               },
             };
           if (command === "plugin_module") return "export function apply() {}";
+          // Agent storage starts empty; the app saves agent state there.
+          if (command === "app_agent_state_load") return {};
+          if (command === "app_agent_state_set") return;
           const plugin = /^plugin:(updater|resources)\|(\w+)$/.exec(command);
           if (!plugin && command !== "update_restart")
             throw new Error(`Unexpected command ${command}`);
@@ -102,9 +106,8 @@ async function nativeUpdater(
 
 async function openUpdates(page, app) {
   await page.goto(app.origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Software updates").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Software updates");
   return page
     .getByRole("region", { name: "Software updates", exact: true })
     .getByRole("status");
@@ -271,6 +274,11 @@ test("the ready toast yields to Settings → Updates, which offers the same acti
 
   await button(page, "Appearance").click();
   await expect(toast).toBeVisible();
+  // Toasts layer above dialogs, so the action stays usable over Settings.
+  await page
+    .getByRole("region", { name: "App notifications" })
+    .getByRole("button", { name: "Update now", exact: true })
+    .click({ trial: true });
   await button(page, "Software updates").click();
   await expect(toast).toHaveCount(0);
 

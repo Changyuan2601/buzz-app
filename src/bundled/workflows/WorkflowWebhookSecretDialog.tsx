@@ -67,6 +67,7 @@ export function WorkflowWebhookSecretDialog({
     <>
       <Dialog
         open
+        dismissOnOutsideClick={false}
         onOpenChange={(open) => {
           if (!open) leave();
         }}

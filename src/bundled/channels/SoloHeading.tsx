@@ -64,6 +64,7 @@ export function SoloHeading({
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
     trigger: RefObject<HTMLButtonElement | null>;
+    rename?: boolean;
   }>();
   const [sharing, setSharing] = useState<{ visit: AbortSignal | undefined }>();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
@@ -116,6 +117,13 @@ export function SoloHeading({
                     }}
                     onNewWorkspace={() => setCreatingWorkspace(true)}
                     onCopy={copy}
+                    onRename={() =>
+                      setSettingsOpen({
+                        visit: signal,
+                        trigger: actionsTrigger,
+                        rename: true,
+                      })
+                    }
                     onSettings={() =>
                       setSettingsOpen({
                         visit: signal,
@@ -279,6 +287,7 @@ export function SoloHeading({
       {settingsOpen && (
         <WorkspaceSettings
           signal={settingsOpen.visit}
+          focusName={settingsOpen.rename}
           finalFocus={settingsOpen.trigger}
           key={channel.id}
           session={session}

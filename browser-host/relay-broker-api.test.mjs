@@ -414,10 +414,15 @@ test("Git authorization signs only this community's exact repository URL", async
   }
 });
 
-test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
+test("saved community presentation survives join-policy failure without changing join discovery", async () => {
   const icon = "https://images.example/icon@2x.png";
   const h = await harness((call) => {
-    if (call.url === fixtureRelayUrl) return Response.json({ icon });
+    if (call.url === fixtureRelayUrl)
+      return Response.json({
+        icon,
+        name: "Published",
+        description: "Not projected",
+      });
     if (call.url === `${fixtureRelayUrl}/api/join-policy`)
       return new Response("unavailable", { status: 503 });
     return new Response(null, { status: 404 });
@@ -425,7 +430,7 @@ test("saved icon discovery survives join-policy failure without changing join di
   try {
     const iconResponse = await h.get("icon-info");
     expect(iconResponse.status).toBe(200);
-    expect(await iconResponse.json()).toEqual({ icon });
+    expect(await iconResponse.json()).toEqual({ icon, name: "Published" });
     expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
 
     const joinResponse = await h.get("info");

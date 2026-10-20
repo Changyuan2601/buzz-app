@@ -18,6 +18,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CommunityPicker } from "./CommunityPicker";
+import { CommunityAddress } from "../../app/CommunityAddress";
 import { MEMBERSHIP_SECTION } from "./CommunityPickerItem";
 import type { PurgeFailure } from "./device-state";
 import { MEMBERSHIP_KIND, type Role } from "./roster";
@@ -142,6 +143,7 @@ function harness({
     subscribe: () => () => {},
   } as unknown as RelayData;
   const communities = {
+    retainPresentation: () => () => {},
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -258,7 +260,6 @@ it("offers the original's actions on the selected community and only reads its r
     "Mark all as read",
     "Copy community URL",
     "Invite to community",
-    "Community settings",
     "Leave community",
   ]);
   expect(within(menu).getAllByRole("separator")).toHaveLength(2);
@@ -283,7 +284,6 @@ it("offers the original's actions on the selected community and only reads its r
   expect(items(inactive)).toEqual([
     "Mark all as read",
     "Copy community URL",
-    "Community settings",
     "Leave community",
   ]);
   expect(within(inactive).getAllByRole("separator")).toHaveLength(2);
@@ -315,7 +315,6 @@ it("offers no Invite and reads nothing while the session carries no relay author
   expect(items(menu)).toEqual([
     "Mark all as read",
     "Copy community URL",
-    "Community settings",
     "Leave community",
   ]);
   // Without the session's authority there is nothing to verify a roster
@@ -530,7 +529,7 @@ it.each([
   expect(h.markAllChannelsRead).not.toHaveBeenCalled();
 });
 
-it("opens Invites and Community settings scoped to the community", async () => {
+it("opens Invites scoped to the community, with no duplicate Settings entry", async () => {
   const user = userEvent.setup();
   const h = harness();
   render(
@@ -552,19 +551,11 @@ it("opens Invites and Community settings scoped to the community", async () => {
   });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 
-  // Settings for an inactive community: the scoped target selects it on the
-  // way, so the picker itself neither selects nor connects.
   menu = await openMenu("Secondary");
-  await user.click(
-    within(menu).getByRole("menuitem", { name: "Community settings" }),
-  );
-  expect(h.onOpenTarget).toHaveBeenLastCalledWith({
-    version: 1,
-    kind: "settings",
-    section: "profile",
-    scope: { viewer, communityOrigin: secondary },
-  });
-  expect(h.onOpenTarget).toHaveBeenCalledTimes(2);
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Community settings" }),
+  ).toBeNull();
+  expect(h.onOpenTarget).toHaveBeenCalledTimes(1);
   expect(h.select).not.toHaveBeenCalled();
 });
 
@@ -589,7 +580,7 @@ it.each([
         name: "Invite to community",
       });
     else {
-      await within(menu).findByRole("menuitem", { name: "Community settings" });
+      await within(menu).findByRole("menuitem", { name: "Leave community" });
       expect(
         within(menu).queryByRole("menuitem", { name: "Invite to community" }),
       ).toBeNull();
@@ -628,7 +619,7 @@ it("leaves an inactive community after confirming: the relay releases it before 
   expect(h.leaveRequests()).toEqual([]);
   expect(h.leave).not.toHaveBeenCalled();
   await user.click(confirmLeave(dialog));
-  await screen.findByText("Left Secondary.");
+  await screen.findByText("Left Secondary — https://secondary.example.");
   const route = `/api/relay/${encodeURIComponent(secondary)}/leave`;
   expect(h.leaveRequests()).toEqual([route]);
   expect(h.fetch).toHaveBeenCalledWith(
@@ -663,7 +654,7 @@ it("leaving the selected community tells the host to select Personal space; an i
   render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
   let dialog = await askToLeave(user, "Primary");
   await user.click(confirmLeave(dialog));
-  await screen.findByText("Left Primary.");
+  await screen.findByText("Left Primary — https://primary.example.");
   // The service owns the store state; the host adds the navigation and ingress
   // recovery that clicking Personal space would, so a Settings card scoped to
   // the gone community is not left open.
@@ -679,7 +670,7 @@ it("leaving the selected community tells the host to select Personal space; an i
   h.update({ selected: secondary });
   dialog = await askToLeave(user, "Secondary");
   await user.click(confirmLeave(dialog));
-  await screen.findByText("Left Secondary.");
+  await screen.findByText("Left Secondary — https://secondary.example.");
   expect(h.onSelect).toHaveBeenCalledTimes(2);
   expect(h.onSelect).toHaveBeenLastCalledWith(null);
 
@@ -693,11 +684,13 @@ it("leaving the selected community tells the host to select Personal space; an i
   });
   dialog = await askToLeave(user, "Secondary");
   await user.click(confirmLeave(dialog));
-  // The earlier "Left Secondary." toast is still showing, so wait on the
+  // The earlier "Left Secondary — https://secondary.example." toast is still showing, so wait on the
   // leave itself rather than on a second copy of the same text.
   await waitFor(() => expect(h.leave).toHaveBeenCalledTimes(3));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(await screen.findAllByText("Left Secondary.")).toHaveLength(2);
+  expect(
+    await screen.findAllByText("Left Secondary — https://secondary.example."),
+  ).toHaveLength(2);
   expect(h.onSelect).toHaveBeenCalledTimes(2);
   expect(button("Primary")).toHaveAttribute("aria-current", "true");
   await waitFor(() => expect(switcher()).toHaveFocus());
@@ -726,7 +719,8 @@ it.each([
   {
     name: "the relay is unreachable",
     response: () => Response.json({ error: "upstream" }, { status: 503 }),
-    toast: "Couldn’t leave Secondary. Check your connection and try again.",
+    toast:
+      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
   },
   {
     name: "the relay rejects the request for an unknown reason",
@@ -735,7 +729,8 @@ it.each([
         { error: "invalid: database error: secret" },
         { status: 400 },
       ),
-    toast: "Couldn’t leave Secondary. Check your connection and try again.",
+    toast:
+      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
   },
   {
     name: "the viewer owns the relay",
@@ -744,13 +739,14 @@ it.each([
         { error: "invalid: relay owner cannot leave" },
         { status: 400 },
       ),
-    toast: "The relay owner can’t leave Secondary.",
+    toast: "The relay owner can’t leave Secondary — https://secondary.example.",
   },
   {
     name: "the request times out",
     response: () =>
       Promise.reject(new DOMException("timed out", "TimeoutError")),
-    toast: "Couldn’t leave Secondary. Check your connection and try again.",
+    toast:
+      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
   },
 ])(
   "keeps the membership when $name and leaves the item usable",
@@ -777,7 +773,7 @@ it.each([
 );
 
 const absent =
-  "You were no longer a member of Secondary, so it was removed from this device.";
+  "You were no longer a member of Secondary — https://secondary.example, so it was removed from this device.";
 it.each([
   // The relay holds no membership, so nothing keyed to it is worth keeping.
   { error: "invalid: you are not a relay member", toast: absent, purge: true },
@@ -794,7 +790,7 @@ it.each([
     // reuse after a re-add, and the notice promises nothing permanent.
     error: "blocked: you are banned from this community",
     toast:
-      "You’re currently banned from Secondary, so the leave was refused. It was removed from this device and can be added again by its URL if access is restored.",
+      "You’re currently banned from Secondary — https://secondary.example, so the leave was refused. It was removed from this device and can be added again by its URL if access is restored.",
     purge: false,
   },
 ])(
@@ -836,12 +832,12 @@ it("reports a device that could not finish forgetting a left community without b
   // A store that never saves would otherwise show the identical promise on
   // every attempt; the storage error's own words tell the viewer why.
   const notice = await screen.findByText(
-    "Left Secondary, but this device couldn’t finish cleaning up (Setting the value exceeded the quota). Leave it again to finish.",
+    "Left Secondary — https://secondary.example, but this device couldn’t finish cleaning up (Setting the value exceeded the quota). Leave it again to finish.",
   );
   expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "error");
   expect(
     screen.queryByText(
-      "Couldn’t leave Secondary. Check your connection and try again.",
+      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
     ),
   ).toBeNull();
   // The relay released the membership; only the device record failed, so the
@@ -861,7 +857,7 @@ it("falls back to the save failure's own message when it carries no cause", asyn
   const dialog = await askToLeave(user, "Secondary");
   await user.click(confirmLeave(dialog));
   await screen.findByText(
-    "Left Secondary, but this device couldn’t finish cleaning up (Storage is read-only). Leave it again to finish.",
+    "Left Secondary — https://secondary.example, but this device couldn’t finish cleaning up (Storage is read-only). Leave it again to finish.",
   );
   expect(button("Secondary")).toBeInTheDocument();
 });
@@ -879,7 +875,9 @@ it("still reports a successful leave when the host's selection callback throws",
   await user.click(confirmLeave(dialog));
   // The device did finish: the community is gone and the relay released it.
   // A host that cannot navigate afterwards must not read as a device failure.
-  const notice = await screen.findByText("Left Primary.");
+  const notice = await screen.findByText(
+    "Left Primary — https://primary.example.",
+  );
   expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "success");
   expect(screen.queryByText(/couldn’t finish cleaning up/)).toBeNull();
   expect(onSelect).toHaveBeenCalledWith(null);
@@ -904,7 +902,7 @@ it("says when some saved data outlived the purge", async () => {
   const dialog = await askToLeave(user, "Secondary");
   await user.click(confirmLeave(dialog));
   const notice = await screen.findByText(
-    "Left Secondary. Some saved data couldn’t be cleared.",
+    "Left Secondary — https://secondary.example. Some saved data couldn’t be cleared.",
   );
   expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "success");
   await waitFor(() =>
@@ -941,7 +939,7 @@ it("keeps the pending leave modal and prevents another submission until the rela
   fireEvent.click(confirm);
   expect(h.leaveRequests()).toHaveLength(1);
   release(accepted());
-  await screen.findByText("Left Secondary.");
+  await screen.findByText("Left Secondary — https://secondary.example.");
   expect(h.leave).toHaveBeenCalledTimes(1);
 });
 
@@ -1033,7 +1031,7 @@ it("removes the Invite shortcut with its Settings contribution and restores it o
       within(menu).queryByRole("menuitem", { name: "Invite to community" }),
     ).toBeNull();
     expect(
-      within(menu).getByRole("menuitem", { name: "Community settings" }),
+      within(menu).getByRole("menuitem", { name: "Leave community" }),
     ).toBeInTheDocument();
     expect(h.onOpenTarget).not.toHaveBeenCalled();
     await act(async () => {
@@ -1130,4 +1128,72 @@ it("shows only the active community until opened and routes creation through Hos
       screen.queryByRole("dialog", { name: "Switch community" }),
     ).toBeNull(),
   );
+});
+
+it("shares discovered community artwork with an already-open Settings address without another read", async () => {
+  const root = new Context();
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "You", picture: "" },
+      selected: null,
+      memberships: [{ id: primary, name: "Primary" }],
+    }),
+  );
+  let finish!: (response: Response) => void;
+  const pendingIcon = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const artwork = "https://images.example/bee.png";
+  const communityId = "primary";
+  const fetch = vi.fn(async (url: string) => {
+    if (url === "/api/relay/identity") return Response.json({ viewer });
+    if (url === "/api/relay/register") return Response.json({});
+    if (url === `/api/relay/${communityId}/icon-info`) return pendingIcon;
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const communities = createCommunities(root, true);
+  try {
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    render(
+      <>
+        <CommunityPicker communities={communities} />
+        <CommunityAddress
+          communities={communities}
+          community={{ id: communityId, name: "Primary" }}
+        />
+      </>,
+    );
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        `/api/relay/${communityId}/icon-info`,
+        expect.anything(),
+      ),
+    );
+    await act(async () => finish(Response.json({ icon: artwork })));
+    await waitFor(() =>
+      expect(button("Primary").querySelector("img")).toHaveAttribute(
+        "src",
+        artwork,
+      ),
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Copy community URL, primary.example" })
+        .querySelector("img"),
+    ).toHaveAttribute("src", artwork);
+    expect(
+      fetch.mock.calls.filter(
+        ([url]) => url === `/api/relay/${communityId}/icon-info`,
+      ),
+    ).toHaveLength(1);
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/session"))).toBe(
+      false,
+    );
+  } finally {
+    await act(async () => finish(Response.json({ icon: artwork })));
+    cleanup();
+    await root.fiber.dispose();
+  }
 });

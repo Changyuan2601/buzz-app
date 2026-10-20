@@ -123,6 +123,7 @@ const communityState = {
 const host = {
   plugins: { subscribe: () => () => {}, snapshot: () => pluginState },
   communities: {
+    retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => communityState,
   },
@@ -1078,6 +1079,7 @@ it("keeps grouped cards available without a selected community", () => {
       {...host}
       communities={
         {
+          retainPresentation: () => () => {},
           subscribe: () => () => {},
           snapshot: () => noCommunityState,
         } as unknown as Parameters<typeof Settings>[0]["communities"]
@@ -1112,13 +1114,14 @@ it("shows administration only within a selected community", () => {
   const { cards } = registry([membership]);
   const view = render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).toHaveTextContent("Primary");
+  expect(nav).toHaveTextContent("primary.example");
   expect(nav).toHaveTextContent("Community admin");
   fireEvent.click(screen.getByRole("button", { name: "Membership" }));
   expect(screen.getByText("Membership body for Primary")).toBeVisible();
 
   const noCommunityState = { ...communityState, selected: null };
   const noCommunity = {
+    retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => noCommunityState,
   } as unknown as Parameters<typeof Settings>[0]["communities"];
@@ -1153,7 +1156,7 @@ it("gives contributed cards their own community sections and retires removed car
     />,
   );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).toHaveTextContent("Primary");
+  expect(nav).toHaveTextContent("primary.example");
   expect(nav).toHaveTextContent("Communities");
   expect(await screen.findByText("Hosted communities body")).toBeVisible();
   expect(
@@ -1283,6 +1286,7 @@ it.each(["primary", null])(
     const state = { ...communityState, selected };
     const connection = { scope: "settings-parity-test" };
     const communities = {
+      retainPresentation: () => () => {},
       subscribe: () => () => {},
       snapshot: () => state,
       relay: {
@@ -1292,12 +1296,13 @@ it.each(["primary", null])(
     } as unknown as Parameters<typeof Settings>[0]["communities"];
     render(<Settings {...host} communities={communities} cards={cards} />);
     render(
-      <SettingsSidebar
-        cards={cards}
-        communities={communities}
-        onBack={() => {}}
-        onSection={() => {}}
-      />,
+      <nav aria-label="Settings sections">
+        <SettingsSidebar
+          cards={cards}
+          communities={communities}
+          onSection={() => {}}
+        />
+      </nav>,
     );
     const [standalone, shell] = screen.getAllByRole("navigation", {
       name: "Settings sections",
@@ -1316,7 +1321,9 @@ it.each(["primary", null])(
       outline(shell as HTMLElement),
     );
     expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
-      ...(selected ? ["Primary", "Community admin"] : ["Personal space"]),
+      ...(selected
+        ? [undefined, "Community", "Community admin"]
+        : ["Personal space"]),
       "Buzz",
       "Plugins",
       "Communities",
@@ -1584,7 +1591,7 @@ it("retains departure confirmation until local cleanup settles", async () => {
   expect(screen.queryByRole("button", { name: "Leave or remove" })).toBeNull();
   expect(
     screen.getByText(
-      "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
+      "Primary — https://primary.example was removed from this device. Your membership wasn’t changed. You can add it again later.",
     ),
   ).toBeVisible();
 });
@@ -1939,4 +1946,65 @@ it("keeps identity independent of community profile and clears revealed keys on 
     "••••••••••••••••",
   );
   expect(exportKey).toHaveBeenCalledTimes(1);
+});
+
+it("retains both local drafts across section navigation but retires them with their account or community", async () => {
+  const priorNative = Object.getOwnPropertyDescriptor(globalThis, "isTauri");
+  Object.defineProperty(globalThis, "isTauri", {
+    configurable: true,
+    value: true,
+  });
+  try {
+    const { cards } = registry([]);
+    let snapshot: ClientSnapshot = {
+      ...communityState,
+      status: "ready",
+      relayAvailable: false,
+    };
+    const communities = {
+      ...host.communities,
+      snapshot: () => snapshot,
+    };
+    const view = render(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Local settings" }));
+    await user.type(screen.getByLabelText("Display name"), "Unsaved name");
+    await user.type(
+      screen.getByLabelText("Repositories folder"),
+      "/unsaved/repos",
+    );
+    await user.click(screen.getByRole("button", { name: "Profile" }));
+    expect(screen.queryByRole("region", { name: "Local settings" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Local settings" }));
+    expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved name");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue(
+      "/unsaved/repos",
+    );
+    snapshot = {
+      ...snapshot,
+      selected: "https://other.example",
+      memberships: [{ id: "https://other.example", name: "Other" }],
+    };
+    view.rerender(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue("");
+    await user.type(screen.getByLabelText("Display name"), "Other draft");
+    await user.type(
+      screen.getByLabelText("Repositories folder"),
+      "/other/draft",
+    );
+    snapshot = { ...snapshot, viewer: "cd".repeat(32) };
+    view.rerender(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue("");
+  } finally {
+    if (priorNative) Object.defineProperty(globalThis, "isTauri", priorNative);
+    else Reflect.deleteProperty(globalThis, "isTauri");
+  }
 });
