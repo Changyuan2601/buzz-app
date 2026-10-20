@@ -233,8 +233,8 @@ the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
 with the same key finds it. Native federated sessions are removed by the same
-sign-out owner across indexed profiles and configurations. Builderlab and hosted-community logins live only in
-memory and end with the restart. Kept agents start only while the signed-in key
+sign-out owner across indexed profiles and configurations. Builderlab and hosted
+communities sign in through that same native session and hold no credential of their own. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
 ## Automatic backup consent hooks
@@ -302,11 +302,12 @@ upgrades attach the assertion beside their existing possession proof. Protected
 socket workers stop by assertion expiry; the existing live owner reconnects and
 performs fresh NIP-42. Retirement fences protected reads and results.
 
-API-backed remote-agent and hosted-community controls remain unavailable until
-the agreed same-origin NIP-FA extension and API authentication contract exist.
-The native SDK checks distinct authority/operation grants, enabled artifact
-revision, and live registration, then returns an explicit unavailable error;
-it never forwards the adapter credential under a legacy header. No Buzz-managed
+Builderlab remote-agent and hosted-community calls go through the native SDK.
+It checks distinct authority/operation grants, enabled artifact revision, and
+live registration, then sends the adapter session as `Authorization: Bearer`
+only to the adapter origin on the allowlisted routes. It never forwards the
+credential under a legacy header, and a 401 from those routes fails that call
+without ending the session. No Buzz-managed
 CLI listener or provisioning is advertised without the companion CLI contract.
 The Node development host retains its supported broker flow.
 
