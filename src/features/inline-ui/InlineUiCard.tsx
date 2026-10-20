@@ -99,7 +99,7 @@ function ChoiceForm({
             </div>
             <div className={styles.shuffle}>
               <Button
-                variant="outline"
+                variant="prominent"
                 size="sm"
                 disabled={busy}
                 onClick={() => {
