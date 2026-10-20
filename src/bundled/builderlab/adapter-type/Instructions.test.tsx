@@ -4,7 +4,7 @@ import type { RelayData } from "../../../features/relay/service";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
 import type { HostResponse } from "../../../features/host/service";
@@ -52,13 +52,7 @@ const response = (): HostResponse => ({
     ],
   }),
 });
-beforeEach(() =>
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
-);
-afterEach(() => {
-  cleanup();
-  vi.unstubAllEnvs();
-});
+afterEach(cleanup);
 function fixture() {
   const federated = federatedFixture("user", "account-a");
   const session = createBuilderlabSession(federated.session);
@@ -79,6 +73,7 @@ function fixture() {
     Tab,
     type,
     request,
+    signOut: () => session.signOut(),
     changeAccount: () => {
       void session.signOut();
       vi.mocked(federated.service.signIn).mockImplementation(async () => {
@@ -195,4 +190,14 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
   expect(
     screen.getByRole("button", { name: "Save instructions" }),
   ).toBeEnabled();
+});
+it("links to the signed-in NIP-FI origin and hides the link without one", async () => {
+  const h = fixture();
+  render(<h.Tab agent={agent()} save={vi.fn()} />);
+  expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
+    "href",
+    "https://builderlab.example",
+  );
+  await act(async () => h.signOut());
+  expect(screen.queryByRole("link", { name: "Builderlab" })).toBeNull();
 });

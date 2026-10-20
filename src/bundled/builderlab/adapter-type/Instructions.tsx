@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
@@ -151,6 +151,7 @@ export function createSettingsTab(
     settingsContent,
   }: AgentViewProps) {
     const [revision, setRevision] = useState(0);
+    const origin = useSyncExternalStore(session.subscribe, session.origin);
     return (
       <div className="grid gap-4">
         <div hidden={settingsSection === "runtime"}>
@@ -175,17 +176,19 @@ export function createSettingsTab(
             {settingsContent}
           </>
         )}
-        <p className="m-0 text-body-sm text-secondary">
-          Remote runtime managed via{" "}
-          <a
-            className={inlineStyles.link}
-            href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Builderlab
-          </a>
-        </p>
+        {origin && (
+          <p className="m-0 text-body-sm text-secondary">
+            Remote runtime managed via{" "}
+            <a
+              className={inlineStyles.link}
+              href={origin}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Builderlab
+            </a>
+          </p>
+        )}
       </div>
     );
   };

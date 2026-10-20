@@ -79,6 +79,8 @@ export function createBuilderlabSession(federated: FederatedSession) {
         listeners.delete(listener);
       };
     },
+    /** The validated NIP-FI origin while signed in, for links to Builderlab. */
+    origin: () => (disposed ? undefined : credential?.origin),
     credential() {
       if (disposed || !credential)
         throw new Error("Sign in to Builderlab first.");
