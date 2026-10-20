@@ -1,15 +1,13 @@
 //! Mainline pre-start path: reuse the selected node, then probe its inference route.
-#[cfg(feature = "mesh")]
 use tauri::Manager;
 
-#[cfg(feature = "mesh")]
 pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
     let mut url = url::Url::parse(raw).map_err(|_| "Invalid agent community")?;
     if url.scheme() == "wss" {
         url.set_scheme("https")
             .map_err(|_| "Invalid agent community")?;
     }
-    crate::relay::mesh_origin(url.as_str())?;
+    crate::desktop::host::relay_origin(url.as_str())?;
     if let Some(host) = url.host_str().filter(|host| host.ends_with('.')) {
         let host = host.trim_end_matches('.').to_owned();
         url.set_host(Some(&host))
@@ -20,25 +18,23 @@ pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
 
 /// Shared readiness: the agent's community holds the current lease, compute is
 /// Ready, and a real chat probe on the loopback route succeeded.
-#[cfg(feature = "mesh")]
 struct Ready {
     lease: String,
     model: String,
 }
 
-#[cfg(feature = "mesh")]
 async fn ready_inference(
     app: &tauri::AppHandle,
     relay: &str,
     model: &str,
 ) -> Result<Ready, String> {
-    use buzz_mesh_compute::lifecycle::Phase;
+    use crate::lifecycle::Phase;
     let host = app.state::<super::MeshHost>();
-    let identity = app.state::<crate::identity::IdentityHost>();
+    let identity = app.state::<crate::desktop::host::Identity>();
     let community = community_origin(relay)?;
     let lease = host.lease.for_community(&community)?;
     if host.lifecycle.phase() == Phase::Stopped {
-        buzz_mesh_compute::startup_log::stage("entry", "from=agent");
+        crate::startup_log::stage("entry", "from=agent");
         super::start(app, &host, &identity, &lease).await?;
     }
     let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;
@@ -68,7 +64,7 @@ async fn ready_inference(
                     result = probe(&client, port, model) => result,
                 } {
                     Ok(model) => {
-                        buzz_mesh_compute::startup_log::stage("first_probe_ok", "");
+                        crate::startup_log::stage("first_probe_ok", "");
                         return Ok(model);
                     }
                     Err(error) => last = error,
@@ -81,7 +77,7 @@ async fn ready_inference(
     let model = tokio::time::timeout_at(deadline, ready)
         .await
         .map_err(|_| {
-            buzz_mesh_compute::startup_log::stage("first_probe_ok", "ok=false timeout");
+            crate::startup_log::stage("first_probe_ok", "ok=false timeout");
             format!("Shared compute inference did not become ready: {last}")
         })??;
     host.lease.community(&lease)?;
@@ -90,7 +86,6 @@ async fn ready_inference(
 
 /// Lease-bound gateway target for a plugin-owned helper. Each request is checked
 /// after taking the native replacement lock, held through the upstream body.
-#[cfg(feature = "mesh")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedInference {
@@ -99,7 +94,6 @@ pub struct PreparedInference {
     pub lease: String,
 }
 
-#[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_prepare_inference(
     app: tauri::AppHandle,
@@ -117,7 +111,7 @@ pub async fn mesh_compute_prepare_inference(
                 host.preparing.clone(),
                 std::sync::Arc::new(move |id| {
                     lease.with_current(id, |_| {
-                        if lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+                        if lifecycle.phase() != crate::lifecycle::Phase::Ready {
                             return Err("Shared compute is not ready".into());
                         }
                         super::mesh_port("BUZZ_MESH_API_PORT", 19337)
@@ -140,7 +134,6 @@ pub async fn mesh_compute_prepare_inference(
 /// current selection and compute is Ready. Check before publishing a reply.
 /// Output freshness only; the gateway separately isolates inference requests.
 /// A same-community lease rotation also returns false.
-#[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_inference_current(
     app: tauri::AppHandle,
@@ -150,7 +143,7 @@ pub async fn mesh_compute_inference_current(
     Ok(host
         .lease
         .with_current(&lease, |_| {
-            Ok(host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready)
+            Ok(host.lifecycle.phase() == crate::lifecycle::Phase::Ready)
         })
         .unwrap_or(false))
 }
@@ -159,7 +152,6 @@ pub async fn mesh_compute_inference_current(
 /// agent's "Chat" mode (no harness). Native so the WebView CSP stays closed to
 /// loopback HTTP. Refuses unless `lease` is still current and compute is Ready;
 /// holds the replacement lock through the complete HTTP operation.
-#[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_chat(
     app: tauri::AppHandle,
@@ -174,7 +166,7 @@ pub async fn mesh_compute_chat(
     }
     let port = {
         host.lease.with_current(&lease, |_| {
-            if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+            if host.lifecycle.phase() != crate::lifecycle::Phase::Ready {
                 return Err("Shared compute is not ready".into());
             }
             super::mesh_port("BUZZ_MESH_API_PORT", 19337)
@@ -192,7 +184,6 @@ pub async fn mesh_compute_chat(
     }
 }
 
-#[cfg(feature = "mesh")]
 async fn chat_completion(
     client: &reqwest::Client,
     port: u16,
@@ -221,7 +212,6 @@ async fn chat_completion(
 
 /// Baseline readiness (legacy `mesh_readiness::wait_for_mesh_inference`): a real
 /// chat request decides. The catalog only explains a failure; it never gates.
-#[cfg(feature = "mesh")]
 async fn probe(client: &reqwest::Client, port: u16, model: &str) -> Result<String, String> {
     let base = format!("http://127.0.0.1:{port}/v1");
     let wire = match model.trim() {
@@ -268,7 +258,7 @@ async fn probe(client: &reqwest::Client, port: u16, model: &str) -> Result<Strin
     })
 }
 
-#[cfg(all(test, feature = "mesh"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -453,7 +443,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "mesh"))]
+#[cfg(test)]
 mod community_tests {
     use super::community_origin;
     #[test]

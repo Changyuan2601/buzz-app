@@ -8,11 +8,10 @@ there is no ACP helper, process-backed session store or MCP bridge. See the
 ## Source ownership
 
 The plugin registers the Mesh agent type through the shared Agents extension point.
-Its Tauri-independent Rust runtime lives in `native/` (`buzz-mesh-agent`).
-The desktop bridge in `src-tauri/src/mesh_compute/inline.rs` retains native
-identity/community admission, run cancellation and activity/tool callbacks.
-This backend is compiled behind the desktop `mesh` feature; colocating its source
-does not make it a dynamically installable native extension.
+Agent mode runs on the app's bundled `goose-acp` through the Goose plugin's
+`GooseProcess` and Buzz tool servers; `meshGoose.ts` points it at the mesh route.
+Chat mode, native identity/community admission and the Mesh node live in
+`src-tauri/src/mesh_compute/` and `compute/`, compiled into every build.
 
 ## Modes and admission
 

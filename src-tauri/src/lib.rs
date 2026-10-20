@@ -36,10 +36,8 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod mesh_compute;
-use mesh_compute::widget::{
-    mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
-};
-use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
+use buzz_mesh_compute::desktop::{self as mesh, agent, sharing, widget};
+use mesh_compute::MeshHost;
 mod identity;
 mod nsec_backup;
 mod nsec_backup_choice;
@@ -448,12 +446,6 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
-        mesh_compute_inventory,
-        mesh_compute_status,
-        mesh_compute_stop,
-        mesh_compute_widget_open,
-        mesh_compute_widget_close,
-        mesh_compute_widget_status,
         huddle_window_reset_incoming,
         huddle_window_open,
         huddle_window_update,
@@ -594,23 +586,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Donor parity: model/download futures require upstream's 8 MiB worker stacks.
-    // Keep the runtime owned for the complete app lifetime, not a second Mesh node.
-    #[cfg(feature = "mesh")]
-    let _mesh_runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()
-    {
-        Ok(runtime) => {
-            tauri::async_runtime::set(runtime.handle().clone());
-            Some(runtime)
-        }
-        Err(error) => {
-            eprintln!("Mesh async runtime unavailable: {error}");
-            return;
-        }
-    };
     let context = app_context();
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
@@ -678,7 +653,6 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());
-            #[cfg(feature = "mesh")]
             app.state::<MeshHost>().initialize_preferences(
                 app.path()
                     .app_data_dir()
@@ -768,6 +742,7 @@ pub fn run() {
     };
     builder
         .manage(image_clipboard::ImageClipboard::default())
+        .manage(mesh_compute::identity(identity.clone()))
         .manage(identity)
         .manage(MeshHost::default())
 
@@ -797,11 +772,25 @@ pub fn run() {
                 browser_action,
                 browser_status
             ];
-            #[cfg(feature = "mesh")]
-            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, mesh_compute_widget_open, mesh_compute_widget_close, mesh_compute_widget_status, mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                    mesh::mesh_compute_inventory,
+                    mesh::mesh_compute_status,
+                    mesh::mesh_compute_stop,
+                    mesh::mesh_compute_catalog,
+                    mesh::mesh_compute_start,
+                    mesh::mesh_compute_select,
+                    mesh::mesh_compute_release,
+                    mesh::mesh_compute_disarm,
+                    widget::mesh_compute_widget_open,
+                    widget::mesh_compute_widget_close,
+                    widget::mesh_compute_widget_status,
+                    sharing::mesh_compute_share,
+                    agent::mesh_compute_prepare_inference,
+                    agent::mesh_compute_inference_current,
+                    agent::mesh_compute_chat
+                ];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
-                #[cfg(feature = "mesh")]
                 if request.message.command().starts_with("mesh_compute_") {
                     return mesh_commands(request);
                 }

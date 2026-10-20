@@ -39,7 +39,7 @@ jobs:
           path: .cache/mesh-cross-node
           key: mesh-smoke-assets-linux-v0.78.1-8030f045
       - name: Full mesh crate tests
-        run: ./bin/cargo test --locked -p buzz-mesh-compute --features mesh
+        run: ./bin/cargo test --locked -p buzz-mesh-compute
       - name: Remote-only completion and provider outage
         run: scripts/ci-mesh-cross-node.sh
       - name: Evidence (includes ephemeral test identities only)

@@ -113,17 +113,15 @@ export function MeshCreateSetup({
               }
             />
           </SettingsGroup>
-          {(busy || !status || !status.available || otherCommunity) && (
+          {(busy || !status || otherCommunity) && (
             <p role="status" className="m-0 text-body-sm text-secondary">
               {busy
                 ? "Starting shared compute. You can create your agent while setup continues."
                 : !status
                   ? "Checking shared compute…"
-                  : !status.available
-                    ? "Shared compute is unavailable in this build."
-                    : otherCommunity
-                      ? "This computer is connected to another community. Switch communities in Settings → Shared compute to share here."
-                      : "You can change sharing in Settings → Shared compute."}
+                  : otherCommunity
+                    ? "This computer is connected to another community. Switch communities in Settings → Shared compute to share here."
+                    : "You can change sharing in Settings → Shared compute."}
             </p>
           )}
         </>

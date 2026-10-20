@@ -1,5 +1,5 @@
 use super::*;
-use crate::mesh_compute::lease::Lease;
+use crate::lease::Lease;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Notify;
 
@@ -124,7 +124,7 @@ async fn unknown_lease_never_connects_and_upstream_failure_releases_replacement(
 
 #[tokio::test]
 async fn stop_cancels_a_held_body_and_retires_its_ingress_before_returning() {
-    use crate::mesh_compute::{stop_compute, MeshHost};
+    use crate::desktop::{stop_compute, MeshHost};
     let host = Arc::new(MeshHost::default());
     let lease = host.lease.select("https://a.example".into()).unwrap();
     let started = Arc::new(Notify::new());

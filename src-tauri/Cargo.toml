@@ -12,15 +12,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-mesh = ["dep:axum", "dep:buzz-mesh-compute", "buzz-mesh-compute/mesh"]
 
 [build-dependencies]
 url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
-buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute", optional = true }
+buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute" }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }

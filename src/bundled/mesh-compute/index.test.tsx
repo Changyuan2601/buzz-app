@@ -789,58 +789,6 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
   );
 });
 
-it("unsupported native builds never show bindings or load inventory across navigation", async () => {
-  native.invoke.mockImplementation((command) => {
-    if (command !== "mesh_compute_status")
-      throw new Error("Unknown native command");
-    return Promise.resolve({
-      available: false,
-      reason: "Mesh native runtime is not included in this build",
-    });
-  });
-  let Component!: React.ComponentType;
-  let snapshot = {
-    status: "ready",
-    viewer: "viewer",
-    scope: "https://fixture.example:viewer",
-  };
-  const listeners = new Set<() => void>();
-  apply({
-    relay: {
-      snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0]);
-  await flushRegistration();
-  render(<Component />);
-  await screen.findByText("Shared compute isn’t available in this build.");
-  act(() => {
-    snapshot = { ...snapshot, scope: "https://other.example:viewer" };
-    for (const listener of listeners) listener();
-  });
-  await screen.findByText("Shared compute isn’t available in this build.");
-  expect(screen.queryByText(/Compute connected/)).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", {
-      name: "Use compute in this community instead",
-    }),
-  ).not.toBeInTheDocument();
-  expect(
-    native.invoke.mock.calls.every(
-      ([command]) => command === "mesh_compute_status",
-    ),
-  ).toBe(true);
-});
-
 it.each([
   ["starting", "Sharing is off. Connecting to community compute…", false],
   ["stopping", "Stopping…", true],

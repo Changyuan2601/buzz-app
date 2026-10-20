@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 
 #[derive(Default)]
-pub(super) struct Lease(Mutex<Option<(String, String)>>);
+pub struct Lease(Mutex<Option<(String, String)>>);
 impl Lease {
     pub fn current(&self) -> Result<Option<(String, String)>, String> {
         self.0
@@ -20,11 +20,12 @@ impl Lease {
             .ok_or_else(|| "Enable Shared compute in the agent’s community first".into())
     }
 
-    #[cfg(test)]
+    /// Test helper shared with the desktop host tests.
+    #[doc(hidden)]
     pub fn select(&self, community: String) -> Result<String, String> {
         self.select_with(community, || {})
     }
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn select_with(&self, community: String, changed: impl FnOnce()) -> Result<String, String> {
         self.try_select_with(community, false, || {
             changed();

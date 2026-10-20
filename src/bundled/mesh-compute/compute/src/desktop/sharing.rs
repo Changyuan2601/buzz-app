@@ -4,10 +4,10 @@ use tauri::Manager;
 pub(super) fn observer(
     app: tauri::AppHandle,
     config: super::preferences::Config,
-) -> impl Fn(buzz_mesh_compute::lifecycle::Phase) + Send + Sync + 'static {
+) -> impl Fn(crate::lifecycle::Phase) + Send + Sync + 'static {
     let reached_ready = std::sync::atomic::AtomicBool::new(false);
     move |phase| {
-        if phase == buzz_mesh_compute::lifecycle::Phase::Ready {
+        if phase == crate::lifecycle::Phase::Ready {
             reached_ready.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         let host = app.state::<super::MeshHost>();
@@ -22,7 +22,7 @@ pub(super) fn observer(
                         .sharing
                         .lock()
                         .map_err(|_| "Mesh sharing unavailable")?;
-                    if intent.as_ref().map_or(true, |share| {
+                    if intent.as_ref().is_none_or(|share| {
                         share.model != config.model || share.max_vram_gb != config.max_vram_gb
                     }) {
                         return Ok(());
@@ -36,7 +36,7 @@ pub(super) fn observer(
                             &phase,
                             reached_ready.load(std::sync::atomic::Ordering::SeqCst),
                         );
-                    if matches!(phase, buzz_mesh_compute::lifecycle::Phase::Failed(_)) {
+                    if matches!(phase, crate::lifecycle::Phase::Failed(_)) {
                         *intent = None;
                     }
                     result
@@ -55,7 +55,7 @@ pub(super) struct Share {
 }
 impl Share {
     fn new(model: String, max_vram_gb: Option<u64>) -> Result<Self, String> {
-        let model = buzz_mesh_compute::catalog::canonical_curated_model_id(&model).to_owned();
+        let model = crate::catalog::canonical_curated_model_id(&model).to_owned();
         if model.is_empty() {
             return Err("Choose a model before sharing compute".into());
         }
@@ -78,7 +78,7 @@ pub async fn mesh_compute_share(
     let automatic = auto.unwrap_or(false);
     let resetting = reset_only.unwrap_or(false);
     let host = app.state::<super::MeshHost>();
-    let identity = app.state::<crate::identity::IdentityHost>();
+    let identity = app.state::<crate::desktop::host::Identity>();
     let stopping = model.is_none();
     let viewer = identity.viewer().await?;
     let member = viewer.clone();
@@ -108,7 +108,7 @@ pub async fn mesh_compute_share(
         // limit from the caller still wins.
         let recommended = if (automatic && model.is_some() && !resetting) || needs_reset_model {
             Some(
-                tokio::task::spawn_blocking(buzz_mesh_compute::catalog::recommended_model)
+                tokio::task::spawn_blocking(crate::catalog::recommended_model)
                     .await
                     .map_err(|error| format!("Mesh hardware survey failed: {error}"))?,
             )
@@ -229,7 +229,7 @@ pub async fn mesh_compute_share(
         })
         .await
     } else {
-        buzz_mesh_compute::startup_log::stage("entry", "from=share");
+        crate::startup_log::stage("entry", "from=share");
         let result = super::start(&app, &host, &identity, &lease).await;
         if result.is_err() {
             let _ = host.lease.with_current(&lease, |_| {
@@ -265,8 +265,8 @@ mod tests {
 /// shutdown are left to finish. A consumer client that is still connecting
 /// owns no sharing intent, and a join that never settles must not lock the
 /// member out of sharing, so it is stopped (confirmed) and replaced.
-fn changing_state(phase: &buzz_mesh_compute::lifecycle::Phase, serving: bool) -> bool {
-    use buzz_mesh_compute::lifecycle::Phase;
+fn changing_state(phase: &crate::lifecycle::Phase, serving: bool) -> bool {
+    use crate::lifecycle::Phase;
     match phase {
         Phase::Stopping => true,
         Phase::Starting => serving,
@@ -277,7 +277,7 @@ fn changing_state(phase: &buzz_mesh_compute::lifecycle::Phase, serving: bool) ->
 #[cfg(test)]
 mod changing_state_tests {
     use super::changing_state;
-    use buzz_mesh_compute::lifecycle::Phase;
+    use crate::lifecycle::Phase;
 
     #[test]
     fn only_a_connecting_consumer_may_be_replaced_by_share_on() {
@@ -332,7 +332,7 @@ async fn stop_if_current(host: &super::MeshHost, lease: &str) -> Result<bool, St
     if host.lease.community(lease).is_err() {
         return Ok(false);
     }
-    let _guard = host.preparing.interrupt(Some(&lease)).await;
+    let _guard = host.preparing.interrupt(Some(lease)).await;
     if host.lease.community(lease).is_err() {
         return Ok(false);
     }
@@ -346,7 +346,7 @@ async fn stop_if_current(host: &super::MeshHost, lease: &str) -> Result<bool, St
 struct ProdOff<'a> {
     app: &'a tauri::AppHandle,
     host: &'a super::MeshHost,
-    identity: &'a crate::identity::IdentityHost,
+    identity: &'a crate::desktop::host::Identity,
     lease: &'a str,
     member: &'a str,
 }

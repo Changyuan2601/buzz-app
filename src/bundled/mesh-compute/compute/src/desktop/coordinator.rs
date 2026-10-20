@@ -1,5 +1,5 @@
 //! Donor roster and peer-join duties, scoped to the app-owned node.
-use buzz_mesh_compute::{
+use crate::{
     discovery::{availability_from_events, current_member_pubkeys, owner_ids_from_events},
     lifecycle::Phase,
     roster::{Decision, Observation, Reconcile},
@@ -48,7 +48,7 @@ async fn reconcile(
     check_roster: bool,
 ) -> Result<(), String> {
     let host = app.state::<super::MeshHost>();
-    let identity = app.state::<crate::identity::IdentityHost>();
+    let identity = app.state::<crate::desktop::host::Identity>();
     let Some((lease, community)) = host.lease.current()? else {
         return Ok(());
     };
@@ -254,7 +254,7 @@ async fn recover_routes<F, R>(
     admitted: &[nostr::event::Event],
     owners: &[String],
     discovery: F,
-    restart: impl FnOnce(Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>) -> R,
+    restart: impl FnOnce(Vec<crate::discovery_types::MeshServeTarget>) -> R,
 ) -> Result<(), String>
 where
     F: std::future::Future<Output = Result<Vec<nostr::event::Event>, String>>,
@@ -274,7 +274,7 @@ fn retained_targets(
     events: &[nostr::event::Event],
     membership: &[nostr::event::Event],
     owners: &[String],
-) -> Vec<buzz_mesh_compute::discovery_types::MeshServeTarget> {
+) -> Vec<crate::discovery_types::MeshServeTarget> {
     availability_from_events(retained_evidence(events, membership))
         .serve_targets
         .into_iter()
@@ -339,10 +339,8 @@ mod tests {
         let b = Keys::generate();
         let new = Keys::generate();
         let dir = tempfile::tempdir().unwrap();
-        let owner_a =
-            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("a.json")).unwrap();
-        let owner_b =
-            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("b.json")).unwrap();
+        let owner_a = crate::identity::load_owner_at(&dir.path().join("a.json")).unwrap();
+        let owner_b = crate::identity::load_owner_at(&dir.path().join("b.json")).unwrap();
         let roster =
             |members: &[&Keys]| {
                 EventBuilder::new(Kind::Custom(13534), "")
@@ -353,7 +351,7 @@ mod tests {
                     .unwrap()
             };
         let status = |member: &Keys, owner| {
-            buzz_mesh_compute::publication::status_event(
+            crate::publication::status_event(
                 owner,
                 &member.public_key().to_hex(),
                 false,
@@ -390,10 +388,8 @@ mod tests {
         let member = Keys::generate();
         let newcomer = Keys::generate();
         let dir = tempfile::tempdir().unwrap();
-        let owner =
-            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("owner.json")).unwrap();
-        let new_owner =
-            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("new.json")).unwrap();
+        let owner = crate::identity::load_owner_at(&dir.path().join("owner.json")).unwrap();
+        let new_owner = crate::identity::load_owner_at(&dir.path().join("new.json")).unwrap();
         let token = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&serde_json::json!({
                 "id": hex::encode(owner.verifying_key().as_bytes()),
@@ -402,7 +398,7 @@ mod tests {
             .unwrap(),
         );
         let raw = serde_json::json!({"hosted_models": ["fixture-model"]});
-        let old = buzz_mesh_compute::publication::status_event(
+        let old = crate::publication::status_event(
             &owner,
             &member.public_key().to_hex(),
             true,
@@ -414,7 +410,7 @@ mod tests {
         .custom_created_at(Timestamp::from_secs(Timestamp::now().as_secs() - 180))
         .finalize(&member)
         .unwrap();
-        let fresh = buzz_mesh_compute::publication::status_event(
+        let fresh = crate::publication::status_event(
             &owner,
             &member.public_key().to_hex(),
             true,
@@ -425,7 +421,7 @@ mod tests {
         .unwrap()
         .finalize(&member)
         .unwrap();
-        let new = buzz_mesh_compute::publication::status_event(
+        let new = crate::publication::status_event(
             &new_owner,
             &newcomer.public_key().to_hex(),
             true,

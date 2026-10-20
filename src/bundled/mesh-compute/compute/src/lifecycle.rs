@@ -78,6 +78,21 @@ struct Slot {
     status: Option<mpsc::Sender<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>>,
 }
 
+/// The Mesh node runs on its own process-wide runtime, so the app keeps its
+/// default runtime. SDK model/download futures need 8 MiB worker stacks.
+fn mesh_runtime() -> std::io::Result<tokio::runtime::Handle> {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    if let Some(runtime) = RUNTIME.get() {
+        return Ok(runtime.handle().clone());
+    }
+    let built = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("mesh")
+        .thread_stack_size(8 * 1024 * 1024)
+        .build()?;
+    Ok(RUNTIME.get_or_init(|| built).handle().clone())
+}
+
 /// The app owns this across plugin/page lifetimes. Dropping it requests shutdown.
 pub struct Lifecycle {
     slot: Arc<Mutex<Slot>>,
@@ -214,7 +229,7 @@ impl Lifecycle {
         if slot.phase != Phase::Stopped {
             anyhow::bail!("Previous Mesh runtime shutdown is not confirmed");
         }
-        let runtime = tokio::runtime::Handle::try_current()?;
+        let runtime = mesh_runtime()?;
         self.progress.clear();
         let (dial, mut pending) = mpsc::channel::<String>(64);
         let (status, mut reads) =

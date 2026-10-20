@@ -7,10 +7,6 @@ pub async fn mesh_compute_widget_open<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, MeshHost>,
 ) -> Result<(), String> {
-    if !cfg!(feature = "mesh") {
-        return Err("Mesh native runtime is not included in this build".into());
-    }
-    #[cfg(feature = "mesh")]
     if host
         .sharing
         .lock()
@@ -19,8 +15,6 @@ pub async fn mesh_compute_widget_open<R: tauri::Runtime>(
     {
         return Err("Share compute before opening the activity widget".into());
     }
-    #[cfg(not(feature = "mesh"))]
-    let _ = host;
     if let Some(window) = app.get_webview_window("compute-widget") {
         window.show().map_err(|e| e.to_string())?;
         return window.set_focus().map_err(|e| e.to_string());
@@ -54,7 +48,6 @@ pub fn mesh_compute_widget_close<R: tauri::Runtime>(
     Ok(())
 }
 
-#[cfg(any(feature = "mesh", test))]
 fn usage(payload: &serde_json::Value) -> Option<serde_json::Value> {
     let metrics = payload.get("routing_metrics")?;
     Some(serde_json::json!({
@@ -71,9 +64,8 @@ fn usage(payload: &serde_json::Value) -> Option<serde_json::Value> {
 pub async fn mesh_compute_widget_status(
     host: tauri::State<'_, MeshHost>,
 ) -> Result<serde_json::Value, String> {
-    #[cfg(feature = "mesh")]
     {
-        use buzz_mesh_compute::lifecycle::Phase;
+        use crate::lifecycle::Phase;
         let generation = host.lifecycle.generation();
         let phase = host.lifecycle.phase();
         let sharing = host
@@ -118,11 +110,6 @@ pub async fn mesh_compute_widget_status(
             "available": true, "sharing": sharing, "generation": generation, "state": state,
             "usage": payload.as_ref().filter(|_| state == "running").and_then(usage)
         }))
-    }
-    #[cfg(not(feature = "mesh"))]
-    {
-        let _ = host;
-        Ok(serde_json::json!({"available": false, "sharing": false, "state": "off", "usage": null}))
     }
 }
 

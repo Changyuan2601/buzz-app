@@ -54,12 +54,10 @@ impl Preferences {
                         .get("auto")
                         .is_none();
                     if legacy {
-                        config.auto =
-                            buzz_mesh_compute::catalog::is_legacy_recommendation(&config.model);
+                        config.auto = crate::catalog::is_legacy_recommendation(&config.model);
                     }
                     config.model =
-                        buzz_mesh_compute::catalog::canonical_curated_model_id(&config.model)
-                            .to_owned();
+                        crate::catalog::canonical_curated_model_id(&config.model).to_owned();
                     if config.viewer.is_empty()
                         || config.community.is_empty()
                         || config.model.is_empty()
@@ -159,10 +157,10 @@ impl Preferences {
     pub fn phase(
         &mut self,
         expected: &Config,
-        phase: &buzz_mesh_compute::lifecycle::Phase,
+        phase: &crate::lifecycle::Phase,
         reached_ready: bool,
     ) -> Result<(), String> {
-        if self.hint().map_or(true, |current| {
+        if self.hint().is_none_or(|current| {
             current.viewer != expected.viewer
                 || current.community != expected.community
                 || current.model != expected.model
@@ -171,11 +169,11 @@ impl Preferences {
             return Ok(());
         }
         // Normal shutdown deliberately leaves enabled armed for restore through Mesh.
-        if *phase == buzz_mesh_compute::lifecycle::Phase::Ready
-            || (matches!(phase, buzz_mesh_compute::lifecycle::Phase::Failed(_)) && !reached_ready)
+        if *phase == crate::lifecycle::Phase::Ready
+            || (matches!(phase, crate::lifecycle::Phase::Failed(_)) && !reached_ready)
         {
             let mut config = self.hint().cloned().ok_or("Mesh selection expired")?;
-            config.enabled = *phase == buzz_mesh_compute::lifecycle::Phase::Ready;
+            config.enabled = *phase == crate::lifecycle::Phase::Ready;
             self.checkpoint(config)?;
         }
         Ok(())
@@ -198,7 +196,7 @@ mod tests {
     }
 
     use super::*;
-    use buzz_mesh_compute::lifecycle::Phase;
+    use crate::lifecycle::Phase;
     fn config() -> Config {
         Config::pending(
             "viewer".into(),
@@ -397,7 +395,7 @@ mod auto_tests {
         reset.auto = true;
         prefs.checkpoint(reset).unwrap();
         prefs
-            .phase(&config, &buzz_mesh_compute::lifecycle::Phase::Ready, false)
+            .phase(&config, &crate::lifecycle::Phase::Ready, false)
             .unwrap();
         assert!(prefs.hint().unwrap().auto);
         assert!(prefs.hint().unwrap().enabled);

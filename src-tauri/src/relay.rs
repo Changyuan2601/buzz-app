@@ -1845,7 +1845,6 @@ fn media_type(value: Option<&str>) -> (String, bool) {
 mod tests;
 
 /// Mesh uses the same bounded, authenticated HTTP client as other native relay reads.
-#[cfg(feature = "mesh")]
 pub(crate) async fn mesh_read(
     host: &IdentityHost,
     community: &str,
@@ -1865,13 +1864,7 @@ pub(crate) async fn mesh_read(
     serde_json::from_str(&response.body).map_err(|_| "Invalid Mesh relay response".into())
 }
 
-#[cfg(feature = "mesh")]
-pub(crate) fn mesh_origin(community: &str) -> Result<()> {
-    origin(community).map(|_| ())
-}
-
 /// Native Mesh coordinator only; never exposes arbitrary signing/publication to plugins.
-#[cfg(feature = "mesh")]
 pub(crate) async fn mesh_publish(
     host: &IdentityHost,
     community: &str,

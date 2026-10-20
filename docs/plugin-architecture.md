@@ -94,9 +94,9 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
-Plugin-owned Rust may live under `bundled/<plugin>/native/` as a Cargo workspace
-member (currently Mesh). Keep its native host admission/IPC integration in
-`src-tauri/`; source colocation does not make Rust dynamically installable.
+Plugin-owned Rust may live under `bundled/<plugin>/compute/` as a Cargo workspace
+member (currently Mesh), including its Tauri commands. `src-tauri/` keeps only
+the identity/relay adapter it lends the plugin and command registration; source colocation does not make Rust dynamically installable.
 When adding such a crate, include its path in the Rust input selection in
 `scripts/check-push.mjs` and cover that selection in the hook tests.
 

@@ -612,17 +612,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
             ? "Open Buzz desktop to use shared compute."
             : !status
               ? "Checking shared compute…"
-              : status.available === false
-                ? "Shared compute isn’t available in this build."
-                : leaseReady
-                  ? shareStatus(status, phase, community?.name, modelNames)
-                  : "Checking shared compute…"
+              : leaseReady
+                ? shareStatus(status, phase, community?.name, modelNames)
+                : "Checking shared compute…"
         }
         error={error ?? status?.settingsError ?? status?.reason}
         attention={
           !isTauri() ||
           phase === "failed" ||
-          status?.available === false ||
           Boolean(
             status?.savedSharing?.enabled &&
               !status.sharing &&

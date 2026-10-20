@@ -992,7 +992,6 @@ name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
  "arboard",
- "axum",
  "base64 0.22.1",
  "bech32 0.11.1",
  "block2",
@@ -1083,8 +1082,10 @@ name = "buzz-mesh-compute"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
+ "futures-util",
  "hex",
  "iroh",
  "mesh-llm-events",
@@ -1092,12 +1093,16 @@ dependencies = [
  "mesh-llm-sdk",
  "mesh-llm-system",
  "nostr 0.45.5",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tauri",
  "tempfile",
  "tokio",
+ "tokio-util",
  "url",
+ "uuid",
 ]
 
 [[package]]

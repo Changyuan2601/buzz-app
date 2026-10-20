@@ -1,7 +1,7 @@
 //! Allowlisted runtime-session activity, not member contribution accounting.
 use serde_json::{json, Value};
 
-pub(super) fn snapshot(payload: &Value) -> Option<Value> {
+pub fn snapshot(payload: &Value) -> Option<Value> {
     let metrics = payload.get("routing_metrics")?.as_object()?;
     let count = |name: &str| metrics.get(name).and_then(Value::as_u64);
     let peers = payload.get("peers").and_then(Value::as_array);

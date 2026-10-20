@@ -1,6 +1,6 @@
 //! Every invocation captures one community URL; no authority cache crosses communities.
-use crate::{identity::IdentityHost, relay};
-use buzz_mesh_compute::{
+use crate::desktop::host::Identity as IdentityHost;
+use crate::{
     discovery::{availability_from_events, current_member_pubkeys, owner_ids_from_events},
     discovery_query,
 };
@@ -12,7 +12,7 @@ pub(super) async fn read(
 ) -> Result<
     (
         Vec<String>,
-        Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>,
+        Vec<crate::discovery_types::MeshServeTarget>,
         Vec<nostr::event::Event>,
     ),
     String,
@@ -29,26 +29,28 @@ pub(super) async fn read_membership(
     community: &str,
 ) -> Result<Vec<nostr::event::Event>, String> {
     let viewer = host.viewer().await?;
-    let info = relay::mesh_read(host, community, None).await?;
+    let info = host.relay_read(community, None).await?;
     let authority = info
         .get("self")
         .and_then(serde_json::Value::as_str)
         .ok_or("Relay did not advertise its identity")?;
     let authority = PublicKey::from_hex(authority).map_err(|_| "Invalid relay identity")?;
-    let data = relay::mesh_read(
-        host,
-        community,
-        Some(buzz_mesh_compute::discovery::authoritative_membership_filter(&authority)),
-    )
-    .await?;
+    let data = host
+        .relay_read(
+            community,
+            Some(crate::discovery::authoritative_membership_filter(
+                &authority,
+            )),
+        )
+        .await?;
     let values = data.as_array().ok_or("Invalid Mesh membership response")?;
     let events = values
         .iter()
         .cloned()
         .filter_map(|value| serde_json::from_value(value).ok())
         .collect();
-    let events = buzz_mesh_compute::discovery::verify_evidence(events, &authority)
-        .map_err(|error| error.to_string())?;
+    let events =
+        crate::discovery::verify_evidence(events, &authority).map_err(|error| error.to_string())?;
     if host.viewer().await? != viewer {
         return Err("Identity changed during Mesh membership read".into());
     }
@@ -60,14 +62,15 @@ pub(super) async fn read_events(
     community: &str,
 ) -> Result<Vec<nostr::event::Event>, String> {
     let viewer = host.viewer().await?;
-    let info = relay::mesh_read(host, community, None).await?;
+    let info = host.relay_read(community, None).await?;
     let authority = info
         .get("self")
         .and_then(serde_json::Value::as_str)
         .ok_or("Relay did not advertise its identity")?;
     let authority = PublicKey::from_hex(authority).map_err(|_| "Invalid relay identity")?;
     let events = discovery_query::discover(&authority, |filter| async move {
-        let data = relay::mesh_read(host, community, Some(filter))
+        let data = host
+            .relay_read(community, Some(filter))
             .await
             .map_err(std::io::Error::other)?;
         let values = data
@@ -86,11 +89,11 @@ pub(super) async fn read_events(
 pub(super) async fn inventory(
     host: &IdentityHost,
     community: &str,
-) -> Result<buzz_mesh_compute::inventory::Inventory, String> {
+) -> Result<crate::inventory::Inventory, String> {
     let events = member_events(host, community).await?;
-    Ok(buzz_mesh_compute::inventory::project(
-        availability_from_events(events.clone()),
-    ))
+    Ok(crate::inventory::project(availability_from_events(
+        events.clone(),
+    )))
 }
 
 async fn member_events(

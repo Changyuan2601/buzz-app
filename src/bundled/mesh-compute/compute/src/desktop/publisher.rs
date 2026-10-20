@@ -1,5 +1,5 @@
 //! One app-owned publisher; no public Nostr discovery or raw SDK payload forwarding.
-use buzz_mesh_compute::{identity::load_owner_at, lifecycle::Phase, publication};
+use crate::{identity::load_owner_at, lifecycle::Phase, publication};
 use std::time::Duration;
 use tauri::Manager;
 
@@ -94,7 +94,7 @@ async fn publish(
     // Read state and sign under the same lock as withdrawal.
     let _serial = PUBLISH.lock().await;
     let host = app.state::<super::MeshHost>();
-    let identity = app.state::<crate::identity::IdentityHost>();
+    let identity = app.state::<crate::desktop::host::Identity>();
     let selection = host.lease.current()?;
     let viewer = identity.viewer().await?;
     let retired = previous.clone().filter(|old| {
@@ -179,7 +179,7 @@ pub(super) async fn display_names(console_url: &str) -> Option<serde_json::Value
 /// `mesh_stop_node` did with `publish_stopped_status_once_at`. Best-effort and bounded;
 /// the periodic publisher still follows up.
 pub(super) async fn publish_stopped(
-    identity: &crate::identity::IdentityHost,
+    identity: &crate::desktop::host::Identity,
     community: &str,
     member: &str,
 ) {
@@ -197,11 +197,11 @@ pub(super) async fn publish_stopped(
 }
 
 async fn send(
-    identity: &crate::identity::IdentityHost,
+    identity: &crate::desktop::host::Identity,
     community: &str,
     member: &str,
     serving: bool,
-    status: Option<&buzz_mesh_compute::lifecycle::NodeStatus>,
+    status: Option<&crate::lifecycle::NodeStatus>,
 ) -> Result<(), String> {
     let path = super::mesh_owner_path()?;
     // The first hardware survey can be slow, so it joins the blocking owner load.
@@ -218,7 +218,7 @@ async fn send(
     }
     .map_err(|e| e.to_string())?;
     let event = identity
-        .sign(crate::identity::EventTemplate {
+        .sign(crate::desktop::host::EventTemplate {
             kind: builder.kind.as_u16(),
             created_at: next_created_at(unix_now, tokio::time::sleep, &LAST_CREATED).await,
             tags: builder
@@ -232,7 +232,7 @@ async fn send(
     if event["pubkey"].as_str() != Some(member) {
         return Err("Identity changed during Mesh publication".into());
     }
-    crate::relay::mesh_publish(identity, community, event).await
+    identity.relay_publish(community, event).await
 }
 
 #[cfg(test)]
