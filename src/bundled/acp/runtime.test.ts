@@ -366,6 +366,24 @@ describe("AcpRuntime", () => {
     );
   });
 
+  it("keeps a stored config's validation error local, secret and all", async () => {
+    // As stored, outside Settings: a value pasted into an env name's slot.
+    const config = {
+      ...(await confirmed()),
+      env: { "API_KEY=SYNTHETIC_SECRET": "" },
+    };
+    const { fake, runtime, deliver, sync, published, workingUntil } = setup();
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await reported(runtime, workingUntil);
+    expect(await workingUntil.mock.calls[0]?.[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("SYNTHETIC_SECRET"),
+    });
+    expect(published.map((event) => event.content)).toEqual([FAILED]);
+    expect(fake.harnesses).toEqual([]);
+  });
+
   it("gives no hint for a harness error that imitates ours", async () => {
     const config = await confirmed();
     const { deliver, sync, published } = setup({

@@ -12,7 +12,7 @@ import type {
   ServeMcp,
   Spawn,
 } from "../../features/agent-harness/acp/types";
-import { config, type Launch, launch } from "./config";
+import { config, type Launch, launch, UNCONFIRMED } from "./config";
 import { preset } from "./presets";
 
 /** How long Check waits for the harness to exit once it has answered. */
@@ -50,8 +50,12 @@ export async function start(
 ) {
   const snapshot = config(stored);
   const found = await launch(snapshot);
-  // Each of `launch`'s errors is ours, and says what to fix.
-  if ("error" in found) throw new HintedError(found.error, found.error);
+  // Only the unconfirmed launch's error is advice to post: the others can
+  // quote what the owner typed, such as a value pasted into an env name.
+  if ("error" in found)
+    throw found.error === UNCONFIRMED
+      ? new HintedError(UNCONFIRMED, UNCONFIRMED)
+      : new Error(found.error);
   const { command, args, env, workspace } = found.launch;
   return AcpProcess.start(spawn, hooks(snapshot.preset, found.launch), {
     cwd: workspace,
