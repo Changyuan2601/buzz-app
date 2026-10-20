@@ -5,8 +5,15 @@
 
 pub(crate) mod grant;
 
-use super::{protocol, FederatedIdentity};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use super::{
+    config::canonical_relay,
+    protocol::{self, now, Failure},
+    FederatedIdentity,
+};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use buzz_agent_controller::{AppAgent, Secret};
 use grant::{Grant, GrantStore, SecureGrantStore};
 use serde::Deserialize;
@@ -16,6 +23,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use zeroize::Zeroizing;
 
 const GRANT_PATH: &str = "/v1/nip-fi/agent-grant";
+const ASSERTION_PATH: &str = "/v1/nip-fi/agent-assertion";
 const GRANT_TOKEN_TYPE: &str = "urn:builderlab:params:oauth:token-type:nip-fi-agent-grant";
 const SIGN_IN: &str = "Sign in to your organization to enroll this agent";
 const CHANGED: &str = "Your organization sign-in changed; try again";
@@ -29,7 +37,15 @@ struct Inner {
     slots: Mutex<HashMap<String, Arc<AsyncMutex<Slot>>>>,
 }
 #[derive(Default)]
-struct Slot {}
+struct Slot {
+    assertion: Option<Cached>,
+}
+/// One minted assertion, reused until shortly before it expires.
+struct Cached {
+    relay: String,
+    header: Zeroizing<String>,
+    refresh_at: u64,
+}
 
 impl AgentTokens {
     pub(crate) fn new(identity: FederatedIdentity) -> Self {
@@ -72,6 +88,95 @@ impl AgentTokens {
     }
     fn grant_key(&self, agent: &AppAgent) -> String {
         self.0.identity.agent_grant_key(&agent.owner, &agent.pubkey)
+    }
+
+    /// The `Nostr-Federated-Identity` value for the agent's requests to its
+    /// community, or `None` when that community is not the organization's.
+    /// Concurrent requests share one enrollment and one mint.
+    pub(crate) async fn evidence(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+    ) -> Result<Option<Zeroizing<String>>, String> {
+        let Some(config) = self.0.identity.0.config.as_ref() else {
+            return Ok(None);
+        };
+        if !config.matches_relay(&agent.relay)? {
+            return Ok(None);
+        }
+        let relay = canonical_relay(&agent.relay)?;
+        let slot = self.slot(&agent.pubkey);
+        let mut slot = slot.lock().await;
+        let now = now()? as u64;
+        if let Some(cached) = &slot.assertion {
+            if cached.relay == relay && cached.refresh_at > now {
+                return Ok(Some(cached.header.clone()));
+            }
+        }
+        slot.assertion = None;
+        let grant = self.grant(agent, key).await?;
+        let cached = self
+            .mint(agent, key, &grant, relay)
+            .await
+            .map_err(|failure| refused(failure.code))?;
+        let header = cached.header.clone();
+        slot.assertion = Some(cached);
+        Ok(Some(header))
+    }
+
+    /// Trades the grant for a short-lived agent assertion for `relay`.
+    async fn mint(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        grant: &Grant,
+        relay: String,
+    ) -> Result<Cached, Failure> {
+        let config = self.0.identity.0.config.as_ref().ok_or("unconfigured")?;
+        let endpoint = config.endpoint(ASSERTION_PATH);
+        // Field order and exact bytes are the NIP-FA assertion request contract.
+        let body =
+            serde_json::json!({ "nostr_pubkey": agent.pubkey, "relay_url": relay }).to_string();
+        let proof = || {
+            agent
+                .issuer_auth(key, endpoint.as_str(), body.as_bytes())
+                .and_then(nostr)
+        };
+        proof().map_err(|_| "invalid-proof")?;
+        #[derive(Deserialize)]
+        struct Issued {
+            assertion: String,
+            nostr_pubkey: String,
+            expires_at: u64,
+        }
+        let client = protocol::client()?;
+        let issued: Issued = protocol::json(|| {
+            let request = client
+                .post(endpoint.clone())
+                .bearer_auth(&grant.token)
+                .header("Content-Type", "application/json")
+                .body(body.clone());
+            match proof() {
+                Ok(proof) => request.header("Nostr-Authorization", proof),
+                Err(_) => request,
+            }
+        })
+        .await?;
+        let assertion = Zeroizing::new(issued.assertion);
+        let now = now()? as u64;
+        if issued.nostr_pubkey != agent.pubkey || issued.expires_at <= now {
+            return Err("invalid-assertion".into());
+        }
+        validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
+        Ok(Cached {
+            header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
+            refresh_at: if issued.expires_at - now > 30 {
+                issued.expires_at - 30
+            } else {
+                issued.expires_at
+            },
+            relay,
+        })
     }
 
     /// The agent's grant, enrolling it on first use: new agents and ones made
@@ -179,6 +284,41 @@ fn nostr(event: serde_json::Value) -> Result<String, String> {
     serde_json::to_vec(&event)
         .map(|event| format!("Nostr {}", STANDARD.encode(event)))
         .map_err(|_| "Could not authorize the agent".into())
+}
+
+/// Local misuse checks on an agent assertion; the relay verifies its signature.
+fn validate(
+    token: &str,
+    agent: &AppAgent,
+    grant: &Grant,
+    relay: &str,
+    expires_at: u64,
+    now: u64,
+) -> Result<(), Failure> {
+    let invalid = || Failure::from("invalid-assertion");
+    let parts: Vec<_> = token.split('.').collect();
+    if token.len() > 8192 || parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+        return Err(invalid());
+    }
+    let decode = |part: &str| -> Result<serde_json::Value, Failure> {
+        let bytes = Zeroizing::new(URL_SAFE_NO_PAD.decode(part).map_err(|_| invalid())?);
+        serde_json::from_slice(&bytes).map_err(|_| invalid())
+    };
+    let (header, claims) = (decode(parts[0])?, decode(parts[1])?);
+    let text = |name: &str| claims.get(name).and_then(serde_json::Value::as_str);
+    let minted = claims.get("iat").and_then(serde_json::Value::as_u64);
+    let audience = format!("https://{}", &relay["wss://".len()..]);
+    if header.get("typ").and_then(serde_json::Value::as_str) != Some("nip-fi-agent+jwt")
+        || text("nostr_pubkey") != Some(&agent.pubkey)
+        || text("nostr_owner_pubkey") != Some(&agent.owner)
+        || text("iss") != Some(&grant.issuer)
+        || text("aud") != Some(&audience)
+        || claims.get("exp").and_then(serde_json::Value::as_u64) != Some(expires_at)
+        || !minted.is_some_and(|minted| minted <= now + 5 && minted <= expires_at)
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// What the agent's owner sees when the identity issuer turns it away.
