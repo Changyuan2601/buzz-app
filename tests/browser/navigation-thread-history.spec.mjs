@@ -86,31 +86,32 @@ test("Back restores each thread visit before the previous channel", async ({
     `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
   const feedback = await selectedTab.evaluateHandle((tab) => {
-    const state = { cue: null };
-    tab.addEventListener(
-      "animationstart",
-      (event) => {
-        if (!event.target.classList.contains("buzz-tabs-attention")) return;
-        state.cue = event.target;
-        for (const animation of state.cue.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-      },
-      { once: true },
-    );
+    const state = { cue: null, paint: null };
+    const start = (event) => {
+      if (!event.target.classList.contains("buzz-tabs-attention")) return;
+      tab.removeEventListener("animationstart", start);
+      state.cue = event.target;
+      for (const animation of state.cue.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      // Read the paint now. A slow renderer can deliver animationstart and
+      // animationend together, and the host removes the cue on animationend.
+      state.paint = {
+        tint: getComputedStyle(state.cue).backgroundColor,
+        resting: getComputedStyle(state.cue.parentElement).backgroundColor,
+        opacity: Number(getComputedStyle(state.cue).opacity),
+      };
+    };
+    tab.addEventListener("animationstart", start);
     return state;
   });
   await activate(threadButton(roots[1]));
   try {
     await expect
-      .poll(() => feedback.evaluate((state) => !!state.cue))
+      .poll(() => feedback.evaluate((state) => !!state.paint))
       .toBe(true);
-    const paint = await feedback.evaluate(({ cue }) => ({
-      tint: getComputedStyle(cue).backgroundColor,
-      resting: getComputedStyle(cue.parentElement).backgroundColor,
-      opacity: Number(getComputedStyle(cue).opacity),
-    }));
+    const paint = await feedback.evaluate(({ paint }) => paint);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {
