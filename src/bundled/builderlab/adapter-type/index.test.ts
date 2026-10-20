@@ -109,7 +109,10 @@ it.each(["account", "server"])(
     await expect(other.remote.remove(removal)).rejects.toThrow(
       "account that created",
     );
-    expect(other.request).not.toHaveBeenCalled();
+    // Re-signing in reads the permission; nothing reaches Beekeeper.
+    expect(
+      other.request.mock.calls.map(([input]) => input.path),
+    ).not.toContainEqual(expect.stringContaining("beekeeper"));
   },
 );
 

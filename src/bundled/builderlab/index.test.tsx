@@ -38,9 +38,19 @@ const ORIGIN = "https://builderlab.example";
  * route on it the way the native proxy does.
  */
 type Invoke = Parameters<typeof native.invoke.mockImplementation>[0];
+/** `GET /v1/auth/me` with the account's remote-agent permission. */
+const account = (canUseRemoteAgents: boolean) => ({
+  status: 200,
+  headers: {},
+  body: JSON.stringify({
+    email: "a@example.com",
+    capabilities: { can_use_remote_agents: canUseRemoteAgents },
+  }),
+});
 function nativeSession(
   handler: Invoke,
   login: () => unknown = () => undefined,
+  me: () => unknown = () => account(true),
 ) {
   let revision = 0;
   let signedIn = false;
@@ -74,6 +84,7 @@ function nativeSession(
         return;
       case "federated_identity_request":
         input.request = { ...input.request, url: ORIGIN + input.request.path };
+        if (input.request.path.endsWith("/v1/auth/me")) return me();
     }
     return handler(command, input);
   };
@@ -201,21 +212,23 @@ it.each(["unconfigured", "unavailable"])(
 );
 
 it.each([false, true])(
-  "gates remote agents on Builderlab's answer (allowed=%s) and re-checks it on sign-in",
+  "gates remote agents on the account permission (allowed=%s) and re-checks it on sign-in",
   async (initialCapability) => {
     let capability = initialCapability;
+    // Beekeeper answers normally; only the permission decides.
     native.invoke.mockImplementation(
-      nativeSession(async (command) => {
-        if (command !== "federated_identity_request") return;
-        // A 403 from Beekeeper is the account's capability answer.
-        return capability
-          ? {
-              status: 200,
-              headers: {},
-              body: JSON.stringify({ status: 1, agents: [] }),
-            }
-          : { status: 403, headers: {}, body: "{}" };
-      }),
+      nativeSession(
+        async (command) =>
+          command === "federated_identity_request"
+            ? {
+                status: 200,
+                headers: {},
+                body: JSON.stringify({ status: 1, agents: [] }),
+              }
+            : undefined,
+        undefined,
+        () => account(capability),
+      ),
     );
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
@@ -273,12 +286,12 @@ it.each([false, true])(
             signal: new AbortController().signal,
           }),
         ).rejects.toThrow("coming soon");
-        // Only the refused list was sent; nothing was provisioned.
+        // Blocked before any Beekeeper request: only the permission was read.
         expect(
           native.invoke.mock.calls
             .filter(([command]) => command === "federated_identity_request")
-            .map(([, input]) => input.request.path.split("/").at(-1)),
-        ).not.toContain("register-agent");
+            .map(([, input]) => input.request.path),
+        ).toEqual(["/api/goose/v1/auth/me"]);
         expect(localStorage.length).toBe(0);
         await user.click(
           screen.getByRole("button", { name: "Coming soon, attention" }),
@@ -315,6 +328,100 @@ it.each([false, true])(
   },
 );
 
+it("shows checking while the permission loads and offers a retry when it fails", async () => {
+  let reply = deferred<unknown>();
+  native.invoke.mockImplementation(
+    nativeSession(
+      async (command) =>
+        command === "federated_identity_request"
+          ? {
+              status: 200,
+              headers: {},
+              body: JSON.stringify({ status: 1, agents: [] }),
+            }
+          : undefined,
+      undefined,
+      () => reply.promise,
+    ),
+  );
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => builderlab);
+  new HostService(root);
+  new FederatedIdentityService(root);
+  const cards = new SettingsCardsService(root);
+  const community = communityFixture(null);
+  root.provide("relay", community.relay as never);
+  const agents = provideAgents(root, community);
+  try {
+    runtime.reconcile([
+      {
+        manifest: { ...manifest, apiVersion: 1 },
+        source: "bundled",
+        revision: "bundled",
+        enabled: true,
+        previous: null,
+        reloadable: false,
+        error: null,
+      },
+    ]);
+    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    const card = cards.snapshot()[0];
+    if (!card) throw new Error("Missing Builderlab card");
+    const Card = card.component;
+    render(<Card active={() => true} />);
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Sign in with Builderlab" }),
+    );
+    await screen.findByText("Checking Builderlab access…");
+    const type = agents.types()[0];
+    if (!type?.remote) throw new Error("Missing Builderlab agent type");
+    expect(type.provider?.snapshot().readiness).toBe("checking");
+    // Creation waits for the answer instead of reaching Beekeeper.
+    const refused = expect(
+      type.remote.provision({
+        name: "Helper",
+        community: "wss://community.example",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Could not check");
+    const beekeeper = () =>
+      native.invoke.mock.calls.filter(
+        ([command, input]) =>
+          command === "federated_identity_request" &&
+          input.request.path.includes("beekeeper"),
+      );
+    expect(beekeeper()).toEqual([]);
+
+    // A failed read is never ready, and a 401 here is that call's error only.
+    await act(async () =>
+      reply.resolve({ status: 401, headers: {}, body: "{}" }),
+    );
+    await refused;
+    expect(beekeeper()).toEqual([]);
+    await screen.findByText("Could not check Builderlab access.");
+    expect(type.provider?.snapshot()).toMatchObject({
+      readiness: "attention",
+      attentionLabel: "Retry Builderlab access",
+    });
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+
+    reply = deferred();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(type.provider?.snapshot().readiness).toBe("checking");
+    await act(async () => reply.resolve(account(true)));
+    expect(
+      await screen.findByText("No remote agents yet."),
+    ).toBeInTheDocument();
+    expect(type.provider?.snapshot().readiness).toBe("ready");
+  } finally {
+    cleanup();
+    await runtime.dispose();
+    await root.fiber.dispose();
+    await community.dispose();
+  }
+});
+
 it.each([
   ["1", true],
   ["0", true],
@@ -326,23 +433,25 @@ it.each([
     const viewer = "01".repeat(32);
     const linkFinished = deferred<void>();
     native.invoke.mockImplementation(
-      nativeSession(async (command, input) => {
-        if (command === "nsec_backup_retry") return;
-        if (command === "identity_restore") return viewer;
-        if (command !== "federated_identity_request")
-          throw new Error(`Unexpected command ${command}`);
-        const { url } = input.request;
-        let result: unknown;
-        if (url.endsWith("/list-agents")) {
-          if (!canUseRemoteAgents)
-            return { status: 403, headers: {}, body: "{}" };
-          result = { status: 1, agents: [] };
-        } else if (url.endsWith("/nostr-identities/current")) {
-          result = { identity: { pubkey_hex: viewer } };
-          linkFinished.resolve();
-        } else throw new Error(`Unexpected request ${url}`);
-        return { status: 200, headers: {}, body: JSON.stringify(result) };
-      }),
+      nativeSession(
+        async (command, input) => {
+          if (command === "nsec_backup_retry") return;
+          if (command === "identity_restore") return viewer;
+          if (command !== "federated_identity_request")
+            throw new Error(`Unexpected command ${command}`);
+          const { url } = input.request;
+          let result: unknown;
+          if (url.endsWith("/list-agents")) {
+            result = { status: 1, agents: [] };
+          } else if (url.endsWith("/nostr-identities/current")) {
+            result = { identity: { pubkey_hex: viewer } };
+            linkFinished.resolve();
+          } else throw new Error(`Unexpected request ${url}`);
+          return { status: 200, headers: {}, body: JSON.stringify(result) };
+        },
+        undefined,
+        () => account(canUseRemoteAgents),
+      ),
     );
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
@@ -594,13 +703,13 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       "Signed in as a@example.com.",
     );
     expect(loginWaits()).toHaveLength(1);
-    // Sign-in also checks the account's linked Buzz identity.
+    // Sign-in also reads the permission and checks the linked Buzz identity.
     await waitFor(() =>
       expect(
         hostRequests()
           .map((input) => input.request.url.split("/").at(-1))
           .sort(),
-      ).toEqual(["current", "list-agents"]),
+      ).toEqual(["current", "list-agents", "me"]),
     );
     const requests = hostRequests();
     expect(

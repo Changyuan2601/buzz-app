@@ -13,24 +13,27 @@ export type Credential = Readonly<{
   apiBasePath: string;
   account: Readonly<{ subject: string; email: string }>;
 }>;
+/** Whether this account may use remote agents, from `GET /v1/auth/me`. */
+export type RemoteAgentsAccess = "checking" | "allowed" | "denied" | "failed";
 export type LoginSnapshot = Readonly<{
   status: "signed-out" | "pending" | "signed-in";
   account?: Readonly<{
     subject: string;
     email: string;
-    canUseRemoteAgents: boolean;
+    remoteAgents: RemoteAgentsAccess;
   }>;
   error?: string;
 }>;
 
 /**
  * Builderlab's view of the shared native session. The native side owns the
- * token; the renderer only learns whether remote agents were refused (403).
+ * token; each sign-in revision reads its remote-agent permission once.
  */
 export function createBuilderlabSession(federated: FederatedSession) {
   let disposed = false;
   let credential: Credential | undefined;
-  let refused: string | undefined;
+  let access: RemoteAgentsAccess = "checking";
+  let checking: Promise<void> = Promise.resolve();
   let source: ReturnType<FederatedSession["snapshot"]> | undefined;
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
@@ -50,6 +53,7 @@ export function createBuilderlabSession(federated: FederatedSession) {
           email: next.account?.email ?? "",
         }),
       });
+      checking = checkAccess(credential);
     }
     state = Object.freeze({
       status: next.status,
@@ -57,7 +61,7 @@ export function createBuilderlabSession(federated: FederatedSession) {
         ? {
             account: Object.freeze({
               ...credential.account,
-              canUseRemoteAgents: refused !== credential.revision,
+              remoteAgents: access,
             }),
           }
         : {}),
@@ -65,9 +69,42 @@ export function createBuilderlabSession(federated: FederatedSession) {
     });
     return true;
   };
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const settle = (owner: Credential, next: RemoteAgentsAccess) => {
+    if (disposed || credential !== owner || access === next) return;
+    access = next;
+    source = undefined;
+    project();
+    notify();
+  };
+  async function checkAccess(owner: Credential) {
+    access = "checking";
+    let next: RemoteAgentsAccess = "failed";
+    try {
+      const response = await federated.request({
+        path: `${owner.apiBasePath}v1/auth/me`,
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      if (response.status >= 200 && response.status < 300) {
+        const account = JSON.parse(response.body) as {
+          capabilities?: { can_use_remote_agents?: unknown };
+        };
+        next =
+          account?.capabilities?.can_use_remote_agents === true
+            ? "allowed"
+            : "denied";
+      }
+    } catch {
+      // Not ready, never allowed: the provider offers a retry.
+    }
+    settle(owner, next);
+  }
   const stop = federated.subscribe(() => {
     if (disposed || !project()) return;
-    for (const listener of listeners) listener();
+    notify();
   });
   project();
   return {
@@ -90,13 +127,26 @@ export function createBuilderlabSession(federated: FederatedSession) {
       if (disposed) throw new Error("Builderlab session is closed.");
       return federated.request(input);
     },
-    /** A 403 from Builderlab gates remote agents for this account until it changes. */
+    /** The permission once the current check has answered. */
+    async remoteAgents(): Promise<RemoteAgentsAccess> {
+      while (access === "checking" && credential && !disposed) {
+        const current = checking;
+        await current;
+        if (current === checking) break;
+      }
+      return access;
+    },
+    /** Re-reads the permission after a failed check. */
+    retryRemoteAgents() {
+      if (disposed || !credential || access !== "failed") return;
+      const owner = credential;
+      settle(owner, "checking");
+      checking = checkAccess(owner);
+    },
+    /** Beekeeper reported the feature disabled (or, as a fallback, a 403):
+     * remote agents stay denied for this sign-in. */
     refuseRemoteAgents(owner: Credential) {
-      if (refused === owner.revision || credential !== owner) return;
-      refused = owner.revision;
-      source = undefined;
-      project();
-      for (const listener of listeners) listener();
+      settle(owner, "denied");
     },
     /** Creation joins a login that is already running; it never cancels it. */
     async ensureSignedIn(signal: AbortSignal): Promise<void> {

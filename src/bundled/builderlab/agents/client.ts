@@ -58,6 +58,8 @@ const nativeOwner: OwnerIdentity = {
     invoke("identity_sign_builderlab_binding", { challenge }),
 };
 
+const COMING_SOON =
+  "Builderlab remote agents are coming soon for your account.";
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
     "This Builderlab account is linked to a different Buzz identity.",
@@ -71,13 +73,24 @@ export function createAgentClient(
   // dev broker, which has no binding signer, so linking is skipped.
   owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
-  function remoteCredential() {
+  /** Waits for the account's permission; only "allowed" reaches Beekeeper. */
+  async function remoteCredential(signal: AbortSignal) {
     const credential = session.credential();
-    if (session.snapshot().account?.canUseRemoteAgents === false)
+    const access = await session.remoteAgents();
+    check(credential, signal);
+    if (access !== "allowed")
       throw new Error(
-        "Builderlab remote agents are coming soon for your account.",
+        access === "failed"
+          ? "Could not check Builderlab access. Retry."
+          : COMING_SOON,
       );
     return credential;
+  }
+  /** Beekeeper's typed `*_FEATURE_DISABLED` answer denies this sign-in. */
+  function featureDisabled(status: string | number) {
+    if (status !== 2 && status !== "DISABLED") return;
+    session.refuseRemoteAgents(session.credential());
+    throw new Error(COMING_SOON);
   }
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -100,7 +113,7 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = remoteCredential();
+    const credential = await remoteCredential(signal);
     let response: HostResponse;
     try {
       response = await session.request({
@@ -118,6 +131,7 @@ export function createAgentClient(
     }
     check(credential, signal);
     refusedIfUnauthorized(response);
+    // Fallback only: the permission check and typed status are the gate.
     if (response.status === 403) {
       session.refuseRemoteAgents(credential);
       throw Object.assign(
@@ -374,7 +388,7 @@ export function createAgentClient(
         throw new Error(
           "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
         );
-      const credential = remoteCredential();
+      const credential = await remoteCredential(signal);
       const { account } = credential;
       const intent = registrationIntent(
         credential.origin,
@@ -403,9 +417,9 @@ export function createAgentClient(
         throw error;
       }
       const status = resultStatus(result.status);
+      if ([2, "DISABLED"].includes(status)) clearRegistration(intent);
+      featureDisabled(status);
       const rejected = new Map<string | number, string>([
-        [2, "Agent creation is disabled on this server."],
-        ["DISABLED", "Agent creation is disabled on this server."],
         [3, "Finish setup for an existing agent before creating another."],
         [
           "REGISTRATIONS",
@@ -450,7 +464,9 @@ export function createAgentClient(
         { include_instructions: true },
         signal,
       );
-      if (![1, "SUCCESS"].includes(resultStatus(result.status)))
+      const status = resultStatus(result.status);
+      featureDisabled(status);
+      if (![1, "SUCCESS"].includes(status))
         throw new Error("Builderlab did not return an agent list.");
       // Protobuf JSON can omit an empty repeated field.
       const agents = result.agents ?? [];

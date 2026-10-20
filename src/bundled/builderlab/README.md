@@ -71,7 +71,9 @@ agents are not migrated into this type.
   seven-day replay window. Instructions are limited to 20,000 characters,
   affect newly accepted tasks and are never published to the relay.
 
-Builderlab answers whether an account can use remote agents: a 403 from a
-Beekeeper route marks remote agents “Coming soon” in Settings and the Agents
-provider, and no further Beekeeper requests are sent for that sign-in. Sign out
-and back in to check again.
+Each sign-in reads `capabilities.can_use_remote_agents` from `GET /v1/auth/me`.
+While it loads, the Agents provider shows checking and creation waits. Only
+`true` makes remote agents ready; `false` shows “Coming soon”, and a failed read
+offers Retry. A typed `*_FEATURE_DISABLED` status from listing or creation also
+shows “Coming soon” (a 403 does too, as a fallback). No further Beekeeper
+requests are sent for that sign-in.

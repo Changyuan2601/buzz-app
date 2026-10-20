@@ -35,9 +35,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const state = session.snapshot();
       providerState = Object.freeze(
         state.status === "signed-in"
-          ? state.account?.canUseRemoteAgents
-            ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+          ? (
+              {
+                allowed: { readiness: "ready" },
+                checking: { readiness: "checking", blocking: true },
+                failed: {
+                  readiness: "attention",
+                  attentionLabel: "Retry Builderlab access",
+                },
+                denied: {
+                  readiness: "attention",
+                  attentionLabel: "Coming soon",
+                },
+              } as const
+            )[state.account?.remoteAgents ?? "checking"]
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -60,7 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             showHeading={false}
           />
           {state.status === "signed-in" &&
-            !state.account?.canUseRemoteAgents && (
+            state.account?.remoteAgents === "denied" && (
               <p role="status" className="text-body-sm text-secondary">
                 Builderlab remote agents are coming soon for your account.
               </p>
@@ -76,7 +87,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
           providerListeners.add(listener);
           return () => providerListeners.delete(listener);
         },
-        check: updateProvider,
+        check: () => {
+          session.retryRemoteAgents();
+          updateProvider();
+        },
         DialogBody: ProviderDialogBody,
       },
     });

@@ -116,7 +116,6 @@ it.each([
 );
 it.each([
   null,
-  { status: 2 },
   { status: 1, agents: {} },
   { status: 1, agents: [null] },
   { status: 1, agents: [{ ...row, agent_pubkey: "bad" }] },
@@ -142,6 +141,36 @@ it.each([401, 403, 500])(
     expect(h.session.snapshot().status).toBe("signed-in");
   },
 );
+it.each([
+  ["list", "LIST_AGENTS_STATUS_FEATURE_DISABLED"],
+  ["register", "REGISTER_AGENT_STATUS_FEATURE_DISABLED"],
+  ["register", 2],
+] as const)(
+  "a typed feature-disabled reply from %s (%s) denies remote agents for this sign-in",
+  async (operation, status) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValue(response({ status }));
+    const attempt =
+      operation === "list"
+        ? h.client.list(h.signal)
+        : h.client.register("Helper", h.signal, h.retain);
+    await expect(attempt).rejects.toThrow("coming soon");
+    expect(h.session.snapshot().account?.remoteAgents).toBe("denied");
+    expect(h.retain).not.toHaveBeenCalled();
+    // Denied: no further Beekeeper request is sent.
+    await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
+    expect(h.host.request).toHaveBeenCalledTimes(1);
+  },
+);
+it("an unrelated 403 still denies remote agents as a fallback", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(response({}, 403));
+  await expect(h.client.list(h.signal)).rejects.toThrow(
+    "cannot manage remote agents",
+  );
+  expect(h.session.snapshot().account?.remoteAgents).toBe("denied");
+  expect(h.session.snapshot().status).toBe("signed-in");
+});
 it.each(["sign-out", "new-login", "cancel", "dispose"])(
   "discards a held result after %s",
   async (action) => {
@@ -408,7 +437,7 @@ it("does not reuse a pending creation for another verified account with the same
   );
   expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
 });
-it.each([2, 3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
+it.each([3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
   "reports a terminal registration status %s and allows a fresh retry",
   async (status) => {
     const h = await fixture();

@@ -4,8 +4,18 @@ import { createBuilderlabSession } from "./session";
 
 function fixture() {
   const federated = federatedFixture("user", "a@example.com");
+  federated.request.mockResolvedValue(account(true));
   return { ...federated, session: createBuilderlabSession(federated.session) };
 }
+const account = (canUseRemoteAgents: unknown, status = 200) => ({
+  status,
+  headers: {},
+  body: JSON.stringify({
+    capabilities: { can_use_remote_agents: canUseRemoteAgents },
+  }),
+});
+const access = (h: ReturnType<typeof fixture>) =>
+  h.session.snapshot().account?.remoteAgents;
 const signal = () => new AbortController().signal;
 
 it("projects the native session without a token and keeps one credential per revision", async () => {
@@ -19,12 +29,13 @@ it("projects the native session without a token and keeps one credential per rev
     apiBasePath: "/api/goose/",
     account: { subject: "a@example.com", email: "a@example.com" },
   });
+  await vi.waitFor(() => expect(access(h)).toBe("allowed"));
   expect(h.session.snapshot()).toEqual({
     status: "signed-in",
     account: {
       subject: "a@example.com",
       email: "a@example.com",
-      canUseRemoteAgents: true,
+      remoteAgents: "allowed",
     },
   });
   h.publish({ email: "a@example.com" });
@@ -72,15 +83,76 @@ it("rejects creation waits on a failed, canceled, aborted or disposed login", as
   expect(disposed.session.snapshot().status).toBe("signed-out");
 });
 
-it("gates remote agents for the refused revision only", async () => {
+it("reads the permission once per sign-in revision from /v1/auth/me", async () => {
   const h = fixture();
+  h.request.mockResolvedValueOnce(account(false));
   await h.session.signIn();
-  const refused = h.session.credential();
-  h.session.refuseRemoteAgents(refused);
-  expect(h.session.snapshot().account?.canUseRemoteAgents).toBe(false);
+  await vi.waitFor(() => expect(access(h)).toBe("denied"));
+  expect(h.request).toHaveBeenCalledExactlyOnceWith({
+    path: "/api/goose/v1/auth/me",
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  h.publish({ email: "a@example.com" });
+  expect(h.request).toHaveBeenCalledTimes(1);
   await h.session.signOut();
   await h.session.signIn();
+  await vi.waitFor(() => expect(access(h)).toBe("allowed"));
+  expect(h.request).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ["a non-true permission", account("true")],
+  ["a missing capability", { status: 200, headers: {}, body: "{}" }],
+])("denies %s", async (_name, reply) => {
+  const h = fixture();
+  h.request.mockResolvedValueOnce(reply);
+  await h.session.signIn();
+  await vi.waitFor(() => expect(access(h)).toBe("denied"));
+});
+
+it.each([
+  ["a 401", account(true, 401)],
+  ["a 500", account(true, 500)],
+  ["invalid JSON", { status: 200, headers: {}, body: "<html>" }],
+])("fails closed on %s and retries on request", async (_name, reply) => {
+  const h = fixture();
+  h.request.mockResolvedValueOnce(reply);
+  await h.session.signIn();
+  await vi.waitFor(() => expect(access(h)).toBe("failed"));
+  // A failed permission read never ends the native session.
+  expect(h.session.snapshot().status).toBe("signed-in");
+  h.session.retryRemoteAgents();
+  expect(access(h)).toBe("checking");
+  await vi.waitFor(() => expect(access(h)).toBe("allowed"));
+});
+
+it("ignores a permission reply that arrives after the account changed", async () => {
+  const h = fixture();
+  let answer: (value: ReturnType<typeof account>) => void = () => {};
+  h.request.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  await h.session.signIn();
+  await h.session.signOut();
+  h.request.mockImplementationOnce(() => new Promise(() => {}));
+  await h.session.signIn();
+  answer(account(true));
+  await Promise.resolve();
+  expect(access(h)).toBe("checking");
+});
+
+it("denies remote agents for the refused revision only", async () => {
+  const h = fixture();
+  await h.session.signIn();
+  await vi.waitFor(() => expect(access(h)).toBe("allowed"));
+  const refused = h.session.credential();
+  h.session.refuseRemoteAgents(refused);
+  expect(access(h)).toBe("denied");
+  await h.session.signOut();
+  await h.session.signIn();
+  await vi.waitFor(() => expect(access(h)).toBe("allowed"));
   // A stale refusal cannot gate the next sign-in.
   h.session.refuseRemoteAgents(refused);
-  expect(h.session.snapshot().account?.canUseRemoteAgents).toBe(true);
+  expect(access(h)).toBe("allowed");
 });

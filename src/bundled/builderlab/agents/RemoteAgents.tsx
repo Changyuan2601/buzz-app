@@ -22,7 +22,23 @@ export function RemoteAgents({
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const [revision, setRevision] = useState(0);
-  if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
+  const access = login.account?.remoteAgents;
+  if (login.status === "signed-in" && access === "checking")
+    return (
+      <p role="status" className="text-body-sm text-secondary">
+        Checking Builderlab access…
+      </p>
+    );
+  if (login.status === "signed-in" && access === "failed")
+    return (
+      <div role="alert" className="grid justify-items-start gap-2">
+        <p className="text-body-sm">Could not check Builderlab access.</p>
+        <Button variant="outline" onClick={session.retryRemoteAgents}>
+          Retry
+        </Button>
+      </div>
+    );
+  if (login.status === "signed-in" && access !== "allowed")
     return (
       <EmptyState
         icon={<RobotIcon />}

@@ -360,6 +360,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                     "v3/beekeeper/attest-agent",
                     "v3/beekeeper/list-agents",
                     "v3/beekeeper/cancel-agent-turn",
+                    // The account's `capabilities.can_use_remote_agents`.
+                    "GET v1/auth/me",
                     // Attestation requires this device's key to be bound first.
                     "v1/buzz/nostr-identities/current",
                     "v1/buzz/nostr-identities/challenge",
@@ -388,9 +390,13 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                 authority: authority.into(),
                 operations: routes
                     .iter()
-                    .map(|route| AuthenticatedOperation {
-                        method: "POST".into(),
-                        path: format!("{base}{route}"),
+                    .map(|route| {
+                        // Routes are POST unless they name another method.
+                        let (method, route) = route.split_once(' ').unwrap_or(("POST", route));
+                        AuthenticatedOperation {
+                            method: method.into(),
+                            path: format!("{base}{route}"),
+                        }
                     })
                     .collect(),
             });

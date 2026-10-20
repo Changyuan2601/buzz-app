@@ -1,3 +1,4 @@
+import { expect, vi } from "vitest";
 import { federatedFixture } from "../../features/federated-identity/testing";
 import { createBuilderlabSession } from "./session";
 
@@ -21,8 +22,21 @@ export async function signedInBuilderlab(
   federated.publish({
     authority: { id: "test", identityOrigin, apiBasePath: "/api/goose/" },
   });
+  federated.request.mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      capabilities: { can_use_remote_agents: canUseRemoteAgents },
+    }),
+  });
   const session = createBuilderlabSession(federated.session);
   await session.signIn();
-  if (!canUseRemoteAgents) session.refuseRemoteAgents(session.credential());
+  await vi.waitFor(() =>
+    expect(session.snapshot().account?.remoteAgents).toBe(
+      canUseRemoteAgents ? "allowed" : "denied",
+    ),
+  );
+  // Callers count their own requests, not the permission read.
+  federated.request.mockClear();
   return { ...federated, session };
 }

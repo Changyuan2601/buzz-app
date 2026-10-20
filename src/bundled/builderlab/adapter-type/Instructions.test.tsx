@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
 import type { HostResponse } from "../../../features/host/service";
+import type { AuthenticatedRequest } from "../../../features/federated-identity/service";
 import { createAgentClient } from "../agents/client";
 import { federatedFixture } from "../../../features/federated-identity/testing";
 import { createBuilderlabSession } from "../session";
@@ -56,7 +57,19 @@ afterEach(cleanup);
 function fixture() {
   const federated = federatedFixture("user", "account-a");
   const session = createBuilderlabSession(federated.session);
-  const request = federated.request.mockResolvedValue(response());
+  // Beekeeper calls go to `request`; the permission read is always allowed.
+  const request = vi.fn(async (_input: AuthenticatedRequest) => response());
+  federated.request.mockImplementation(async (input) =>
+    input.path.endsWith("/v1/auth/me")
+      ? {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({
+            capabilities: { can_use_remote_agents: true },
+          }),
+        }
+      : request(input),
+  );
   const client = createAgentClient(session);
   const type = {
     ...builderlabType(client, session, {
