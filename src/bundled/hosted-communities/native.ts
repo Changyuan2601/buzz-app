@@ -37,7 +37,13 @@ export function createNativeBackend(identity: FederatedIdentity) {
     const response = await identity.request({
       path: `${snapshot.authority.apiBasePath}${route.replace(/^\//, "")}`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // Binding routes require the configured identity origin as `Origin`.
+        ...(route.startsWith("/v1/buzz/nostr-identities/")
+          ? { Origin: snapshot.authority.identityOrigin }
+          : {}),
+      },
       body: JSON.stringify(body),
     });
     signal?.throwIfAborted();

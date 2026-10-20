@@ -35,10 +35,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         session.snapshot,
         session.snapshot,
       );
-      // A new sign-in, sign-out or account change elsewhere starts the card over.
+      // A new sign-in, sign-out or account change starts the card over. Pending
+      // and restoring states keep it mounted so a running sign-in survives.
       return (
         <HostedCommunities
-          key={state.account?.revision ?? state.status}
+          key={state.account?.revision ?? "signed-out"}
           api={api}
           active={active}
         />

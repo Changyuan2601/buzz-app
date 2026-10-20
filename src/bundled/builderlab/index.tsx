@@ -20,7 +20,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ? ""
     : "Open the Buzz desktop app to sign in with Builderlab.";
   const loginAvailable = !unavailable;
-  if (session.available()) {
+  // Native discovery can finish after apply. Register once the authority is
+  // known; the registration is owned by ctx, so disposal removes it.
+  let registered = false;
+  const registerType = () => {
+    if (registered || !session.available()) return;
+    registered = true;
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
       attentionLabel: "Log in to Builderlab",
@@ -76,7 +81,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-  }
+  };
+  registerType();
+  ctx.effect(() => ctx.federatedIdentity.subscribe(registerType));
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
   let linked: unknown;

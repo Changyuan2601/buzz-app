@@ -10,6 +10,7 @@ import { PluginRuntime } from "../../plugins/runtime";
 import * as hosted from "./index";
 import manifest from "./manifest.json";
 import { federatedFixture } from "../../features/federated-identity/testing";
+import { createNativeBackend } from "./native";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -105,9 +106,19 @@ it("signs in and connects the identity through the shared native session", async
     },
   };
   const fi = federatedFixture();
-  fi.request.mockImplementation(async ({ path }) => {
+  fi.request.mockImplementation(async ({ path, headers }) => {
     const reply = replies[path.slice("/api/goose/".length)];
     if (!reply) throw new Error(`Unexpected ${path}`);
+    // The binding contract rejects a missing or different HTTP Origin.
+    if (
+      path.includes("/nostr-identities/") &&
+      headers?.Origin !== "https://builderlab.example"
+    )
+      return {
+        status: 400,
+        headers: {},
+        body: JSON.stringify({ error: { code: "invalid_origin" } }),
+      };
     const status = bound || !path.endsWith("/current") ? 200 : 404;
     return { status, headers: {}, body: JSON.stringify(reply()) };
   });
@@ -145,11 +156,19 @@ it("signs in and connects the identity through the shared native session", async
     expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
       source: "hosted",
     });
-    const verify = fi.request.mock.calls.find(([{ path }]) =>
-      path.endsWith("/verify"),
-    )?.[0];
-    // The native host adds the Bearer session; the plugin sends no credential.
-    expect(verify?.headers).toEqual({ "Content-Type": "application/json" });
+    const sent = (route: string) =>
+      fi.request.mock.calls.find(([{ path }]) => path.endsWith(route))?.[0];
+    const verify = sent("/verify");
+    // The native host adds the Bearer session; the plugin sends no credential,
+    // only the configured identity origin the binding contract requires.
+    for (const route of ["/challenge", "/verify"])
+      expect(sent(route)?.headers).toEqual({
+        "Content-Type": "application/json",
+        Origin: "https://builderlab.example",
+      });
+    expect(sent("/communities/list")?.headers).toEqual({
+      "Content-Type": "application/json",
+    });
     expect(JSON.parse(String(verify?.body))).toEqual({
       challenge_id: challenge.challenge_id,
       nonce: challenge.nonce,
@@ -179,6 +198,84 @@ it("starts the card over when the shared session signs out elsewhere", async () 
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeInTheDocument();
+  } finally {
+    await dispose();
+  }
+});
+
+it("sends the configured identity origin when unlinking", async () => {
+  const fi = federatedFixture();
+  fi.publish({
+    authority: {
+      id: "test",
+      identityOrigin: "https://identity.example:8443",
+      apiBasePath: "/api/goose/",
+    },
+  });
+  await fi.service.signIn();
+  fi.request.mockResolvedValue({ status: 200, headers: {}, body: "{}" });
+  await createNativeBackend(fi.service).backend.send("unbind");
+  expect(fi.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      path: "/api/goose/v1/buzz/nostr-identities/delete",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://identity.example:8443",
+      },
+    }),
+  );
+});
+
+it("keeps a pending browser sign-in running until it completes", async () => {
+  vi.stubEnv("VITE_BUZZ_LIVE", "");
+  const fi = federatedFixture();
+  let finish = () => {};
+  vi.mocked(fi.service.signIn).mockImplementation(async () => {
+    fi.publish({ status: "signing-in" });
+    await new Promise<void>((resolve) => (finish = resolve));
+    fi.publish({ status: "signed-in", revision: "user:1", email: null });
+    return fi.service.snapshot();
+  });
+  fi.request.mockResolvedValue({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ identity: { pubkey_hex: local } }),
+  });
+  native.invoke.mockResolvedValue(local);
+  const dispose = await mountCard(fi);
+  try {
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+    );
+    // The card that started the sign-in is still mounted and still offers Cancel.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(fi.service.cancelSignIn).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(
+      await screen.findByRole("button", { name: "Sign out" }),
+    ).toBeInTheDocument();
+    expect(fi.service.cancelSignIn).not.toHaveBeenCalled();
+  } finally {
+    await dispose();
+  }
+});
+
+it("cancels a pending browser sign-in from its Cancel button", async () => {
+  vi.stubEnv("VITE_BUZZ_LIVE", "");
+  const fi = federatedFixture();
+  vi.mocked(fi.service.signIn).mockImplementation(async () => {
+    fi.publish({ status: "signing-in" });
+    return new Promise(() => {});
+  });
+  const dispose = await mountCard(fi);
+  try {
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(fi.service.cancelSignIn).toHaveBeenCalledOnce();
   } finally {
     await dispose();
   }

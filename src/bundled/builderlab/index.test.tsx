@@ -420,6 +420,49 @@ it.each([
   },
 );
 
+it("registers the agent type once when native discovery finishes after the plugin starts", async () => {
+  const discovered = deferred<unknown>();
+  const play = nativeSession(async () => undefined);
+  native.invoke.mockImplementation(async (command, input) =>
+    command === "federated_identity_snapshot"
+      ? discovered.promise
+      : play(command, input),
+  );
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => builderlab);
+  new HostService(root);
+  const identity = new FederatedIdentityService(root);
+  const cards = new SettingsCardsService(root);
+  const community = communityFixture(null);
+  root.provide("relay", community.relay as never);
+  const agents = provideAgents(root, community);
+  try {
+    runtime.reconcile([
+      {
+        manifest: { ...manifest, apiVersion: 1 },
+        source: "bundled",
+        revision: "bundled",
+        enabled: true,
+        previous: null,
+        reloadable: false,
+        error: null,
+      },
+    ]);
+    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents.types()).toHaveLength(0);
+    discovered.resolve(await play("federated_identity_snapshot", {}));
+    await waitFor(() => expect(agents.types()).toHaveLength(1));
+    await identity.signIn();
+    expect(agents.types().map((type) => type.id)).toEqual(["builderlab"]);
+    await runtime.dispose();
+    expect(agents.types()).toHaveLength(0);
+  } finally {
+    await runtime.dispose();
+    await root.fiber.dispose();
+    await community.dispose();
+  }
+});
+
 it("shares plugin login with Settings and hosted Agents, replays failed setup writes, and keeps the native session across re-enable", async () => {
   const user = userEvent.setup();
   const hostedKey = "de".repeat(32);
