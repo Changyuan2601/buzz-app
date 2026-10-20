@@ -138,12 +138,14 @@ impl AppAgentHost {
         Ok((agent, key, evidence))
     }
     /// Saves an imported identity with its key, opening the agent's next
-    /// incarnation if it was deleted here before.
+    /// incarnation if it was deleted here before. Work that keeps the returned
+    /// agent and key passes the returned incarnation to `evidence`, so a later
+    /// deletion refuses it even after another import of the same key.
     async fn install(
         &self,
         prepared: buzz_agent_controller::NewAppAgent,
         auth: Vec<String>,
-    ) -> Result<(AppAgent, Arc<Secret>), String> {
+    ) -> Result<(AppAgent, Arc<Secret>, u64), String> {
         let host = self.clone();
         blocking(move || {
             let mut keys = host.keys();
@@ -153,10 +155,35 @@ impl AppAgentHost {
                     .commit(prepared, &auth, host.credentials.as_ref())?;
             let key = Arc::new(key);
             keys.insert(agent.pubkey.clone(), key.clone());
-            host.tokens.reopen(&agent.pubkey);
-            Ok((agent, key))
+            let incarnation = host.tokens.reopen(&agent.pubkey);
+            Ok((agent, key, incarnation))
         })
         .await
+    }
+    /// Uploads an imported agent's inline picture and saves its URL, as the
+    /// installation `incarnation` returned by `install`.
+    async fn imported_picture(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        incarnation: u64,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String, String> {
+        let agents = self.agents.clone()?;
+        let evidence = self.tokens.evidence(agent, key, incarnation).await?;
+        let receipt = upload(
+            agent,
+            key,
+            evidence.as_deref().map(String::as_str),
+            bytes,
+            mime,
+        )
+        .await?;
+        let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
+        let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
+        blocking(move || agents.set_picture(&pubkey, picture)).await?;
+        Ok(url.to_owned())
     }
     /// Deletes the key once any profile publication in flight has settled, so
     /// the community's cleanup sees every profile it will ever have. The row
@@ -411,7 +438,7 @@ pub(crate) async fn app_agent_port(
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
-    let (mut agent, key) = state.install(prepared, auth).await?;
+    let (mut agent, key, incarnation) = state.install(prepared, auth).await?;
     let mut notes = vec![];
     // Old Buzz kept some pictures inline; the community serves the upload. The
     // agent comes over without it if that fails, which the import reports.
@@ -426,24 +453,10 @@ pub(crate) async fn app_agent_port(
         ));
     }
     if let Some((mime, bytes)) = inline.and_then(inline_picture) {
-        let agents = state.agents.clone()?;
-        let uploaded = async {
-            let incarnation = state.tokens.incarnation(&agent.pubkey);
-            let evidence = state.tokens.evidence(&agent, &key, incarnation).await?;
-            let receipt = upload(
-                &agent,
-                &key,
-                evidence.as_deref().map(String::as_str),
-                bytes,
-                mime,
-            )
-            .await?;
-            let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
-            let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
-            blocking(move || agents.set_picture(&pubkey, picture)).await?;
-            Ok::<_, String>(url.to_owned())
-        };
-        match uploaded.await {
+        match state
+            .imported_picture(&agent, &key, incarnation, mime, bytes)
+            .await
+        {
             Ok(url) => agent.picture = Some(url),
             Err(error) => {
                 eprintln!("Imported agent picture was not saved: {error}");
@@ -1237,8 +1250,7 @@ mod tests {
             let host = host.clone();
             async move { host.install(prepared, auth).await.unwrap() }
         };
-        let (agent, _) = import(&key).await;
-        let old_incarnation = host.tokens.incarnation(&agent.pubkey);
+        let (agent, _, old_incarnation) = import(&key).await;
         host.keys().clear();
 
         // A request reads the agent, then is held reading its key.
@@ -1275,7 +1287,7 @@ mod tests {
 
         // The same key imported again enrolls and works; the old request's
         // incarnation stays refused.
-        let (agent, key) = import(&key).await;
+        let (agent, key, _) = import(&key).await;
         let (_, _, evidence) = host.signer(agent.pubkey.clone()).await.unwrap();
         assert!(evidence.is_some());
         assert_eq!(
@@ -1291,6 +1303,67 @@ mod tests {
             seen.len(),
             2,
             "only the re-imported agent's grant and assertion"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_import_held_past_its_deletion_does_not_upload_with_a_re_import() {
+        use crate::federated_identity::agent::tests::{enrolled, fixture, issued, issuer, settled};
+        let key = Secret::generate().unwrap();
+        let owner = attestation(key.pubkey())[1].clone();
+        let probe = AppAgent {
+            owner: owner.clone(),
+            ..agent_at("wss://relay.example".into(), &key)
+        };
+        let (base, served) = issuer(vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ])
+        .await;
+        let f = fixture(base);
+        let dir = tempfile::tempdir().unwrap();
+        let host = AppAgentHost {
+            agents: Ok(AppAgents::open(dir.path().join("identities.json"))),
+            old: Err("unused".into()),
+            credentials: Arc::new(Gated::default()),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), true)),
+            tokens: f.tokens.clone(),
+        };
+        let import = || {
+            let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
+            let auth = attestation(key.pubkey());
+            let prepared = AppAgents::adopt(
+                "https://relay.example/",
+                &owner,
+                "p/t",
+                key,
+                "Ada",
+                None,
+                None,
+            )
+            .unwrap();
+            let host = host.clone();
+            async move { host.install(prepared, auth).await.unwrap() }
+        };
+
+        // Import I installs, then its picture work is held while the agent is
+        // deleted and the same key is imported again as import II.
+        let (old_agent, old_key, old_incarnation) = import().await;
+        host.delete(old_agent.pubkey.clone()).await.unwrap();
+        let (agent, _, _) = import().await;
+        let (_, _, evidence) = host.signer(agent.pubkey.clone()).await.unwrap();
+        assert!(evidence.is_some(), "import II works");
+
+        let stale = host
+            .imported_picture(&old_agent, &old_key, old_incarnation, "image/png", vec![1])
+            .await;
+        assert_eq!(stale.err().as_deref(), Some("This agent was deleted"));
+        assert_eq!(
+            settled(served).await.len(),
+            2,
+            "only import II's grant and assertion"
         );
     }
 

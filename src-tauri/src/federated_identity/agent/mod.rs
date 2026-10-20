@@ -49,6 +49,9 @@ struct Inner {
     /// record of a retirement whose wipe is still to come.
     wiping: AsyncMutex<()>,
     agents: std::sync::OnceLock<Arc<Agents>>,
+    /// Signalled when the next sign-out waits for a grant write holding `retired`.
+    #[cfg(test)]
+    contended: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 #[derive(Default)]
 struct Retired {
@@ -102,6 +105,8 @@ impl AgentTokens {
             retired: Arc::default(),
             wiping: AsyncMutex::default(),
             agents: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            contended: Mutex::default(),
         }))
     }
     fn slot(&self, agent: &str) -> Arc<AsyncMutex<Slot>> {
@@ -117,8 +122,14 @@ impl AgentTokens {
             .map_err(|_| "Secure storage is unavailable")?
             .map_err(str::to_owned)
     }
-    /// The signed-in BB account, if any.
+    /// The BB account last seen signed in, if any. It outlives that session's
+    /// expiry, so a grant another account enrolled stays refused meanwhile.
     fn account(&self) -> Option<String> {
+        let state = self.0.identity.state();
+        state.account.clone().flatten().filter(|_| !state.closed)
+    }
+    /// The signed-in BB account, if any.
+    fn signed_in(&self) -> Option<String> {
         let state = self.0.identity.state();
         state
             .session
@@ -150,8 +161,9 @@ impl AgentTokens {
         at.unwrap_or_default().generation == incarnation && !at.is_some_and(|at| at.closed)
     }
     /// An authorized import installed the agent again: requests taken from now
-    /// on work, while ones from before its deletion stay refused.
-    pub(crate) fn reopen(&self, agent: &str) {
+    /// on work, while ones from before its deletion stay refused. Returns the
+    /// installation's incarnation.
+    pub(crate) fn reopen(&self, agent: &str) -> u64 {
         let mut incarnations = lock(&self.0.incarnations);
         let at = incarnations.entry(agent.into()).or_default();
         if at.closed {
@@ -160,6 +172,7 @@ impl AgentTokens {
                 closed: false,
             };
         }
+        at.generation
     }
 
     /// The `Nostr-Federated-Identity` value for the agent's requests to its
@@ -305,18 +318,7 @@ impl AgentTokens {
         }
         // Cached assertions carry the count and account they were minted
         // under, so they are already unusable; only stored grants need deleting.
-        let agents = self
-            .0
-            .agents
-            .get()
-            .cloned()
-            .ok_or("Agents are unavailable")?;
-        let keys = tauri::async_runtime::spawn_blocking(move || agents())
-            .await
-            .map_err(|_| "Agents are unavailable")??
-            .into_iter()
-            .map(|(owner, agent)| self.0.identity.agent_grant_key(&owner, &agent))
-            .collect::<Vec<_>>();
+        let keys = self.grant_keys().await?;
         let (retired, at) = (self.0.retired.clone(), self.retiring_key());
         self.storage(move |store| {
             let mut retired = lock(&retired);
@@ -331,6 +333,53 @@ impl AgentTokens {
         .await
     }
 
+    /// Every agent's grant key.
+    async fn grant_keys(&self) -> Result<Vec<String>, String> {
+        let agents = self
+            .0
+            .agents
+            .get()
+            .cloned()
+            .ok_or("Agents are unavailable")?;
+        Ok(tauri::async_runtime::spawn_blocking(move || agents())
+            .await
+            .map_err(|_| "Agents are unavailable")??
+            .into_iter()
+            .map(|(owner, agent)| self.0.identity.agent_grant_key(&owner, &agent))
+            .collect())
+    }
+    /// Once an account is seen signed in, retires every grant if any was
+    /// enrolled by another account. Recorded durably first, as sign-out is, so
+    /// neither that session ending nor a restart lets the old grant mint again.
+    async fn reconcile(&self) -> Result<(), String> {
+        let Some(account) = self.account() else {
+            return Ok(());
+        };
+        let _wiping = self.0.wiping.lock().await;
+        let keys = self.grant_keys().await?;
+        let (retired, at) = (self.0.retired.clone(), self.retiring_key());
+        let foreign = self
+            .storage(move |store| {
+                let mut retired = lock(&retired);
+                for key in &keys {
+                    if store
+                        .read(key)?
+                        .is_some_and(|grant| !grant.usable_with(Some(&account)))
+                    {
+                        store.set_pending(&at, true)?;
+                        retired.pending = Some(true);
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .await?;
+        if foreign {
+            self.wipe(self.0.identity.retirements()).await?;
+        }
+        Ok(())
+    }
+
     /// Signs the owner out of the organization and retires every agent's grant
     /// with it. The retirement is recorded durably first, under the grant-write
     /// lock, so a write already past its check lands before it and is wiped,
@@ -339,7 +388,15 @@ impl AgentTokens {
     pub(crate) async fn sign_out(&self) -> Result<Snapshot, String> {
         let _wiping = self.0.wiping.lock().await;
         let (retired, at) = (self.0.retired.clone(), self.retiring_key());
+        #[cfg(test)]
+        let contended = lock(&self.0.contended).take();
         self.storage(move |store| {
+            #[cfg(test)]
+            if let (Err(std::sync::TryLockError::WouldBlock), Some(contended)) =
+                (retired.try_lock().map(drop), contended)
+            {
+                let _ = contended.send(());
+            }
             let mut retired = lock(&retired);
             store.set_pending(&at, true)?;
             retired.pending = Some(true);
@@ -420,7 +477,8 @@ impl AgentTokens {
         self.storage(move |store| store.delete(&at)).await
     }
 
-    /// Follows the owner's account: an explicit sign-out or another account
+    /// Follows the owner's account: an explicit sign-out or another account,
+    /// including a first sign-in other than the one that enrolled a grant,
     /// retires every agent's grant (`agents` lists each owner and agent), and
     /// any new sign-in lets a stopped agent enroll again. Expiry keeps grants.
     /// Requests check the retirement count themselves; this only wipes early.
@@ -450,7 +508,9 @@ impl AgentTokens {
                 slot.lock().await.stopped = false;
             }
         }
-        self.admit().await.map(drop)
+        self.admit().await?;
+        // On every change: a sign-in and its expiry may arrive as one.
+        self.reconcile().await
     }
 
     async fn retire(&self, agent: &AppAgent) -> Result<(), String> {
@@ -526,7 +586,7 @@ impl AgentTokens {
     /// session that started it may install the result.
     async fn enroll(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, Error> {
         let identity = &self.0.identity;
-        let account = self.account().ok_or(SIGN_IN)?;
+        let account = self.signed_in().ok_or(SIGN_IN)?;
         let (form, revision, endpoint) = identity
             .with_session(|token, revision, config| {
                 let form = url::form_urlencoded::Serializer::new(String::new())

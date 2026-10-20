@@ -906,13 +906,25 @@ async fn a_grant_write_past_its_check_does_not_survive_a_concurrent_sign_out() {
         .await
         .unwrap()
         .unwrap();
-    // The write has passed its check and holds the transaction lock.
+    // The write has passed its check. Sign-out runs until it waits on the
+    // transaction the write holds; only then is the write released. Were the
+    // two not one transaction, sign-out would finish first and the write would
+    // land after its wipe.
+    let (contended_tx, contended) = std::sync::mpsc::channel();
+    *f.tokens.0.contended.lock().unwrap() = Some(contended_tx);
     let sign_out = {
         let f = f.clone();
         tokio::spawn(async move { f.tokens.sign_out().await })
     };
+    // Sign-out drops the sender unsignalled if it never waits.
+    let waited = bounded(tokio::task::spawn_blocking(move || {
+        contended.recv().is_ok()
+    }))
+    .await
+    .unwrap();
     release.send(()).unwrap();
     assert!(write.await.unwrap().is_ok());
+    assert!(waited, "sign-out did not wait for the write's transaction");
     assert!(bounded(sign_out).await.unwrap().is_ok());
     assert!(
         f.grants.0.lock().unwrap().is_empty(),
@@ -957,6 +969,64 @@ async fn another_account_as_the_first_sign_in_after_restart_retires_the_cached_g
         f.grants.read(&at).unwrap().unwrap().account,
         "b@example.com"
     );
+}
+
+#[tokio::test]
+async fn another_first_sign_in_retires_the_grant_even_once_that_session_has_expired() {
+    // The watcher follows B's sign-in before it expires, or sees both as one change.
+    for watched_before_expiry in [true, false] {
+        let owner = "b".repeat(64);
+        let (key, probe) = keyed(&owner);
+        let (base, served) = issuer(vec![(200, issued(&probe, serde_json::json!({})))]).await;
+        let mut f = fixture(base.clone());
+        (f.agent, f.key) = (probe.clone(), key);
+        stored(&f, "a@example.com");
+        let tokens = restarted(&f, base.clone());
+        assert!(tokens
+            .evidence(&f.agent, &f.key, 0)
+            .await
+            .unwrap()
+            .is_some());
+
+        // B is the first sign-in, with no agent call while it lasts.
+        let f = Fixture { tokens, ..f };
+        signed_in_again(&f, "b@example.com");
+        let identity = f.tokens.0.identity.clone();
+        let watch = || f.tokens.follow(identity.account_changes().borrow().clone());
+        if watched_before_expiry {
+            watch().await.unwrap();
+        }
+        // B's session expires and the restore owner removes it.
+        {
+            let mut state = identity.state();
+            let session = Arc::get_mut(state.session.as_mut().unwrap()).unwrap();
+            session.record.expires_at = "2000-01-01T00:00:00Z".into();
+            state.restored = true;
+        }
+        identity.restore().await;
+        assert!(identity.state().session.is_none());
+        watch().await.unwrap();
+
+        // A's grant neither mints nor comes back, here or after a restart.
+        assert_eq!(
+            f.tokens
+                .evidence(&f.agent, &f.key, 0)
+                .await
+                .err()
+                .as_deref(),
+            Some(SIGN_IN)
+        );
+        let tokens = restarted(&f, base);
+        assert_eq!(
+            tokens.evidence(&f.agent, &f.key, 0).await.err().as_deref(),
+            Some(SIGN_IN)
+        );
+        assert!(
+            f.grants.0.lock().unwrap().is_empty(),
+            "grant and record wiped"
+        );
+        assert_eq!(settled(served).await.len(), 1, "only A's first mint");
+    }
 }
 
 #[tokio::test]
