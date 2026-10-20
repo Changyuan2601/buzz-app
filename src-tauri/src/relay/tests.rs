@@ -653,14 +653,21 @@ fn isolated_agent_ipc_probe() {
     verify(&event);
 
     let repository = format!("https://relay.test/git/{}/plugins", "a".repeat(64));
-    // This unresolved fixture relay cannot admit repository authorization.
+    app.state::<FederatedIdentity>()
+        .discovered("wss://relay.test", false);
+    let token = invoke(
+        "relay_git_authorization",
+        serde_json::json!({"community": "https://relay.test", "repository": repository}),
+    )
+    .unwrap();
+    let auth: serde_json::Value =
+        serde_json::from_slice(&STANDARD.decode(token.as_str().unwrap()).unwrap()).unwrap();
+    verify(&auth);
+    assert_eq!(auth["pubkey"], public);
+    assert_eq!(auth["kind"], 27235);
     assert_eq!(
-        invoke(
-            "relay_git_authorization",
-            serde_json::json!({"community":"https://relay.test", "repository":repository})
-        )
-        .unwrap_err(),
-        serde_json::json!("Federated community discovery failed")
+        auth["tags"],
+        serde_json::json!([["u", repository], ["method", "GET"]])
     );
     assert!(invoke(
         "relay_git_authorization",

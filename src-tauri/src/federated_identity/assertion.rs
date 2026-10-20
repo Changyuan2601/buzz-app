@@ -168,6 +168,12 @@ impl FederatedIdentity {
             }
         }
     }
+    /// Settles a relay's discovery without the network, as the relay's `/info` would.
+    #[cfg(test)]
+    pub(crate) fn discovered(&self, relay: &str, requires: bool) {
+        let generation = self.discovery_generation(relay, None).unwrap();
+        generation.result.set(Ok(requires)).unwrap();
+    }
     pub(crate) fn clear_discoveries(&self) {
         for (_, generation) in self
             .0
