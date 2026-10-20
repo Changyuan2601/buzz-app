@@ -1,7 +1,8 @@
-/* Provider setup sits above the locked composer, like a new chat's prompt. */
+/* Provider setup centers in the chat frame above the locked composer. */
 .connect {
   width: min(calc(100% - 2 * var(--space-4)), 32rem);
-  margin: 0 auto var(--space-6);
+  margin: auto;
+  padding-block: var(--space-6);
 }
 .lockedComposer {
   flex: 0 0 auto;

@@ -10,9 +10,12 @@ import styles from "./Solo.module.css";
 export function SoloDraftView({
   children,
   actions,
+  fill = false,
 }: {
   actions?: ReactNode;
   children: ReactNode;
+  /** Content fills the frame above the composer, so it can center itself. */
+  fill?: boolean;
 }) {
   return (
     <section
@@ -22,7 +25,13 @@ export function SoloDraftView({
     >
       <SoloTitle channel={{ name: "New chat" }}>{actions}</SoloTitle>
       <div className={styles.start}>
-        <div className={styles.startContent}>{children}</div>
+        <div
+          className={
+            fill ? `${styles.startContent} ${styles.fill}` : styles.startContent
+          }
+        >
+          {children}
+        </div>
       </div>
     </section>
   );

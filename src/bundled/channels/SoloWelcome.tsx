@@ -63,7 +63,7 @@ export function SoloWelcome({
 }) {
   const agents = useContext(AgentsContext);
   return (
-    <SoloDraftView>
+    <SoloDraftView fill>
       <div className={styles.connect}>
         {agents ? (
           <WelcomeSetup
