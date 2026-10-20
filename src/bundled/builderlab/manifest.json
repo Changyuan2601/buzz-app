@@ -3,5 +3,8 @@
   "name": "Builderlab",
   "apiVersion": 1,
   "description": "Connect Buzz to Builderlab-hosted agents.",
-  "discovery": { "category": "developer-tools-and-integrations" }
+  "discovery": {
+    "category": "agents",
+    "tags": ["Essentials", "builderlab"]
+  }
 }

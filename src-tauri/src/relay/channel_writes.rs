@@ -58,6 +58,7 @@ fn details(event: &EventTemplate) -> bool {
             .trim_end_matches(char::is_whitespace)
             == name
         && about.chars().count() <= 1000
+        && !about.contains("Buzz Huddle (")
 }
 
 fn details_labels(labels: &[Vec<String>]) -> bool {
@@ -323,7 +324,7 @@ pub(crate) async fn relay_direct_message(
 }
 
 pub(super) fn creation(event: &EventTemplate) -> bool {
-    if event.kind != 9007 || !event.content.is_empty() || !(4..=15).contains(&event.tags.len()) {
+    if event.kind != 9007 || !event.content.is_empty() || !(4..=47).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
@@ -385,6 +386,26 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         if index - first_label >= 8
             || !channel_label(label)
             || event.tags[first_label..index].iter().any(|t| t[1] == label)
+        {
+            return false;
+        }
+        index += 1;
+    }
+    // block/buzz#8421: up to 32 distinct `p` tags name the first members.
+    let first_member = index;
+    while event
+        .tags
+        .get(index)
+        .is_some_and(|t| t.first().is_some_and(|s| s == "p"))
+    {
+        let Some(member) = tag(event, index, "p") else {
+            return false;
+        };
+        if index - first_member >= 32
+            || !super::hex_key(member)
+            || event.tags[first_member..index]
+                .iter()
+                .any(|t| t[1] == member)
         {
             return false;
         }
@@ -548,6 +569,18 @@ mod boundary_tests {
     }
 
     #[test]
+    fn details_reject_huddle_markers_at_sign_and_publish_boundaries() {
+        let mut event = details_event(vec![]);
+        event.tags[2][1] =
+            "Buzz Huddle (buzz.huddles/v1)\nparent:11111111-1111-4111-8111-111111111111".into();
+        let value = serde_json::to_value(&event).unwrap();
+        assert!(validate("channel-details", &value, None).is_err());
+        let host = IdentityHost::fixture();
+        let signed = tauri::async_runtime::block_on(host.sign(event)).unwrap();
+        assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_err());
+    }
+
+    #[test]
     fn details_reject_malformed_optional_tags() {
         for extra in [
             vec![vec![]],
@@ -681,6 +714,23 @@ mod boundary_tests {
         event.tags.push(vec!["p".into(), "attacker".into()]);
         assert!(!creation(&event));
         event.tags.pop();
+        let member = |n: usize| vec!["p".to_string(), format!("{n:064x}")];
+        event.tags.extend((1..=32).map(member));
+        assert!(creation(&event));
+        event.tags.push(member(33));
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event.tags.extend([member(1), member(1)]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event.tags.push(vec!["p".into(), "A".repeat(64)]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event
+            .tags
+            .extend([member(1), vec!["t".into(), "buzz.solo".into()]]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
         event.tags[3][1] = "system".into();
         assert!(creation(&event));
         for other in ["dm", "forum", "session", "System", ""] {

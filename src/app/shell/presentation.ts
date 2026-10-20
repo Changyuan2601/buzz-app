@@ -3,6 +3,7 @@ import {
   BellIcon,
   BestieIcon,
   BrowserIcon,
+  ChartBarIcon,
   ChatsCircleIcon,
   GearIcon,
   LightningIcon,
@@ -47,6 +48,7 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.bestie/bestie", BestieIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
+  ["buzz.usage/usage", ChartBarIcon],
 ]);
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {

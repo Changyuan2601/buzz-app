@@ -6,14 +6,16 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
-import { respond } from "../../buzz-mcp/rpc";
+import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
   addedKey,
+  sessionHint,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -28,11 +30,12 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
+import { readProject } from "../../features/agent-harness/project";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -107,6 +110,8 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  /** The project folders each Solo chat's latest turn named, for its process. */
+  directories: Map<string, readonly string[]>;
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
   policies: Map<
@@ -120,6 +125,17 @@ const where = ({ workspace, model, effort }: Config) => ({
   cwd: workspace,
   ...(model.trim() ? { model: model.trim() } : {}),
   ...(effort ? { effort } : {}),
+});
+
+/** How Claude lists the session tools: in full up front only those marked
+ * `alwaysLoad`, and the rest by name until its tool search loads them, with
+ * the server's instructions saying what they are. */
+const listing = (added: readonly AddedTool[]): Listing => ({
+  instructions: sessionHint(added),
+  tool: ({ load, ...tool }) =>
+    load === "always"
+      ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
+      : tool,
 });
 
 export class ClaudeRuntime {
@@ -137,7 +153,8 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    (_conversation, message) =>
+      respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
     () => addedKey(this.added()),
   );
@@ -148,7 +165,7 @@ export class ClaudeRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = globalThis.localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -337,6 +354,7 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
@@ -440,6 +458,7 @@ export class ClaudeRuntime {
     if (!wait) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error, topLevel);
@@ -578,8 +597,17 @@ export class ClaudeRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const canvas = reads?.canvas?.bind(reads);
+    const owner = entry.handle?.owner;
+    const reading = topLevel
+      ? readProject(
+          canvas && owner ? () => canvas(channelId, owner) : undefined,
+        )
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
-    if (reads && (thread || dm || topLevel))
+    // A chat its owner is still creating has nothing earlier to read.
+    if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
         const events = await reads.read(
           thread && !topLevel
@@ -620,6 +648,11 @@ export class ClaudeRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = await reading;
+    // An unread Canvas keeps the folders the chat had, not restarting it.
+    if (project?.directories.length)
+      entry.directories.set(key, project.directories);
+    else if (project) entry.directories.delete(key);
     return {
       key,
       event,
@@ -634,6 +667,7 @@ export class ClaudeRuntime {
       context: unseen,
       total: earlier.length + 1,
       name: (pubkey: string) => reads?.name(pubkey, members),
+      ...(project?.section ? { project: project.section } : {}),
     };
   }
 
@@ -646,6 +680,7 @@ export class ClaudeRuntime {
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
+      directories: new Map(),
     };
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
@@ -660,22 +695,28 @@ export class ClaudeRuntime {
             audienceAuthorityCommunity:
               this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
-            spawn: this.spawn,
-            cwd,
+            read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, this.added());
+        return respond(
+          client,
+          context,
+          message,
+          this.added(),
+          listing(this.added()),
+        );
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       spare: this.spare,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
-      fingerprint: () =>
+      fingerprint: (key) =>
         JSON.stringify([
+          key ? (entry.directories.get(key) ?? []) : [],
           entry.config.model,
           entry.config.effort,
           entry.config.workspace,
@@ -685,11 +726,13 @@ export class ClaudeRuntime {
           entry.name,
           addedKey(this.added()),
         ]),
-      launch: async () => {
+      launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
         const memory = await this.core(pubkey);
+        const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
+          ...(directories ? { directories } : {}),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,

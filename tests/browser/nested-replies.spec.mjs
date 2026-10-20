@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
@@ -13,7 +14,7 @@ test.use({
 // Every thread reply, nested or not, carries the same full action bar; on desktop
 // it is revealed by hover or focus.
 async function replyActions(row) {
-  await row.hover();
+  await hoverMessage(row);
   return row.getByRole("group", { name: "Message actions", exact: true });
 }
 
@@ -75,7 +76,7 @@ test("nested replies send, stay open, and reveal through links at readable panel
     path: test.info().outputPath("ordinary-thread-replies.png"),
   });
   await editor.fill("Nested browser reply");
-  await parent.hover();
+  await hoverMessage(parent);
   await parent.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(editor).toHaveText("Nested browser reply");
   let rejected;
@@ -590,7 +591,7 @@ for (const width of [1492, 1280, 1024, 700, 390])
           history.clientHeight / 2;
       });
       const restingHeight = (await row.boundingBox()).height;
-      await row.hover();
+      await hoverMessage(row);
       expect((await row.boundingBox()).height).toBe(restingHeight);
       // Every reply, nested or not, exposes the same full bar. Revealing it must
       // not reflow the row.
@@ -606,20 +607,18 @@ for (const width of [1492, 1280, 1024, 700, 390])
         Promise.all(bar.getAnimations().map((animation) => animation.finished)),
       );
       if (width >= 640) {
-        // Both headers and continuations use centered beside controls when
-        // they fit, and the same token-sized corner overlap otherwise.
+        // Headers and continuations both lift the bar over the bubble's top
+        // corner by the same token-sized overlap.
         const placement = await row.evaluate((node) => {
           const bar = node.querySelector('[aria-label="Message actions"]');
           const body = node.querySelector('[class*="_messageBubble_"]');
           const rect = bar.getBoundingClientRect();
           const anchor = body.getBoundingClientRect();
-          const beside = bar.dataset.placement === "beside";
           return {
-            actual: beside ? rect.top + rect.height / 2 : rect.bottom,
-            expected: beside
-              ? anchor.top + anchor.height / 2
-              : anchor.top +
-                parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+            actual: rect.bottom,
+            expected:
+              anchor.top +
+              parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
           };
         });
         expect(placement.actual).toBeCloseTo(placement.expected, 1);
@@ -639,6 +638,10 @@ for (const width of [1492, 1280, 1024, 700, 390])
       // layer stack, so a hoverable hint would swallow every action click.
       const stamp = row.locator("time");
       if (await stamp.count()) {
+        // Metadata is not a pointer reveal target. Keep the toolbar keyboard-
+        // owned while checking that it remains hit-testable over the byline.
+        await page.keyboard.press("Tab");
+        await actions.getByRole("button").first().focus();
         const hint = await stamp.boundingBox();
         await page.mouse.move(hint.x + 4, hint.y + hint.height / 2);
         await expect
@@ -661,7 +664,7 @@ for (const width of [1492, 1280, 1024, 700, 390])
             ),
           )
           .toBe(true);
-        await row.hover();
+        await hoverMessage(row);
       }
       // Every action is on screen, enabled and owns the pointer at its centre.
       // One page-side check per row: a trial click per button made this test

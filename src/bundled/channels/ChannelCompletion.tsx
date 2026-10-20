@@ -16,6 +16,8 @@ function referable(channel: ChannelSummary) {
   return (
     !!channel.name.trim() &&
     !/[\r\n]/.test(channel.name) &&
+    !channel.huddle &&
+    !channel.metadataPending &&
     !channel.archived &&
     !channel.hidden &&
     channel.channelType !== "dm" &&

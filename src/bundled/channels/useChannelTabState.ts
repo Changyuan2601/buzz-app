@@ -18,6 +18,8 @@ export type ConversationTab =
       revealRequest?: number | undefined;
       /** False: seeing messages here marks none read; the opener decides. */
       markRead?: false | undefined;
+      /** Each new value focuses the composer. */
+      focusRequest?: number | undefined;
     }
   | {
       id: string;
@@ -25,6 +27,8 @@ export type ConversationTab =
       channelId: string;
       messageId: string;
       replyRequest?: number | undefined;
+      /** Each new value focuses the reply box, keeping its target. */
+      focusRequest?: number | undefined;
       /** Each new value reveals `messageId` again; set only by openings at it. */
       revealRequest?: number | undefined;
       /** Transient visual cue when an opening reuses this tab. */
@@ -124,7 +128,7 @@ export const threadTab = (
 
 /** Reply asks for the composer; select keeps the tab's requests; reveal asks
  * the reader to show `messageId` again. */
-export type ThreadIntent = "reply" | "select" | "reveal";
+export type ThreadIntent = "reply" | "select" | "reveal" | "focus";
 
 /** Opening a thread selects its existing tab or adds one in `pane`. */
 function withThread(
@@ -156,9 +160,11 @@ function withThread(
     replyRequest:
       intent === "reply"
         ? (prior?.replyRequest ?? 0) + 1
-        : intent === "select" || intent === "reveal"
+        : intent === "select" || intent === "reveal" || intent === "focus"
           ? prior?.replyRequest
           : undefined,
+    focusRequest:
+      intent === "focus" ? (prior?.focusRequest ?? 0) + 1 : prior?.focusRequest,
     revealRequest:
       intent === "reveal"
         ? (prior?.revealRequest ?? 0) + 1
@@ -226,7 +232,7 @@ const named = (tab: ConversationTab, name: string): ConversationTab =>
   tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
 // Until its reader verifies the root, a tab's id holds the root it was opened
 // with, before any disambiguating suffix.
-const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
+export const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
   tab.rootId ??
   (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
 /** A channel's own thread tabs in its workspace, changed from outside the
@@ -273,7 +279,9 @@ export function channelTabs(session: RelaySession) {
       if (threads(channelId).some((thread) => thread.root === rootId))
         return false;
       store.update(keyOf("messages", channelId), (state) => {
-        const pane = threadPlacementPreference();
+        // Solo chats have no main tab workspace.
+        const pane =
+          channel.channelType === "solo" ? "side" : threadPlacementPreference();
         const opened = withThread(
           state,
           channelId,
@@ -429,7 +437,12 @@ export function useChannelTabState(
   const enterVisit = useCallback(
     (
       visit: string,
-      routed?: { channelId: string; messageId: string; rootId: string },
+      routed?: {
+        channelId: string;
+        messageId: string;
+        rootId: string;
+        pane?: TabPane | undefined;
+      },
       /** A new visit keeps the current selection instead of the conversation. */
       keep = false,
     ) =>
@@ -444,7 +457,7 @@ export function useChannelTabState(
             routed.messageId,
             routed.rootId,
             "select",
-            threadPlacementPreference(),
+            routed.pane ?? threadPlacementPreference(),
           );
         const saved = visits?.[visit];
         return saved

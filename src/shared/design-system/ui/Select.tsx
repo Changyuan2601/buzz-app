@@ -11,7 +11,7 @@ export type SelectGroup = {
     value: string;
     label: string;
     description?: ReactNode;
-    /** Decorative identity artwork shown before the option's text. */
+    /** Decorative 20px icon, avatar, or custom accessory shown before the option's text. */
     leading?: ReactNode;
     disabled?: boolean;
   }[];
@@ -51,7 +51,7 @@ export function Select({
   valueTitle?: string;
   /** Compact metadata stays visible while the selected value truncates. */
   valueSuffix?: string | undefined;
-  /** Decorative identity artwork shown before the selected value. */
+  /** Decorative 20px icon, avatar, or custom accessory shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";

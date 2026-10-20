@@ -166,6 +166,7 @@ function row(id: string, top: number, bottom: number) {
   const element = document.createElement("div");
   element.dataset.messageId = id;
   if (id === "membership") element.dataset.membershipRow = "";
+  if (id === "huddle") element.dataset.huddleRow = "";
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, top, 400, bottom - top),
   );
@@ -405,15 +406,18 @@ it("the viewing validity callback rechecks focus and settled positioning synchro
   expect(visible()).toBe(false);
 });
 
-it("membership activity cannot abort acknowledgment of a visible message below it", () => {
-  const h = setup();
-  h.setRows([row("membership", 10, 50), row("conversation", 100, 200)]);
-  h.mutation();
-  vi.advanceTimersByTime(300);
-  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
-    "conversation",
-  ]);
-});
+it.each(["membership", "huddle"])(
+  "%s activity cannot abort acknowledgment of a visible message below it",
+  (kind) => {
+    const h = setup();
+    h.setRows([row(kind, 10, 50), row("conversation", 100, 200)]);
+    h.mutation();
+    vi.advanceTimersByTime(300);
+    expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
+      "conversation",
+    ]);
+  },
+);
 
 it("releases the old channel and session on rerender and only observes the current lease", () => {
   const h = setup();

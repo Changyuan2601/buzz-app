@@ -172,6 +172,7 @@
   inset-inline: 0;
   padding: 0 calc(var(--space-6) * 2);
 }
+.title,
 .title input {
   text-align: center;
 }
@@ -221,7 +222,9 @@
 .identity:not([data-avatar-active]) {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* Top-anchored, so an arriving name error grows the card downward
+   * instead of re-centering the avatar and name upward. */
+  justify-content: flex-start;
   gap: var(--space-4);
   height: auto;
   min-height: 20rem;

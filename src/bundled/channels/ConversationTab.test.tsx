@@ -15,6 +15,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import { createOutbox, type OutgoingEvent } from "../../features/relay/outbox";
 import { keypair, signed } from "../../features/relay/testing";
 import { ConversationTab } from "./ConversationTab";
+import type { ConversationTab as Tab } from "./useChannelTabState";
 
 // Exercise the real tab recovery owner and durable outbox without mounting the
 // independent timelines/composers. Recovery must work with no editor mounted.
@@ -22,17 +23,20 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
     replyRequest,
+    focusRequest,
     revealSelected,
     revealRequest,
   }: {
     active: boolean;
     replyRequest?: number;
+    focusRequest?: number;
     revealSelected?: boolean;
     revealRequest?: number;
   }) => (
     <aside
       data-active={active}
       data-reply-request={replyRequest}
+      data-focus-request={focusRequest}
       data-reveal-selected={revealSelected}
       data-reveal-request={revealRequest}
     >
@@ -63,7 +67,9 @@ vi.mock("./ChannelBody", () => ({
   ),
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
-  MessageComposer: () => <div>Composer content</div>,
+  MessageComposer: ({ focusRequest }: { focusRequest?: number }) => (
+    <div data-focus-request={focusRequest}>Composer content</div>
+  ),
 }));
 const owners: ReturnType<typeof createOutbox>[] = [];
 afterEach(() => {
@@ -223,6 +229,48 @@ it.each(["thread", "conversation"] as const)(
   },
 );
 
+it.each(["thread", "conversation"] as const)(
+  "%s tabs that only reveal never visit their channel",
+  (kind) => {
+    const channel = { id: "beta", name: "Beta", members: ["viewer"] };
+    const snapshot = { status: "ready", channels: [channel] };
+    const enterChannel = vi.fn(async () => {});
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: { enterChannel, leaveChannel: vi.fn() },
+    } as unknown as RelaySession;
+    render(
+      <ConversationTab
+        tab={{
+          id: "beta-tab",
+          kind,
+          channelId: "beta",
+          messageId: "a".repeat(64),
+          // A conversation tab seeks no message here; its reader is not mocked.
+          revealRequest: kind === "thread" ? 1 : undefined,
+        }}
+        channel={channel}
+        session={session}
+        scope="reveal-test"
+        openLink={() => false}
+        canOpenLink={() => false}
+        openThread={() => {}}
+        close={() => {}}
+        active
+        visit={false}
+      />,
+    );
+    expect(screen.getByLabelText("Conversation in Beta")).toBeVisible();
+    expect(enterChannel).not.toHaveBeenCalled();
+    if (kind === "thread")
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-reveal-selected",
+        "true",
+      );
+  },
+);
+
 it.each([false, true])(
   "restored Reply intent is not replayed but fresh requests are delivered (focusOnMount=%s)",
   (focusOnMount) => {
@@ -268,6 +316,96 @@ it.each([false, true])(
     // A non-Reply opening resets the sequence; a later Reply may reuse number 1.
     mounted.rerender(<ConversationTab {...props} tab={{ ...tab }} />);
     expect(thread).toHaveAttribute("data-reply-request", "1");
+  },
+);
+
+it.each([
+  ["conversation", false],
+  ["conversation", true],
+  ["thread", false],
+  ["thread", true],
+] as const)(
+  "restored %s composer focus is not replayed but fresh requests are delivered (focusOnMount=%s)",
+  (kind, focusOnMount) => {
+    const channel = { id: "beta", name: "Beta" };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const tab: Tab =
+      kind === "thread"
+        ? {
+            id: "beta-tab",
+            kind,
+            channelId: "beta",
+            messageId: "a".repeat(64),
+            focusRequest: 1,
+          }
+        : { id: "beta-tab", kind, channelId: "beta", focusRequest: 1 };
+    const props = {
+      tab,
+      channel,
+      session,
+      scope: "composer-focus-test",
+      active: true,
+      focusOnMount,
+      openLink: () => false,
+      canOpenLink: () => false,
+      openThread: () => {},
+      close: () => {},
+    };
+    const mounted = render(<ConversationTab {...props} />);
+    const composer = screen.getByText(
+      kind === "thread" ? "Thread content" : "Composer content",
+    );
+    if (focusOnMount)
+      expect(composer).toHaveAttribute("data-focus-request", "1");
+    else expect(composer).not.toHaveAttribute("data-focus-request");
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, focusRequest: 2 }} />,
+    );
+    expect(composer).toHaveAttribute("data-focus-request", "2");
+  },
+);
+
+it.each(["pointerDown", "keyDown"] as const)(
+  "a focus request expires once the user acts first (%s)",
+  (event) => {
+    const channel = { id: "beta", name: "Beta" };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const tab: Tab = {
+      id: "thread",
+      kind: "thread",
+      channelId: "beta",
+      messageId: "a".repeat(64),
+      focusRequest: 1,
+    };
+    const props = {
+      tab,
+      channel,
+      session,
+      scope: "focus-expiry-test",
+      active: true,
+      openLink: () => false,
+      canOpenLink: () => false,
+      openThread: () => {},
+      close: () => {},
+    };
+    const mounted = render(<ConversationTab {...props} />);
+    const thread = screen.getByText("Thread content");
+    expect(thread).toHaveAttribute("data-focus-request", "1");
+    // Acting elsewhere before the reply box loads keeps the user's focus.
+    act(() => {
+      fireEvent[event](document.body, { key: "a" });
+    });
+    expect(thread).not.toHaveAttribute("data-focus-request");
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, focusRequest: 2 }} />,
+    );
+    expect(thread).toHaveAttribute("data-focus-request", "2");
   },
 );
 

@@ -73,6 +73,8 @@ export type TurnInput = Readonly<{
   label: string;
   /** A display name for a pubkey, if known. */
   name(pubkey: string): string | undefined;
+  /** The chat's workspace Canvas section, for a Solo chat with one. */
+  project?: string;
 }>;
 
 const time = (seconds: number) => new Date(seconds * 1000).toISOString();
@@ -140,6 +142,7 @@ export function turnPrompt(input: TurnInput) {
       [...lines, `Agent: ${input.agent}`, hint, reply].join("\n"),
     ),
   ];
+  if (input.project) parts.push(input.project);
   if (context.length)
     parts.push(
       section(

@@ -169,7 +169,7 @@ it.each(["buzz-media://localhost", "http://buzz-media.localhost"])(
     const link = screen.getByRole("button", { name: "Download image" });
     expect(link).not.toHaveAttribute("href");
     fireEvent.click(link);
-    expect(downloadNativeMedia).toHaveBeenCalledWith(source);
+    expect(downloadNativeMedia).toHaveBeenCalledWith(source, "");
     expect(
       screen.queryByRole("link", { name: "Open image in browser" }),
     ).toBeNull();

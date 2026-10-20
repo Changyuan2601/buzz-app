@@ -4,10 +4,8 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import {
-  createContext,
   memo,
   useCallback,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -24,7 +22,6 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
 import { matchPerson } from "../../features/search/person-match";
-import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
@@ -33,7 +30,11 @@ import {
   canRemoveMember,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
-import { canAddMembers } from "../../features/channel-members/members";
+import {
+  canAddMembers,
+  canShareSoloChat,
+} from "../../features/channel-members/members";
+import { ownSolo } from "../../features/solo/labels";
 import {
   formatPublicKey,
   publicKeyLabels,
@@ -59,20 +60,6 @@ import { avatarMedia } from "../../shared/avatar-source";
  * mentions and New message. */
 const typedMatch = (name: string, needle: string) =>
   needle ? matchPerson(name, needle) : undefined;
-
-/** Typed text, lowercased. A context, so a query change redraws only the
- * names and not every memoized row. */
-const TypedText = createContext("");
-
-function MemberName({ name }: { name: string }) {
-  const needle = useContext(TypedText);
-  return (
-    <MatchedLabel
-      label={name}
-      positions={typedMatch(name, needle)?.positions}
-    />
-  );
-}
 
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
@@ -217,10 +204,15 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
         <span className="min-w-0 flex-1">
           <span className={styles.identity}>
             <span className={styles.identityName}>
-              <span className={`${styles.name} text-body-sm`}>
-                {adding ? <MemberName name={name} /> : name}
+              <span className={`${styles.name} min-w-0 text-body-sm`}>
+                {name}
                 {pubkey === session.viewer ? " (you)" : ""}
               </span>
+              {!adding && (roleLabel === "owner" || roleLabel === "admin") && (
+                <span className="shrink-0 text-caption text-subtle">
+                  {roleLabel === "owner" ? "Owner" : "Admin"}
+                </span>
+              )}
             </span>
             {ownerName && (
               <span className={styles.manager}>
@@ -407,9 +399,7 @@ function TeamRow({
         <div className={styles.staticProfile}>
           <Avatar alt="" fallback={team.name} size="small" shape="squircle" />
           <span className="min-w-0 flex-1">
-            <span className={`${styles.name} text-body-sm`}>
-              <MemberName name={team.name} />
-            </span>
+            <span className={`${styles.name} text-body-sm`}>{team.name}</span>
             <span className="block truncate text-caption text-subtle">
               {names.join(", ")}
             </span>
@@ -439,6 +429,8 @@ export function ChannelMembersDialog({
   channelId,
   close,
   trigger,
+  title = "Channel members",
+  description,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
@@ -448,6 +440,8 @@ export function ChannelMembersDialog({
   channelId: string;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  title?: string;
+  description?: string;
   agents?: Agents;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
@@ -492,19 +486,27 @@ export function ChannelMembersDialog({
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
+  const [soloAdditions, setSoloAdditions] = useState<
+    Record<string, { pending: boolean; error?: string }>
+  >({});
+  const soloPending = useRef(new Set<string>());
   const additions = useSyncExternalStore(
     session.memberAdditions.subscribe,
     session.memberAdditions.snapshot,
     session.memberAdditions.snapshot,
   ).filter((item) => item.channelId === channelId);
-  const busy = new Set(
-    additions.filter((item) => item.pending).map((item) => item.pubkey),
-  );
-  const errors = Object.fromEntries(
-    additions
+  const busy = new Set([
+    ...additions.filter((item) => item.pending).map((item) => item.pubkey),
+    ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
+  ]);
+  const errors = Object.fromEntries<string | undefined>([
+    ...additions
       .filter((item) => item.error)
-      .map((item) => [item.pubkey, item.error]),
-  );
+      .map((item) => [item.pubkey, item.error] as const),
+    ...Object.entries(soloAdditions)
+      .filter(([, item]) => item.error)
+      .map(([key, item]) => [key, item.error] as const),
+  ]);
   const [notice, setNotice] = useState("");
   const [rosterError, setRosterError] = useState("");
   const [nameError, setNameError] = useState("");
@@ -530,7 +532,7 @@ export function ChannelMembersDialog({
     session.archives.snapshot,
     session.archives.snapshot,
   );
-  const agentChoices = useAgentChoices(session);
+  const agentChoices = useAgentChoices(session, true, true);
   const agentsSnapshot = useSyncExternalStore(
     agents?.subscribe ?? noTeams,
     agents?.snapshot ?? noSnapshot,
@@ -540,7 +542,13 @@ export function ChannelMembersDialog({
   const channel =
     list.channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
-  const canAdd = canAddMembers(session, channel);
+  const solo = channel?.channelType === "solo";
+  const canAddSoloAgents =
+    ownSolo(channel, session.viewer) &&
+    canShareSoloChat(session, channel) &&
+    session.channelWrites.available;
+  const canAddPeople = canAddMembers(session, channel);
+  const canAdd = canAddPeople || canAddSoloAgents;
   const text = query.trim();
   const [invitationPage, setInvitationPage] = useState({
     text,
@@ -553,6 +561,8 @@ export function ChannelMembersDialog({
     const controller = new AbortController();
     lifetime.current = controller;
     setAgentsBusy(false);
+    setSoloAdditions({});
+    soloPending.current = new Set();
     messagePending.current = false;
     setOpeningMessage(false);
     setMessageError("");
@@ -666,6 +676,7 @@ export function ChannelMembersDialog({
       key,
       profiles.get(key)?.name ??
         fallback ??
+        known.get(key)?.name ??
         formatPublicKey(key) ??
         "Unknown member",
     );
@@ -687,17 +698,10 @@ export function ChannelMembersDialog({
   const currentMembers = [...members].sort(
     (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
   );
-  const groups = ["Owners", "Admins", "Members", "Agents"].map((name) => {
+  const groups = ["People", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
-      const role = administration.authority.roles[key];
       const group =
-        role === "owner"
-          ? "Owners"
-          : role === "admin"
-            ? "Admins"
-            : known.has(key) || profiles.get(key)?.isAgent
-              ? "Agents"
-              : "Members";
+        known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
       return group === name;
     });
     return {
@@ -722,12 +726,14 @@ export function ChannelMembersDialog({
   const filteredGroups = groups.filter(
     (group) => roleFilter === "All" || group.name === roleFilter,
   );
-  const search = useMemberSearch(session, query, canAdd);
+  const search = useMemberSearch(session, query, canAddPeople);
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
-  if (query.trim())
-    for (const agent of agentChoices.identities) {
+  if (text)
+    for (const agent of solo
+      ? agentChoices.selectable
+      : agentChoices.identities) {
       if (addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name))
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
@@ -835,7 +841,7 @@ export function ChannelMembersDialog({
   const teamNames = new Map(
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );
-  const teams = (agentsSnapshot?.teams ?? []).flatMap((team) => {
+  const teams = (solo ? [] : (agentsSnapshot?.teams ?? [])).flatMap((team) => {
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
     );
@@ -861,17 +867,48 @@ export function ChannelMembersDialog({
       const signal = lifetime.current?.signal;
       if (!signal) return;
       setNotice("");
+      const pending = soloPending.current;
+      if (canAddSoloAgents) {
+        if (pending.has(key)) return;
+        pending.add(key);
+        setSoloAdditions((old) => ({ ...old, [key]: { pending: true } }));
+      }
       try {
-        await session.memberAdditions.add(channelId, key);
-        if (!signal.aborted)
-          setNotice(
-            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? formatPublicKey(key) ?? "Unknown member")} is in the channel.`,
+        if (canAddSoloAgents)
+          await session.channelWrites.addAgents(
+            channelId,
+            [key],
+            () => !signal.aborted,
           );
-      } catch {
-        // Session-owned recovery remains visible if this dialog closes and reopens.
+        else await session.memberAdditions.add(channelId, key);
+        if (!signal.aborted) {
+          if (canAddSoloAgents) {
+            setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
+            setQuery("");
+            setSelectedRole("All");
+          }
+          setNotice(
+            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")}${canAddSoloAgents ? " added." : " is in the channel."}`,
+          );
+        }
+      } catch (error: unknown) {
+        if (canAddSoloAgents && !signal.aborted)
+          setSoloAdditions((old) => ({
+            ...old,
+            [key]: {
+              pending: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Could not add this agent. Try again.",
+            },
+          }));
+        // Ordinary channel additions retain session-owned recovery.
+      } finally {
+        pending.delete(key);
       }
     },
-    [session, channelId],
+    [session, channelId, canAddSoloAgents],
   );
 
   const addTeam = useCallback(
@@ -1083,7 +1120,7 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from channel`
             : "Change member role?"
-          : "Channel members"
+          : title
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1112,7 +1149,7 @@ export function ChannelMembersDialog({
             </span>
           </span>
         ) : (
-          channel?.name
+          description
         )
       }
       closeLabel={
@@ -1195,9 +1232,20 @@ export function ChannelMembersDialog({
             <div className="min-w-0 flex-1">
               <SearchField
                 inputRef={input}
-                label="Search people and agents"
+                aria-describedby={
+                  canAddSoloAgents ? `${presenceId}-solo-help` : undefined
+                }
+                label={
+                  canAddSoloAgents
+                    ? "Search members and add agents"
+                    : "Search people and agents"
+                }
                 placeholder={
-                  canAdd ? "Add people and agents" : "Search members"
+                  canAddSoloAgents
+                    ? "Add agents"
+                    : canAdd
+                      ? "Add people and agents"
+                      : "Search members"
                 }
                 value={query}
                 onValueChange={(value) => {
@@ -1238,7 +1286,7 @@ export function ChannelMembersDialog({
                 <Select
                   variant="compact"
                   size="md"
-                  label="Filter members by role"
+                  label="Filter people and agents"
                   align="end"
                   value={roleFilter}
                   valueLabel={roleFilter}
@@ -1262,6 +1310,15 @@ export function ChannelMembersDialog({
               </motion.div>
             )}
           </div>
+          {canAddSoloAgents && (
+            <p
+              id={`${presenceId}-solo-help`}
+              className="shrink-0 text-body-sm text-subtle"
+            >
+              Agents you add can read this chat and its history. Adding them
+              won’t start a run.
+            </p>
+          )}
           {administrationError && (
             <p role="alert" className="shrink-0 text-body-sm text-danger">
               {administrationError}
@@ -1273,14 +1330,18 @@ export function ChannelMembersDialog({
             aria-label="Member list"
           >
             {!canAdd && (
-              <p className="text-body-sm text-subtle">
+              <p className={`${styles.listNote} text-body-sm text-subtle`}>
                 {channel?.channelType === "dm"
                   ? "DM membership cannot be changed here."
                   : channel?.archived
                     ? "Archived channels cannot add members."
                     : !session.outbox?.supports(9000)
                       ? "Adding members is unavailable in this connection."
-                      : "Join this channel to add people and agents."}
+                      : solo
+                        ? ownSolo(channel, session.viewer)
+                          ? "Adding agents is unavailable in this connection."
+                          : "Only the chat owner can add agents here."
+                        : "Join this channel to add people and agents."}
               </p>
             )}
             {rosterError && (
@@ -1306,22 +1367,25 @@ export function ChannelMembersDialog({
                 .filter(
                   (group) =>
                     group.keys.length ||
-                    group.name ===
-                      (roleFilter === "All" ? "Members" : roleFilter),
+                    (!text &&
+                      group.name ===
+                        (roleFilter === "All" ? "People" : roleFilter)),
                 )
                 .map((group) => (
                   <section key={group.name} aria-label={group.name}>
                     <h3
-                      className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                      className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
                     >
-                      {group.name} · {group.count}
+                      {group.name} · {text ? group.keys.length : group.count}
                     </h3>
                     <ul>
                       {group.keys.map((key) => row(key, label(key), false))}
                     </ul>
                     {!filteredGroups.some((item) => item.keys.length) &&
                       !rosterBusy && (
-                        <p className="px-control-inset text-body-sm text-subtle">
+                        <p
+                          className={`${styles.listNote} text-body-sm text-subtle`}
+                        >
                           {query
                             ? "No members match your search."
                             : "No members to show."}
@@ -1331,85 +1395,95 @@ export function ChannelMembersDialog({
                 ))
             )}
             {!initialLoading &&
-              canAdd &&
-              roleFilter === "All" &&
-              query.trim() && (
-                <section
-                  className={styles.memberGroup}
-                  aria-label="Not in this channel"
-                  {...highlight.listProps}
-                >
-                  <h3
-                    className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
-                  >
-                    Not in this channel
-                  </h3>
-                  {teams.length > 0 && (
-                    <ul aria-label="Teams">
-                      {teams.map(({ team, missing }) => (
-                        <TeamRow
-                          key={team.id}
-                          team={team}
-                          names={missing.map((key) =>
-                            label(key, teamNames.get(key)),
-                          )}
-                          busy={missing.some((key) => busy.has(key))}
-                          disabled={rosterBusy || !!rosterError}
-                          onAdd={() => void addTeam(team, missing)}
-                        />
-                      ))}
-                    </ul>
-                  )}
-                  {visibleCandidates.map((person) =>
-                    row(
-                      person.pubkey,
-                      label(person.pubkey, person.name),
-                      true,
-                      person.picture,
-                      person.isAgent,
-                    ),
-                  )}
-                  {search.loading && (
-                    <p
-                      role="status"
-                      className="px-control-inset text-body-sm text-subtle"
-                    >
-                      Searching…
-                    </p>
-                  )}
-                  {!search.loading && !search.error && !available.length && (
-                    <p className="px-control-inset text-body-sm text-subtle">
-                      No other matching people or agents.
-                    </p>
-                  )}
-                  {search.error && (
-                    <p
-                      role="alert"
-                      className="px-control-inset text-body-sm text-danger"
-                    >
-                      {search.error}
-                    </p>
-                  )}
-                  {(moreCandidates || search.more) && (
-                    <div className="flex justify-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setInvitationPage({
-                            text,
-                            size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                          });
-                          if (!moreCandidates) search.next();
-                        }}
-                        disabled={search.loading}
-                      >
-                        Show more results
-                      </Button>
-                    </div>
-                  )}
-                </section>
+              text &&
+              !offering &&
+              !rosterBusy &&
+              !filteredGroups.some((group) => group.keys.length) && (
+                <p className={`${styles.listNote} text-body-sm text-subtle`}>
+                  No members match your search.
+                </p>
               )}
+            {offering && (
+              <section
+                className={styles.memberGroup}
+                aria-label={solo ? "Available agents" : "Not in this channel"}
+                {...highlight.listProps}
+              >
+                <h3
+                  className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
+                >
+                  {solo ? "Available agents" : "Not in this channel"}
+                </h3>
+                {teams.length > 0 && (
+                  <ul aria-label="Teams">
+                    {teams.map(({ team, missing }) => (
+                      <TeamRow
+                        key={team.id}
+                        team={team}
+                        names={missing.map((key) =>
+                          label(key, teamNames.get(key)),
+                        )}
+                        busy={missing.some((key) => busy.has(key))}
+                        disabled={rosterBusy || !!rosterError}
+                        onAdd={() => void addTeam(team, missing)}
+                      />
+                    ))}
+                  </ul>
+                )}
+                {visibleCandidates.map((person) =>
+                  row(
+                    person.pubkey,
+                    label(person.pubkey, person.name),
+                    true,
+                    person.picture,
+                    person.isAgent,
+                  ),
+                )}
+                {search.loading && (
+                  <p
+                    role="status"
+                    className={`${styles.listNote} text-body-sm text-subtle`}
+                  >
+                    Searching…
+                  </p>
+                )}
+                {!search.loading && !search.error && !available.length && (
+                  <p className={`${styles.listNote} text-body-sm text-subtle`}>
+                    {solo
+                      ? agentChoices.pending
+                        ? "Loading agents…"
+                        : "No other agents match your search."
+                      : "No other matching people or agents."}
+                  </p>
+                )}
+                {search.error && (
+                  <p
+                    role="alert"
+                    className={`${styles.listNote} text-body-sm text-danger`}
+                  >
+                    {search.error}
+                  </p>
+                )}
+                {(moreCandidates || search.more) && (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setInvitationPage({
+                          text,
+                          size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
+                        });
+                        if (!moreCandidates) search.next();
+                      }}
+                      disabled={search.loading}
+                    >
+                      Show more results
+                    </Button>
+                  </div>
+                )}
+              </section>
+            )}
             {nameError && (
               <p role="status" className="text-body-sm text-subtle">
                 {nameError}
@@ -1453,7 +1527,7 @@ export function ChannelMembersDialog({
               </p>
             )}
             {notice && (
-              <p role="status" className="text-body-sm text-subtle">
+              <p role="status" className="sr-only">
                 {notice}
               </p>
             )}
@@ -1462,5 +1536,5 @@ export function ChannelMembersDialog({
       )}
     </Dialog>
   );
-  return <TypedText.Provider value={needle}>{dialog}</TypedText.Provider>;
+  return dialog;
 }

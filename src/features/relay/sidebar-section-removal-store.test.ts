@@ -483,3 +483,97 @@ it.each([true, false])(
     }
   },
 );
+
+it("confirms the filter reset before section removal and leaves failures retryable", async () => {
+  const saved: SidebarPreferences = {
+    ...data,
+    filters: { "section:work": "unreads", channels: "active" },
+  };
+  const calls: string[] = [];
+  const filter = vi.fn(async () => {
+    calls.push("filter");
+    return {
+      filters: { channels: "active" as const },
+      activeWindowSeconds: {},
+    };
+  });
+  filter.mockRejectedValueOnce(new Error("filter not confirmed"));
+  const remove = vi.fn(async () => {
+    calls.push("remove");
+    return removed;
+  });
+  const store = createSidebarPreferencesStore({
+    read: async () => saved,
+    available: true,
+    writeSort: async () => {
+      calls.push("sort");
+      return data.sort ?? {};
+    },
+    removeSection: remove,
+    writeFilter: filter,
+  });
+  try {
+    await store.queries.ensure();
+    await expect(store.queries.removeSection("work")).rejects.toThrow(
+      "filter not confirmed",
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(store.queries.snapshot().data?.sections).toEqual(data.sections);
+    await store.queries.removeSection("work");
+    expect(filter).toHaveBeenLastCalledWith(
+      "section:work",
+      "all",
+      ["work"],
+      expect.any(AbortSignal),
+      null,
+    );
+    expect(calls).toEqual(["sort", "sort", "filter", "remove"]);
+    expect(store.queries.snapshot().data).toMatchObject({
+      ...removed,
+      filters: { channels: "active" },
+    });
+  } finally {
+    store.dispose();
+  }
+});
+
+it("clears only the removed section's failed filter save after removal succeeds", async () => {
+  const filter = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("section save failed"))
+    .mockRejectedValueOnce(new Error("channel save failed"))
+    .mockResolvedValue({ filters: {}, activeWindowSeconds: {} });
+  const remove = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("removal failed"))
+    .mockResolvedValue(removed);
+  const store = createSidebarPreferencesStore({
+    read: async () => data,
+    available: true,
+    writeSort: async () => ({}),
+    removeSection: remove,
+    writeFilter: filter,
+  });
+  try {
+    await store.queries.ensure();
+    await expect(
+      store.queries.setFilter("section:work", "active", ["work"]),
+    ).rejects.toThrow("section save failed");
+    await expect(
+      store.queries.setFilter("channels", "unreads", ["work"]),
+    ).rejects.toThrow("channel save failed");
+    await expect(store.queries.removeSection("work")).rejects.toThrow(
+      "removal failed",
+    );
+    expect(
+      store.queries.snapshot().filterErrors?.map(({ group }) => group),
+    ).toEqual(["section:work", "channels"]);
+    await store.queries.removeSection("work");
+    expect(store.queries.snapshot().data?.sections).toEqual([]);
+    expect(
+      store.queries.snapshot().filterErrors?.map(({ group }) => group),
+    ).toEqual(["channels"]);
+  } finally {
+    store.dispose();
+  }
+});

@@ -18,6 +18,7 @@ import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies } from "./fold";
+import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -135,6 +136,9 @@ export interface UnreadCapability {
   clearUnreadLocal(target: ReadTarget): Promise<ReadMutationResult>;
   readonly syncedManualUnread: false;
 }
+/** Rendered message order: effective ms, then event id. */
+const order = (a: RelayEvent, b: RelayEvent) =>
+  eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
 const contentKind = (event: RelayEvent) =>
   event.kind === 9 || event.kind === 40002 || event.kind === 40008;
 const channelIds = new WeakMap<RelayEvent, string | undefined>();
@@ -910,6 +914,8 @@ export function createUnread({
     if (!closed)
       for (const channel of channels.list().channels) {
         if (
+          channel.huddle ||
+          channel.metadataPending ||
           channel.cached ||
           channel.archived ||
           !channel.members?.includes(viewer)
@@ -925,32 +931,54 @@ export function createUnread({
         // roots included, stay separate.
         const roots = new Set(evidence.map((entry) => entry.rootId));
         const groups = new Map<string, Evidence[]>();
+        const elsewhere = new Set<string>();
         for (const entry of evidence) {
           const id =
             dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
+          if (id !== channel.id) elsewhere.add(id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
         }
         if (!groups.size) continue;
-        const content = new Map(
-          foldMessages(channel.id, "", [...events.values()], {
-            includeReplies: true,
-          }).map((row) => [row.id, row.content]),
-        );
+        const rows = foldMessages(channel.id, "", [...events.values()], {
+          includeReplies: true,
+          signingAuthority,
+        });
+        const content = new Map(rows.map((row) => [row.id, row.content]));
+        // A session's top-level row shows its newest message from someone
+        // else to everyone, even one that is not Inbox evidence, unless that
+        // message is the root of its own thread row.
+        const newest = session
+          ? rows.reduce<RelayEvent | undefined>((best, row) => {
+              const event = events.get(row.id);
+              return event &&
+                !row.threadRootId &&
+                !row.membership &&
+                !row.audience &&
+                row.authorId !== viewer &&
+                !elsewhere.has(row.id) &&
+                (!best || order(event, best) > 0)
+                ? event
+                : best;
+            }, undefined)
+          : undefined;
         for (const [id, entries] of groups) {
-          entries.sort(
-            (a, b) =>
-              a.event.created_at - b.event.created_at ||
-              a.event.id.localeCompare(b.event.id),
-          );
+          entries.sort((a, b) => order(a.event, b.event));
           const project = (
             entries: readonly Evidence[],
+            timeline = false,
           ): InboxItem | undefined => {
             const latest = entries[entries.length - 1];
             if (!latest) return;
+            // The row shows its newest message, matching its time; opening
+            // still resumes at the representative.
+            const shown =
+              timeline && newest && order(newest, latest.event) >= 0
+                ? newest
+                : latest.event;
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
@@ -1009,15 +1037,11 @@ export function createUnread({
               ...(representative.rootId
                 ? { rootId: representative.rootId }
                 : {}),
-              authorId: representative.event.pubkey,
-              workflowOwnerId: workflowOwner(
-                representative.event,
-                workflowAuthority,
-              ),
-              preview:
-                content.get(representative.event.id) ??
-                representative.event.content,
-              createdAt: latest.event.created_at,
+              authorId: shown.pubkey,
+              workflowOwnerId: workflowOwner(shown, workflowAuthority),
+              preview: content.get(shown.id) ?? shown.content,
+              previewMessageId: shown.id,
+              createdAt: shown.created_at,
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(
                 entries.map(({ event, mentioned }) =>
@@ -1045,7 +1069,7 @@ export function createUnread({
               ),
             });
           };
-          const item = project(entries);
+          const item = project(entries, id === channel.id && session);
           if (item)
             items.push(
               Object.freeze({
@@ -1186,7 +1210,10 @@ export function createUnread({
         .filter(
           (channel) => !channel.cached && channel.members?.includes(viewer),
         )
-        .map((channel) => [channel.id, channel.channelType]),
+        .map((channel) => [
+          channel.id,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}`,
+        ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
     new Set(
@@ -1252,8 +1279,15 @@ export function createUnread({
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
+    // Activity groups unread thread replies by root, so fetch a root the
+    // sampled window dropped for a followed thread or an unread reply in it.
     const structuralRootId =
-      chosen(entry) === true && !entry.rootId ? threadRootId : undefined;
+      !entry.rootId &&
+      (chosen(entry) === true ||
+        ((entry.mentioned || entry.broadcast || conversation(entry)) &&
+          isUnread(entry, reads.state(), dm)))
+        ? threadRootId
+        : undefined;
     const structuralRecovery = structuralRootId !== undefined;
     const key = structuralRecovery
       ? `${conversationKey(channelId, structuralRootId)}:structure`
@@ -1997,12 +2031,7 @@ export function createUnread({
             await dm;
             return;
           }
-          // A timeline that shows replies (Solo chats) can end at one. It
-          // anchors the live bottom; channel catch-up never reads replies.
-          const anchor = rootId
-            ? target
-            : { kind: "message" as const, channelId, messageId: id };
-          const event = requireMessage(anchor, id);
+          const event = requireMessage(target, id);
           const key = rootId
             ? `thread-activity:${rootId}`
             : `activity:${channelId}`;
@@ -2032,7 +2061,7 @@ export function createUnread({
           const frontiers = reads.state().frontiers;
           const current = (journal: ReadJournal) =>
             valid(journal) &&
-            requireMessage(anchor, id) === event &&
+            requireMessage(target, id) === event &&
             (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
           // channel. Unseen mentions, replies and marked messages stay unread.

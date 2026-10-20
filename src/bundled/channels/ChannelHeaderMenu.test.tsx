@@ -329,12 +329,12 @@ it.each([true, false])(
       .setup()
       .click(screen.getByRole("button", { name: "Channel actions" }));
     await screen.findByRole("menuitem", {
-      name: owner ? "Delete channel" : "Leave channel",
+      name: owner ? "Delete chat" : "Leave chat",
     });
-    expect(!!screen.queryByRole("menuitem", { name: "Archive channel" })).toBe(
+    expect(!!screen.queryByRole("menuitem", { name: "Archive chat" })).toBe(
       owner,
     );
-    expect(!!screen.queryByRole("menuitem", { name: "Delete channel" })).toBe(
+    expect(!!screen.queryByRole("menuitem", { name: "Delete chat" })).toBe(
       owner,
     );
     expect(h.lifecycleLoad).toHaveBeenCalledWith(

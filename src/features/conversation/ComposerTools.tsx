@@ -120,5 +120,15 @@ function OwnedTool({
   }, [tool, registry]);
   const opener = useTargetOpener(registry, tool);
   const Tool = tool.component;
-  return commands ? <Tool {...props} {...commands} {...opener} /> : null;
+  // A host that cannot attach withholds capture, so capture tools hide.
+  if (!commands) return null;
+  const { capture, ...rest } = commands;
+  return (
+    <Tool
+      {...props}
+      {...rest}
+      {...(props.capture && capture ? { capture } : {})}
+      {...opener}
+    />
+  );
 }

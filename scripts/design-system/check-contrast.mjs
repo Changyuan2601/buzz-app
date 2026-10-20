@@ -40,6 +40,29 @@ const TARGET_META = 45;
  * surface that role reaches, which is the failure mode this list must not have.
  */
 const EXCEPTIONS = new Map([
+  // Product-directed 2026-10-01: Green 10 / Red 10 incoming-call fills.
+  ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => [
+    `--text-inverse on --${surface}`,
+    "Product-directed bright incoming-call fills with inverse labels; below normal text targets, limited to Join and Decline.",
+  ]),
+  // Kenneth requested Red 10 for Huddle Leave during the 2026-10-01 tryout.
+  // Limit this deliberate text-contrast tradeoff to the actual control fills.
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
+    "affordance-danger-pressed",
+  ].map((surface) => [
+    `--text-call-leave on --${surface}`,
+    "Product-directed Red 10 for the Huddle Leave label/icon; below normal text targets, not approved for general error text.",
+  ]),
   [
     "--text-disabled",
     "Low contrast is the signal that a control is unavailable; WCAG exempts inactive controls. Never carries information a person needs.",
@@ -66,6 +89,7 @@ const META_ROLES = new Set([
   "--text-tertiary",
   "--text-metadata",
   "--text-row-metadata",
+  "--text-row-selected-metadata",
 ]);
 
 /**
@@ -131,6 +155,21 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ["--text-control-selected", "--surface-control-selected"],
+  ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => ["--text-inverse", `--${surface}`]),
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
+    "affordance-danger-pressed",
+  ].map((surface) => ["--text-call-leave", `--${surface}`]),
   ...["--text-standard", "--text-subtle", "--text-metadata"].map((role) => [
     role,
     "--bg-app",
@@ -142,9 +181,18 @@ const PAIRS = [
   ]),
   ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
     ["--text-row", fill],
+    ["--text-navigation-unread", fill],
     ["--text-row-subtle", fill],
     ["--text-row-metadata", fill],
   ]),
+  // The selected sidebar destination and every ink on it.
+  ...[
+    "--text-row-selected",
+    "--text-row-selected-subtle",
+    "--text-row-selected-metadata",
+  ].map((role) => [role, "--affordance-navigation-selected"]),
+  // Small status/count badges on a selected row keep their own readable pair.
+  ["--text-row-selected-detail", "--surface-row-selected-detail"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -153,6 +201,12 @@ const PAIRS = [
   ["--text-danger", "--affordance-floating-hover"],
   ["--text-inverse", "--surface-inverse"],
   ["--text-link", "--affordance-link-hover"],
+  // Mentions: ink on the highlight, and the own-bubble pairing, at rest and hover.
+  ...["", "-hover"].flatMap((state) => [
+    ["--text-mention", `--affordance-mention${state}`],
+    ["--text-mention-own", `--affordance-mention-own${state}`],
+    ["--text-mention-self", `--affordance-mention-self${state}`],
+  ]),
   ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
     "--text-standard",
     `--affordance-${state}`,
@@ -195,11 +249,18 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  // Chart marks need 3:1 against the surfaces a chart sits on.
+  "--chart-series-1",
+  "--chart-series-2",
+  "--chart-series-3",
+  "--chart-series-4",
 ];
 
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
   ["--text-success", "--affordance-success"],
+  ["--text-success", "--affordance-success-hover"],
+  ["--text-success", "--affordance-success-pressed"],
   ["--text-accent", "--affordance-accent"],
   ["--text-accent", "--affordance-accent-hover"],
   ["--text-on-accent", "--affordance-accent-prominent"],
@@ -211,7 +272,7 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
-const DEFAULT_ACCENT = "chartreuse";
+const DEFAULT_ACCENT = "citrus";
 /** Exceptions are approved against the neutral role layer. */
 const BASELINE_LEVEL = "neutral";
 
@@ -329,21 +390,6 @@ function audit(mode, map, baseline) {
       `${mode}: --border-floating-control on --surface-popover — ${floatingBoundary === null ? "unresolved color" : `${floatingBoundary.toFixed(3)}:1`}, needs 3:1`,
     );
   }
-  // A step slider's selected track meets the unfilled track, and its thumb
-  // sits on both the track and panel. These are standalone marks, not button
-  // fills with paired ink; keyboard focus is not their resting boundary.
-  for (const surfaceRole of [
-    "--affordance-subtle-pressed",
-    "--surface-panel",
-  ]) {
-    const mark = resolve(map, "--affordance-prominent-mark");
-    const surface = resolve(map, surfaceRole);
-    const ratio = mark && surface ? wcagRatio(mark, surface) : null;
-    if (ratio === null || ratio < 3)
-      boundaryFailures.push(
-        `${mode}: step-slider --affordance-prominent-mark on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-      );
-  }
   for (const role of BOUNDARY_ROLES) {
     const surfaces =
       role.startsWith("--status-avatar-") || role === "--status-away"
@@ -355,7 +401,12 @@ function audit(mode, map, baseline) {
             "--affordance-floating-hover",
             "--neutral-4",
           ]
-        : BOUNDARY_SURFACES;
+        : role.startsWith("--chart-series-")
+          ? // Charts sit on panels; a popover only shows a swatch beside its label.
+            BOUNDARY_SURFACES.filter(
+              (surface) => surface !== "--surface-popover",
+            )
+          : BOUNDARY_SURFACES;
     for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
@@ -405,6 +456,8 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...["", "-hover", "-pressed"].map((state) => [
     "--text-on-accent",
     `--affordance-accent-prominent${state}`,
@@ -487,17 +540,22 @@ function oklch(hex) {
   };
 }
 const isAccent = (hex) => oklch(hex).chroma >= 0.02;
+// Black ink is allowed on accent fills, including the near-black unread ink
+// (#262626, lightness 0.27); mid grays from #525252 (0.44) up are not.
 const isGray = (hex) => {
   const { lightness, chroma } = oklch(hex);
-  return chroma < 0.02 && lightness > 0.25 && lightness < 0.9;
+  return chroma < 0.02 && lightness > 0.3 && lightness < 0.9;
 };
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
 const GROUNDED = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...on(
     [
       "--text-standard",
       "--text-row",
+      "--text-navigation-unread",
       "--text-row-subtle",
       "--text-row-metadata",
     ],
@@ -507,6 +565,14 @@ const GROUNDED = [
       "--affordance-navigation-quiet",
       "--affordance-selected",
     ],
+  ),
+  ...on(
+    [
+      "--text-row-selected",
+      "--text-row-selected-subtle",
+      "--text-row-selected-metadata",
+    ],
+    ["--affordance-navigation-selected"],
   ),
   ...on(
     ["--text-standard"],
@@ -539,11 +605,7 @@ const GROUNDED = [
   ),
   ...on(
     ["--text-standard", "--text-chrome-subtle"],
-    [
-      "--affordance-chrome",
-      "--affordance-chrome-hover",
-      "--bg-chrome-selected",
-    ],
+    ["--affordance-chrome", "--affordance-chrome-hover"],
   ),
   ...on(
     [

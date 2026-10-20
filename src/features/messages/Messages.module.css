@@ -110,6 +110,10 @@
   flex: 1;
   background: var(--border-standard);
 }
+/* A notice under its day reads as that day's caption, not a new section. */
+[data-membership-row] > .day {
+  margin-block-end: 0;
+}
 .feed[data-chat-presentation] ol > li:first-child .day {
   margin-block-start: var(--space-2);
 }
@@ -159,12 +163,14 @@
   flex: 1;
   min-width: 0;
 }
-/* Keep both speakers inside the opposing avatar column, including narrow panes. */
+/* Reserve the opposing avatar column when space permits. At narrow widths or
+   enlarged text, keep enough of the row for readable words. The own avatar
+   remains outside this body in its existing flex column. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
     85%,
     46rem,
-    calc(100% - 2 * var(--message-side-space) - var(--space-4))
+    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
   );
 }
 .message[data-viewer-message] > .messageBody {
@@ -1438,7 +1444,7 @@ button.mediaPreview {
 .text > :last-child {
   margin-bottom: 0;
 }
-.text :where(p, ul, ol, blockquote, pre, table, hr) {
+.text :where(p, ul, ol, blockquote, pre, .codeBlock, table, hr) {
   margin: var(--space-4) 0;
 }
 .text > p:has(+ :is(ul, ol)) {
@@ -1529,8 +1535,9 @@ button.mediaPreview {
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);
 }
-/* The code scrolls inside its frame so the copy action stays in the corner. */
-.text pre {
+/* The code scrolls inside its frame so the copy action stays in the corner.
+   A plugin-presented block keeps the same frame and action. */
+.text :is(pre, .codeBlock) {
   position: relative;
   max-width: 100%;
   overflow: hidden;
@@ -1549,15 +1556,17 @@ button.mediaPreview {
   overflow-wrap: normal;
 }
 /* Keep every line end reachable beside the pinned action. */
-.text pre:has(> .codeCopy) code {
+.text pre:has(> .codeActions) code {
   padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
 }
 /* `pre` clips, so a focusable scroller draws its ring inside. */
 html[data-keyboard-navigation] .text pre code:focus-visible {
   outline-offset: -2px;
 }
-.codeCopy {
+.codeActions {
   position: absolute;
+  display: flex;
+  gap: var(--space-half);
   top: var(--space-1);
   inset-inline-end: var(--space-1);
   border-radius: var(--radius-icon-button);
@@ -1565,7 +1574,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   user-select: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .text pre:not(:hover, :focus-within) .codeCopy {
+  .text :is(pre, .codeBlock):not(:hover, :focus-within) .codeActions {
     opacity: 0;
   }
 }
@@ -1652,8 +1661,9 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  /* Keep spacing inside the virtual row so its measured and visible tops agree. */
-  padding: calc(var(--space-2) + var(--space-5)) 0;
+  /* Keep spacing inside the virtual row so its measured and visible tops agree.
+     A quiet caption, about as tall as the day divider. */
+  padding: var(--space-2) 0;
   color: var(--text-subtle);
   @apply text-caption;
 }
@@ -1667,6 +1677,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
    color while hovered or keyboard-focused. The shared chip fill and ring stay. */
 .membership .membershipName {
   --link-text: var(--text-subtle);
+  /* Restated over the channel host's button reset. */
+  color: var(--link-text);
   font-weight: var(--type-weight-medium);
 }
 .membership .membershipName:hover,
@@ -1760,10 +1772,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   display: contents;
 }
 .messageActions {
-  background: transparent;
-  color: var(--text-standard);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1780,8 +1788,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
-}
-.messageActions:not([data-placement="beside"]) {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
@@ -1859,17 +1865,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     opacity: 1;
     pointer-events: auto;
   }
-  .messageActions[data-placement="beside"] {
-    translate: 0 -50%;
-  }
-  /* Retain pointer travel to the lifted toolbar without adding row spacing. */
-  .message:hover::before {
-    content: "";
-    position: absolute;
-    bottom: 100%;
-    inset-inline: 0;
-    height: var(--space-2);
-  }
 }
 
 @media (hover: hover) and (pointer: fine) and (
@@ -1946,12 +1941,69 @@ html[data-keyboard-input] .quickReactionGlyph {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  padding-inline-end: var(--space-2);
   color: var(--text-standard);
   background: var(--surface-inset);
   border-radius: var(--radius-control);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+/* The slot owns its gap so closing leaves no empty flex-row spacing. */
+.composerReplySlot {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-block-end: calc(-1 * var(--composer-gap));
+  margin-block-start: 0;
+}
+.composerReplySlot[data-open] {
+  grid-template-rows: 1fr;
+  margin-block-start: calc(-1 * var(--space-1h));
+}
+.composerReplyClip {
+  min-height: 0;
+  overflow: hidden;
+}
+.composerReplyContent {
+  padding-block-end: var(--composer-gap);
+  opacity: 0;
+  transform: translateY(var(--space-1h));
+}
+.composerReplySlot[data-open] .composerReplyContent {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .composerReplySlot {
+    transition:
+      grid-template-rows var(--duration-state) var(--easing-enter),
+      margin-block-start var(--duration-state) var(--easing-enter);
+  }
+  html:not([data-keyboard-navigation]) .composerReplySlot[data-open] {
+    transition-duration: var(--duration-settle);
+
+    @starting-style {
+      grid-template-rows: 0fr;
+      margin-block-start: 0;
+    }
+  }
+  html:not([data-keyboard-navigation]) .composerReplyContent {
+    transition:
+      opacity var(--duration-fast) var(--easing-enter),
+      transform var(--duration-state) var(--easing-enter);
+  }
+  html:not([data-keyboard-navigation])
+    .composerReplySlot[data-open]
+    .composerReplyContent {
+    transition:
+      opacity var(--duration-state) var(--easing-enter),
+      transform var(--duration-settle) var(--easing-enter);
+
+    @starting-style {
+      opacity: 0;
+      transform: translateY(var(--space-1h));
+    }
+  }
 }
 .replyContext > div {
   min-width: 0;
@@ -2608,9 +2660,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
-/* Reuse the toolbar state so the target stays marked during pointer travel. */
+/* Own bubbles retain their toolbar hover treatment; received bubbles stay
+   on the same quiet surface as their reaction strip. */
 @media (hover: hover) and (pointer: fine) {
-  .message[data-actions-revealed]
+  .message[data-own][data-actions-revealed]
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only])::after {
@@ -2666,7 +2719,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
-.messageBubble .text :is(a, [data-mention-kind]):not([data-solo-link]) {
+/* Links take the bubble's paired link ink; mentions keep their own tint. */
+.messageBubble .text a:not([data-solo-link]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2676,12 +2730,16 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
 }
-.messageBubble .text :is(pre, table) {
+.messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
   background: var(--surface-panel);
   color: var(--text-standard);
   /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 .messageContent {
   position: relative;
@@ -2717,6 +2775,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
+  --mention-fill: var(--affordance-mention-own);
+  --mention-hover: var(--affordance-mention-own-hover);
+  --mention-text: var(--text-mention-own);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;
@@ -2728,7 +2789,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: inherit;
   border-color: currentColor;
 }
-.messageBubble[data-own] .text :is(code, pre) {
+.messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }
 .messageBubble[data-own] .spoilerMask {
@@ -2744,6 +2805,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-panel);
   color: var(--text-standard);
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 
 .threadAvatar:nth-child(1) {

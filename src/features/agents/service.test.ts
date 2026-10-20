@@ -25,7 +25,8 @@ import {
   teamPrompt,
 } from "./service";
 import type { ClassifierNative } from "./classifier";
-import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
+import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
+import { fileStore, type AgentStore } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -75,7 +76,7 @@ const UNFINISHED =
 
 type Config = { reply: string };
 async function setup({
-  storage = memoryStorage(),
+  storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   history = [] as RelayEvent[],
@@ -457,10 +458,10 @@ it("imports a team with the members that came, names the rest, and leaves later 
   expect(result.teamError).toBeUndefined();
   // Imported on its own afterwards, it never joins the team.
   native.port.mockImplementation(port);
-  const stored = storage.getItem("buzz.agents.teams.v1");
+  const stored = storage.get("buzz.agents.teams.v1");
   await importOld(service, birch);
   expect(service.find(birch)).toBeDefined();
-  expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
+  expect(storage.get("buzz.agents.teams.v1")).toBe(stored);
   expect(service.snapshot().teams).toEqual([savedShift([alder, carrow])]);
 });
 
@@ -852,7 +853,7 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(result.team).toBeUndefined();
   expect(service.find(carrow)).toBeDefined();
   expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
-  expect(service.snapshot().teams).toBe(teams);
+  expect(service.snapshot().teams).toEqual(teams);
 });
 
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
@@ -928,7 +929,7 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
       [],
     ]),
   );
-  expect(storage.getItem("buzz.agents.teams.v1")).not.toContain(sibling);
+  expect(storage.get("buzz.agents.teams.v1")).not.toContain(sibling);
   await service.removeTeam(team.id);
   expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
 });
@@ -1040,6 +1041,41 @@ it("wakes on a reply in a thread it started only by a mention or a watch", async
     "mention",
     "watch",
   ]);
+});
+
+it("publishes an agent's reply in a chat its owner is still starting once the start lands", async () => {
+  const { service, run, emit, native, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  let land = () => {};
+  const starting = new Promise<void>((resolve) => {
+    land = resolve;
+  });
+  vi.spyOn(session.channelWrites, "starting").mockImplementation((id) =>
+    id === channel ? starting : undefined,
+  );
+  let replied = false;
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+    replied = true;
+  });
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  await settle();
+  expect(await published(native, 9)).toEqual([]);
+  land();
+  await vi.waitFor(() => expect(replied).toBe(true));
+  expect(await published(native, 9)).toHaveLength(1);
 });
 
 it("keeps room for mentions however much watch work waits", async () => {
@@ -1464,6 +1500,90 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
 });
 
+it("hands a plugin its own agents outside any run, while this copy runs them", async () => {
+  const { service, plugin, ctx, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  expect(handle?.pubkey).toBe(bot);
+  await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
+  // Not to another plugin, nor to code that is no plugin's.
+  const other = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  expect(other.agents.handle(bot)).toBeUndefined();
+  expect(ctx.agents.handle(bot)).toBeUndefined();
+  // Nor while its community is offline, or another copy of the app holds it,
+  // and a handle kept from before stops working.
+  connect(false);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
+  await expect(
+    handle?.publish({ kind: 9, content: "late", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  await expect(
+    handle?.attention.write("x", null, { expected: "x" }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(() => handle?.attention.enabled()).toThrow("ask for its handle again");
+  native.claim.mockClear();
+  native.claim.mockResolvedValue(false);
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  // Nor once it is deleted.
+  native.claim.mockResolvedValue(true);
+  connect(false);
+  connect(true);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await service.remove(bot);
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
+  const { service, plugin, ctx, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const relay = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  relay.agents.register({
+    id: "relay",
+    title: "Relay",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const kept = plugin.agents.handle(bot);
+  let continueType = () => {};
+  const typeGate = new Promise<void>((resolve) => (continueType = resolve));
+  const persistType = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await typeGate;
+    return persistType?.(...args);
+  });
+  const changing = service.retype(bot, "other/relay");
+  await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  expect(relay.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "mid", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  continueType();
+  await changing;
+  await vi.waitFor(() => expect(relay.agents.handle(bot)).toBeDefined());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "after", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  // Changing back hands out a new handle, but never revives the kept one.
+  await service.retype(bot, "example/echo");
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await expect(
+    kept?.publish({ kind: 9, content: "revived", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(await published(native, 9)).toEqual([]);
+});
+
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
   const { service, run, emit, second, select } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -1816,9 +1936,9 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   expect(native.setType).not.toHaveBeenCalled();
   finish();
   await settle();
-  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
-    throw new Error("QuotaExceededError");
-  });
+  vi.spyOn(storage, "set").mockRejectedValueOnce(
+    new Error("QuotaExceededError"),
+  );
   await expect(
     service.retype(bot, "other/relay", {
       config: { prompt: "Reviewed target", model: "large" },
@@ -2161,7 +2281,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   await service.create({ type: "example/echo", name: "Echo" });
   warn.mockRestore();
-  expect(storage.getItem("buzz.agents.v1") ?? "").not.toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
@@ -2169,7 +2289,354 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   ]);
   // The next save stores them.
   await service.save(bot, { config: { reply: "saved" } });
-  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("rejects a save that agent storage could not write, and saves it on retry", async () => {
+  const disk = new Map<string, string>();
+  let failing = false;
+  const storage = fileStore(new Map(), async (key, value) => {
+    if (failing) throw new Error("disk full");
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  failing = true;
+  // Every config the owner sees. A form resets its draft when the shown
+  // config changes, so a change it never saved must not be shown at all.
+  const shown: unknown[] = [];
+  const stop = service.subscribe(() => shown.push(service.find(bot)?.config));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    service.save(bot, { config: { reply: "unsaved" } }),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  stop();
+  expect(shown).not.toContainEqual({ reply: "unsaved" });
+  expect(disk.get(`buzz.agent.v1:${bot}`)).not.toContain("unsaved");
+  // The agent shows what is saved, so a settings form's draft differs from it
+  // and its Save stays enabled.
+  expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+  failing = false;
+  await service.save(bot, { config: { reply: "unsaved" } });
+  expect(disk.get(`buzz.agent.v1:${bot}`)).toContain("unsaved");
+  expect(service.find(bot)?.config).toEqual({ reply: "unsaved" });
+});
+
+const tick = {
+  "watch/tick": {
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 10,
+    expires_at: null,
+  },
+} as const;
+
+it("keeps a settings change still being saved when a timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  // The timer comes due while the edit is still being saved: it waits.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  // A form still compares its draft against the saved settings.
+  expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+  release();
+  await saving;
+  expect(service.find(bot)?.config).toEqual({ reply: "edited" });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.config).toEqual({ reply: "edited" });
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
+});
+
+it("starts a timer due while a change was saving as soon as it is saved", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/b": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "b",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_001,
+        max_occurrences: 1,
+        expires_at: 1_063,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(59_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Due at 1061 while the edit saves; it expires before the 1065 tick.
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(run).not.toHaveBeenCalled();
+  release();
+  await saving;
+  await vi.advanceTimersByTimeAsync(100);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("starts a due timer in a free Interest while another timer's progress saves", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (interest: string, prompt: string, expires: number | null) =>
+    ({
+      type: "timer",
+      interest_id: interest,
+      prompt,
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: expires,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "interest/other": { type: "interest", instructions: "Other." },
+      "watch/a": timer("default", "a", null),
+      "watch/b": timer("other", "b", 1_061),
+    },
+  });
+  // A's run stays active, and its progress is still saving.
+  run.mockImplementation(() => new Promise<void>(() => {}));
+  hold = new Promise(() => {});
+  await vi.advanceTimersByTimeAsync(60_000);
+  const slugs = run.mock.calls.map(([{ trigger }]) =>
+    trigger.type === "timer" ? trigger.slug : trigger.type,
+  );
+  expect(slugs.sort()).toEqual(["watch/a", "watch/b"]);
+});
+
+it("keeps a timer rearm still being saved when another timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (prompt: string, interval: number, armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: interval,
+      armed_at: armed,
+      max_occurrences: 10,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "watch/a": timer("a", 60, 1_000),
+      "watch/b": timer("b", 90, 1_000),
+    },
+  });
+  // A runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // A is rearmed, keeping its used count, while B comes due at 1090.
+  const saving = service.save(bot, {
+    attention: { "watch/a": timer("a", 60, 1_070) },
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  release();
+  await saving;
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_070,
+    nextDue: 1_130,
+    used: 1,
+  });
+  expect(saved.timers["watch/b"]).toMatchObject({ armedAt: 1_000, used: 1 });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+});
+
+it("runs no occurrence of a timer while its rearm is being saved, so the rearm keeps its budget", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060; the next would be due at 1120.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(55_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Rearmed at 1115, which keeps its used count; still saving past 1120.
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_115) } });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  release();
+  await saving;
+  expect(service.find(bot)?.timers["watch/a"]).toEqual({
+    armedAt: 1_115,
+    nextDue: 1_175,
+    used: 1,
+  });
+  // Its second and last occurrence comes from the rearm, and no third.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(
+    JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}").timers["watch/a"],
+  ).toMatchObject({ armedAt: 1_115, used: 2 });
+});
+
+it("keeps the occurrence a timer used while its progress saves, when the owner rearms it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Its second and last occurrence runs at 1120; that progress is saving
+  // when the owner rearms it at 1121.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1_000);
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_121) } });
+  release();
+  await saving;
+  // The rearm applies after the progress: a new deadline, the used count kept.
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_121,
+    nextDue: 1_181,
+    used: 2,
+  });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+  // Its budget is spent: no third occurrence.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("runs a timer whose progress storage refuses only when due, and saves its count once it can", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const storage = memoryStorage();
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  const setItem = storage.setItem.bind(storage);
+  let refusing = true;
+  vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+    if (refusing && key === `buzz.agent.v1:${bot}`)
+      throw new Error("QuotaExceededError");
+    setItem(key, value);
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Due at 1060, 1120 and 1180. Its unsaved progress stays in memory, so it
+  // runs once each time it is due, never again at once after a run.
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(warn).toHaveBeenCalledWith(
+    `Agent ${bot} timer state was not saved`,
+    expect.objectContaining({ message: "QuotaExceededError" }),
+  );
+  refusing = false;
+  await vi.advanceTimersByTimeAsync(60_000);
+  warn.mockRestore();
+  expect(run).toHaveBeenCalledTimes(4);
+  const saved = JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 4 });
+});
+
+it("shows the saved teams after a team save agent storage could not write", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) throw new Error("disk full");
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [bot] });
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    service.saveTeam({ name: "Solo", instructions: "", members: [bot] }),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(service.snapshot().teams.map((team) => team.name)).toEqual(["Crew"]);
 });
 
 it("saves nothing when native create fails", async () => {
@@ -2211,7 +2678,7 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     "interest/default",
     "watch/channel",
   ]);
-  expect(storage.getItem("buzz.agents.v1")).toContain("chosen");
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("chosen");
 });
 
 it("keeps a new agent whose picture could not be set", async () => {
@@ -2298,7 +2765,83 @@ it("forgets records whose key is gone when identities load", async () => {
   expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
     "Echo",
   ]);
-  expect(storage.getItem("buzz.agents.v1")).not.toContain(sibling);
+  expect(storage.getItem("buzz.agents.v1")).toBeNull();
+  expect(storage.getItem(`buzz.agent.v1:${sibling}`)).toBeNull();
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("starts with the old shared records when a full store refuses their move", async () => {
+  const storage = memoryStorage();
+  const shared = JSON.stringify({
+    version: 1,
+    agents: { [bot]: { pubkey: bot, attention: {}, config: {} } },
+  });
+  storage.setItem("buzz.agents.v1", shared);
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key.startsWith("buzz.agent.v1:"))
+      throw new DOMException(
+        "The quota has been exceeded.",
+        "QuotaExceededError",
+      );
+    setItem(key, value);
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { service } = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+  });
+  expect(error).toHaveBeenCalledWith(
+    "Agent records were not split",
+    expect.any(DOMException),
+  );
+  error.mockRestore();
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Echo",
+  ]);
+  // The only saved copy stays for the next start to move.
+  expect(storage.getItem("buzz.agents.v1")).toBe(shared);
+});
+
+it("saving one agent leaves another program's changes to other agents", async () => {
+  const storage = memoryStorage();
+  for (const pubkey of [bot, sibling])
+    storage.setItem(
+      `buzz.agent.v1:${pubkey}`,
+      JSON.stringify({ pubkey, attention: {}, config: { reply: "start" } }),
+    );
+  const identity = (pubkey: string, name: string): AgentIdentity => ({
+    pubkey,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name,
+    deleted: false,
+  });
+  const { service } = await setup({
+    storage,
+    identities: [identity(bot, "Echo"), identity(sibling, "Other")],
+  });
+  await vi.waitFor(() => expect(service.find(sibling)).toBeDefined());
+  // The standalone host runs the sibling and saves its progress.
+  const hosted = JSON.stringify({
+    pubkey: sibling,
+    attention: {},
+    config: { reply: "from the host" },
+  });
+  storage.setItem(`buzz.agent.v1:${sibling}`, hosted);
+  await service.save(bot, { config: { reply: "edited" } });
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("edited");
+  expect(storage.getItem(`buzz.agent.v1:${sibling}`)).toBe(hosted);
 });
 
 it("keeps an agent created while identities are still loading", async () => {
@@ -2331,7 +2874,7 @@ it("keeps an agent created while identities are still loading", async () => {
   release([]);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   expect(service.find(bot)?.name).toBe("Echo");
-  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
 });
 
 it("reads the list again on refresh and clears the error a failed read left", async () => {
@@ -2435,8 +2978,7 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
-  const stored = () =>
-    JSON.parse(storage.getItem("buzz.agents.v1") ?? "{}").agents[bot];
+  const stored = () => JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}");
   expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
@@ -2660,7 +3202,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "forget",
   ]);
   expect(service.snapshot().agents).toEqual([]);
-  expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
+  expect(storage.get(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(leaveChannels).toHaveBeenCalledWith(
     expect.objectContaining({ archives }),
     bot,
@@ -3926,7 +4468,11 @@ it("wakes nothing for what came before a watch was first caught up, as after an 
     await settle();
     first.connect(false);
     // As a build from before catch-up leaves it: the watch, and no progress.
-    storage.removeItem(CATCH_UP_KEY);
+    const progress = Array.from({ length: storage.length }, (_, index) =>
+      storage.key(index),
+    ).filter((key) => key?.startsWith(CATCH_UP_PREFIX));
+    expect(progress).not.toHaveLength(0);
+    for (const key of progress) storage.removeItem(key as string);
     vi.setSystemTime((start + 60) * 1000);
     const second = await setup({
       storage,
@@ -4314,14 +4860,7 @@ it("waits for a confirmed roster before catching up, saving no progress past wha
     const reads = catchUpReads(session).length;
     expect(reads).toBe(20);
     expect(run).not.toHaveBeenCalled();
-    const saved = () =>
-      Object.values(
-        (
-          JSON.parse(storage.getItem(CATCH_UP_KEY) ?? "{}") as {
-            streams?: Record<string, { after?: unknown }>;
-          }
-        ).streams ?? {},
-      );
+    const saved = () => Object.values(readCheckpoints(storage));
     expect(saved().some((checkpoint) => checkpoint.after)).toBe(false);
     confirm("saved", [viewer, bot]);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
@@ -4406,9 +4945,10 @@ it("wakes nothing from the time its watch was off, also when it is turned on aft
     await settle();
     first.connect(false);
     // Turned on again elsewhere while this copy was closed.
-    const saved = storage.getItem("buzz.agents.v1") ?? "";
+    const saved = storage.getItem(`buzz.agent.v1:${bot}`) ?? "";
+    expect(saved).toContain('"enabled":false');
     storage.setItem(
-      "buzz.agents.v1",
+      `buzz.agent.v1:${bot}`,
       saved.replace('"enabled":false', '"enabled":true'),
     );
     vi.setSystemTime((start + 60) * 1000);
@@ -4871,7 +5411,7 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
-  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain('"agents":[]');
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
 });
 
 it("keeps a hosted agent whose setup failed, and finishes it without making another", async () => {
@@ -5061,6 +5601,114 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
   await service.remove(hostedKey);
   expect(steps).toEqual(["provider", "leave"]);
   expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("offers Stop for a finished hosted agent whose provider can stop its turns", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(true);
+  // A local agent has no provider to ask.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.interruptible(bot)).toBe(false);
+  expect(service.interruptible("f".repeat(64))).toBe(false);
+});
+
+it("offers no Stop for a hosted agent whose provider cannot stop its turns", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("does not offer Stop for a hosted agent whose setup is unfinished", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow("provider down");
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("has a hosted agent's provider stop its turn in one conversation", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const interrupt = vi.fn(
+    async (_: {
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }) => false,
+  );
+  plugin.agents.register({ ...type, remote: { ...remote, interrupt } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(false);
+  expect(interrupt).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    channelId: "channel-1",
+    threadRootId: "m1",
+    signal: expect.any(AbortSignal),
+  });
+  interrupt.mockResolvedValueOnce(true);
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(true);
+});
+
+it("refuses to stop a hosted agent whose provider cannot", async () => {
+  const { service, plugin } = await setup();
+  const { type } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).rejects.toThrow("This agent can't be stopped here");
+});
+
+it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async (key) => {
+    if (failing && key === "buzz.agents.unfinished.v1")
+      throw new Error("disk full");
+  });
+  const { service, plugin } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow();
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(service.remove(hostedKey)).rejects.toThrow("disk full");
+  error.mockRestore();
+  // Still listed with what is saved, so a restart shows no other state and
+  // Delete can be tried again.
+  expect(service.find(hostedKey)?.unfinished).toBe(true);
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain(hostedKey);
 });
 
 it("refuses to finish a hosted agent's setup while it is being deleted", async () => {
@@ -5630,6 +6278,40 @@ it("lets a run read and write its attention with expected-state tokens", async (
   ).rejects.toThrow(/^conflict:/);
 });
 
+it("fails an agent's attention write that agent storage could not save, and keeps the saved value", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) throw new Error("disk full");
+  });
+  const { service, run, emit } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const { attention } = await handleOf(run, emit);
+  const shown = await attention.show("interest/default");
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    attention.write(
+      "interest/default",
+      { type: "interest", instructions: "Unsaved." },
+      { expected: shown.expected_state },
+    ),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(await attention.show("interest/default")).toEqual(shown);
+  expect(service.find(bot)?.attention["interest/default"]?.value).toEqual({
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  failing = false;
+  const written = await attention.write(
+    "interest/default",
+    { type: "interest", instructions: "Saved." },
+    { expected: shown.expected_state },
+  );
+  expect(written.object).toMatchObject({ instructions: "Saved." });
+});
+
 it("keeps attention off across a reload", async () => {
   const { service, storage, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5688,10 +6370,12 @@ it("stops watches and timers while attention is off, keeps every object, and res
   expect(service.find(bot)?.attention).toEqual(before?.attention);
   emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);
+  // The overdue timer starts once turning attention on is saved, before the
+  // next tick and so before the later event.
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "mention",
-    "watch",
     "timer",
+    "watch",
   ]);
 });
 

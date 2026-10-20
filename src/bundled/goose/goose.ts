@@ -15,6 +15,11 @@ export type Spawn = (
   options?: HostProcessOptions,
 ) => Promise<HostProcess>;
 export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
+/** The desktop host's `spawn` and `resolveDirectory`, which goose starts with. */
+export type GooseHost = Readonly<{
+  spawn: Spawn;
+  resolveDirectory(path: string): Promise<string>;
+}>;
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
 const WRITTEN_LIMIT = 20_000;
@@ -462,6 +467,12 @@ export class GooseSession {
   private acted = false;
   private written = "";
   private closed = false;
+  /** The work the owner stopped, while goose ends it: the messages it had
+   * taken, and their activity. What goose wrote meanwhile is not posted, and
+   * messages sent since wait for a turn of their own. */
+  private stopped:
+    | { waiters: Waiter[]; receipts: Set<ActivityReceipt> }
+    | undefined;
 
   constructor(
     private readonly goose: GooseProcess,
@@ -503,6 +514,7 @@ export class GooseSession {
     // A steer cannot change the model, and must not pass a queued turn.
     if (
       this.prompting &&
+      !this.stopped &&
       !this.queue.length &&
       (!model || model === this.model)
     )
@@ -521,6 +533,20 @@ export class GooseSession {
   finished() {
     if (this.pending === 1 && !this.queue.length && !this.steering)
       this.settle({ ok: true });
+  }
+
+  /** Stops the work: the running turn, as ACP's `session/cancel` does, and
+   * the messages waiting for a turn after it, which goose cannot stop apart.
+   * A turn not yet sent is never sent. The work then ends as goose ends it;
+   * a message sent before it has runs as a new turn after. */
+  interrupt() {
+    if (!this.busy || this.closed) return;
+    this.queue.length = 0;
+    this.stopped = {
+      waiters: [...this.waiters],
+      receipts: new Set(this.active.values()),
+    };
+    this.goose.notify("session/cancel", { sessionId: this.id });
   }
 
   /** A Buzz tool that answers, such as `send`, succeeded. */
@@ -569,6 +595,9 @@ export class GooseSession {
     model?: string,
   ) {
     this.steering++;
+    // Work the owner stopped, or that ended meanwhile, takes no more.
+    const live = () =>
+      this.waiters.includes(waiter) && !this.stopped?.waiters.includes(waiter);
     try {
       const runId =
         this.runId ??
@@ -584,14 +613,16 @@ export class GooseSession {
             prompt: [{ type: "text", text }],
             expectedRunId: runId,
           });
-          this.acknowledge(activity, waiter);
+          if (live()) this.acknowledge(activity, waiter);
           return;
         } catch {
           // The turn ended, or another took its place: run it as the next.
         }
       }
-      this.queue.push({ text, ...(model ? { model } : {}) });
-      this.acknowledge(activity, waiter);
+      if (live()) {
+        this.queue.push({ text, ...(model ? { model } : {}) });
+        this.acknowledge(activity, waiter);
+      }
     } finally {
       this.steering--;
       // Runs the next turn, or ends work whose turn ended during the steer.
@@ -604,9 +635,13 @@ export class GooseSession {
     this.prompting = true;
     try {
       while (this.queue.length && !this.closed) {
+        // Stopped work has ended, and messages sent since run as new work.
+        if (this.stopped) this.endStopped();
         const { text, model } = this.queue.shift() ?? { text: "" };
         try {
           await this.select(model);
+          // The owner stopped it while its provider switch was going.
+          if (this.stopped) continue;
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],
@@ -695,12 +730,37 @@ export class GooseSession {
   private done() {
     // Work that wrote text and never answered in Buzz answered only goose: a
     // model that forgot `send`, or goose saying it cannot reach its provider.
-    const text = this.acted ? "" : this.written.trim();
+    const text = this.acted || this.stopped ? "" : this.written.trim();
     const error = this.lastError;
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
       ...(text ? { text } : {}),
     });
+  }
+  /** Settles the work the owner stopped, leaving messages sent since. */
+  private endStopped() {
+    const stopped = this.stopped;
+    if (!stopped) return;
+    this.stopped = undefined;
+    const error = this.lastError;
+    this.lastError = undefined;
+    this.acted = false;
+    this.written = "";
+    for (const [scope, receipt] of this.active)
+      if (stopped.receipts.has(receipt)) this.active.delete(scope);
+    const owner =
+      this.owner && stopped.waiters.includes(this.owner)
+        ? this.owner
+        : stopped.waiters.at(-1);
+    if (this.owner === owner) this.owner = undefined;
+    this.waiters = this.waiters.filter(
+      (waiter) => !stopped.waiters.includes(waiter),
+    );
+    this.pending = this.waiters.length;
+    for (const resolve of stopped.waiters)
+      resolve(
+        resolve === owner && error ? { ok: false, error } : { ok: !error },
+      );
   }
   private settle(settled: Settled) {
     this.pending = 0;
@@ -708,6 +768,7 @@ export class GooseSession {
     this.lastError = undefined;
     this.acted = false;
     this.written = "";
+    this.stopped = undefined;
     const owner = this.owner ?? this.waiters.at(-1);
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))

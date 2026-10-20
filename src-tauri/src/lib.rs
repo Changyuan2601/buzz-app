@@ -14,9 +14,15 @@ use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
 };
+mod agent_state;
 mod app_agents;
 mod deep_links;
 mod dock;
+mod huddle_window;
+use huddle_window::{
+    huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
+    huddle_window_watch, HuddleWindow,
+};
 #[cfg(test)]
 #[path = "enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
@@ -26,12 +32,23 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_files;
 mod host_mcp;
 mod host_process;
 mod host_request;
 mod identity;
+mod nsec_backup;
+mod nsec_backup_choice;
+mod nsec_backup_config;
+use nsec_backup::{
+    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_restore_begin,
+    nsec_restore_cancel, nsec_restore_install, nsec_restore_wait, NsecBackupHost,
+};
+use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+#[cfg(any(not(target_os = "macos"), test))]
+mod microphone;
 
 mod notifications;
 mod os_idle;
@@ -43,9 +60,11 @@ mod relay;
 mod relay_admin;
 mod sign_out;
 use identity::{
-    identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, identity_sign_builderlab_binding, IdentityHost,
+    identity_create, identity_export, identity_import, identity_import_legacy,
+    identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
+    identity_sign_builderlab_binding, IdentityHost,
 };
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
     media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
@@ -60,13 +79,14 @@ mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
 use buzzodz_plugins::{
-    imports::{prepare_folder, prepare_git, PreparedImport, Preview},
+    imports::{prepare_folder, prepare_git, prepare_upload, FolderUpload, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use host_command::plugin_host_run_command;
+use host_files::{plugin_host_read_file, plugin_host_resolve_directory};
 use host_mcp::{
     plugin_host_mcp_close, plugin_host_mcp_reply, plugin_host_mcp_serve, HostMcpServers,
 };
@@ -289,8 +309,12 @@ async fn workspace_pick_folder<R: tauri::Runtime>(
 async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
+    upload: Option<FolderUpload>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
+        if let Some(upload) = upload {
+            return prepare_upload(upload).map(Some);
+        }
         app.dialog()
             .file()
             .set_title("Choose a plugin folder")
@@ -423,6 +447,15 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        huddle_window_reset_incoming,
+        huddle_window_open,
+        huddle_window_update,
+        huddle_window_watch,
+        huddle_window_action,
+        huddle_open,
+        huddle_close,
+        huddle_pcm,
+        huddle_touch,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -431,8 +464,12 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_cancel,
         identity_restore,
         identity_import,
+        identity_legacy_available,
+        identity_import_legacy,
         identity_create,
         identity_export,
+        nsec_backup_choice,
+        nsec_backup_set_choice,
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         enterprise_login_gate,
@@ -491,9 +528,18 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_serve,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_read_file,
+        plugin_host_resolve_directory,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        nsec_backup_available,
+        nsec_backup_session,
+        nsec_backup_retry,
+        nsec_restore_begin,
+        nsec_restore_wait,
+        nsec_restore_install,
+        nsec_restore_cancel,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_portable,
@@ -517,6 +563,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
         jev::jev_classify,
+        agent_state::app_agent_state_load,
+        agent_state::app_agent_state_set,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -599,6 +647,15 @@ pub fn run() {
                 if let Some(settings) = gtk::Settings::default() {
                     settings.set_gtk_xft_hintstyle(Some("hintslight"));
                 }
+                // WebKitGTK hides `navigator.mediaDevices` unless media streams are on.
+                if let Some(main) = app.get_webview_window("main") {
+                    main.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        if let Some(settings) = webview.inner().settings() {
+                            settings.set_enable_media_stream(true);
+                        }
+                    })?;
+                }
             }
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
@@ -646,6 +703,12 @@ pub fn run() {
                     .map_err(|_| "Could not resolve legacy library directory")?;
                 Ok((root, legacy))
             })();
+            app.manage(agent_state::AgentState::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _)| root.with_file_name(sign_out::AGENTS).join("state"))
+                    .map_err(Clone::clone),
+            ));
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
@@ -666,6 +729,21 @@ pub fn run() {
             ));
             Ok(())
         });
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.on_permission_request(|webview, kind| {
+        microphone::decide(
+            webview.label(),
+            webview.url().ok().as_ref(),
+            // Packaged builds keep `devUrl` in their config but never load it.
+            webview
+                .config()
+                .build
+                .dev_url
+                .as_ref()
+                .filter(|_| tauri::is_dev()),
+            kind,
+        )
+    });
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(TitleBarFillFrames::default())
@@ -688,6 +766,8 @@ pub fn run() {
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
         .manage(pairing::Pairing::default())
+        .manage(Huddles::default())
+        .manage(HuddleWindow::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -695,6 +775,7 @@ pub fn run() {
         .manage(HostProcesses::default())
         .manage(HostMcpServers::default())
         .manage(OAuthCallbackHost::default())
+        .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
@@ -726,8 +807,10 @@ pub fn run() {
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
+                webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
+                webview.state::<Huddles>().stop_all();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
             }
@@ -764,6 +847,7 @@ pub fn run() {
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<NsecBackupHost>().close();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();

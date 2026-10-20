@@ -7,6 +7,7 @@
 import type { Memory } from "../../buzz-mcp/client";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
+import { ownerCanvas } from "../agent-harness/project";
 import { soloChat } from "./solo-chat";
 
 /** The agent's memory entries, and whether some may be missing. */
@@ -20,6 +21,8 @@ export type ChannelFacts = Readonly<{
   name?: string;
   dm: boolean;
   members: readonly string[];
+  /** The owner's device is still creating it, so it has nothing to read yet. */
+  starting?: true;
 }>;
 
 export type AgentReads = Readonly<{
@@ -52,6 +55,10 @@ export type AgentReads = Readonly<{
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
   memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
+  /** The channel's current Canvas text when `owner`, or an agent they
+   * attest, wrote it; undefined when it has none, someone else wrote it, or
+   * the reader cannot read Canvas. */
+  canvas?(channelId: string, owner: string): Promise<string | undefined>;
   /** Whether a mention in this channel continues `owner`'s Solo chat. Only the
    * owner's own connection can tell; other readers answer false. */
   soloChat(
@@ -83,6 +90,7 @@ export function ownerReads(
             ...(summary.name ? { name: summary.name } : {}),
             dm: summary.channelType === "dm",
             members: summary.members ?? [],
+            ...(summary.pending ? { starting: true as const } : {}),
           }
         : undefined;
     },
@@ -103,6 +111,13 @@ export function ownerReads(
     audienceAuthorityCommunity: () => session.audienceAuthorityCommunity,
     soloChat: (owner: string, channelId: string, signal: AbortSignal) =>
       soloChat(() => relay, owner, channelId, signal),
+    canvas: (channelId: string, owner: string) =>
+      ownerCanvas(
+        session.canvas,
+        owner,
+        channelId,
+        session.channelWrites.startingCanvas(channelId),
+      ),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
   });

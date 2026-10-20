@@ -76,6 +76,14 @@ export type AgentUpload = Readonly<{
   thumb?: string;
   duration?: number;
 }>;
+/** A community media blob saved to a local file for the agent; `data`
+ * (base64) is the image itself when the agent can be shown it. */
+export type AgentMedia = Readonly<{
+  path: string;
+  type: string;
+  size: number;
+  data?: string;
+}>;
 export type AgentsNative = {
   list(): Promise<readonly AgentIdentity[]>;
   /** Generates a key, has the signed-in owner attest it, and saves both. */
@@ -129,10 +137,11 @@ export type AgentsNative = {
     query: string,
     limit: number,
   ): Promise<RelayEvent[] | undefined>;
-  /** Uploads base64 `data` (an image or MP4) as the agent. */
+  /** Uploads base64 `data`, a file of any type its community accepts, as
+   * the agent. `mime` is a hint; the community decides the type. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
-  /** Downloads one of its community's media blobs as the agent, as base64. */
-  media(pubkey: string, url: string): Promise<string>;
+  /** Saves one of its community's media blobs, of any type, as the agent. */
+  media(pubkey: string, url: string): Promise<AgentMedia>;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
   remember(
     pubkey: string,

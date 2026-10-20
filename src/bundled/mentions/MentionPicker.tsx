@@ -13,7 +13,7 @@ import { AtIcon } from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { outsideMentionDetail } from "./mention-candidates";
 import { matchPerson } from "../../features/search/person-match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
@@ -33,7 +33,7 @@ export function MentionPicker({
   select,
   selectTeam,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   disabled: boolean;

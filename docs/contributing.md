@@ -37,6 +37,8 @@ No user-level npm configuration edit, Corepack bootstrap, or temporary
 tool PATH is needed for a clean public-registry setup. Commit the `bin/` scripts
 and package symlinks; `.hermit/` contains ignored local state.
 
+CMake is pinned through Hermit for the native Opus codec build.
+
 All tool versions are unchanged by the public-tooling migration. The public
 catalog does not yet include Node 24.18.0, so `bin/packages/node.hcl` pins its
 [official downloads and checksums](https://nodejs.org/dist/v24.18.0/SHASUMS256.txt)
@@ -561,16 +563,16 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** two runners, each with Biome, one TypeScript check and a frontend
+- **JavaScript:** three runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
-  both shards must succeed. Timing artifacts include the shard number.
+  every shard must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** eighteen runners (Chromium and WebKit, nine file-level shards
-  per engine), each with two workers. They start alongside measurements on separate
+- **Browser journeys:** twenty-one runners (nine Chromium and twelve WebKit
+  file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu
   job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
   It uploads a tar with executable permission, checkout revision and SHA-256

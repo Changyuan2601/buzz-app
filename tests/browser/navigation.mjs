@@ -1,10 +1,14 @@
 import { expect } from "@playwright/test";
 
-export async function pageChoices(page) {
+export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
-  return page
-    .getByRole("dialog", { name: "Search Buzz", exact: true })
-    .getByRole("group", { name: "Actions", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await dialog
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill(query);
+  return dialog.locator(
+    '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
+  );
 }
 
 export async function openPage(page, name, { connected = true } = {}) {
@@ -30,11 +34,6 @@ export async function newChat(page) {
 export async function selectPage(page, name, { connected = true } = {}) {
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
-  const choice = dialog
-    .getByRole("group", { name: "Actions", exact: true })
-    .getByRole("option", { name, exact: true });
-  // Registered page actions are visible only after the plugin catalog is ready.
-  await expect(choice).toBeVisible();
   // Until the community connects, the palette is a placeholder. The connected
   // palette replaces it, which resets selection and option ids, so select only
   // in the final palette. Pass `connected: false` when the test holds or fails
@@ -42,11 +41,20 @@ export async function selectPage(page, name, { connected = true } = {}) {
   await expect(
     dialog.getByText("Connecting to this community…", { exact: true }),
   ).toHaveCount(connected ? 0 : 1);
+  await input.fill(name);
+  const choice = pageChoice(
+    dialog.locator(
+      '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
+    ),
+    name,
+  );
+  // Registered page actions are visible only after the plugin catalog is ready.
+  await expect(choice).toBeVisible();
   // Conversation groups above Actions arrive with the channel list and move
   // every row below them, so a pointer click can land between rows. Keyboard
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
-  const limit = await dialog.getByRole("option").count();
+  const limit = await dialog.locator("[role=option], [role=row]").count();
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;
@@ -79,15 +87,34 @@ export async function settleShellToggle(page) {
   );
 }
 
-export async function selectSettingsSection(page, name, regionName = name) {
-  await settleShellToggle(page);
-  const show = page.getByRole("button", {
-    name: "Show navigation",
+// Settings is a modal over the retained workspace. Its sections stay in the
+// modal's own navigation at every width; narrow modals stack it above the detail.
+export function settingsDialog(page) {
+  return page.getByRole("dialog", { name: "Settings", exact: true });
+}
+
+export function settingsSections(page) {
+  return settingsDialog(page).getByRole("navigation", {
+    name: "Settings sections",
     exact: true,
   });
-  if (await show.isVisible()) await show.click();
-  await page
-    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+}
+
+export async function openSettings(page) {
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(settingsDialog(page)).toBeVisible();
+}
+
+export async function closeSettings(page) {
+  await settingsDialog(page)
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
+}
+
+export async function selectSettingsSection(page, name, regionName = name) {
+  await settingsSections(page)
     .getByRole("button", { name, exact: true })
     .click();
   await expect(
@@ -96,9 +123,10 @@ export async function selectSettingsSection(page, name, regionName = name) {
 }
 
 export async function chooseColorMode(page, name) {
-  const choice = page.getByRole("radio", { name, exact: true });
-  await page.locator("label").filter({ has: choice }).click();
-  await expect(choice).toBeChecked();
+  const choice = page.getByRole("combobox", { name: "Mode", exact: true });
+  await choice.click();
+  await page.getByRole("option", { name, exact: true }).click();
+  await expect(choice).toHaveText(name);
 }
 
 // Secondary panels enter with a short horizontal transform. Positions compared
@@ -144,4 +172,10 @@ export async function selectCommunity(page, name) {
       exact: true,
     }),
   ).toBeVisible();
+}
+
+export function pageChoice(group, name) {
+  return group
+    .getByRole("option", { name, exact: true })
+    .or(group.getByRole("row", { name, exact: true }));
 }

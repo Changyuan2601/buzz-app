@@ -27,7 +27,7 @@ export function PageNavigation({
     return (
       <Tabs
         label="Topbar pages"
-        variant="segmented"
+        variant="chrome"
         value={pages.some((page) => page.key === selected) ? selected : null}
         onValueChange={(key) => onSelect(key, { focus: "preserve" })}
         onReselect={(key) => {

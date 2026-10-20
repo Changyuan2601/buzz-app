@@ -24,9 +24,12 @@ export type ButtonProps = Omit<
   children: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
-  shape?: "capsule" | "control";
   loading?: boolean;
-};
+} & (
+    | { shape?: "capsule" | "control" }
+    // Icon geometry has no visible label, so it requires an accessible name.
+    | { shape: "icon"; "aria-label": string }
+  );
 
 /** Base UI owns activation. Legacy variant/size names remain during migration. */
 export function Button({
@@ -44,6 +47,13 @@ export function Button({
   const control = (
     <BaseButton
       {...props}
+      {...(shape === "icon"
+        ? {
+            "data-icon-variant": variant,
+            "data-icon-shape": "control",
+            "data-icon-size": size,
+          }
+        : {})}
       type={type}
       disabled={disabled || loading}
       focusableWhenDisabled={

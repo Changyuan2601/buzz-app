@@ -13,16 +13,9 @@
     // Storage may be denied; the system palette still opens safely.
   }
   document.documentElement.dataset.colorMode = mode;
-  let accent = "chartreuse";
+  let accent = "citrus";
   try {
-    const accents = [
-      "chartreuse",
-      "flame",
-      "magenta",
-      "iris",
-      "cobalt",
-      "jade",
-    ];
+    const accents = ["bee", "magenta", "iris", "cobalt", "citrus", "mono"];
     let value = localStorage.getItem("buzz-accent.v1");
     if (value === null) {
       // The former bubble color carries over; its old "Default" does not.
@@ -30,8 +23,8 @@
         blue: "cobalt",
         cyan: "cobalt",
         indigo: "cobalt",
-        green: "jade",
-        orange: "flame",
+        green: "citrus",
+        orange: "bee",
         pink: "magenta",
         red: "magenta",
         lilac: "iris",
@@ -39,19 +32,29 @@
       };
       value = legacy[localStorage.getItem("buzz-bubble-color.v1")] ?? null;
     }
+    if (
+      value === "chartreuse" ||
+      value === "lime" ||
+      value === "pear" ||
+      value === "jade"
+    )
+      value = "citrus";
+    if (value === "flame") value = "bee";
+    if (value === "gray") value = "mono";
     if (accents.includes(value)) accent = value;
   } catch {
     /* The default accent remains usable without storage. */
   }
   document.documentElement.dataset.accent = accent;
-  let level = "touch";
+  let contrast = "low";
   try {
-    const value = localStorage.getItem("buzz-color-level.v1");
-    if (["neutral", "touch", "more", "full"].includes(value)) level = value;
+    const saved = localStorage.getItem("buzz-contrast.v1");
+    if (saved === "quiet" || saved === "high") contrast = saved;
   } catch {
-    /* The default color amount remains usable without storage. */
+    /* Low contrast remains usable without storage. */
   }
-  document.documentElement.dataset.colorLevel = level;
+  document.documentElement.dataset.colorLevel =
+    contrast === "low" ? "touch" : contrast;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

@@ -18,11 +18,12 @@ import {
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import {
   communityFromScope,
   gifMarkdown,
-  relaySupportsKlipy,
+  relayGifRequests,
+  type GifRequests,
 } from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
 import { GifPicker } from "./GifPicker";
@@ -41,13 +42,15 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  gifRequests = relayGifRequests,
   externalTrigger,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
   reaction?: boolean;
+  gifRequests?: GifRequests | undefined;
   externalTrigger?: {
     ref: RefObject<HTMLButtonElement | null>;
     id: string;
@@ -147,7 +150,7 @@ export function EmojiPicker({
     )
       return;
     const controller = new AbortController();
-    void relaySupportsKlipy(community, controller.signal).then(
+    void gifRequests.supports(community, controller.signal).then(
       (supported) => {
         if (!controller.signal.aborted) {
           setGifAvailability({ community, supported });
@@ -166,7 +169,7 @@ export function EmojiPicker({
       },
     );
     return () => controller.abort();
-  }, [community, gifDiscoveryRequested, gifAvailability]);
+  }, [community, gifDiscoveryRequested, gifAvailability, gifRequests]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host || !perLine) return;
@@ -234,6 +237,7 @@ export function EmojiPicker({
   const gifContent = community && (
     <GifPicker
       community={community}
+      search={gifRequests.search}
       initialQuery={search.current}
       onQueryChange={(value) => {
         search.current = value;

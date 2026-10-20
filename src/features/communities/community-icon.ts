@@ -1,3 +1,4 @@
+import type { CommunityReader, Membership } from "./service";
 import { registerBrokerCommunity } from "../relay/transport";
 import { nativeIdentityEnabled } from "../identity/service";
 import { nativeRelayInfo } from "../relay/native";
@@ -65,4 +66,40 @@ export async function fetchCommunityIcon(id: string, signal: AbortSignal) {
   return info && typeof info === "object" && "icon" in info
     ? communityIcon(info.icon)
     : undefined;
+}
+
+/** Public display evidence shared within one Communities lifetime. The rail
+ * still owns discovery; readers never fetch or acquire a community session. */
+const iconsByReader = new WeakMap<
+  CommunityReader,
+  ReturnType<typeof createCommunityIcons>
+>();
+export function communityIcons(reader: CommunityReader) {
+  let icons = iconsByReader.get(reader);
+  if (!icons) {
+    icons = createCommunityIcons();
+    iconsByReader.set(reader, icons);
+  }
+  return icons;
+}
+function createCommunityIcons() {
+  let snapshot: Readonly<Record<string, string>> = {};
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    resolve: (membership: Membership) =>
+      snapshot[membership.id] ?? communityIcon(membership.icon),
+    remember(id: string, value: string) {
+      const icon = communityIcon(value);
+      if (!icon || snapshot[id] === icon) return;
+      snapshot = { ...snapshot, [id]: icon };
+      for (const listener of listeners) listener();
+    },
+  };
 }

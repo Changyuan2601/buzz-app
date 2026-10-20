@@ -34,6 +34,8 @@ function setup(
         oauth_callback_begin: () => ({ id: "attempt" }),
         oauth_callback_wait: () => ({ parameters: [["code", "one-time"]] }),
         oauth_callback_cancel: () => undefined,
+        nsec_backup_session: () => undefined,
+        nsec_backup_retry: () => undefined,
         ...commands,
       };
       const handler = handlers[name];
@@ -202,16 +204,63 @@ it("clears the session when it can no longer be verified", async () => {
 });
 
 it("forgets the credential on sign-out and plugin disposal", async () => {
-  const { backend, dispose } = setup(signedIn);
+  const { backend, dispose, invoke } = setup(signedIn);
   await login(backend);
+  const firstHandoff = invoke.mock.calls.find(
+    ([name, input]) =>
+      name === "nsec_backup_session" && input?.credential === "token",
+  )?.[1];
+  expect(firstHandoff).toMatchObject({ source: "hosted", credential: "token" });
   await expect(backend.send("sign-out")).resolves.toEqual({
     status: 200,
     value: {},
   });
   await expect(backend.auth()).resolves.toBeNull();
+  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
+    source: "hosted",
+    generation: expect.any(Number),
+    credential: null,
+  });
   await login(backend);
+  const replacement = invoke.mock.calls
+    .filter(
+      ([name, input]) =>
+        name === "nsec_backup_session" && input?.credential === "token",
+    )
+    .at(-1)?.[1];
+  expect(replacement?.generation).toBeGreaterThan(
+    Number(firstHandoff?.generation),
+  );
   dispose();
   await expect(backend.auth()).resolves.toBeNull();
+  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
+    source: "hosted",
+    generation: expect.any(Number),
+    credential: null,
+  });
+});
+
+it("finishes login while the silent backup handoff is still pending", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { backend, invoke } = setup(signedIn, {
+    nsec_backup_session: (input) => (input?.credential ? pending : undefined),
+  });
+  try {
+    await expect(login(backend)).resolves.toMatchObject({ status: 200 });
+    expect(invoke).toHaveBeenCalledWith("nsec_backup_session", {
+      source: "hosted",
+      generation: expect.any(Number),
+      credential: "token",
+    });
+    await expect(backend.auth()).resolves.toMatchObject({
+      email: "a@example.com",
+    });
+  } finally {
+    release();
+  }
 });
 
 it("returns a challenge error without signing", async () => {
@@ -340,7 +389,7 @@ function bindingWithHeldSignature() {
 }
 
 it("verifies a signed binding with the session that requested it", async () => {
-  const { start, verified } = bindingWithHeldSignature();
+  const { start, verified, invoke } = bindingWithHeldSignature();
   const { binding, release } = await start();
   release();
   await expect(binding).resolves.toEqual({
@@ -355,6 +404,9 @@ it("verifies a signed binding with the session that requested it", async () => {
       nonce: "n",
       signed_payload: JSON.stringify({ id: "event" }),
     }),
+  });
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_retry", {
+    source: "hosted",
   });
 });
 
@@ -380,4 +432,7 @@ it.each([
   release();
   await expect(binding).rejects.toThrow("Builderlab session changed");
   expect(native.verified()).toEqual([]);
+  expect(native.invoke).not.toHaveBeenCalledWith("nsec_backup_retry", {
+    source: "hosted",
+  });
 });

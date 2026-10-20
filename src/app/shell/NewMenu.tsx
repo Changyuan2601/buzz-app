@@ -8,7 +8,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
-import { NewProject } from "../../features/solo/NewProject";
+import { NewWorkspace } from "../../features/solo/NewWorkspace";
 import { resetNewChatProject } from "../../features/solo/SoloDraft";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -70,7 +70,7 @@ function ReadyNewMenu({
               disabled={!available}
               aria-label="New"
               title="New"
-              variant="ghost"
+              variant="chrome"
               shape="round"
               size="sm"
               icon={<PlusIcon className={styles.createIcon} size={18} />}
@@ -92,7 +92,7 @@ function ReadyNewMenu({
               if (current()) setCreatingProject(true);
             }}
           >
-            New project
+            New workspace
           </MenuItem>
           <MenuItem
             disabled={!scope}
@@ -136,7 +136,7 @@ function ReadyNewMenu({
         }}
       />
       {creatingProject && (
-        <NewProject
+        <NewWorkspace
           session={session}
           create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}

@@ -1,5 +1,8 @@
 import { test, expect } from "./fixture.mjs";
-import { expectMessageActionsHidden } from "./message-actions.mjs";
+import {
+  expectMessageActionsHidden,
+  hoverMessage,
+} from "./message-actions.mjs";
 import { open } from "./timeline.mjs";
 import { generateSecretKey, finalizeEvent, getPublicKey } from "nostr-tools";
 
@@ -195,7 +198,7 @@ test("message activity opens a grouped preview and the agent's profile without l
       // Resize with the channel toolbar revealed: the overlay thread pane
       // must cover it, even if the pointer has not moved off its old row.
       await page.setViewportSize({ width: 1440, height: 950 });
-      await row.hover();
+      await hoverMessage(row);
       await page.setViewportSize({ width, height: 950 });
       await expect(bubble).toBeVisible();
       const groupBox = await region.boundingBox();

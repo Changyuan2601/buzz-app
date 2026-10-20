@@ -29,6 +29,7 @@ import {
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
 
+const showSettings = new URLSearchParams(location.search).has("settings");
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
@@ -472,9 +473,7 @@ function Fixture() {
           {...(thread ? { threadRootId: "a".repeat(64) } : {})}
         />
       </div>
-      {new URLSearchParams(location.search).has("settings") && (
-        <AgentSettings />
-      )}
+      {showSettings && <AgentSettings />}
     </main>
   );
 }

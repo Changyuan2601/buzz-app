@@ -306,7 +306,9 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
   try {
     await failRecent(1);
     await expect(
-      notifications.getByText("Sections sorted by Recent may be out of date."),
+      notifications.getByText(
+        "Activity filters and Recent sorting may be out of date.",
+      ),
     ).toBeVisible();
     await setSort("A–Z");
     await expect(warning).toHaveCount(0);

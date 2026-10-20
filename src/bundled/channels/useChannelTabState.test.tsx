@@ -277,6 +277,11 @@ test("moving a thread reorders it within a pane and across panes", () => {
   expect(
     h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
   ).toMatchObject({ replyRequest: 1 });
+  // Focusing keeps the reply request, so the reply box keeps its target.
+  act(() => h.result.current.openThreadTab("alpha", "a", "a", "focus"));
+  expect(
+    h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
+  ).toMatchObject({ replyRequest: 1, focusRequest: 1 });
 });
 
 // A link's root hint is not identity: the reader's verified root merges a
@@ -586,6 +591,30 @@ test("an agent's main-pane tab leaves the conversation showing", () => {
     { root: "r1", pane: "main", shown: true },
   ]);
   expect(tabs.close("alpha", "r1")).toBe("shown");
+});
+
+test("Solo threads open beside the chat even when the device prefers main", () => {
+  setThreadPlacementPreference("main");
+  const session = tabSession([
+    { id: "alpha", name: "Alpha", channelType: "solo" },
+  ]);
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  act(() =>
+    page.result.current.enterVisit("link", {
+      channelId: "alpha",
+      messageId: "r2",
+      rootId: "r2",
+      pane: "side",
+    }),
+  );
+  expect(page.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", pane: "side" },
+    { id: "thread:alpha:r2", pane: "side" },
+  ]);
 });
 
 function tabSession(

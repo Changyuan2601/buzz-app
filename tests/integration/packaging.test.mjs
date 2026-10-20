@@ -165,3 +165,28 @@ test("all-platform releases preserve candidate isolation and read-only installer
     assert.ok(!JSON.stringify(job).includes("secrets."));
   }
 });
+
+test("Huddle release provisioning passes microphone entitlements to the actual signer and installs Opus", () => {
+  const workflow = parse(read(".github/workflows/release.yml"));
+  const signer = workflow.jobs.build.steps.find((step) =>
+    step.uses?.startsWith("block/apple-codesign-action@"),
+  );
+  assert.equal(
+    signer.with["entitlements-plist-path"],
+    "src-tauri/entitlements.plist",
+  );
+  assert.match(
+    read(signer.with["entitlements-plist-path"]),
+    /<key>com.apple.security.device.audio-input<\/key>\s*<true\/>/,
+  );
+  const verification = workflow.jobs.build.steps.find(
+    (step) => step.name === "Verify release DMG",
+  ).run;
+  assert.match(verification, /SIGNED_DMG/);
+  assert.match(verification, /codesign --display --entitlements/);
+  assert.match(verification, /Print :com.apple.security.device.audio-input/);
+  const dependencies = workflow.jobs.linux.steps.find(
+    (step) => step.name === "Install build and packaging dependencies",
+  ).run;
+  assert.match(dependencies, /\blibopus-dev\b/);
+});

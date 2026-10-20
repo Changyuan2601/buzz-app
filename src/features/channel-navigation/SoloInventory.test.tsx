@@ -130,3 +130,21 @@ it("opens a typing-only agent's profile activity in its Solo chat", async () => 
   );
   expect(f.open).toHaveBeenLastCalledWith(conversationTarget(scope, id));
 });
+it.each([
+  { observedCount: 1, attentionCount: 1 },
+  { observedCount: 1, attentionCount: 0 },
+])(
+  "bolds a Solo chat for any unread message, keeping its dot for attention only ($observedCount unread, $attentionCount attention)",
+  (counts) => {
+    const f = fixture(false, false, undefined, counts);
+    const row = screen.getByRole("button", { name: /^Planning/ });
+    expect(
+      row.querySelector('[data-channel-unread-title="true"]'),
+    ).toBeInTheDocument();
+    expect(!!row.querySelector("[data-channel-priority]")).toBe(
+      counts.attentionCount > 0,
+    );
+    f.clearUnread();
+    expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
+  },
+);

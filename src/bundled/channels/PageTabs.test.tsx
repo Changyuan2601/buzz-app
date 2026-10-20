@@ -8,6 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -21,16 +22,29 @@ vi.mock("./ConversationTab", () => ({
   ConversationTab: ({
     tab,
     channel,
+    visit,
+    onResolvedRoot,
   }: {
     tab: Tab;
     channel: { name: string };
+    visit: boolean;
+    onResolvedRoot?: (rootId: string) => void;
   }) => (
     <p
+      data-tab={tab.id}
       data-message={tab.messageId}
       data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
+      data-focus={tab.focusRequest}
+      data-reply={tab.kind === "thread" ? tab.replyRequest : undefined}
     >
       {tab.kind} in {channel.name}
+      {!visit && " unvisited"}
+      {onResolvedRoot && (
+        <button type="button" onClick={() => onResolvedRoot("older")}>
+          Resolve root
+        </button>
+      )}
     </p>
   ),
 }));
@@ -50,7 +64,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(visits?: boolean) {
   const channels = [
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
@@ -82,6 +96,8 @@ function fixture() {
   } as unknown as ConversationHostServices;
   let open: (target: PageTabTarget, options?: PageTabOptions) => boolean = () =>
     false;
+  let close: (target: PageTabTarget) => boolean = () => false;
+  let isOpen: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
   render(
     <PageTabs
@@ -91,9 +107,12 @@ function fixture() {
       label="Switchboard"
       host={host}
       extensions={{} as ConversationExtensions}
+      visits={visits}
     >
-      {(next) => {
+      {(next, closer, opened) => {
         open = next;
+        close = closer;
+        isOpen = opened;
         openers.add(next);
         return <p>Chat list</p>;
       }}
@@ -101,12 +120,21 @@ function fixture() {
   );
   return {
     openers,
+    navigation: host.navigation,
     open(target: PageTabTarget, options?: PageTabOptions) {
       let opened = false;
       act(() => {
         opened = open(target, options);
       });
       return opened;
+    },
+    isOpen: (target: PageTabTarget) => isOpen(target),
+    close(target: PageTabTarget) {
+      let closed = false;
+      act(() => {
+        closed = close(target);
+      });
+      return closed;
     },
   };
 }
@@ -167,6 +195,10 @@ it("opens a thread moved to the main pane where it is", () => {
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
   expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
+  // The next plain open does not replace it.
+  expect(page.open({ channelId: "beta" })).toBe(true);
+  expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
+  expect(side()).toEqual(["beta"]);
 });
 
 it("opens at a message, asking again on each open, with the page's read choice", () => {
@@ -200,4 +232,107 @@ it("opens a thread at one of its messages", () => {
   page.open({ channelId: "alpha", threadId: "root" });
   expect(thread()).toHaveAttribute("data-message", "root");
   expect(thread()).toHaveAttribute("data-reveal", "2");
+});
+
+it("reopens a thread opened at a reply in its tab once its root resolves", () => {
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "reply" });
+  const thread = () => screen.getByText("thread in alpha");
+  const id = thread().getAttribute("data-tab");
+  fireEvent.click(screen.getByRole("button", { name: "Resolve root" }));
+  expect(
+    page.open({ channelId: "alpha", threadId: "reply", messageId: "reply" }),
+  ).toBe(true);
+  expect(thread()).toHaveAttribute("data-tab", id);
+  expect(thread()).toHaveAttribute("data-reveal", "1");
+  expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(true);
+});
+
+it("opens a page's tabs without visiting their conversations when it asks", () => {
+  const page = fixture(false);
+  expect(
+    page.open({ channelId: "alpha", threadId: "root", messageId: "reply" }),
+  ).toBe(true);
+  expect(screen.getByText("thread in alpha unvisited")).toHaveAttribute(
+    "data-message",
+    "reply",
+  );
+  expect(page.open({ channelId: "beta" })).toBe(true);
+  expect(screen.getByText("conversation in beta unvisited")).toBeVisible();
+});
+
+it("closes a conversation's tab only when one is open", () => {
+  const page = fixture();
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(false);
+  expect(page.open({ channelId: "beta" }, { keep: true })).toBe(true);
+  expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(false);
+  expect(side()).toEqual(["beta"]);
+  expect(page.close({ channelId: "beta" })).toBe(true);
+  expect(screen.getAllByRole("tablist")).toHaveLength(1);
+});
+
+it("focuses the composer of each tab it opens, except at a message", () => {
+  const page = fixture();
+  const tab = () => screen.getByText("conversation in beta");
+  const thread = () => screen.getByText("thread in alpha");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "beta", messageId: "post" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "alpha", threadId: "root" }, { keep: true });
+  expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root" });
+  expect(thread()).toHaveAttribute("data-focus", "2");
+  // Focus is not a Reply, which would retarget the reply box at the root.
+  expect(thread()).not.toHaveAttribute("data-reply");
+});
+
+it("opens a tab's conversation in its channel from the tab's menu", async () => {
+  const user = userEvent.setup();
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  const scope = { viewer: "viewer", communityOrigin: "origin" };
+  // The menu has handed focus back to the tab, so the destination can take it.
+  let focused: Element | null = null;
+  vi.mocked(page.navigation.open).mockImplementation(async () => {
+    focused = document.activeElement;
+    return { status: "opened" };
+  });
+  const thread = screen.getByRole("tab", { name: /Root text/ });
+  await user.pointer({ keys: "[MouseRight]", target: thread });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in channel" }),
+  );
+  await vi.waitFor(() => expect(focused).toBe(thread));
+  expect(page.navigation.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+    messageId: "reply",
+    threadRootId: "root",
+  });
+  page.open({ channelId: "beta" });
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("tab", { name: /beta/ }),
+  });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in channel" }),
+  );
+  await vi.waitFor(() =>
+    expect(page.navigation.open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+    }),
+  );
 });

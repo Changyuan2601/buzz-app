@@ -1,3 +1,4 @@
+import { SidebarNavigation } from "../../shared/design-system/ui/SidebarNavigation";
 import type { ReactNode } from "react";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import styles from "../../bundled/channels/Channels.module.css";
@@ -26,16 +27,18 @@ export function SidebarFrame({
       data-buzz-launch-pending={launchPending}
     >
       <div className={styles.sidebar}>
-        {header && <div className={styles.sidebarFilter}>{header}</div>}
-        <div
-          className={styles.sidebarBody}
-          id={panelId}
-          {...(panelId
-            ? { role: "tabpanel", "aria-labelledby": `${panelId}-tab` }
-            : {})}
-        >
-          {children}
-        </div>
+        <SidebarNavigation>
+          {header && <div className={styles.sidebarFilter}>{header}</div>}
+          <div
+            className={styles.sidebarBody}
+            id={panelId}
+            {...(panelId
+              ? { role: "tabpanel", "aria-labelledby": `${panelId}-tab` }
+              : {})}
+          >
+            {children}
+          </div>
+        </SidebarNavigation>
       </div>
     </Panel>
   );

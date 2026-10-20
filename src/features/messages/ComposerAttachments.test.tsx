@@ -289,6 +289,33 @@ it("removes immediately without playing a poof sound", () => {
   expect(document.querySelector("[data-attachment-poof]")).toBeNull();
 });
 
+it("shows a returning draft at once and animates only attachments picked later", async () => {
+  const props = {
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: () => undefined,
+  };
+  const item = (name: string): DraftAttachment => ({
+    id: name,
+    file: new File(["text"], name),
+    status: "queued",
+  });
+  const row = (name: string) =>
+    screen.getByText(name).closest("li") as HTMLElement;
+  const view = render(
+    <ComposerAttachments {...props} items={[item("restored.txt")]} />,
+  );
+  // The composer remounted with this draft (switching back to a channel).
+  expect(row("restored.txt").style.opacity).toBe("1");
+  view.rerender(<ComposerAttachments {...props} items={[]} />);
+  view.rerender(
+    <ComposerAttachments {...props} items={[item("picked.txt")]} />,
+  );
+  expect(row("picked.txt").style.opacity).toBe("0");
+  await waitFor(() => expect(row("picked.txt").style.opacity).toBe("1"));
+});
+
 it("dismisses draft preview while retaining the original file and preview URL", async () => {
   const revoke = vi.fn();
   vi.stubGlobal(
@@ -656,4 +683,57 @@ it("compacts media beside non-media chips and restores media-only previews after
   expect(screen.getByRole("list").hasAttribute("data-compact-media")).toBe(
     false,
   );
+});
+
+it("keeps the local thumbnail until the uploaded image has loaded", () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:local"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const item: DraftAttachment = {
+    id: "image",
+    file: new File(["png"], "photo.png", { type: "image/png" }),
+    status: "uploading",
+  };
+  const props = {
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: (url: string) => `/media?url=${url}`,
+  };
+  const view = render(<ComposerAttachments {...props} items={[item]} />);
+  const sources = () =>
+    Array.from(view.container.querySelectorAll("img"), (image) =>
+      image.getAttribute("src"),
+    );
+  fireEvent.load(view.container.querySelector("img") as HTMLImageElement);
+  expect(sources()).toEqual(["blob:local"]);
+  view.rerender(
+    <ComposerAttachments
+      {...props}
+      items={[
+        {
+          ...item,
+          status: "ready",
+          uploaded: {
+            url: "https://relay.test/photo.webp",
+            name: "photo.webp",
+            type: "image/webp",
+            size: 8,
+            sha256: "a".repeat(64),
+          },
+        },
+      ]}
+    />,
+  );
+  const canonical = "/media?url=https://relay.test/photo.webp";
+  expect(sources()).toEqual(["blob:local", canonical]);
+  const incoming = view.container.querySelectorAll("img")[1];
+  assert.exists(incoming);
+  fireEvent.load(incoming);
+  expect(sources()).toEqual([canonical]);
+  expect(view.container.querySelector("img")).toBe(incoming);
 });

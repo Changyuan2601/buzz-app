@@ -48,13 +48,14 @@ export async function nameSoloChat(
   };
   // Naming is for a new chat, not an unbounded history scan. A full page cannot
   // establish the first message, so keep the existing title rather than guess.
+  // An ordinary filter, not a channel window: the relay's window ignores authors
+  // and rejects `until` without a `before_id` cursor. Replies are dropped below.
   const limit = 100;
   const history = await session.read([
     {
       kinds: [9],
       authors: [owner],
       "#h": [channel],
-      top_level: true,
       until: event.created_at,
       limit,
       consistency: "strong",

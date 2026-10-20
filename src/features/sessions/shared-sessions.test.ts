@@ -768,8 +768,7 @@ it.each([false, true])(
         audienceAuthority,
       } as unknown as AgentHandle,
       {
-        cwd: "/workspace",
-        spawn: vi.fn(),
+        read: vi.fn(),
         memories: async () => ({ entries: [], partial: false }),
         relayAuthor: authority,
         audienceAuthorityCommunity: community,

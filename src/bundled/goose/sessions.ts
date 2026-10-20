@@ -11,12 +11,13 @@ import {
   GooseProcess,
   type ActivityReceipt,
   type Choice,
+  type GooseHost,
   type GooseSession,
   type ServeMcp,
   type Settled,
-  type Spawn,
   type ToolServer,
 } from "./goose";
+import { absoluteWorkspace } from "../codex/config";
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -90,7 +91,7 @@ export class ServerPool {
 export class SharedProcess {
   private ready: Promise<GooseProcess> | undefined;
   constructor(
-    private readonly spawn: Spawn,
+    private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
     private readonly serve: ServeMcp,
   ) {}
@@ -100,8 +101,8 @@ export class SharedProcess {
   get(): Promise<GooseProcess> {
     if (this.ready) return this.ready;
     const ready = (async () =>
-      GooseProcess.start(this.spawn, {
-        cwd: await absolute(this.spawn, "~"),
+      GooseProcess.start(this.host.spawn, {
+        cwd: await this.host.resolveDirectory("~"),
         serve: this.serve,
       }))();
     const forget = () => {
@@ -127,7 +128,8 @@ export type Launch = Readonly<{
 }>;
 
 export type SessionsOptions = Readonly<{
-  spawn: Spawn;
+  /** The host's, for the workspace's absolute path. */
+  resolveDirectory: GooseHost["resolveDirectory"];
   /** Answers the agent's Buzz tools. */
   tools: ToolServer;
   /** The process all goose agents' sessions open in. */
@@ -294,6 +296,13 @@ export class AgentSessions {
     }
   }
 
+  /** Stops the turn running in conversation `key`, if any, once a session
+   * opening for it has taken its message. */
+  async interrupt(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    this.live.get(key)?.session.interrupt();
+  }
+
   /** Runs one turn in a new session, then closes it. `label` names it in the
    * snapshot. It gives up, and stops the turn, once `signal` aborts.
    * `prompt` is asked for the turn's text once the session is open, so a turn
@@ -369,7 +378,7 @@ export class AgentSessions {
     title: string | undefined,
     use: (live: Live) => unknown,
   ): Promise<Live> {
-    const { pool, spawn } = this.options;
+    const { pool, resolveDirectory } = this.options;
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
@@ -377,7 +386,7 @@ export class AgentSessions {
     if (this.disposed) throw new Error("goose was stopped");
     const [process, cwd] = await Promise.all([
       this.options.process.get(),
-      absolute(spawn, launch.workspace),
+      absolute(resolveDirectory, launch.workspace),
     ]);
     if (process !== this.process) {
       this.process = process;
@@ -528,24 +537,20 @@ export function localSessions(
   };
 }
 
-/** `workspace` as an absolute path, which ACP sessions need: the host
- * resolves `~/…` for the process it starts there. */
-export async function absolute(spawn: Spawn, workspace: string) {
-  if (workspace.startsWith("/")) return workspace;
-  let directory = "";
-  const process = await spawn("workspace", {
-    cwd: workspace,
-    onStdout: (data) => {
-      directory += data;
-    },
-  });
-  if ((await process.exited) !== 0 || !directory.trim())
-    throw new Error(`Could not find the workspace ${workspace}`);
-  return directory.trim();
+/** `workspace` as an absolute path, which ACP sessions need. One already
+ * absolute stays as written, as the sessions started in it recorded it. */
+export async function absolute(
+  resolveDirectory: GooseHost["resolveDirectory"],
+  workspace: string,
+) {
+  return absoluteWorkspace(workspace) ? workspace : resolveDirectory(workspace);
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */
-function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function abortable<T>(
+  work: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return work;
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);

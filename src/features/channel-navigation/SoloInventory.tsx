@@ -1,11 +1,16 @@
-import { useSyncExternalStore, type ComponentProps } from "react";
+import {
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+} from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
-import { SoloProjects } from "../../bundled/channels/SoloProjects";
+import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
@@ -14,10 +19,20 @@ import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
-import { ChatCircleIcon } from "../../shared/design-system/icons";
+import { NewWorkspace } from "../solo/NewWorkspace";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import creationStyles from "./SoloInventory.module.css";
+import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import channelStyles from "../../bundled/channels/Channels.module.css";
-import styles from "../../bundled/channels/SoloProjects.module.css";
+import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
@@ -32,6 +47,13 @@ export function SoloInventory({
   target: OpenTarget;
 }) {
   const list = useChannelList(session.channels);
+  const preferences = useSyncExternalStore(
+    session.soloPreferences.subscribe,
+    session.soloPreferences.snapshot,
+  );
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
@@ -80,9 +102,75 @@ export function SoloInventory({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
           (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
     );
+  const empty =
+    list.status === "ready" &&
+    preferences.status === "ready" &&
+    !conversations.length &&
+    !preferences.data?.sections.length;
+  const current = () => !handoff || handoff.session === session;
+  const newChat = (project?: string) => {
+    if (!current()) return;
+    if (project) resetNewChatProject(scope, project);
+    void navigator.open(soloDraftTarget(scope, project ? { project } : {}));
+  };
   return (
     <nav className={styles.sidebarContents} aria-label="Solo conversations">
-      <SoloProjects
+      <div
+        className={creationStyles.header}
+        data-actions-visible={menuOpen || undefined}
+      >
+        <InlineHeader
+          title={<span className="text-standard">Solo</span>}
+          actions={
+            <div className={creationStyles.actions}>
+              <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      ref={trigger}
+                      size="compact"
+                      aria-label="New in Solo"
+                      title="New in Solo"
+                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                    />
+                  }
+                />
+                <MenuPopup align="end">
+                  <MenuItem onClick={() => newChat()}>New chat</MenuItem>
+                  <MenuItem
+                    disabled={!session.soloPreferences.sectionCreationWritable}
+                    onClick={() => {
+                      if (current()) setCreatingProject(true);
+                    }}
+                  >
+                    New workspace…
+                  </MenuItem>
+                </MenuPopup>
+              </MenuRoot>
+            </div>
+          }
+        />
+      </div>
+      {empty && (
+        <NavigationItem
+          variant="row"
+          label="New chat"
+          icon={<PlusIcon size={16} />}
+          onClick={() => newChat()}
+        />
+      )}
+      {creatingProject && (
+        <NewWorkspace
+          session={session}
+          create={(section) => session.soloPreferences.createSection(section)}
+          close={() => setCreatingProject(false)}
+          finalFocus={trigger}
+          onCreated={(id) => {
+            if (trigger.current?.isConnected) newChat(id);
+          }}
+        />
+      )}
+      <SoloWorkspaces
         navigator={navigator}
         visit={navigator.snapshot().attempt.signal}
         session={session}
@@ -102,12 +190,7 @@ export function SoloInventory({
           id: item.id,
           title: item.name,
         }))}
-        onNew={(project) => {
-          if (project) resetNewChatProject(scope, project);
-          void navigator.open(
-            soloDraftTarget(scope, project ? { project } : {}),
-          );
-        }}
+        onNew={newChat}
         renderChat={(item) => (
           <SoloConversationRow
             key={item.id}
@@ -131,11 +214,6 @@ export function SoloInventory({
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
       {list.status === "error" && !recoveryShown && (
         <p role="alert">{list.error}</p>
-      )}
-      {!conversations.length && list.status === "ready" && (
-        <p className={styles.listMessage}>
-          Start a conversation with your agents.
-        </p>
       )}
     </nav>
   );
@@ -191,7 +269,12 @@ function SoloConversationRow({
           }
           label={
             <span className={styles.chatRow}>
-              <UnreadBadge session={session} channelId={id} label={title} />
+              <UnreadBadge
+                session={session}
+                channelId={id}
+                label={title}
+                labelUnread="all"
+              />
             </span>
           }
           trailing={

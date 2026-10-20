@@ -162,10 +162,10 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
-    await expect(cue(page, "below")).toHaveCSS("border-radius", "26px");
+    await expect(cue(page, "below")).toHaveCSS("border-radius", "34px");
     await expect(cue(page, "below").locator("..")).toHaveCSS(
       "border-radius",
-      "26px",
+      "34px",
     );
     await expect.poll(() => evidence().length).toBe(2); // 130 IDs, not retries.
     expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
@@ -220,10 +220,21 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
     /observed unread messages/,
   );
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
-  await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
-    "font-weight",
-    "600",
-  );
+  const ordinaryLabel = ordinary.getByText("Alpha", { exact: true });
+  await expect(ordinaryLabel).toHaveCSS("font-weight", "600");
+  // A selected unread row keeps its weight and takes the selection's ink, so
+  // the label stays readable on the selection fill, hovered or not.
+  const unreadInk = await ordinaryLabel.evaluate((label) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--text-row-selected)";
+    label.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(ordinaryLabel).toHaveCSS("color", unreadInk);
+  await ordinary.hover();
+  await expect(ordinaryLabel).toHaveCSS("color", unreadInk);
   await expect(directed).toBeVisible();
   await expect(directed).toHaveCSS("width", "6px");
   await expect(
@@ -264,6 +275,9 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   );
   await expect(cue(page, "above")).toHaveAttribute("data-attention", "false");
   await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  // Only attention earns the strong fill; ordinary unread is the quiet cue.
+  await expect(cue(page, "above")).toHaveAttribute("data-variant", "subtle");
+  await expect(cue(page, "below")).toHaveAttribute("data-variant", "prominent");
   await scroll(page, 0);
   await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
   await scroll(page, 1800);

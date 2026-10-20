@@ -21,8 +21,10 @@ export function GifPicker({
   initialQuery,
   onQueryChange,
   select,
+  search = fetchKlipyGifs,
 }: {
   community: string;
+  search?: typeof fetchKlipyGifs;
   initialQuery: string;
   onQueryChange(query: string): void;
   select(gif: KlipyGif): void;
@@ -48,7 +50,7 @@ export function GifPicker({
     const controller = new AbortController();
     setError(undefined);
     setGifs(undefined);
-    void fetchKlipyGifs(community, debouncedQuery, controller.signal).then(
+    void search(community, debouncedQuery, controller.signal).then(
       setGifs,
       (reason: unknown) => {
         if (!controller.signal.aborted)
@@ -56,7 +58,7 @@ export function GifPicker({
       },
     );
     return () => controller.abort();
-  }, [community, debouncedQuery, attempt]);
+  }, [community, debouncedQuery, attempt, search]);
 
   return (
     <div className={styles.gifPicker}>

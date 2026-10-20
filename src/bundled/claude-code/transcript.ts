@@ -256,25 +256,47 @@ export function startedFor(file: string, conversation: Conversation) {
  * session when it cannot resume one, e.g. in another build of the app, which
  * keeps its own saved sessions. */
 async function otherSessions(spawn: Spawn, project: string, pattern: string) {
+  return (await searchProject(spawn, project, pattern)).filter((name) =>
+    /^[^/]+\.jsonl$/.test(name),
+  );
+}
+
+/** Paths of the project's `.jsonl` files, subagents' included, containing
+ * `pattern`. A failed search finds what it found before failing, unless
+ * `exhaustive`, when it rejects. */
+export async function searchProject(
+  spawn: Spawn,
+  project: string,
+  pattern: string,
+  exhaustive = false,
+) {
   let output = "";
+  let errors = "";
   const process = await spawn("find", {
     args: [pattern, "."],
     cwd: `~/.claude/projects/${project}`,
     onStdout: (data) => {
       output += data;
     },
+    onStderr: (data) => {
+      errors += data;
+    },
   });
-  // No match exits 1; a failed search leaves just the saved session.
-  await process.exited;
+  const code = await process.exited;
+  // No match exits 1.
+  if (exhaustive && code !== 0 && code !== 1)
+    throw new Error(
+      `Couldn’t search the Claude Code history: ${errors.trim() || `exit ${code}`}`,
+    );
   return output
     .split("\n")
     .map((line) => line.trim().replace(/^\.\//, ""))
-    .filter((name) => /^[^/]+\.jsonl$/.test(name));
+    .filter(Boolean);
 }
 
 /** The Claude Code project directory name for the agent's workspace, or
  * undefined when it is too long to be one. */
-async function workspaceProject(
+export async function workspaceProject(
   spawn: Spawn,
   workspace: string,
   signal: AbortSignal,

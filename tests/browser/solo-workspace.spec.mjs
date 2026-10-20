@@ -1,6 +1,13 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  newChat,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 const id = "33333333-3333-4333-8333-333333333333";
 const other = "44444444-4444-4444-8444-444444444444";
@@ -17,6 +24,128 @@ const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });
 const closeProfile = (page) =>
   page.getByRole("button", { name: /^Close (?!Thread).* tab$/ });
+// Render a genuine pre-existing human member through signed roster/profile
+// reads; no client stores are seeded. Shared mounts after opening its access UI.
+async function showSharedAction(page, app, row) {
+  const person = app.serveProfile(generateSecretKey(), {
+    name: "Shared teammate",
+  });
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (!filters.some((filter) => filter.kinds?.includes(39002)))
+      return route.continue();
+    const response = await route.fetch();
+    const events = await response.json();
+    await route.fulfill({
+      response,
+      json: events.map((event) =>
+        event.kind === 39002 &&
+        event.tags.some(([key, value]) => key === "d" && value === id)
+          ? app.signRelay({
+              ...event,
+              created_at: event.created_at + 1,
+              tags: [...event.tags, ["p", person.pubkey, "", "member"]],
+            })
+          : event,
+      ),
+    });
+  });
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Share chat", exact: true });
+  await dialog.getByRole("button", { name: /^Other access/ }).click();
+  await expect(
+    dialog.getByText("Shared teammate", { exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const outer = page.locator(`[data-solo-menu-id="${id}"]`);
+  const shared = outer.getByRole("button", {
+    name: "Shared · Manage access",
+    exact: true,
+  });
+  await expect(shared).toBeVisible();
+  return shared;
+}
+// The row owns status/action geometry. Compare painted centers on desktop;
+// on touch, status flows immediately before the actual actions (Shared or menu).
+async function expectTrailingAlignment(row, status, touch = false) {
+  await expect
+    .poll(
+      async () => {
+        const action = await row.evaluate((button) => {
+          const outer = button.closest("[data-solo-menu-id]");
+          const menu = outer?.querySelector("[data-solo-row-action]");
+          const shared = outer?.querySelector(
+            '[aria-label="Shared · Manage access"]',
+          );
+          if (!menu) throw new Error("Missing Solo row action");
+          const rect = (node) => {
+            const { x, y, width, height } = node.getBoundingClientRect();
+            return { x, y, width, height };
+          };
+          const style = getComputedStyle(button);
+          return {
+            menu: rect(menu),
+            glyph: rect(menu.querySelector("svg") ?? menu),
+            next: rect(shared ?? menu),
+            // Inline content keeps the same trailing padding and margin as its label.
+            endSpace:
+              parseFloat(style.paddingRight) + parseFloat(style.marginRight),
+          };
+        });
+        const marker = await status.boundingBox();
+        if (!marker) throw new Error("Missing Solo status geometry");
+        // A correctly positioned marker can still be clipped by a narrower
+        // select button. Check the full paint ancestry, not just its rectangle.
+        const unclipped = await status.evaluate((element) => {
+          const marker = element.getBoundingClientRect();
+          for (
+            let node = element.parentElement;
+            node;
+            node = node.parentElement
+          ) {
+            const style = getComputedStyle(node);
+            const clip = node.getBoundingClientRect();
+            const clips = (overflow) =>
+              /^(hidden|clip|auto|scroll)$/.test(overflow);
+            if (
+              clips(style.overflowX) &&
+              (marker.left < clip.left - 1 || marker.right > clip.right + 1)
+            )
+              return false;
+            if (
+              clips(style.overflowY) &&
+              (marker.top < clip.top - 1 || marker.bottom > clip.bottom + 1)
+            )
+              return false;
+          }
+          return true;
+        });
+        if (!unclipped) return false;
+        const target = touch ? action.next : action.menu;
+        const dy = Math.abs(
+          marker.y + marker.height / 2 - target.y - target.height / 2,
+        );
+        if (touch) {
+          const gap = target.x - marker.x - marker.width;
+          return dy < 1 && gap >= 0 && gap <= action.endSpace + 1;
+        }
+        // The wider status pill shares the overflow glyph's trailing edge, which
+        // sits on the row inset like the leading icon.
+        const dx = Math.abs(
+          marker.x + marker.width - action.glyph.x - action.glyph.width,
+        );
+        return dx < 1 && dy < 1;
+      },
+      {
+        message: touch
+          ? "status stays next to the row actions"
+          : "status shares the overflow glyph's trailing edge",
+      },
+    )
+    .toBe(true);
+}
 // Verifies shell routing, actual hover/focus and retained drafts across the real panel host.
 test("Solo chat Activity opens the agent's profile locally, restores per conversation and retires on plugin disable", async ({
   page,
@@ -83,20 +212,21 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
   await expect(trigger).toBeFocused();
   await trigger.press("Enter");
   await expect(panel).toBeVisible();
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await page
-    .getByRole("switch", { name: "Enable Agent Activity", exact: true })
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  await newChat(page);
+  await pluginAction(page, "Agent Activity").click();
+  // Closing Settings returns to the retained Solo visit without the trigger.
+  await closeSettings(page);
   await expect(trigger).toHaveCount(0);
 });
 // Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.
 test("Solo sidebar shares working activity, keyboard preview and local panel navigation", async ({
   page,
   app,
-}) => {
+}, info) => {
   // Install before app timers exist so hover cleanup never mixes real/fake IDs.
   await page.clock.install();
   await page.goto(app.origin);
@@ -122,6 +252,91 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     "opacity",
     "1",
   );
+  // Activity replaces the overflow action on pointer devices. Their centers
+  // must agree even while the menu is visually hidden, not merely avoid overlap.
+  await expectTrailingAlignment(alpha, badge);
+  // Resize the actual sidebar (not just the browser), and scale text while the
+  // same working row remains mounted. No state or geometry is substituted.
+  const resize = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  for (const [keyName, size, mode] of [
+    ["Home", "", "light"],
+    ["End", "larger", "dark"],
+  ]) {
+    await resize.press(keyName);
+    await page.evaluate(
+      ({ size, mode }) => {
+        document.documentElement.dataset.fontSize = size;
+        document.documentElement.dataset.colorMode = mode;
+      },
+      { size, mode },
+    );
+    await page.mouse.move(0, 0);
+    await expectTrailingAlignment(alpha, badge);
+  }
+  await page.evaluate(() => {
+    document.documentElement.dataset.fontSize = "";
+    document.documentElement.dataset.colorMode = "light";
+  });
+  await resize.press("Home");
+  const shared = await showSharedAction(page, app, alpha);
+  await page.mouse.move(0, 0);
+  await expectTrailingAlignment(alpha, badge);
+  await expect(shared).toBeVisible();
+  await alpha.press("Enter");
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await page.keyboard.press("Escape");
+  // Wait for the popup's real focus restoration before moving focus away.
+  await expect(alpha).toBeFocused();
+  await resize.focus();
+  await expect(resize).toBeFocused();
+  await page.mouse.move(0, 0);
+  await expect(alpha.locator("[data-solo-working-indicator]")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await expectTrailingAlignment(alpha, badge);
+  await page
+    .locator(`[data-solo-menu-id="${id}"]`)
+    .screenshot({ path: info.outputPath("solo-working-selected.png") });
+  // This point belongs to the visible status at rest and the action on hover.
+  // It must stay actionable rather than becoming a clipped/dead trailing area.
+  const marker = await badge.boundingBox();
+  const x = marker.x + marker.width / 2,
+    y = marker.y + marker.height / 2;
+  await page.mouse.move(x, y);
+  const action = page.locator(
+    `[data-solo-menu-id="${id}"] [data-solo-row-action]`,
+  );
+  await expect(action).toHaveCSS("opacity", "1");
+  // Bare row actions keep standard artwork, unlike glyph-state toggles.
+  await expect(action.locator("svg")).toHaveCSS("width", "16px");
+  await expect(action.locator("svg")).toHaveCSS("height", "16px");
+  // The selected row's fill is the action's state; the action adds none.
+  await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  // Hovering a selected row's action keeps the selection's ink on the row.
+  const selectedInk = await alpha.evaluate((row) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--text-row-selected)";
+    row.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(alpha).toHaveCSS("color", selectedInk);
+  await page.mouse.click(x, y);
+  await expect(
+    page.getByRole("menu", { name: "Actions for Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(action).toHaveAttribute("aria-expanded", "true");
+  await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.keyboard.press("Escape");
+  await expect(alpha).toBeFocused();
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+  await page.mouse.move(0, 0);
+  await expectTrailingAlignment(alpha, badge);
   await alpha.hover();
   const popup = page.getByRole("dialog", {
     name: "Activity in Alpha",
@@ -396,23 +611,25 @@ test.describe("personal recipients", () => {
 // Touch has no hover affordance: working must coexist with the permanent menu.
 test.describe("touch sidebar activity", () => {
   test.use({ hasTouch: true, isMobile: true });
-  test("working remains visible beside the row menu", async ({ page, app }) => {
+  test("working remains visible beside the row menu", async ({
+    page,
+    app,
+  }, info) => {
     await page.goto(app.origin);
     await newChat(page);
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
       .toBe(true);
-    app.observer(
-      {
-        kind: "turn_liveness",
-        seq: 1,
-        timestamp: new Date().toISOString(),
-        channelId: id,
-        sessionId: "S",
-        turnId: "touch",
-      },
-      generateSecretKey(),
-    );
+    const key = generateSecretKey();
+    const event = (kind) => ({
+      kind,
+      seq: 1,
+      timestamp: new Date().toISOString(),
+      channelId: id,
+      sessionId: "S",
+      turnId: "touch",
+    });
+    app.observer(event("turn_liveness"), key);
     const row = page.locator(`[data-solo-channel-id="${id}"]`);
     const indicator = row.locator("[data-solo-working-indicator]");
     await expect(
@@ -422,16 +639,62 @@ test.describe("touch sidebar activity", () => {
     await row.tap();
     await expect(row).toHaveAttribute("aria-current", "page");
     await expect(indicator).toHaveCSS("opacity", "1");
+    // The quiet pill distinguishes working from the adjacent overflow glyph.
+    // Its own ink/fill pair must survive the selection's inherited text color.
+    const badge = row.locator("[data-channel-working]");
+    const detail = await row.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-row-selected-detail)";
+      probe.style.backgroundColor = "var(--surface-row-selected-detail)";
+      element.append(probe);
+      const style = getComputedStyle(probe);
+      const pair = { ink: style.color, fill: style.backgroundColor };
+      probe.remove();
+      return pair;
+    });
+    await expect(badge).toHaveCSS("background-color", detail.fill);
+    await expect(badge).toHaveCSS("color", detail.ink);
+    const dots = badge.locator('[data-state="working"] > span');
+    await expect(dots).toHaveCount(3);
+    for (const dot of await dots.all())
+      await expect(dot).toHaveCSS("background-color", detail.ink);
     const menu = page.locator(
       `[data-solo-menu-id="${id}"] [data-solo-row-action]`,
     );
     await expect(menu).toHaveCSS("opacity", "1");
-    const a = await indicator.boundingBox(),
-      b = await menu.boundingBox();
-    expect(a.x + a.width).toBeLessThanOrEqual(b.x + 1);
+    await expectTrailingAlignment(row, badge, true);
+    const shared = await showSharedAction(page, app, row);
+    await expectTrailingAlignment(row, badge, true);
+    await expect(shared).toBeVisible();
+    // Touch keeps adjacent actions and status aligned at wider layouts and
+    // larger text too, without a hard-coded extra action-width offset.
+    await page
+      .getByRole("separator", { name: "Resize sidebar", exact: true })
+      .press("End");
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+      document.documentElement.dataset.fontSize = "larger";
+    });
+    await expectTrailingAlignment(row, badge, true);
+    await page
+      .locator(`[data-solo-menu-id="${id}"]`)
+      .screenshot({ path: info.outputPath("solo-touch-working.png") });
     await menu.focus();
     await expect(menu).toBeFocused();
     await expect(indicator).toHaveCSS("opacity", "1");
+    const label = row.locator(".navigation-item-label");
+    const labelWidth = await label.evaluate((element) => element.clientWidth);
+    const before = await menu.boundingBox();
+    app.observer(event("turn_completed"), key);
+    await expect(badge).toHaveCount(0);
+    await expect(indicator).toBeHidden();
+    await expect
+      .poll(() => label.evaluate((element) => element.clientWidth))
+      .toBeGreaterThan(labelWidth);
+    const after = await menu.boundingBox();
+    expect(after.x).toBeCloseTo(before.x, 1);
+    expect(after.y).toBeCloseTo(before.y, 1);
+    await expect(menu).toBeFocused();
   });
 });
 

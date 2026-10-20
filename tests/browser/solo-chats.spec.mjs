@@ -54,7 +54,12 @@ test("chat row menus open Share with the chat's people and restore focus", async
     name: "Actions for Alpha",
     exact: true,
   });
-  await expect(menu).toBeVisible();
+  // Lifecycle items mount after each opening's permission read.
+  const lifecycleReady = menu.getByRole("menuitem", {
+    name: "Delete chat",
+    exact: true,
+  });
+  await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
   expect(actions).toContain("Share…");
   await page.keyboard.press("Escape");
@@ -65,7 +70,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await sidebar
     .getByRole("button", { name: "Actions for Alpha", exact: true })
     .click();
-  await expect(menu).toBeVisible();
+  await expect(lifecycleReady).toBeVisible();
   expect(await menu.getByRole("menuitem").allTextContents()).toEqual(actions);
   await page.keyboard.press("Escape");
   await row.focus();
@@ -105,12 +110,12 @@ test.describe("Berd-style Solo project organization", () => {
     const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await page.getByRole("menuitem", { name: "New project…" }).click();
+    await page.getByRole("menuitem", { name: "New workspace…" }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+    await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).not.toBeVisible();
-    await expect(sidebar.getByText("Saving project…")).not.toBeVisible();
+    await expect(sidebar.getByText("Saving workspace…")).not.toBeVisible();
     await expect(sidebar.getByRole("alert")).toHaveCount(0);
     const project = sidebar.getByRole("button", { name: "Work", exact: true });
     await expect(project).toBeVisible();
@@ -121,6 +126,33 @@ test.describe("Berd-style Solo project organization", () => {
     await page.clock.install();
     await page.clock.runFor(1_100);
     await page.clock.resume();
+
+    await newChat(page);
+    for (const [before, choice, after] of [
+      ["Add workspace", "Work", "Workspace: Work"],
+      ["Workspace: Work", "No workspace", "Add workspace"],
+    ]) {
+      const trigger = page.getByRole("button", { name: before, exact: true });
+      await trigger.focus();
+      await trigger.press("Enter");
+      const popup = page.getByRole("menu").filter({
+        has: page.getByRole("menuitemradio", {
+          name: "No workspace",
+          exact: true,
+        }),
+      });
+      const option = popup.getByRole("menuitemradio", {
+        name: choice,
+        exact: true,
+      });
+      await option.focus();
+      await option.press("Enter");
+      // Wait for popup teardown, when Base UI restores focus to the trigger.
+      await expect(popup).toHaveCount(0);
+      await expect
+        .soft(page.getByRole("button", { name: after, exact: true }))
+        .toBeFocused();
+    }
 
     const beta = sidebar.getByRole("button", { name: "Beta", exact: true });
     await beta.click({ button: "right" });
@@ -141,7 +173,7 @@ test.describe("Berd-style Solo project organization", () => {
 
     await sidebar.getByText("Alpha", { exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Project: Work", exact: true }),
+      page.getByRole("button", { name: "Workspace: Work", exact: true }),
     ).toBeVisible();
     app.soloAgentMessage(id, "Agent follow-up fixture");
     const [agent] = app.soloAgents;
@@ -242,9 +274,9 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
   await page.clock.install();
   await chat("Alpha").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New project…" }).click();
+  await page.getByRole("menuitem", { name: "New workspace…" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(inProject("Alpha")).toBeVisible();
   const work = (await published(1))[id];
@@ -370,7 +402,15 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
   const search = dialog.getByRole("combobox", { name: "People or channel" });
+  // Text entry starts after the menu-to-dialog transition and focus handoff.
+  await dialog.evaluate(async (element) => {
+    await Promise.all(
+      element.getAnimations().map((animation) => animation.finished),
+    );
+  });
+  await expect(search).toBeFocused();
   await search.fill("Aria");
+  await expect(search).toHaveValue("Aria");
   await page.getByRole("option", { name: /Aria/ }).click();
   await search.fill("Team");
   await page.getByRole("option", { name: "Team", exact: true }).click();
@@ -915,4 +955,137 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Escape");
 
   await expect(renamedRow).toBeFocused();
+});
+
+// Native caret placement after focus handoffs and popup picks needs a browser.
+test.describe("Solo composer caret", () => {
+  test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
+  test("a returning draft resumes at its end and picked agents join the leading tags", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const caret = () =>
+      composer.evaluate((el) => [el.value, el.selectionStart, el.selectionEnd]);
+    const [honey, brain] = app.soloAgents;
+    const pick = async (agent) => {
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Mention a member or agent" })
+        .getByRole("button", {
+          name: `${agent.name} ${agent.pubkey}`,
+          exact: true,
+        })
+        .click();
+    };
+    await expect(composer).toHaveText(`@${honey.name} `);
+    await page.keyboard.insertText("first");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(composer).toHaveText("");
+    await composer.click();
+    await page.keyboard.insertText("alpha draft");
+    // Returning focuses the restored draft at its end, not before its tag.
+    await newChat(page);
+    await expect.poll(caret).toEqual([`@${honey.name} first`, 18, 18]);
+
+    // The picker files the agent after the leading tag; typing continues
+    // where the caret was.
+    await pick(brain);
+    const tagged = `@${honey.name} @${brain.name} first`;
+    await expect.poll(caret).toEqual([tagged, tagged.length, tagged.length]);
+    await page.keyboard.insertText(" again");
+    await expect(composer).toHaveText(`${tagged} again`);
+
+    // Untagged prose gets its tag in front, even from a blurred composer.
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(composer).toHaveText("alpha draft");
+    await composer.blur();
+    await pick(honey);
+    const alpha = `@${honey.name} alpha draft`;
+    await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
+    // Undo removes the tag and returns to the prose caret, not the front.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(caret).toEqual(["alpha draft", 11, 11]);
+    await page.keyboard.insertText("!");
+    await expect(composer).toHaveText("alpha draft!");
+  });
+});
+
+// Real :focus-visible matching on a focused, briefly non-editable editor needs a
+// browser. Solo admission disables the editor while its membership refreshes.
+test.describe("Solo send focus", () => {
+  test.use({ soloAgentNames: ["Owned Honey"] });
+  test("sending keeps the keyboard focus ring off the briefly disabled editor", async ({
+    page,
+    app,
+  }) => {
+    let hold = false;
+    let held = false;
+    let release;
+    const released = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!hold || !filters.some((filter) => filter.kinds?.includes(39002)))
+        return route.continue();
+      held = true;
+      await released;
+      await route.continue().catch(() => {});
+    });
+    await page.goto(app.origin);
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .getByRole("button", { name: "Alpha", exact: true })
+      .click();
+    const [agent] = app.soloAgents;
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Mention a member or agent" })
+      .getByRole("button", {
+        name: `${agent.name} ${agent.pubkey}`,
+        exact: true,
+      })
+      .click();
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    // End is caret navigation, so the app's keyboard focus treatment is live.
+    await composer.press("End");
+    await page.keyboard.insertText("No ring while sending");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-keyboard-navigation",
+      "",
+    );
+    hold = true;
+    try {
+      await composer.press("Enter");
+      await expect.poll(() => held).toBe(true);
+      await expect(composer).toHaveAttribute("aria-disabled", "true");
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveCSS("outline-style", "none");
+    } finally {
+      hold = false;
+      release();
+    }
+    const publications = () =>
+      app.report.publications.filter(({ event }) => event.kind === 9);
+    await expect.poll(() => publications().length).toBe(1);
+    await expect(composer).not.toHaveAttribute("aria-disabled");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveCSS("outline-style", "none");
+  });
 });

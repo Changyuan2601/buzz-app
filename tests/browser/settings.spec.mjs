@@ -1,39 +1,53 @@
-import { openCommunityPicker } from "./navigation.mjs";
-import { settleShellToggle } from "./navigation.mjs";
+import { setPluginEnabled } from "./plugin-settings.mjs";
+import {
+  closeSettings,
+  openCommunityPicker,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+  settingsSections,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
-test("Settings replaces the channel sidenav and Back restores the prior view", async ({
+test("Settings opens over the retained workspace and closing restores the prior view", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await button(page, "Alpha").click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await expect(composer).toBeVisible();
   const communityRail = page.getByRole("navigation", { name: "Communities" });
   await expect(communityRail).toBeVisible();
-
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  const settingsSidebar = page.getByRole("complementary", {
-    name: "Settings sidebar",
-    includeHidden: true,
+  const channels = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
   });
-  await expect(settingsSidebar).toBeVisible();
+
+  await openSettings(page);
+  const sections = settingsSections(page);
+  await expect(sections).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Settings", level: 1, exact: true }),
-  ).toHaveCount(1);
-  await expect(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
-  await expect(communityRail).toBeVisible();
+  // The workspace stays mounted behind the modal but cannot be reached.
+  for (const name of ["Sidebar", "Communities"]) {
+    const role = name === "Communities" ? "navigation" : "complementary";
+    await expect(page.getByRole(role, { name, exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole(role, { name, exact: true, includeHidden: true }),
+    ).toHaveCount(1);
+  }
+  await expect(composer).toHaveCount(0);
 
-  const notifications = settingsSidebar.getByRole("button", {
+  const notifications = sections.getByRole("button", {
     name: "Notifications",
     exact: true,
   });
@@ -43,17 +57,11 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
     page.getByRole("region", { name: "Notifications", exact: true }),
   ).toBeVisible();
 
-  await settingsSidebar
-    .getByRole("button", { name: "Back", exact: true })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
-  ).toBeVisible();
-  await expect(settingsSidebar).toHaveCount(0);
+  await closeSettings(page);
+  await expect(composer).toBeVisible();
+  await expect(channels).toBeVisible();
   await expect(communityRail).toBeVisible();
+  await expect(button(page, "Your profile")).toBeFocused();
 });
 
 test("short narrow Settings keeps plugin copy and controls reachable at 200% interface size", async ({
@@ -65,72 +73,76 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
     localStorage.setItem("buzz-font-scale.v1", "2"),
   );
   await page.goto(app.origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
+  // Settings has no drawer: the workspace toggle is behind the modal.
   const showNavigation = button(page, "Show navigation");
-  await showNavigation.click();
-  const settingsSidebar = page.getByRole("complementary", {
-    name: "Settings sidebar",
-    includeHidden: true,
-  });
-  await settingsSidebar
-    .getByRole("button", { name: "Plugins", exact: true })
+  await expect(showNavigation).toHaveCount(0);
+  const sections = settingsSections(page);
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  const content = page.getByRole("region", { name: "Plugins", exact: true });
-  const row = content.getByRole("article").filter({
-    has: page.getByRole("switch", { name: "Enable GitHub", exact: true }),
-  });
-  const toggle = row.getByRole("switch", {
-    name: "Enable GitHub",
+  const content = page.getByRole("region", {
+    name: "Manage plugins",
     exact: true,
+  });
+  const row = content.getByRole("article").filter({
+    has: page.getByRole("button", { name: "View GitHub details", exact: true }),
+  });
+  const toggle = row.getByRole("button", {
+    name: /^(Enable|Disable) GitHub$/,
   });
   const title = row.getByText("GitHub", { exact: true });
   const description = row.getByText(
     "View GitHub repositories, pull requests, issues, and commits.",
     { exact: true },
   );
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAccessibleName("Disable GitHub");
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
+  await title.scrollIntoViewIfNeeded();
+  await expect(title).toBeInViewport({ ratio: 1 });
   await description.scrollIntoViewIfNeeded();
   await expect(description).toBeInViewport({ ratio: 1 });
   await toggle.scrollIntoViewIfNeeded();
-  await expect(title).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
   await page.screenshot({
     path: testInfo.outputPath("settings-short-200-percent.png"),
   });
   await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(toggle).toHaveAccessibleName("Enable GitHub");
   await expect(toggle).toBeFocused();
-  await expect(toggle).toHaveAttribute("aria-disabled", "false");
+  await expect(toggle).toBeEnabled();
   await toggle.press("Space");
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAccessibleName("Disable GitHub");
   await expect(toggle).toBeInViewport({ ratio: 1 });
-  // The replacement Settings pane remains reachable by disclosure at narrow
-  // widths and is persistent at desktop widths.
-  await expect(settingsSidebar).toBeHidden();
-  await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
-  await showNavigation.click();
-  await expect(settingsSidebar).toBeVisible();
-  const profile = settingsSidebar.getByRole("button", {
+  // Narrow Settings stacks its own navigation above the detail, reachable by
+  // scrolling the modal; wide Settings keeps it beside the detail.
+  const detail = settingsDialog(page).locator(".buzz-dialog-navigation-detail");
+  const stacked = async () => {
+    const navigation = await sections.boundingBox();
+    const content = await detail.boundingBox();
+    return navigation.y + navigation.height <= content.y;
+  };
+  await expect.poll(stacked).toBe(true);
+  const profile = sections.getByRole("button", {
     name: "Profile",
     exact: true,
-    includeHidden: true,
   });
+  await profile.scrollIntoViewIfNeeded();
+  await expect(profile).toBeInViewport({ ratio: 1 });
   await profile.click();
   await expect(profile).toHaveAttribute("aria-current", "page");
-  await expect(settingsSidebar).toBeHidden();
+  // Choosing from the stacked navigation hands focus to the detail it opened.
+  await expect(detail).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Profile", exact: true }),
+  ).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(settingsSidebar).toBeVisible();
-  await expect(showNavigation).toBeHidden();
+  await expect.poll(stacked).toBe(false);
+  await expect(sections).toBeInViewport();
   await page.setViewportSize({ width: 480, height: 400 });
-  await expect(showNavigation).toBeVisible();
-  await showNavigation.click();
-  await expect(settingsSidebar).toBeVisible();
-  await settingsSidebar
-    .getByRole("button", { name: "Back", exact: true })
-    .click();
+  await expect.poll(stacked).toBe(true);
+  await closeSettings(page);
   await expect(
     page.getByRole("region", { name: "Channels", exact: true }),
   ).toBeVisible();
@@ -158,12 +170,8 @@ for (const action of ["Remove from this device", "Leave community"]) {
         route.fulfill({ json: { accepted: true, event_id: "f".repeat(64) } }),
       );
     await page.goto(app.origin);
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    const settings = page.getByRole("complementary", {
-      name: "Settings sidebar",
-    });
-    await settings
+    await openSettings(page);
+    await settingsSections(page)
       .getByRole("button", { name: "Leave or remove", exact: true })
       .click();
     await expect(
@@ -198,16 +206,18 @@ for (const action of ["Remove from this device", "Leave community"]) {
         { exact: true },
       ),
     ).toBeVisible();
+    // The community switcher is behind the Settings modal, which stays open.
     await expect(
       page.getByRole("button", {
         name: "Community switcher: Personal space",
         exact: true,
+        includeHidden: true,
       }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Profile", exact: true }),
     ).toBeVisible();
-    await expect(page.locator("#main-content")).toBeFocused();
+    await expect(page.locator("#settings-content")).toBeFocused();
     await expect(
       page.getByText("This destination couldn’t open", { exact: true }),
     ).toHaveCount(0);
@@ -229,14 +239,13 @@ test.describe("community administration permissions", () => {
       return route.continue();
     });
     await page.goto(app.origin);
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    const sections = page.getByRole("navigation", {
-      name: "Settings sections",
-    });
-    await expect(sections).toContainText("Administration");
+    await openSettings(page);
+    const sections = settingsSections(page);
     // The account menu finishes its focus handoff before testing section focus.
-    await expect(page.getByRole("main")).toBeFocused();
+    await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
+    await selectSettingsSection(page, "Manage plugins");
+    await setPluginEnabled(page, "Membership", true);
+    await expect(sections).toContainText("Community admin");
     const membership = sections.getByRole("button", {
       name: "Membership",
       exact: true,
@@ -419,49 +428,30 @@ confirmedPresence(
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(account).toBeHidden();
-    await expect(page.getByRole("main")).toBeFocused();
-    const settingsSidebar = page.getByRole("complementary", {
-      name: "Settings sidebar",
-      includeHidden: true,
-    });
-    // The toggle keeps the 390 px label until the resize's media-query change
-    // renders; guard only once it reads the 1280 px one.
-    await settleShellToggle(page);
-    if (await button(page, "Show navigation").isVisible())
-      await button(page, "Show navigation").click();
-    await expect(settingsSidebar).toBeVisible();
-    const sections = settingsSidebar.getByRole("navigation", {
-      name: "Settings sections",
-      includeHidden: true,
-    });
+    await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
+    const sections = settingsSections(page);
+    await expect(sections).toBeVisible();
+    const detail = settingsDialog(page).locator(
+      ".buzz-dialog-navigation-detail",
+    );
     const profile = sections.getByRole("button", {
       name: "Profile",
       exact: true,
-      includeHidden: true,
     });
     const channelTemplates = sections.getByRole("button", {
       name: "Channel templates",
       exact: true,
     });
-    const customEmoji = sections.getByRole("button", {
-      name: "Custom emoji",
-      exact: true,
-    });
-    const hostedCommunities = sections.getByRole("button", {
-      name: "Hosted communities",
-      exact: true,
-    });
     const plugins = sections.getByRole("button", {
-      name: "Plugins",
+      name: "Manage plugins",
       exact: true,
-      includeHidden: true,
     });
     const profileContent = page.getByRole("region", {
       name: "Profile",
       exact: true,
     });
     const pluginContent = page.getByRole("region", {
-      name: "Plugins",
+      name: "Manage plugins",
       exact: true,
     });
     await expect(profile).toHaveAttribute("aria-current", "page");
@@ -474,12 +464,15 @@ confirmedPresence(
     ).toBeVisible();
     await profile.click();
     // Exercise the real shell's destination allowlist, not just the settings component.
-    const agents = sections.getByRole("button", {
-      name: "Agents",
+    const providers = sections.getByRole("button", {
+      name: "Agent setup",
       exact: true,
     });
-    await agents.click();
-    await expect(agents).toHaveAttribute("aria-current", "page");
+    await providers.click();
+    await expect(providers).toHaveAttribute("aria-current", "page");
+    await expect(
+      page.getByRole("region", { name: "Agent setup", exact: true }),
+    ).toBeVisible();
     const remember = page.getByRole("switch", {
       name: "Remember mentioned agents",
     });
@@ -487,87 +480,71 @@ confirmedPresence(
     await remember.click();
     await expect(remember).not.toBeChecked();
     await profile.click();
-    await agents.click();
+    await providers.click();
     await expect(remember).not.toBeChecked();
+    const appearance = sections.getByRole("button", {
+      name: "Appearance",
+      exact: true,
+    });
+    await appearance.click();
+    await expect(remember).toHaveCount(0);
+    const placement = page.getByRole("combobox", {
+      name: "Open threads in",
+      exact: true,
+    });
+    await placement.click();
+    await page.getByRole("option", { name: "Main pane", exact: true }).click();
+    await expect(placement).toHaveText("Main pane");
+    await profile.click();
+    await appearance.click();
+    await expect(placement).toHaveText("Main pane");
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      // The narrow toggle appears only after the resize's media-query change renders.
-      if (width === 390) {
-        await button(page, "Show navigation").click();
-        // A mis-toggle fails here, at the toggle, not at the sidebar below.
-        await expect(
-          page.locator("[data-shell-sidebar-toggle]"),
-        ).toHaveAccessibleName("Hide navigation");
-      }
-      await expect(settingsSidebar).toBeVisible();
+      // Settings keeps its own navigation at every width; narrow modals stack it.
+      await expect(sections).toBeVisible();
       await profile.focus();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Messages", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(channelTemplates).toBeFocused();
-      await tab();
-      await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Leave or remove", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Builderlab", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Jev classifier", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Pair mobile", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Appearance", exact: true }),
-      ).toBeFocused();
+      for (const name of [
+        "Custom emoji",
+        "Pair mobile",
+        "Leave or remove",
+        "Identity",
+        "Appearance",
+      ]) {
+        await tab();
+        await expect(
+          sections.getByRole("button", { name, exact: true }),
+        ).toBeFocused();
+      }
       await plugins.focus();
       await page.keyboard.press("Enter");
       await expect(plugins).toHaveAttribute("aria-current", "page");
       await expect(profile).not.toHaveAttribute("aria-current");
       if (width === 1280) await expect(plugins).toBeFocused();
-      else await expect(page.getByRole("main")).toBeFocused();
+      else await expect(detail).toBeFocused();
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
       await expect(
-        page.getByRole("switch", { name: "Enable Workflows" }),
+        page.getByRole("button", { name: "Disable Workflows", exact: true }),
       ).toBeVisible();
-      const settingsRegion = page.getByRole("region", {
-        name: "Settings",
-        exact: true,
-      });
-      await expect(settingsRegion).toHaveCSS(
-        "background-color",
-        "rgb(255, 255, 255)",
-      );
-      await expect(settingsRegion).toHaveCSS("border-radius", "0px");
-      await expect(page.locator("#main-content > [data-joined]")).toHaveCSS(
-        "border-radius",
-        "16px",
-      );
-      const frame = await settingsRegion.boundingBox();
+      const dialog = settingsDialog(page);
+      await expect(dialog).toHaveCSS("background-color", "rgb(255, 255, 255)");
+      const frame = await dialog.boundingBox();
       expect(frame.height).toBeGreaterThan(700);
+      const navigation = await sections.boundingBox();
+      const scrollport = await detail.boundingBox();
+      expect(navigation).not.toBeNull();
+      expect(scrollport).not.toBeNull();
       if (width === 1280) {
-        await expect(settingsSidebar).toBeVisible();
-        const navigation = await sections.boundingBox();
         const content = await pluginContent.boundingBox();
-        expect(navigation).not.toBeNull();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - frame.y).toBe(32);
+        expect(content.y - scrollport.y).toBe(20);
       } else {
-        await expect(settingsSidebar).toBeHidden();
+        // Narrow Settings stacks its navigation above the detail.
+        expect(navigation.y + navigation.height).toBeLessThanOrEqual(
+          scrollport.y,
+        );
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth),
         ).toBe(width);
@@ -575,7 +552,6 @@ confirmedPresence(
       await page.screenshot({
         path: testInfo.outputPath(`settings-${width}.png`),
       });
-      if (width === 390) await button(page, "Show navigation").click();
       await profile.focus();
       await expect(profile).toBeFocused();
       await page.keyboard.press("Enter");
@@ -583,67 +559,31 @@ confirmedPresence(
       await expect(profileContent).toBeVisible();
       await expect(pluginContent).toHaveCount(0);
       if (width === 390) {
-        await expect(settingsSidebar).toBeHidden();
-        await expect(page.getByRole("main")).toBeFocused();
-        await button(page, "Show navigation").click();
+        await expect(detail).toBeFocused();
         await profile.focus();
       }
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Messages", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(channelTemplates).toBeFocused();
-      await tab();
-      await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Leave or remove", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Builderlab", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Jev classifier", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Pair mobile", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Appearance", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Notifications", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Shortcuts", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(agents).toBeFocused();
-      await tab();
-      await expect(plugins).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Updates", exact: true }),
-      ).toBeFocused();
-      await tab();
-      // Wide Settings includes the shared sidebar resize stop before its content.
-      const handle = page.getByRole("separator", {
-        name: "Resize sidebar",
-        exact: true,
-      });
-      if (await handle.isVisible()) {
-        await expect(handle).toBeFocused();
+      for (const name of [
+        "Custom emoji",
+        "Pair mobile",
+        "Leave or remove",
+        "Identity",
+        "Appearance",
+        "Notifications",
+        "Shortcuts",
+        "Agent setup",
+        "Channel templates",
+        "Software updates",
+        "Manage plugins",
+        "Builderlab agents",
+        "Builderlab hosting",
+        "Jev classifier",
+      ]) {
         await tab();
+        await expect(
+          sections.getByRole("button", { name, exact: true }),
+        ).toBeFocused();
       }
+      await tab();
       // The current profile form begins with its avatar editor before text fields.
       await expect(
         page.getByRole("button", { name: "Edit avatar", exact: true }),
@@ -720,7 +660,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await button(page, "Builderlab hosting").click();
   await expect(
     page.getByText("Deletion status is unknown", { exact: true }),
   ).toBeVisible();
@@ -736,10 +676,10 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   ).not.toBeNull();
   await expect(button(page, "Check deletion status")).toBeDisabled();
   canDelete = true;
+  // Reload restores the open Settings modal over its workspace.
   await page.reload();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await expect(settingsDialog(page)).toBeVisible();
+  await button(page, "Builderlab hosting").click();
   await expect(button(page, "Check deletion status")).toBeEnabled();
   await button(page, "Check deletion status").click();
   await expect(
@@ -802,7 +742,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await button(page, "Builderlab hosting").click();
   await button(page, "Delete").click();
   const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
   await dialog
@@ -877,7 +817,7 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(
     page.getByRole("menu", { name: "Browser Fixture" }),
   ).toBeHidden();
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   const profileRegion = () =>
     page.getByRole("region", { name: "Profile", exact: true });
   const displayName = () =>
@@ -886,11 +826,13 @@ test("Settings loads and publishes the selected community profile", async ({
   const save = () =>
     profileRegion().getByRole("button", { name: "Save", exact: true });
   await expect(name).toHaveValue("Fixture Reader");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Profile edits inline: Settings itself is the only open dialog.
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(settingsDialog(page)).toBeVisible();
   await expect(button(page, "Edit profile")).toHaveCount(0);
   await name.fill("Do not save");
   await expect(name).toHaveValue("Do not save");
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
   await expect(name).toHaveValue("Do not save");
@@ -898,16 +840,21 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(name).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Back", exact: true })
+  await settingsDialog(page)
+    .getByRole("button", { name: "Close Settings", exact: true })
     .click();
+  // Unsaved profile edits ask before Settings closes.
+  await page
+    .getByRole("alertdialog", { name: "Discard changes?" })
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("menu", { name: "Browser Fixture" }),
   ).toBeHidden();
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   const reopenedName = displayName();
   await expect(reopenedName).toHaveValue("Fixture Reader");
   await reopenedName.fill("   ");
@@ -966,43 +913,44 @@ test("Settings loads and publishes the selected community profile", async ({
       name: "Profile description (optional)",
     }),
   ).toBeFocused();
-  await page.keyboard.press(tab);
-  await expect(
-    profileRegion().getByRole("button", {
-      name: "Copy public key",
-      exact: true,
-    }),
-  ).toBeFocused();
   await expect(save()).toHaveCount(0);
   await expect(
     page.getByRole("dialog", { name: "Profile updated" }),
   ).toBeVisible();
   await expect(reopenedName).toHaveValue("Updated community profile");
+  // The account avatar is behind the modal; check it from the workspace. The
+  // pointer left on Close can briefly open a tooltip for the control beneath it.
+  await closeSettings(page);
   await button(page, "Your profile").hover();
-  await expect(page.getByRole("tooltip")).toHaveText(
-    "Updated community profile",
-  );
+  await expect(
+    page.getByRole("tooltip", {
+      name: "Updated community profile",
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(button(page, "Your profile")).toHaveAccessibleDescription(
     "Updated community profile",
   );
+  await openSettings(page);
+  await expect(reopenedName).toHaveValue("Updated community profile");
   await reopenedName.fill("Discard after saving");
   await button(page, "Cancel").press("Enter");
   await expect(reopenedName).toBeFocused();
   await expect(reopenedName).toHaveValue("Updated community profile");
+  // Reload restores the open Settings modal.
   await page.reload();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("menu", { name: "Updated local profile" }),
-  ).toBeHidden();
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page)).toBeVisible();
   // The fixture updates its signed relay profile on publication; reopening proves
   // Settings re-reads that confirmed community state rather than retaining a draft.
   await expect(displayName()).toHaveValue("Updated community profile");
+  await closeSettings(page);
   await button(page, "Your profile").hover();
-  await expect(page.getByRole("tooltip")).toHaveText(
-    "Updated community profile",
-  );
+  await expect(
+    page.getByRole("tooltip", {
+      name: "Updated community profile",
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(2);
   expect(profiles).toHaveLength(2);
   for (const profile of profiles)
@@ -1088,4 +1036,51 @@ test("discarding community setup leaves the published profile unchanged", async 
     }),
   ).toHaveValue("");
   expect(writes).toEqual([]);
+});
+
+// Browser-only: container-query hiding must remove covered controls from native Tab navigation.
+test("narrow plugin details moves focus, skips covered rows, and restores the trigger on Escape", async ({
+  page,
+  app,
+}, info) => {
+  await page.setViewportSize({ width: 480, height: 650 });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    const trigger = button(page, "View GitHub details");
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const pane = page.getByRole("complementary", { name: "GitHub details" });
+    await expect(
+      pane.getByRole("button", { name: "Close plugin details" }),
+    ).toBeFocused();
+    await expect(trigger).toBeHidden();
+    // The covered catalog is hidden from AT; its live feedback must stay exposed.
+    await expect(page.getByRole("alert")).toHaveCSS("visibility", "visible");
+    await page.keyboard.press("Tab");
+    await expect(
+      pane.getByRole("button", { name: "Disable", exact: true }),
+    ).toBeFocused();
+    await pane.evaluate((element) =>
+      Promise.allSettled(
+        element
+          .getAnimations({ subtree: true })
+          .filter(
+            (animation) =>
+              animation.effect?.getComputedTiming().endTime !== Infinity,
+          )
+          .map((animation) => animation.finished),
+      ),
+    );
+    await pane.screenshot({
+      path: info.outputPath(`plugin-details-${mode}.png`),
+    });
+    await page.keyboard.press("Escape");
+    await expect(pane).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toBeVisible();
+  }
 });

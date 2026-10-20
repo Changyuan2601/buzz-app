@@ -101,6 +101,7 @@ export function MessageTimestampHint({
       <div
         ref={payload}
         className={styles.messagePayload}
+        data-message-payload=""
         data-attachments={attachments || undefined}
         onFocusCapture={() => setOpen(false)}
       >

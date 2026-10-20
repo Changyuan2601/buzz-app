@@ -112,7 +112,7 @@ it.each([false, true])(
       q.ensure("a");
       const head = wire.next();
       expect([...(head.filters[0]?.kinds ?? [])].sort((a, b) => a - b)).toEqual(
-        [9, 40002, 40008, 40099],
+        [9, 40002, 40008, 40099, 48100, 48103],
       );
       const row = addition();
       head.respond([
@@ -154,7 +154,7 @@ it.each([false, true])(
       q.loadOlder("a");
       const older = wire.next();
       expect(older.filters[0]).toMatchObject({
-        kinds: [40002, 40008, 40099, 9],
+        kinds: [40002, 40008, 40099, 48100, 48103, 9],
         until: 20,
         before_id: row.id,
       });

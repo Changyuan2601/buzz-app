@@ -25,7 +25,10 @@ async function holdPanelMotion(page) {
           }
       }
       for (const dock of docks) {
-        const animations = dock.getAnimations();
+        const animations = [
+          ...dock.getAnimations(),
+          ...(dock.parentElement?.getAnimations() ?? []),
+        ];
         for (const animation of animations) animation.pause();
         if (animations.some((animation) => animation.playState === "paused"))
           dock.dataset.motionHeld = "true";
@@ -41,7 +44,11 @@ async function holdPanelMotion(page) {
     page.locator("[data-panel-dock]").evaluateAll((elements) => {
       for (const element of elements) {
         delete element.dataset.motionHeld;
-        for (const animation of element.getAnimations()) animation.finish();
+        for (const animation of [
+          ...element.getAnimations(),
+          ...(element.parentElement?.getAnimations() ?? []),
+        ])
+          animation.finish();
       }
     });
 }
@@ -333,65 +340,84 @@ for (const destination of ["Messages", "Workflows"]) {
   });
 }
 
-test("desktop panel closes immediately and reopens at its saved width", async ({
-  page,
-  app,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const launch = page
-    .getByRole("button", { name: "Companion fixture", exact: true })
-    .and(page.locator("button[aria-expanded]"));
-  const close = page.getByRole("button", {
-    name: "Close Companion fixture panel",
-    exact: true,
-  });
-  const dock = page.locator("[data-panel-dock]");
-  const release = await holdPanelMotion(page);
-  try {
-    await launch.click();
-    await expect(dock).toHaveAttribute("data-motion-held", "true");
-    await expect(dock).toHaveCSS("transition-duration", "0.18s, 0.18s");
-    expect(
-      await dock.evaluate((el) =>
-        el
+for (const destination of ["Messages", "Workflows"]) {
+  test(`${destination} split opens and closes continuously and reverses without losing content`, async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(app.origin);
+    await openPage(page, destination);
+    const launch = page
+      .getByRole("button", { name: "Companion fixture", exact: true })
+      .and(page.locator("button[aria-expanded]"));
+    const close = page.getByRole("button", {
+      name: "Close Companion fixture panel",
+      exact: true,
+    });
+    const dock = page.locator("[data-panel-dock]");
+    const release = await holdPanelMotion(page);
+    // Control the browser's real layout transition: no timing assumptions or sleeps.
+    const sample = (fraction) =>
+      dock.evaluate(async (element, fraction) => {
+        const animation = element.parentElement
           .getAnimations()
-          .some((animation) =>
-            animation.effect
-              .getKeyframes()
-              .some(
-                (frame) =>
-                  typeof frame.transform === "string" &&
-                  new DOMMatrix(frame.transform).m41 === 12,
-              ),
-          ),
-      ),
-    ).toBe(true);
-    await release();
-    await expect(dock).toHaveCSS("transform", "none");
-    const width = await dock.evaluate((el) => getComputedStyle(el).width);
-    // The observer holds every real transition. A retained desktop exit would
-    // stay mounted here, so this proves close does not wait for its fade.
-    await close.click();
-    await expect(dock).toHaveCount(0);
-    await launch.click();
-    await expect(dock).not.toHaveAttribute("data-closing");
-    await expect(dock).toHaveCSS("width", width);
-    await release();
-    await expect(close).toBeVisible();
-    await close.click();
-    await expect(dock).toHaveCount(0);
-    await launch.press("Enter");
-    await expect(dock).toHaveCSS("transition-duration", "0s");
-    await close.press("Enter");
-    await expect(dock).toHaveCount(0);
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await launch.click();
-    await expect(dock).toHaveAttribute("data-motion-held", "true");
-    await expect(dock).toHaveCSS("transform", "none");
-    await expect(dock).toHaveCSS("transition-property", "opacity");
-  } finally {
-    await release();
-  }
-});
+          .find((item) => item.transitionProperty === "grid-template-columns");
+        if (!animation) throw new Error("The split must transition, not snap");
+        await animation.ready;
+        animation.currentTime =
+          Number(animation.effect.getTiming().duration) * fraction;
+        await new Promise(requestAnimationFrame);
+        return {
+          edge: element.getBoundingClientRect().left,
+          width: element.getBoundingClientRect().width,
+        };
+      }, fraction);
+    try {
+      await launch.click();
+      await expect(dock).toHaveAttribute("data-motion-held", "true");
+      const start = await sample(0);
+      const middle = await sample(0.5);
+      const end = await sample(1);
+      expect(start.edge).toBeGreaterThan(middle.edge);
+      expect(middle.edge).toBeGreaterThan(end.edge);
+      // The side pane reveals at its final width instead of crushing its content.
+      expect(start.width).toBeCloseTo(end.width, 0);
+      await release();
+      await close.click();
+      await expect(dock).toHaveAttribute("inert");
+      await expect(dock).toHaveAttribute("data-motion-held", "true");
+      const closingStart = await sample(0);
+      const closingMiddle = await sample(0.5);
+      expect(closingMiddle.edge).toBeGreaterThan(closingStart.edge);
+      expect(closingMiddle.edge).toBeLessThan(start.edge);
+      // Interrupt before completion. The old exit must not unmount the reopened dock.
+      await launch.click();
+      await expect(dock).not.toHaveAttribute("inert");
+      await release();
+      await expect(close).toBeVisible();
+      await close.click();
+      await release();
+      await expect(dock).toHaveCount(0);
+      await launch.press("Enter");
+      await expect(close).toBeVisible();
+      expect(
+        await dock.evaluate(
+          (element) => element.parentElement.getAnimations().length,
+        ),
+      ).toBe(0);
+      await close.press("Enter");
+      await expect(dock).toHaveCount(0);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await launch.click();
+      await expect(close).toBeVisible();
+      expect(
+        await dock.evaluate(
+          (element) => element.parentElement.getAnimations().length,
+        ),
+      ).toBe(0);
+    } finally {
+      await release();
+    }
+  });
+}

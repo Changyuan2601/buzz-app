@@ -93,7 +93,7 @@ export function WorkspaceSettings({
         if (!active()) return;
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
-          throw new Error(kit.error ?? "Project defaults are unavailable.");
+          throw new Error(kit.error ?? "Workspace defaults are unavailable.");
         const id = await projectTemplateId(target.id);
         if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
@@ -258,7 +258,7 @@ export function WorkspaceSettings({
       if (loaded && !writeView(scope, key, null))
         throw new CanvasSettingsError(
           target.kind === "project"
-            ? "Project defaults are confirmed, but the saved draft couldn’t be cleared on this device."
+            ? "Workspace defaults are confirmed, but the saved draft couldn’t be cleared on this device."
             : "Changes are confirmed, but the saved draft couldn’t be cleared on this device. Retry to finish without resending confirmed changes.",
         );
       close();
@@ -291,7 +291,7 @@ export function WorkspaceSettings({
       }}
       preventClose={busy || lifetime.busy}
       dismissOnOutsideClick
-      title={target.kind === "project" ? "Project settings" : "Chat settings"}
+      title={target.kind === "project" ? "Workspace settings" : "Chat settings"}
       actions={
         <>
           <Button disabled={busy || lifetime.busy} onClick={close}>

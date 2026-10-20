@@ -95,3 +95,17 @@
   --text-mono-sm--letter-spacing: 0.03em;
   --text-mono-sm--font-weight: var(--type-weight-normal);
 }
+
+/* Text selection follows the accent, distinct from solid-accent message fills. */
+@layer base {
+  ::selection {
+    background-color: var(--affordance-accent);
+    color: var(--text-accent);
+  }
+  @media (forced-colors: active) {
+    ::selection {
+      background-color: Highlight;
+      color: HighlightText;
+    }
+  }
+}

@@ -208,7 +208,7 @@ export function ConvertToChannel({
           const filing = projects.snapshot();
           if (filing.status !== "ready")
             throw new Error(
-              filing.error ?? "Solo projects could not be read. Try again.",
+              filing.error ?? "Solo workspaces could not be read. Try again.",
             );
           if (filing.data?.assignments[id])
             await projects.assign(id, undefined);
@@ -325,7 +325,7 @@ export function ConvertToChannel({
       </Field>
       {converted && (
         <p role="status">
-          Channel converted. Finish removing it from its Solo project.
+          Channel converted. Finish removing it from its Solo workspace.
         </p>
       )}
       {sharing && !converted && (

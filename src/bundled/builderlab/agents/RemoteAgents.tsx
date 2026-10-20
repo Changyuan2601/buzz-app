@@ -22,6 +22,14 @@ export function RemoteAgents({
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const [revision, setRevision] = useState(0);
+  if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
+    return (
+      <EmptyState
+        icon={<RobotIcon />}
+        title="Coming soon"
+        description="Builderlab remote agents are not available for your account yet."
+      />
+    );
   return login.status === "signed-in" ? (
     <AgentList
       key={`${login.account?.subject}:${revision}`}

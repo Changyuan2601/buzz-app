@@ -235,7 +235,7 @@ buzzodz --profile experiment plugin list
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
 Bundled pages work on web; their enabled settings are stored in that browser.
-Folder and Git/GitHub loading is available in **desktop Settings → Plugins**.
+Folder and Git/GitHub loading is available in **desktop Settings → Plugins → Manage plugins**.
 Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
 then select a built plugin subfolder and install it. New installs are disabled;
 updates retain their enabled state and may run immediately. Repositories must

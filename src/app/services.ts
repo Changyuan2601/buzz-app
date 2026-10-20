@@ -1,3 +1,5 @@
+import { createAdminAccess } from "../bundled/admin-access";
+import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import {
@@ -73,6 +75,9 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
+  const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
+  ctx.provide("adminAccess", adminAccess);
+  ctx.effect(() => () => adminAccess.dispose());
   const agents = new AgentsService(
     ctx,
     communities,
@@ -128,6 +133,7 @@ export function createServices() {
     shortcutBindings,
     conversation,
     settingsCards,
+    adminAccess,
     pages,
     panels,
     plugins,

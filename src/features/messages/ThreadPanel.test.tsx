@@ -88,6 +88,7 @@ vi.mock("./MessageComposer", () => ({
     activityClickOpensPanel,
     disabled,
     placeholder,
+    focusRequest,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -98,6 +99,7 @@ vi.mock("./MessageComposer", () => ({
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
+      data-focus-request={focusRequest}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -458,6 +460,29 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
+it.each([
+  ["waits", undefined, "1"],
+  ["clicks elsewhere first", "pointerDown", "0"],
+  ["types elsewhere first", "keyDown", "0"],
+] as const)(
+  "a focus request reaches the reply box once its root loads, unless the user %s",
+  (_, action, delivered) => {
+    const h = messagesHarness();
+    h.snapshot.status = "loading";
+    h.snapshot.root = undefined;
+    Object.assign(h.props, { focusRequest: 1 });
+    h.render();
+    expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+    if (action) fireEvent[action](document.body, { key: "a" });
+    h.snapshot.root = row;
+    h.snapshot.status = "ready";
+    h.render();
+    expect(screen.getByRole("region", { name: "Composer" })).toHaveAttribute(
+      "data-focus-request",
+      delivered,
+    );
+  },
+);
 it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
@@ -1305,32 +1330,28 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes the Solo recipient, readiness and direct Activity contract through to thread composition", () => {
+it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
   const h = messagesHarness();
   const view = render(
-    <ThreadPanel
-      {...h.props}
-      ownSoloConversation
-      activityClickOpensPanel
-      disabled
-    />,
+    <ThreadPanel {...h.props} activityClickOpensPanel disabled />,
   );
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-own-solo", "true");
   expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
   view.rerender(
-    <ThreadPanel
-      {...h.props}
-      ownSoloConversation
-      activityClickOpensPanel
-      disabled={false}
-    />,
+    <ThreadPanel {...h.props} activityClickOpensPanel disabled={false} />,
   );
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-own-solo");
   expect(composer).not.toHaveAttribute("data-direct-activity");
+  // Solo agents answer at top level: its threads are read-only.
+  view.rerender(<ThreadPanel {...h.props} soloConversation />);
+  expect(
+    screen.queryByRole("region", { name: "Composer" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Thread messages" }),
+  ).toBeInTheDocument();
 });
 
 it.each([

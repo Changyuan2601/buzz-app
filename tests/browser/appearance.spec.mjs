@@ -1,6 +1,10 @@
 import {
   chooseColorMode,
+  closeSettings,
+  openSettings,
   selectSettingsSection,
+  settingsDialog,
+  settingsSections,
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -11,10 +15,14 @@ test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  // Finish the menu-to-page focus handoff before testing keyboard controls.
-  await expect(page.getByRole("main")).toBeFocused();
+  await openSettings(page);
+  // Finish the menu-to-dialog focus handoff before testing keyboard controls.
+  await expect(button(settingsDialog(page), "Close Settings")).toBeFocused();
+  await selectSettingsSection(page, "Appearance");
+}
+// Reload restores the Settings visit; its modal reopens with its own focus.
+async function reopenedSettings(page) {
+  await expect(button(settingsDialog(page), "Close Settings")).toBeFocused();
   await selectSettingsSection(page, "Appearance");
 }
 async function expectMode(page, mode, inSettings = false) {
@@ -36,20 +44,19 @@ async function expectMode(page, mode, inSettings = false) {
     "background-image",
     /radial-gradient/,
   );
+  // Settings keeps its sections inside the modal at every width.
+  if (inSettings) {
+    await expect(settingsSections(page)).toBeVisible();
+    return;
+  }
   await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
   await expect(
     page
-      .getByRole("complementary", {
-        name: inSettings ? "Settings sidebar" : "Sidebar",
-        exact: true,
-      })
-      .getByRole("navigation", {
-        name: inSettings ? "Settings sections" : "Subscribed channels",
-        exact: true,
-      }),
+      .getByRole("complementary", { name: "Sidebar", exact: true })
+      .getByRole("navigation", { name: "Subscribed channels", exact: true }),
   ).toBeVisible();
   if (collapsed) await button(page, "Hide navigation").click();
 }
@@ -61,7 +68,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
-  for (const label of ["Chartreuse accent color", "Cobalt accent color"]) {
+  for (const label of ["Citrus accent color", "Cobalt accent color"]) {
     const swatch = button(page, label);
     await page.mouse.move(0, 0);
     const colors = await swatch.evaluate((node) => {
@@ -83,6 +90,24 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     } finally {
       await page.mouse.up();
     }
+    await page.mouse.move(0, 0);
+    await expect(swatch).toHaveAttribute("aria-pressed", "true");
+    const selectedColors = await swatch.evaluate((node) => {
+      const hex = (value) =>
+        "#" +
+        value
+          .match(/\d+/g)
+          .slice(0, 3)
+          .map((part) => Number(part).toString(16).padStart(2, "0"))
+          .join("");
+      return {
+        ink: hex(getComputedStyle(node.querySelector("svg")).color),
+        fill: hex(getComputedStyle(node).backgroundColor),
+      };
+    });
+    expect(
+      wcagRatio(selectedColors.ink, selectedColors.fill),
+    ).toBeGreaterThanOrEqual(3);
   }
   await button(page, "Cobalt accent color").focus();
   await page.keyboard.press("Enter");
@@ -90,8 +115,8 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     "aria-pressed",
     "true",
   );
-  const system = page.getByRole("radio", { name: "System", exact: true });
-  await expect(system).toBeChecked();
+  const system = page.getByRole("combobox", { name: "Mode", exact: true });
+  await expect(system).toHaveText("System");
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "dark", true);
   await page.emulateMedia({ colorScheme: "light" });
@@ -99,11 +124,18 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await chooseColorMode(page, "Light");
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "light", true);
-  const dark = page.getByRole("radio", { name: "Dark", exact: true });
-  await page.getByRole("radio", { name: "Light", exact: true }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(dark).toBeChecked();
-  await expect(dark).toBeFocused();
+  await system.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("option", { name: "Light", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: "Dark", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(system).toHaveText("Dark");
+  await expect(system).toBeFocused();
   await expectMode(page, "dark", true);
   await expect(
     page
@@ -120,7 +152,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       return color;
     }),
   );
-  // Selection follows the chosen accent at the default vibe level.
+  // Selection follows the chosen accent at the default accent level.
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
     await page.evaluate(() => {
@@ -192,6 +224,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // Narrow Settings stacks its sections above the detail; choosing a
+      // section brings that detail into view.
+      await selectSettingsSection(page, "Appearance");
       await expect(
         page.getByRole("region", { name: "Appearance", exact: true }),
       ).toBeInViewport();
@@ -202,34 +237,33 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
         path: testInfo.outputPath(`appearance-${mode}-${width}.png`),
       });
     }
+    // The workspace behind Settings is inert; search from the workspace.
+    await closeSettings(page);
     await button(page, "Search Buzz").click();
     const dialog = page.getByRole("dialog", { name: "Search Buzz" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgb(26, 26, 26)" : "rgb(255, 255, 255)",
     );
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
+    await settings(page);
   }
+  const preview = page.getByRole("figure", { name: "Appearance preview" });
   for (const hostMode of ["Dark", "Light"]) {
     await chooseColorMode(page, hostMode);
-    for (const [mode, colors] of Object.entries(palettes)) {
-      const preview = page.locator(
-        `.buzz-theme-thumbnail[data-mode="${mode}"]`,
-      );
-      for (const [part, property, role] of [
-        ["backdrop", "fill", "bg-app"],
-        ["panel", "fill", "surface-panel"],
-        ["lines", "stroke", "text-metadata"],
-        ["message", "fill", "surface-message-own"],
-      ]) {
-        for (const element of await preview
-          .locator(`.buzz-theme-preview-${part}`)
-          .all())
-          await expect(element).toHaveCSS(property, colors[role]);
-      }
-    }
+    const colors = palettes[hostMode.toLowerCase()];
+    await expect(preview).toBeVisible();
+    await expect(preview.locator("[inert]")).toHaveCount(1);
+    await expect(preview).toHaveCSS(
+      "background-color",
+      colors["surface-panel"],
+    );
+    await expect(preview.locator("[data-own]")).toHaveCSS(
+      "background-color",
+      colors["surface-message-own"],
+    );
   }
   await button(page, "Magenta accent color").click();
   const pink = await button(page, "Magenta accent color").evaluate((el) => {
@@ -240,14 +274,10 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     probe.remove();
     return color;
   });
-  for (const preview of await page
-    .locator('.buzz-theme-preview[data-tone="light"]')
-    .all()) {
-    for (const bubble of await preview
-      .locator(".buzz-theme-preview-message")
-      .all())
-      await expect(bubble).toHaveCSS("fill", pink);
-  }
+  await expect(preview.locator("[data-own]")).toHaveCSS(
+    "background-color",
+    pink,
+  );
   await page
     .getByRole("region", { name: "Appearance", exact: true })
     .screenshot({
@@ -256,113 +286,35 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await chooseColorMode(page, "Dark");
   await page.reload();
   await expectMode(page, "dark", true);
-  await settings(page);
-  await expect(dark).toBeChecked();
+  await reopenedSettings(page);
+  await expect(system).toHaveText("Dark");
 });
 
-// Browser-only boundary: the actual shared slider's painted track/thumb,
-// pointer snapping and native keyboard steps inside Appearance. The token guard
-// owns the full accent/level matrix; these samples catch incorrect role wiring.
-test("Vibe level has visible marks without focus and snaps by pointer and keyboard", async ({
+// Browser-only boundary: real CSS cascade and pre-paint bootstrap cannot
+// be established in jsdom.
+test("saved vibe levels cannot tint the shell after choosing an accent or reloading", async ({
   page,
   app,
-}, testInfo) => {
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-color-level.v1", "full"),
+  );
   await page.goto(app.origin);
   await settings(page);
-  const slider = page.getByRole("slider", { name: "Vibe level" });
-  const root = page.locator(".buzz-step-slider");
-  const thumb = root.locator(".buzz-step-slider-thumb");
-  const control = root.locator(".buzz-step-slider-control");
-  const track = root.locator(".buzz-step-slider-track");
-  const palette = button(page, "Chartreuse accent color");
-  for (const [mode, width, level, name] of [
-    ["Light", 1280, "touch", "Hummin’"],
-    ["Dark", 390, "full", "Buzzin’"],
-  ]) {
-    await page.setViewportSize({ width, height: 844 });
+  for (const mode of ["Light", "Dark"]) {
     await chooseColorMode(page, mode);
-    await slider.focus();
-    await page.keyboard.press("Home");
-    if (level === "full") await page.keyboard.press("End");
-    else await page.keyboard.press("ArrowRight");
-    await expect(slider).toHaveAttribute("aria-valuetext", name);
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-color-level",
-      level,
+    await button(page, "Cobalt accent color").click();
+    await expectMode(page, mode.toLowerCase(), true);
+    await page.reload();
+    await expect(button(page, "Cobalt accent color")).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
-    // Move focus away: a keyboard ring must not hide an invisible resting mark.
-    await palette.click();
-    await page.mouse.move(0, 0);
-    await expect(slider).not.toBeFocused();
-    await expect(thumb).toHaveCSS("outline-style", "none");
-    const colors = await root.evaluate((node) => {
-      const rgb = (value) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = canvas.height = 1;
-        const context = canvas.getContext("2d");
-        context.fillStyle = value;
-        context.fillRect(0, 0, 1, 1);
-        return (
-          "#" +
-          [...context.getImageData(0, 0, 1, 1).data]
-            .slice(0, 3)
-            .map((v) => v.toString(16).padStart(2, "0"))
-            .join("")
-        );
-      };
-      const paint = (selector) =>
-        rgb(getComputedStyle(node.querySelector(selector)).backgroundColor);
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--surface-panel)";
-      node.append(probe);
-      const panel = rgb(getComputedStyle(probe).backgroundColor);
-      probe.remove();
-      return {
-        thumb: paint(".buzz-step-slider-thumb"),
-        selected: paint(".buzz-step-slider-indicator"),
-        track: paint(".buzz-step-slider-track"),
-        panel,
-      };
-    });
-    expect(
-      wcagRatio(colors.thumb, colors.panel),
-      `thumb on panel in ${mode}`,
-    ).toBeGreaterThanOrEqual(3);
-    expect(
-      wcagRatio(colors.selected, colors.track),
-      `selected track in ${mode}`,
-    ).toBeGreaterThanOrEqual(3);
-    await root.screenshot({
-      path: testInfo.outputPath(`vibe-marks-${mode}.png`),
-    });
-    // Click the first visible stop and drag to the last; real hit testing and
-    // pointer capture cannot be established in a DOM emulator.
-    const box = await track.boundingBox();
-    if (!box) throw new Error("Slider track is not visible");
-    await page.mouse.click(box.x, box.y + box.height / 2);
-    await expect(slider).toHaveAttribute("aria-valuetext", "Snoozin’");
-    const start = await thumb.boundingBox();
-    if (!start) throw new Error("Slider thumb is not visible");
-    await page.mouse.move(
-      start.x + start.width / 2,
-      start.y + start.height / 2,
+    await expectMode(page, mode.toLowerCase(), true);
+    await expect(page.getByRole("slider", { name: "Vibe level" })).toHaveCount(
+      0,
     );
-    await page.mouse.down();
-    try {
-      const destination = await control.boundingBox();
-      if (!destination) throw new Error("Slider control is not visible");
-      await page.mouse.move(
-        destination.x + destination.width - 8,
-        destination.y + destination.height / 2,
-      );
-      await expect(slider).toHaveAttribute("aria-valuetext", "Buzzin’");
-    } finally {
-      await page.mouse.up();
-    }
   }
-  expect(
-    await page.evaluate(() => localStorage.getItem("buzz-color-level.v1")),
-  ).toBe("full");
 });
 
 test("System appearance follows computer changes and keeps the selected choice after reload", async ({
@@ -372,10 +324,10 @@ test("System appearance follows computer changes and keeps the selected choice a
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(app.origin);
   await settings(page);
-  const system = page.getByRole("radio", { name: "System", exact: true });
+  const system = page.getByRole("combobox", { name: "Mode", exact: true });
   await chooseColorMode(page, "Dark");
   await chooseColorMode(page, "System");
-  await expect(system).toBeChecked();
+  await expect(system).toHaveText("System");
   await expectMode(page, "light", true);
   await page.screenshot({ path: testInfo.outputPath("system-light.png") });
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
@@ -385,8 +337,8 @@ test("System appearance follows computer changes and keeps the selected choice a
   await expectMode(page, "dark", true);
   await page.reload();
   await expectMode(page, "dark", true);
-  await settings(page);
-  await expect(system).toBeChecked();
+  await reopenedSettings(page);
+  await expect(system).toHaveText("System");
   await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
   await page.emulateMedia({ colorScheme: "light" });
   await expectMode(page, "light", true);
@@ -597,7 +549,8 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
-    // The legacy fill keeps meaning "prominent", whatever the vibe level.
+    // The legacy fill keeps meaning "prominent", with the chosen accent.
+
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",
       await page.evaluate(() => {
@@ -633,7 +586,7 @@ test("compiled host preserves compatibility utility meanings", async ({
     ).toBeGreaterThanOrEqual(4.5);
     await expect(page.locator("#old-primary")).toHaveCSS(
       "border-radius",
-      "12px",
+      "20px",
     );
     for (const id of ["old-code", "old-mono"]) {
       await expect(page.locator(`#${id}`)).toHaveCSS(
@@ -649,5 +602,6 @@ test("compiled host preserves compatibility utility meanings", async ({
       "font-family",
       /JetBrains Mono/,
     );
+    await closeSettings(page);
   }
 });

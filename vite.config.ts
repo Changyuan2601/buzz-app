@@ -30,6 +30,15 @@ export default defineConfig(async ({ command, mode }) => {
     throw new Error(
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
     );
+  // Packagers may seed a community for a viewer with no saved client record.
+  // Keep this separate from the live development broker and its opt-in flags.
+  const packagedRelay =
+    command === "build" ? env.BUZZ_DEFAULT_COMMUNITY_URL?.trim() : "";
+  const openOrigin = packagedRelay
+    ? relayOrigin(packagedRelay)
+    : openRelay
+      ? defaultOrigin
+      : "";
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
@@ -70,9 +79,15 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
         env.BUZZ_BUILDERLAB_URL ?? "",
       ),
-      "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(
-        openRelay ? defaultOrigin : "",
-      ),
+      "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL("index.html", import.meta.url)),
+          huddle: fileURLToPath(new URL("huddle.html", import.meta.url)),
+        },
+      },
     },
     clearScreen: false,
     // Keep build artifacts and coverage pages out of dependency discovery.

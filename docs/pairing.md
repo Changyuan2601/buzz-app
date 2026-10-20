@@ -2,7 +2,8 @@
 
 `buzz.pairing` is an enabled-by-default bundled Settings plugin. Settings →
 Plugins can disable it independently. The plugin contributes `mobile` through
-`ctx.settingsCards.register` in the Account group, using the existing Settings
+`ctx.settingsCards.register` under the selected community, and under Personal
+space, where the user supplies the community address. It uses the existing Settings
 shell, navigation and contribution lifecycle. It reads the existing
 `communityReader` capability without acquiring another relay session.
 

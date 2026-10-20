@@ -39,6 +39,8 @@ export type ReadFilter = Readonly<{
   /** HTTP bridge finite search, home-feed, and thread traversal extensions. */
   search?: string;
   search_mode?: "prefix" | "fulltext";
+  /** Only for relays advertising `buzz-search-sort`. */
+  search_sort?: "newest";
   page?: number;
   feed_types?: readonly string[];
   thread_window?: boolean;

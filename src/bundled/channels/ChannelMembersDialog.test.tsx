@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SOLO_LABEL } from "../../features/solo/labels";
 import type { Agents } from "../../features/agents/service";
 import "@testing-library/jest-dom/vitest";
 import {
@@ -77,6 +78,7 @@ async function setup(
     onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
   },
   agents?: Agents,
+  options: { archivedAgent?: boolean; channelCreation?: boolean } = {},
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -130,9 +132,24 @@ async function setup(
       signed(relay, {
         kind: 39000,
         content: "",
-        tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
+        tags: [
+          ["d", id],
+          ["t", type.includes("solo") ? "stream" : type],
+          ["private"],
+          ["name", "Design"],
+          ...(type.includes("solo")
+            ? [
+                ["t", SOLO_LABEL],
+                ["P", type === "solo" ? viewer.pubkey : person.pubkey],
+              ]
+            : []),
+        ],
       }),
-      signed(relay, { kind: 13535, content: "", tags: [["-"]] }),
+      signed(relay, {
+        kind: 13535,
+        content: "",
+        tags: [["-"], ...(options.archivedAgent ? [["p", agent.pubkey]] : [])],
+      }),
       profile(viewer, { name: "Carl" }),
       profile(person, { name: "Morgan" }),
     ].filter((event) => filters.some((filter) => matchesEvent(event, filter)));
@@ -153,7 +170,7 @@ async function setup(
       query,
       readAgentLibrary,
       writer: {
-        kinds: [9, 9000, 9007],
+        kinds: [9, 9000, ...(options.channelCreation === false ? [] : [9007])],
         sign: async (template) => signed(viewer, template),
         publish,
       },
@@ -260,7 +277,7 @@ it("highlights the first person not in the channel so Enter adds them once", asy
   const input = screen.getByRole("searchbox");
   const row = add.closest("[data-highlighted]");
   expect(row).not.toBeNull();
-  expect(row?.querySelector("mark")).toHaveTextContent("Morgan");
+  expect(row?.querySelector("mark")).toBeNull();
   expect(screen.getByText("Morgan. Press Enter to add.")).toHaveAttribute(
     "role",
     "status",
@@ -724,8 +741,8 @@ it("refreshes membership even when verified role metadata is unavailable", async
   await vi.waitFor(() =>
     expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
   );
-  expect(screen.getByRole("region", { name: "Members" })).toHaveTextContent(
-    "Members · 2",
+  expect(screen.getByRole("region", { name: "People" })).toHaveTextContent(
+    "People · 2",
   );
   expect(
     t.session.memberAdministration.snapshot(
@@ -1455,3 +1472,162 @@ for (const mode of ["cancellation", "early assertion failure"] as const) {
     expect(events).not.toContain("task:settled");
   });
 }
+
+it("lets the Solo owner add an agent without sending a message", async () => {
+  const t = await setup("solo", false, true);
+  const input = screen.getByRole("searchbox", {
+    name: "Search members and add agents",
+  });
+  expect(input).toHaveAttribute("placeholder", "Add agents");
+  expect(screen.queryByText(/Join this channel/)).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/Agents you add can read this chat and its history/),
+  ).toBeVisible();
+  expect(screen.getByRole("dialog")).not.toHaveAccessibleDescription();
+  expect(
+    screen.queryByRole("region", { name: "Available agents" }),
+  ).not.toBeInTheDocument();
+  await t.user.type(input, "Fixture");
+  await screen.findByRole("button", { name: /Add Fixture agent/ });
+  await t.user.clear(input);
+  expect(
+    screen.queryByRole("region", { name: "Available agents" }),
+  ).not.toBeInTheDocument();
+  const add = await t.search();
+  t.hold();
+  await t.user.click(add);
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  expect(add).toHaveAttribute("aria-disabled", "true");
+  await t.user.click(add);
+  expect(t.publish).toHaveBeenCalledOnce();
+  await act(async () => t.release());
+  const notice = await screen.findByText("Fixture agent added.");
+  expect(notice).toHaveClass("sr-only");
+  expect(input).toHaveValue("");
+  expect(input).toHaveFocus();
+  expect(screen.getByRole("heading", { name: "People · 1" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Agents · 1" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Add Fixture agent/ }),
+  ).not.toBeInTheDocument();
+  expect(t.session.channels.list().channels[0]?.members).toContain(
+    t.agent.pubkey,
+  );
+  expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([9000]);
+  expect(
+    t.publish.mock.calls[0]?.[0].tags.filter(([tag]) => tag !== "client-id"),
+  ).toEqual([
+    ["h", "11111111-1111-4111-8111-111111111111"],
+    ["p", t.agent.pubkey],
+  ]);
+  await t.user.click(
+    screen.getByRole("button", { name: "Close channel members" }),
+  );
+  await t.user.click(t.trigger);
+  await screen.findByRole("heading", { name: "Agents · 1" });
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("Solo agent search excludes people and keeps the query after a rejected addition, then retries the same event", async () => {
+  const t = await setup("solo", false, true);
+  const input = screen.getByRole("searchbox");
+  await t.user.type(input, "Morgan");
+  expect(screen.getByText("No other agents match your search.")).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: /^People/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Add Morgan/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    t.query.mock.calls.some(([filters]) =>
+      filters.some((filter) => filter.search),
+    ),
+  ).toBe(false);
+  await t.user.clear(input);
+  await t.user.type(input, "Fixture");
+  t.fail("Permission denied");
+  await t.user.click(
+    await screen.findByRole("button", { name: /Add Fixture agent/ }),
+  );
+  await screen.findByText(/Fixture agent: Permission denied/);
+  expect(input).toHaveValue("Fixture");
+  expect(screen.queryByText("Fixture agent added.")).not.toBeInTheDocument();
+  const original = t.publish.mock.calls[0]?.[0].id;
+  t.fail("");
+  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("Fixture agent added.");
+  expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([
+    9000, 9000,
+  ]);
+  expect(t.publish.mock.calls[1]?.[0].id).toBe(original);
+});
+
+it("withholds Solo agent additions from a shared viewer", async () => {
+  const t = await setup("shared-solo", false, true);
+  expect(
+    screen.getByText("Only the chat owner can add agents here."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Available agents" }),
+  ).not.toBeInTheDocument();
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  expect(
+    screen.queryByRole("button", { name: /Add Fixture agent/ }),
+  ).not.toBeInTheDocument();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("closing Solo members during an addition keeps the confirmed roster discoverable on reopen without a message", async () => {
+  const t = await setup("solo", false, true);
+  await t.search();
+  t.hold();
+  await t.user.click(
+    await screen.findByRole("button", { name: /Add Fixture agent/ }),
+  );
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+  await t.user.click(
+    screen.getByRole("button", { name: "Close channel members" }),
+  );
+  await act(async () => t.release());
+  await t.user.click(t.trigger);
+  // The add's receipt can settle after close; Refresh reads the authoritative roster.
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  await vi.waitFor(() =>
+    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  await t.user.click(refresh);
+  await screen.findByRole("heading", { name: "Agents · 1" });
+  expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([9000]);
+});
+
+it("does not offer archived agents for Solo admission", async () => {
+  const t = await setup("solo", false, true, undefined, undefined, {
+    archivedAgent: true,
+  });
+  await vi.waitFor(() =>
+    expect(t.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("button", { name: /Add Fixture agent/ }),
+  ).not.toBeInTheDocument();
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  expect(screen.getByText("No other agents match your search.")).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: /^People/ }),
+  ).not.toBeInTheDocument();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("does not offer Solo agent additions when the existing admission API is unavailable", async () => {
+  const t = await setup("solo", false, true, undefined, undefined, {
+    channelCreation: false,
+  });
+  expect(
+    screen.getByText("Adding agents is unavailable in this connection."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Available agents" }),
+  ).not.toBeInTheDocument();
+  expect(t.publish).not.toHaveBeenCalled();
+});

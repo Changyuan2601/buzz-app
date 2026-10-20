@@ -82,7 +82,7 @@ it("creates a Solo chat with its label, an optional description and lifetime", (
   expect(
     validChannelCommand({
       ...create,
-      tags: [...create.tags, ["p", "a".repeat(64)]],
+      tags: [...create.tags, ["p", "a".repeat(64), "wss://relay"]],
     }),
   ).toBe(false);
   expect(validChannelCommand({ ...create, content: "extra" })).toBe(false);
@@ -222,4 +222,32 @@ it("admits NIP-CL labels at the end of a channel creation, before the client id"
     Array.from({ length: 9 }, (_, n) => ["t", `l${n}`]),
   ])
     expect(validChannelCommand(create(labels))).toBe(false);
+});
+
+it("allows a create to name up to 32 distinct first members after its labels", () => {
+  const member = (n) => ["p", n.toString(16).padStart(64, "0")];
+  const create = (tail) => ({
+    kind: 9007,
+    created_at: 1,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Chat"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["t", "buzz.solo"],
+      ...tail,
+      ["client-id", id],
+    ],
+  });
+  const members = Array.from({ length: 32 }, (_, n) => member(n + 1));
+  expect(validChannelCommand(create(members))).toBe(true);
+  for (const tail of [
+    [...members, member(33)],
+    [member(1), member(1)],
+    [["p", "A".repeat(64)]],
+    [["p", member(1)[1], "extra"]],
+    [member(1), ["t", "buzz.session.named"]],
+  ])
+    expect(validChannelCommand(create(tail))).toBe(false);
 });

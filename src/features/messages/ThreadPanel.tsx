@@ -9,6 +9,8 @@ import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -37,6 +39,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -49,8 +52,8 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
+  /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -65,6 +68,8 @@ export type ThreadPanelProps = {
   /** Retry a failed routed opening with fresh navigation authority. */
   onRetryNavigation?: (() => void) | undefined;
   replyRequest?: number | undefined;
+  /** Each new value focuses the reply box, keeping its target. */
+  focusRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
@@ -349,10 +354,10 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active = true,
   revealSelected,
   requireReadyRoot,
@@ -409,7 +414,6 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       soloConversation={soloConversation}
-      ownSoloConversation={ownSoloConversation}
       activityClickOpensPanel={activityClickOpensPanel}
       disabled={disabled}
       extensions={extensions}
@@ -421,6 +425,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      focusRequest={focusRequest}
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
@@ -446,10 +451,10 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active,
   revealSelected,
   revealRequest,
@@ -461,8 +466,8 @@ function ThreadMessages({
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
+  /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -473,6 +478,7 @@ function ThreadMessages({
   messageId: string;
   view: ThreadView;
   replyRequest?: number | undefined;
+  focusRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
   revealRequest?: number | undefined;
@@ -803,6 +809,10 @@ function ThreadMessages({
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
+  useEffect(() => {
+    if (focusRequest) setReplyFocus((value) => value + 1);
+  }, [focusRequest]);
+  const pendingReplyFocus = usePendingRequest(replyFocus);
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
@@ -1168,7 +1178,7 @@ function ThreadMessages({
           extensions={extensions}
           session={session}
           scope={scope}
-          onReply={snapshot.root ? targetReply : undefined}
+          onReply={snapshot.root && !soloConversation ? targetReply : undefined}
           row={row}
           getThreadRoot={getThreadRoot}
           stackPrevious={continuation}
@@ -1284,6 +1294,7 @@ function ThreadMessages({
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
+    !soloConversation &&
     (!requireReadyRoot ||
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
@@ -1407,7 +1418,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
-              onReply={focusReply}
+              onReply={soloConversation ? undefined : focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
@@ -1508,8 +1519,6 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
-          soloConversation={soloConversation}
-          ownSoloConversation={ownSoloConversation}
           activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
@@ -1537,6 +1546,15 @@ function ThreadMessages({
             ) : (
               selectedParent && (
                 <div className={styles.replyContext}>
+                  <Avatar
+                    src={avatarMedia(
+                      profiles.get(selectedParent.authorId)?.picture,
+                      session.media,
+                    )}
+                    alt=""
+                    fallback={senderName(selectedParent)}
+                    size="default"
+                  />
                   <div>
                     <span>Replying to {senderName(selectedParent)}</span>
                     <p>{selectedParent.content}</p>
@@ -1552,7 +1570,7 @@ function ThreadMessages({
             )
           }
           editMessages={rows}
-          focusRequest={replyFocus}
+          focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}

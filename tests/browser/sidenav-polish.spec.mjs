@@ -1,5 +1,11 @@
-import { selectCommunity } from "./navigation.mjs";
-import { settleShellToggle, openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectCommunity,
+  settingsSections,
+  settleShellToggle,
+} from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -305,21 +311,31 @@ test("top bar swaps its pages for an overflow menu when narrow", async ({
   ).toBeVisible();
 });
 
-// Real responsive layout owns the Settings overlay and the desktop sidebar.
+// Real responsive layout owns the Settings modal and the desktop sidebar.
+// Settings has its own navigation; the shell sidebar toggle and its collapsed
+// state stay mounted behind it, inert, and work again on close.
 test("Settings retains the sidebar toggle across desktop and narrow layouts", async ({
   page,
   app,
 }) => {
   await open(page, app);
   await page.getByRole("button", { name: "Hide sidebar" }).click();
-  await page.getByRole("button", { name: "Your profile" }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const sidebar = page.getByRole("complementary", {
-    name: "Settings sidebar",
+    name: "Sidebar",
     exact: true,
   });
   const toggle = page.locator("[data-shell-sidebar-toggle]");
+  const inert = () =>
+    toggle.evaluate(
+      (element) => !!element.closest('[aria-hidden="true"], [inert]'),
+    );
   await expect(toggle).toHaveCount(1);
+  await expect(toggle).toHaveAttribute("aria-label", "Show sidebar");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(await inert()).toBe(true);
+  await expect(settingsSections(page)).toBeInViewport();
+  await closeSettings(page);
   await expect(toggle).toHaveAccessibleName("Show sidebar");
   await expect(sidebar).not.toBeVisible();
   await toggle.click();
@@ -332,10 +348,16 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
 
   await page.setViewportSize({ width: 600, height: 950 });
   await expect(toggle).toHaveAccessibleName("Show navigation");
+  // Narrow Settings stacks its own navigation; the drawer toggle stays inert.
+  await openSettings(page);
+  await expect(settingsSections(page)).toBeInViewport();
+  await expect(toggle).toHaveAttribute("aria-label", "Show navigation");
+  expect(await inert()).toBe(true);
+  await closeSettings(page);
   await toggle.click();
   await expect(sidebar).toBeVisible();
   await expect(toggle).toHaveAccessibleName("Hide navigation");
-  await sidebar.getByRole("button", { name: "Back", exact: true }).focus();
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).focus();
   await page.keyboard.press("Escape");
   await expect(sidebar).not.toBeVisible();
   await expect(toggle).toBeFocused();

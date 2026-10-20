@@ -27,6 +27,7 @@ import {
 } from "./service";
 import { fakeNative } from "./service-testing";
 import { memoryStorage } from "./test-fakes";
+import type { AgentStore } from "./store";
 import { claudeRun } from "../../bundled/claude-code/run";
 import { ClaudeRuntime } from "../../bundled/claude-code/runtime";
 import { fakeSpawn as fakeClaude } from "../../bundled/claude-code/claude-testing";
@@ -71,7 +72,7 @@ const revision = (body: object | null, op = "create") =>
   ) as RelayEvent;
 
 /** Confirmed copies in this device's storage, as a sync read installs them. */
-function seed(storage: Storage, heads: [Subject, RelayEvent][]) {
+function seed(storage: AgentStore, heads: [Subject, RelayEvent][]) {
   const store = new AgentConfigStore(storage);
   for (const [subject, head] of heads)
     store.applyRead(subject, store.capture(subject), {
@@ -544,7 +545,12 @@ function gooseHost() {
     ],
     supported: ["synced-model"],
   });
-  const host = { spawn: goose.spawn, serveMcp: goose.serve } as unknown as Host;
+  const host = {
+    spawn: goose.spawn,
+    resolveDirectory: goose.resolveDirectory,
+    readFile: vi.fn(),
+    serveMcp: goose.serve,
+  } as unknown as Host;
   return { goose, host };
 }
 

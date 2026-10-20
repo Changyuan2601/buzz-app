@@ -7,10 +7,12 @@ import {
   useContext,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
@@ -37,7 +39,16 @@ import Markdown, {
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  CodeBlockRenderer,
+  ContributionReader,
+  ConversationExtensions,
+} from "../conversation/contracts";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../conversation/ContributionBoundary";
+import { resolveMatch } from "../../plugins/contributions";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
@@ -403,10 +414,11 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
+  staticMentions = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;
@@ -415,6 +427,8 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
+  /** Preserve signed mention presentation when this surface cannot open profiles. */
+  staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
@@ -435,6 +449,7 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
+      staticMentions={staticMentions}
     />
   );
 }
@@ -453,6 +468,7 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
+  staticMentions = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
@@ -565,7 +581,7 @@ function PreparedMessageMarkdown({
     if (
       typeof text === "string" &&
       typeof target === "string" &&
-      (!interactive || clickable || agent)
+      (!interactive || clickable || agent || staticMentions)
     ) {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
@@ -576,6 +592,7 @@ function PreparedMessageMarkdown({
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
           data-mention-kind={agent ? "agent" : "person"}
+          data-mention-self={key && key === session?.viewer ? "" : undefined}
           data-profile-target={target}
           data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}
@@ -654,14 +671,27 @@ function PreparedMessageMarkdown({
         <span {...props}>{children}</span>
       );
     },
-    pre: ({ node: _node, children, ...props }) => (
-      <pre {...props}>
-        {children}
-        {interactive && (
-          <CopyCodeButton code={labelText(children).replace(/\n$/, "")} />
-        )}
-      </pre>
-    ),
+    pre: ({ node, children, ...props }) => {
+      const code = labelText(children).replace(/\n$/, "");
+      const plain = (
+        <pre {...props}>
+          {children}
+          {interactive && <CodeActions code={code} />}
+        </pre>
+      );
+      const language = codeLanguage(node);
+      // Previews are not interactive, so they keep the plain code.
+      return interactive && language && extensions?.codeBlocks ? (
+        <CodeBlock
+          registry={extensions.codeBlocks}
+          language={language}
+          code={code}
+          fallback={plain}
+        />
+      ) : (
+        plain
+      );
+    },
   };
 
   const markdown = (
@@ -730,11 +760,73 @@ function MessageSpoiler({
   );
 }
 
-function CopyCodeButton({ code }: { code: string }) {
+/** The fence's info-string language, as remark records it on the inner `code`. */
+function codeLanguage(pre: ExtraProps["node"]) {
+  const code = pre?.children[0];
+  if (code?.type !== "element" || code.tagName !== "code") return undefined;
+  const classes = code.properties.className;
+  return Array.isArray(classes)
+    ? classes
+        .map(String)
+        .find((name) => name.startsWith("language-"))
+        ?.slice("language-".length)
+    : undefined;
+}
+
+/** A plugin presents the block and may add an action; the host keeps the frame,
+ * action placement and copy, and restores the plain code when the plugin fails
+ * or is removed. */
+function CodeBlock({
+  registry,
+  language,
+  code,
+  fallback,
+}: {
+  registry: ContributionReader<CodeBlockRenderer>;
+  language: string;
+  code: string;
+  fallback: ReactNode;
+}) {
+  const renderers = useSyncExternalStore(
+    registry.subscribe,
+    registry.snapshot,
+    registry.snapshot,
+  );
+  const renderer = resolveMatch(renderers, language);
+  if (!renderer) return fallback;
+  const { component: Renderer, action: Action } = renderer;
+  return (
+    <ContributionBoundary
+      key={`${contributionKey(renderer)}:${language}:${code}`}
+      fallback={fallback}
+    >
+      {/* Selection copy reads the source here (selection-copy.ts). */}
+      <div
+        className={styles.codeBlock}
+        data-copy-code={code}
+        data-copy-language={language}
+      >
+        <Renderer code={code} language={language} />
+        <CodeActions code={code}>
+          {Action && <Action code={code} language={language} />}
+        </CodeActions>
+      </div>
+    </ContributionBoundary>
+  );
+}
+
+function CodeActions({
+  code,
+  children,
+}: {
+  code: string;
+  children?: ReactNode;
+}) {
   const notify = useToastNotification();
   const [copying, setCopying] = useState(false);
   return (
-    <span className={styles.codeCopy}>
+    <span className={styles.codeActions}>
+      {children}
       <IconButton
         aria-label="Copy code block"
         title="Copy code block"

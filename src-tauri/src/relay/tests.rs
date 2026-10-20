@@ -1320,6 +1320,10 @@ async fn event_writer_admits_sidebar_records_and_recipes_by_their_own_coordinate
             "channel-sort",
             serde_json::json!({"version":1,"groups":{"channels":"recent"}}),
         ),
+        (
+            "channel-filter",
+            serde_json::json!({"version":1,"groups":{"channels":"active"}}),
+        ),
     ] {
         let event = host
             .sign_sidebar(coordinate.into(), payload, 1)
@@ -1342,7 +1346,7 @@ async fn event_writer_admits_sidebar_records_and_recipes_by_their_own_coordinate
     foreign["pubkey"] = serde_json::json!("02".repeat(32));
     assert!(admit_app_data(&host, &foreign, community).await.is_err());
 
-    // Anything outside the four sidebar coordinates is still held to the recipe contract.
+    // Anything outside the sidebar coordinates is still held to the recipe contract.
     let sign = |tags: Vec<Vec<String>>, content: String| {
         host.sign(crate::identity::EventTemplate {
             kind: 30078,

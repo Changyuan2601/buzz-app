@@ -66,6 +66,13 @@ it("shows only exact verified visible memberships, handles partial lists and ope
         channelType: "stream",
         members: [person, viewer],
       },
+      {
+        id: "huddle",
+        name: "Hidden huddle",
+        channelType: "stream",
+        huddle: true,
+        members: [person],
+      },
       { id: "forum", name: "Forum", channelType: "forum", members: [person] },
       { id: "other", name: "Unrelated", members: [viewer] },
       { id: "unknown", name: "Unknown" },
@@ -96,6 +103,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
   expect(
     screen.queryByText(/Unrelated|Unknown type|Hidden|Archived|Direct|Child/),
   ).toBeNull();
+  expect(screen.queryByText("Hidden huddle")).toBeNull();
   expect(screen.getByText(/More channels may exist/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /^Visible$/ }));
   expect(f.open).toHaveBeenCalledWith({

@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { AppServices } from "./services";
 import { communityDestination } from "../features/communities/destination";
-import type { OpenTarget } from "../features/navigation/targets";
+import { targetKey, type OpenTarget } from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type {
   OpenAttempt,
@@ -62,8 +62,11 @@ export function useAppNavigation(
     setRetainedAttempt(state.attempt);
     return release;
   }, [services, settings, state.attempt]);
-  const lastNonSettings = useRef<OpenTarget | undefined>(undefined);
-  if (target.kind !== "settings") lastNonSettings.current = target;
+  const lastNonSettings = useRef<
+    { target: OpenTarget; entryId: string } | undefined
+  >(undefined);
+  if (target.kind !== "settings")
+    lastNonSettings.current = { target, entryId: state.entry.id };
   const scope = "scope" in target ? target.scope : undefined;
   const pageKey =
     target.kind === "page"
@@ -96,7 +99,10 @@ export function useAppNavigation(
     (target.route.params === "Inbox" || target.route.params === "Bestie")
       ? target.route.params.toLowerCase()
       : undefined;
-  let waiting = legacyHome || legacyPage !== undefined;
+  const legacyMessagesSettings =
+    settings && target.section === "buzz.channels/messages";
+  let waiting =
+    legacyHome || legacyPage !== undefined || legacyMessagesSettings;
   if (scope === null) {
     waiting ||= client.status === "loading" || client.selected !== null;
   } else if (scope) {
@@ -168,7 +174,20 @@ export function useAppNavigation(
         pageId: legacyPage,
         ...(scope !== undefined ? { scope } : {}),
       });
-  }, [services, state.attempt, legacyHome, legacyPage, scope]);
+    else if (legacyMessagesSettings && target.kind === "settings")
+      services.navigationHost.resolve(state.attempt, {
+        ...target,
+        section: "appearance",
+      });
+  }, [
+    services,
+    state.attempt,
+    legacyHome,
+    legacyPage,
+    legacyMessagesSettings,
+    target,
+    scope,
+  ]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],
@@ -177,9 +196,24 @@ export function useAppNavigation(
     owner: typeof owner;
     request: PageNavigation;
   }>();
+  const workspace = useRef<{
+    owner: typeof owner;
+    presentation: ReturnType<AppServices["navigationHost"]["request"]>;
+  }>(undefined);
+  useEffect(() => () => workspace.current?.presentation.dispose(), []);
   useLayoutEffect(() => {
     if (owner.waiting || owner.failure) return;
-    const { request, dispose } = services.navigationHost.request(
+    const previous = workspace.current;
+    if (!settings && previous?.presentation.resume(owner.attempt)) {
+      setPresentation({ owner, request: previous.presentation.request });
+      previous.owner = owner;
+      return;
+    }
+    if (!settings) {
+      previous?.presentation.dispose();
+      workspace.current = undefined;
+    }
+    const next = services.navigationHost.request(
       owner.attempt,
       {
         valid() {
@@ -212,12 +246,35 @@ export function useAppNavigation(
           };
         },
       },
+      !settings && !!owner.page,
     );
-    setPresentation({ owner, request });
-    return dispose;
-  }, [services, owner]);
+    setPresentation({ owner, request: next.request });
+    if (settings) return next.dispose;
+    workspace.current = { owner, presentation: next };
+  }, [services, owner, settings]);
+  const retained = workspace.current;
+  const sameWorkspaceVisit =
+    retained &&
+    retained.owner.attempt.entry.id === state.entry.id &&
+    targetKey(retained.owner.attempt.entry.target) === targetKey(target);
+  const retainedRequest =
+    retained && !retained.presentation.request.signal.aborted
+      ? retained.presentation.request
+      : undefined;
   const request =
-    presentation?.owner === owner ? presentation.request : undefined;
+    presentation?.owner === owner
+      ? presentation.request
+      : !settings && sameWorkspaceVisit
+        ? retainedRequest
+        : undefined;
+  const workspacePage = settings
+    ? retainedRequest && retained?.owner.page
+    : page;
+  const workspaceTarget =
+    settings && retainedRequest && retained
+      ? retained.owner.attempt.entry.target
+      : target;
+  const workspaceRequest = settings ? retainedRequest : request;
   useEffect(() => {
     if (state.attempt.signal.aborted) return;
     if (failure) {
@@ -301,10 +358,22 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    workspace: {
+      page: workspacePage || undefined,
+      target: workspaceTarget,
+      request: workspaceRequest,
+      selected:
+        workspacePage?.key ?? (settings ? "home" : (pageKey ?? target.kind)),
+      attempt:
+        settings && retainedRequest && retained
+          ? retained.owner.attempt.id
+          : state.attempt.id,
+    },
     leaveSettings() {
       const previous = lastNonSettings.current;
       if (previous) {
-        void navigation.open(previous);
+        if (services.navigationHost.returnTo(previous.entryId)) return;
+        void navigation.open(previous.target, { focus: "preserve" });
         return;
       }
       const selectedClient = services.communities.snapshot();

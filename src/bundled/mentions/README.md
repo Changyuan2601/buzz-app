@@ -1,3 +1,15 @@
+# Mentions
+
+Find and mention people, agents, and teams while you write.
+
+## Getting started
+
+1. Type @ in the composer and pick someone from the suggestions.
+2. Or choose **Mention a member** to search everyone in your community.
+3. Pick a team to mention all of its members at once.
+
+---
+
 # Mention rules
 
 `version 2` · `client contract` · `uses existing tags`

@@ -28,8 +28,10 @@ function Preview({ tone }: { tone: "light" | "dark" }) {
         className="buzz-theme-preview-panel"
       />
       <path d="M23 5v46" className="buzz-theme-preview-divider" />
+      {/* The selected sidebar destination takes its mode's accent color. */}
+      <path d="M10 13h7" className="buzz-theme-preview-selected" />
       <path
-        d="M10 13h7M10 18h5M29 17h30M29 22h24M29 27h32"
+        d="M10 18h5M29 17h30M29 22h24M29 27h32"
         className="buzz-theme-preview-lines"
       />
       <rect

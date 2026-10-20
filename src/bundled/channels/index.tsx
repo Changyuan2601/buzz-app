@@ -6,8 +6,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
 import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { MessageSettings } from "./MessageSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import { CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import type { ArchiveShortcut } from "./ChannelsPage";
@@ -67,14 +66,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   const agents = ctx.agents;
   ctx.settingsCards.register({
-    id: "messages",
-    title: "Messages",
-    icon: ChatCircleIcon,
-    component: MessageSettings,
-  });
-  ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
+    group: "App",
     icon: CopyIcon,
     component: ({ active }) => (
       <ChannelTemplateSettings agents={agents} active={active} />

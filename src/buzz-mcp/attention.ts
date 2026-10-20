@@ -3,7 +3,8 @@
 // offers them, and only while the owner has attention on for the agent; the
 // standalone server has no attention store. Every answer is JSON and names
 // whether a classifier can run now, so the agent never configures one that it
-// believes works when it does not.
+// believes works when it does not. How to use them is in their descriptions,
+// not the system prompt, so a session pays for it only once it loads them.
 import type {
   AttentionValue,
   EventWatch,
@@ -23,7 +24,7 @@ const id = { ...str, description: "Object id: 1-64 visible ASCII characters." };
 const token = {
   ...str,
   description:
-    "expected_state from your latest show or write of this object; object-v1:absent to create.",
+    "expected_state from your latest show or write of this object; object-v1:absent to create. A conflict answer means it changed since: show it again and decide again.",
 };
 const scope = {
   ...str,
@@ -108,6 +109,9 @@ const watchFields = {
     description: "Timer: Unix time after which it never fires.",
   },
 } as const;
+/** Said by both tools that create objects, one of which any first use loads. */
+const WRITES =
+  "A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous. wrong-scope means the object belongs to another Interest than the one you named. Report conflicts or failures; do not blindly retry an ambiguous write. Attention does not grant channel membership or authority to act. These tools work only while your owner has attention on; the end of each turn says when it is off.";
 const tool = (
   name: string,
   description: string,
@@ -127,7 +131,7 @@ const tool = (
 export const ATTENTION_TOOLS: readonly Tool[] = [
   tool(
     "interest_set",
-    "Create an Interest, or replace its instructions.",
+    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Put reporting destinations in the instructions, not in watch options. ${WRITES}`,
     { id, instructions: str, expected_state: token },
     ["id", "instructions", "expected_state"],
   ),
@@ -135,13 +139,21 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   tool("interest_list", "Interest ids.", { search: str }),
   tool(
     "interest_remove",
-    "Remove an Interest that has no watches.",
+    "Remove an Interest that has no watches: once it has no remaining purpose, remove its watches, then it.",
     { id, expected_state: token },
     ["id", "expected_state"],
   ),
   tool(
     "watch_add",
-    "Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest.",
+    `Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest; only for a new watch.
+
+Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
+
+Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+
+Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
+
+${WRITES}`,
     {
       interest: { ...str, description: "The Interest it serves." },
       id,
@@ -153,7 +165,7 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_update",
-    "Change only the fields given; clear removes optional fields. A timer keeps its next run when its interval changes; use watch_rearm to schedule it from now.",
+    'Change only the fields given; clear removes optional fields, such as a classifier with clear: ["classifier"]. When widening a watch, set its since floor to the change time. A timer keeps its next run when its interval changes; use watch_rearm to schedule it from now. How selectors, classifiers and timer budgets work is in watch_add.',
     {
       id,
       interest: scope,
@@ -182,8 +194,14 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
         "watch_enable",
         "Turn an event watch on. A timer is turned on by watch_rearm.",
       ],
-      ["watch_disable", "Turn a watch off; it is kept."],
-      ["watch_remove", "Remove a watch."],
+      [
+        "watch_disable",
+        "Turn a watch off; it is kept. A timer stays off until watch_rearm.",
+      ],
+      [
+        "watch_remove",
+        "Remove a watch whose purpose is complete, superseded, or no longer relevant.",
+      ],
     ] as const
   ).map(([name, description]) =>
     tool(name, description, { id, interest: scope, expected_state: token }, [
@@ -193,7 +211,7 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_rearm",
-    "Arm a timer, also one that is off: its next occurrence is one interval after at (default now, never earlier). Keeps its used occurrences; a spent timer needs higher limits first.",
+    "Arm a timer, also one that is off: its next occurrence is one interval after at (default now, never earlier). Use it deliberately for a fresh deadline. It keeps its used occurrences and does not bypass expiration: a spent timer needs higher limits, which this takes too.",
     {
       id,
       interest: scope,
@@ -208,11 +226,11 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_show",
-    "One watch and its expected_state.",
+    "One watch and its expected_state; for a timer, its used occurrences, next_due and status.",
     { id, interest: scope },
     ["id"],
   ),
-  tool("watch_list", "Watch summaries.", {
+  tool("watch_list", "Watch summaries. status spent finds spent timers.", {
     interest: str,
     type: { type: "string", enum: ["event", "timer"] },
     status: {

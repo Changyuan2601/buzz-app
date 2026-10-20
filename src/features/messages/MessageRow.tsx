@@ -95,6 +95,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
@@ -115,6 +116,8 @@ export type MessageRowProps = {
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onReply?: ((messageId: string) => void) | undefined;
+  /** False: existing threads open, but the row offers none to start or reply in. */
+  startsThreads?: boolean;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -159,6 +162,7 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
+  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -175,6 +179,7 @@ function MessageRowContent({
   keepMounted,
   onOpenThread,
   onReply,
+  startsThreads = true,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -203,7 +208,7 @@ function MessageRowContent({
     row.threadRootId ?? row.id,
   );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
-    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
+    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
       ? session
       : undefined,
     row.channelId,
@@ -321,7 +326,8 @@ function MessageRowContent({
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
   // Own-message surface colours apply to a bubble, never to a shown thread root.
-  const ownBubble = !shownRow && !!viewer && row.authorId === viewer;
+  const ownBubble =
+    !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -372,6 +378,7 @@ function MessageRowContent({
   );
   const report =
     !row.membership &&
+    !row.huddle &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -441,6 +448,7 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
+      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}
@@ -524,7 +532,7 @@ function MessageRowContent({
       messageId={row.id}
       onReply={
         (onReply ? () => onReply(row.id) : undefined) ??
-        (onOpenThread
+        (onOpenThread && startsThreads
           ? () =>
               onOpenThread(
                 row.threadRootId ?? row.id,
@@ -639,6 +647,9 @@ function MessageRowContent({
       )}
     </>
   );
+  // Accessories may only point at a thread the row could open or start.
+  const summaryThread =
+    startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -648,7 +659,7 @@ function MessageRowContent({
       : undefined;
     return (
       ((row.replyCount > 0 ||
-        (!row.threadRootId && threadAgents.length > 0) ||
+        (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
         activity) &&
         onOpenThread && (
           <Button
@@ -724,7 +735,10 @@ function MessageRowContent({
     );
   };
   const message = (
-    <div data-message-id={renderMessage ? undefined : row.id}>
+    <div
+      data-message-id={renderMessage ? undefined : row.id}
+      data-huddle-row={row.huddle ? "" : undefined}
+    >
       {day && <DayDivider createdAt={row.createdAt} />}
       <div
         ref={rowRef}
@@ -733,7 +747,9 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && row.authorId === viewer ? "" : undefined
+          alignViewer && !row.workflowOwnerId && row.authorId === viewer
+            ? ""
+            : undefined
         }
         data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
       >
@@ -752,7 +768,10 @@ function MessageRowContent({
               <div className={styles.messageAvatar}>{avatar}</div>
             )}
             <div className={styles.messageHeader}>
-              {!row.membership && !renderMessage && messageActions()}
+              {!row.membership &&
+                !row.huddle &&
+                !renderMessage &&
+                messageActions()}
               {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
               <div
@@ -937,7 +956,13 @@ function MessageRowContent({
                       if (attachment.kind === "image") {
                         return (
                           <AttachmentImage
+                            onOpenLink={
+                              canOpenLink?.(attachment.url)
+                                ? openLink
+                                : undefined
+                            }
                             key={url}
+                            session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
                             cached={cached}
@@ -1036,7 +1061,10 @@ function MessageRowContent({
             />
           ) : (
             reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+              <div
+                className={`${styles.reactions} ${styles.reactionFallback}`}
+                data-message-reactions
+              >
                 {reactions.flatMap((reaction) =>
                   [
                     ...new Set(reaction.events.map((event) => event.authorId)),
@@ -1072,7 +1100,7 @@ function MessageRowContent({
             <ComposerAccessories
               registry={extensions.accessories}
               renderMessageSummary={
-                onOpenThread ? renderMessageSummary : undefined
+                summaryThread ? renderMessageSummary : undefined
               }
               session={session}
               scope={scope}
@@ -1083,9 +1111,9 @@ function MessageRowContent({
                 menuTrigger.current?.focus({ preventScroll: true })
               }
               openThread={
-                onOpenThread
+                summaryThread
                   ? () => {
-                      onOpenThread(row.id, row.threadRootId ?? row.id);
+                      summaryThread(row.id, row.threadRootId ?? row.id);
                       return true;
                     }
                   : undefined
@@ -1197,6 +1225,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-audience="agents"
           data-viewer-message={
             (props.alignViewer ?? true) &&
+            !row.workflowOwnerId &&
             row.authorId === (props.viewer ?? session?.viewer)
               ? ""
               : undefined
@@ -1235,11 +1264,7 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
-              {props.stackPrevious && !props.day && !open ? (
-                <span className={styles.audienceAvatar} aria-hidden="true" />
-              ) : (
-                avatar(author)
-              )}
+              {avatar(author)}
               {to.length > 0 && (
                 <>
                   <ArrowRightIcon

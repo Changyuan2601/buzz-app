@@ -40,6 +40,9 @@ export type OutgoingEvent = Readonly<{
   guarded?: boolean;
   delivery: Delivery;
   error?: string | undefined;
+  /** The relay refused the last attempt, rather than it failing on this
+   * device, being asked to wait, or going unanswered. */
+  refused?: true | undefined;
 }>;
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
@@ -85,6 +88,10 @@ export class PublishRejected extends Error {
   }
 }
 
+/** Proven not delivered, but not refused: the request never left this
+ * device, or the relay asked it to wait. Retrying may succeed. */
+export class PublishNotSent extends PublishRejected {}
+
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
@@ -101,6 +108,7 @@ export function createOutbox(
     profiling = createRelayProfiler(),
     notifyListener = (listener: () => void) => listener(),
     preparePublish,
+    holdPublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
     clock = new MessageClock(),
@@ -120,6 +128,10 @@ export function createOutbox(
       event: RelayEvent,
       signal: AbortSignal,
     ) => Promise<(() => void) | undefined>;
+    /** Work a signed event waits for before it publishes, such as its
+     * channel's creation. A held event takes no delivery slot, and its
+     * deadline starts when the hold ends; a rejected hold fails it. */
+    holdPublish?: (event: RelayEvent) => Promise<void> | undefined;
   } = {},
 ) {
   const awaitsReceipt = needsReceipt;
@@ -147,6 +159,8 @@ export function createOutbox(
     timer: ReturnType<typeof setTimeout>;
     intent?: Promise<void>;
     controller?: AbortController;
+    /** Waiting on `holdPublish`, or for a slot after it, without using one. */
+    held?: true;
   };
   const attempts = new Map<string, Attempt>();
   const dismissing = new Map<string, Promise<void>>();
@@ -185,7 +199,28 @@ export function createOutbox(
     }
   };
   const inflight = () =>
-    [...attempts.values()].filter((attempt) => attempt.controller).length;
+    [...attempts.values()].filter(
+      (attempt) => attempt.controller && !attempt.held,
+    ).length;
+  /** Attempts whose hold ended, waiting for a free slot. */
+  const slotWaiters = new Set<() => void>();
+  function nextSlot() {
+    return new Promise<void>((resolve) => slotWaiters.add(resolve));
+  }
+  /** Offers free slots to released holds before queued deliveries; each
+   * released hold pumps again when it ends. */
+  function pumpDeliveries() {
+    if (closed) return;
+    if (slotWaiters.size) {
+      for (const resolve of [...slotWaiters]) {
+        slotWaiters.delete(resolve);
+        resolve();
+      }
+      return;
+    }
+    for (const queued of snapshot)
+      if (queued.delivery === "sending") void deliver(queued.event.id);
+  }
   let closed = false;
   let confirmedInvalidated = false;
   let confirmedKeep: ((event: EventData) => boolean) | undefined;
@@ -476,6 +511,18 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
+      const hold = holdPublish?.(signed);
+      if (hold) {
+        attempt.held = true;
+        clearTimeout(attempt.timer);
+        pumpDeliveries();
+        await Promise.race([hold, aborted]);
+        attempt.expiresAt = Date.now() + timeoutMs;
+        attempt.timer = setTimeout(() => expire(id), timeoutMs);
+        while (inflight() >= 3) await Promise.race([nextSlot(), aborted]);
+        delete attempt.held;
+        if (closed || signal.aborted || !find(id)) return;
+      }
       const check = preparePublish
         ? await profiling.measureAsync("send.prepare", id, () =>
             Promise.race([preparePublish(signed, signal), aborted]),
@@ -513,17 +560,25 @@ export function createOutbox(
       if (closed) return;
       if (latest && awaitsReceipt(latest.event))
         onReceipt(latest.signed ?? latest.event, undefined);
-      if (latest)
+      const delivery: Delivery | undefined =
+        latest &&
+        (latest.delivery === "seen" || attempt.previousDelivery === "seen"
+          ? "seen"
+          : attempt.previousDelivery === "accepted"
+            ? "accepted"
+            : publishing && !(error instanceof PublishRejected)
+              ? "unknown"
+              : failedDelivery(attempt));
+      if (latest && delivery)
         saveStatus({
           ...latest,
-          delivery:
-            latest.delivery === "seen" || attempt.previousDelivery === "seen"
-              ? "seen"
-              : attempt.previousDelivery === "accepted"
-                ? "accepted"
-                : publishing && !(error instanceof PublishRejected)
-                  ? "unknown"
-                  : failedDelivery(attempt),
+          delivery,
+          refused:
+            delivery === "failed" &&
+            error instanceof PublishRejected &&
+            !(error instanceof PublishNotSent)
+              ? true
+              : undefined,
           error: awaitsReceipt(latest.event)
             ? publishing && !(error instanceof PublishRejected)
               ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
@@ -566,9 +621,7 @@ export function createOutbox(
         notify();
         void persist(id).catch(() => {});
       }
-      if (!closed)
-        for (const queued of snapshot)
-          if (queued.delivery === "sending") void deliver(queued.event.id);
+      pumpDeliveries();
     }
   }
   const subscribe = (set: Set<() => void>, listener: () => void) => {
@@ -797,6 +850,7 @@ export function createOutbox(
           ...(active ? { guarded: true } : {}),
           delivery: "sending",
           error: undefined,
+          refused: undefined,
         });
         schedule(id, undefined, item.delivery);
       }

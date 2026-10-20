@@ -1,6 +1,13 @@
 import { motion, useReducedMotion } from "motion/react";
 import { Input } from "../../shared/design-system/ui/Input";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   usePanelTabHost,
   usePanelTabTitle,
@@ -40,6 +47,7 @@ import {
 } from "../../shared/identity/public-key";
 import { AgentPortrait } from "./AgentCard";
 import { AgentIdentityDialog } from "./AgentIdentityDialog";
+import { useNamePrompt, useShake } from "./useNamePrompt";
 import { AgentTabs } from "./AgentTabs";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 import styles from "./AgentsPage.module.css";
@@ -103,6 +111,12 @@ export function AgentDetails({
   const [namePending, setNamePending] = useState(false);
   const [nameError, setNameError] = useState("");
   const nameInput = useRef<HTMLInputElement>(null);
+  const nameEditor = useRef<HTMLDivElement>(null);
+  const namePrompt = useNamePrompt(nameInput);
+  useShake(nameEditor, namePrompt.attempts);
+  const nameMessage =
+    nameError || (namePrompt.attempts ? "Add a name to save your agent" : "");
+  const nameMessageId = useId();
   useEffect(() => {
     if (!editingName) return;
     // Wait for the closing menu's focus handoff before placing the caret.
@@ -119,7 +133,12 @@ export function AgentDetails({
     requestAnimationFrame(() => identityMenu.current?.focus());
   };
   const saveName = async () => {
-    if (namePending || !name.trim()) return;
+    if (namePending) return;
+    if (!name.trim()) {
+      setNameError("");
+      namePrompt.prompt();
+      return;
+    }
     setNamePending(true);
     setNameError("");
     try {
@@ -136,6 +155,7 @@ export function AgentDetails({
     else {
       setName(agent.name);
       setNameError("");
+      namePrompt.named(agent.name);
       setEditingName(true);
     }
   };
@@ -187,14 +207,20 @@ export function AgentDetails({
                 {agent.name}
               </h2>
               {editingName && (
-                <div className={styles.nameEditor}>
+                <div ref={nameEditor} className={styles.nameEditor}>
                   <Input
                     appearance="heading"
                     ref={nameInput}
                     aria-label="Agent name"
+                    placeholder="Name your agent"
+                    aria-invalid={namePrompt.attempts > 0 || undefined}
+                    aria-describedby={nameMessage ? nameMessageId : undefined}
                     value={name}
                     disabled={namePending}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) => {
+                      setName(event.target.value);
+                      namePrompt.named(event.target.value);
+                    }}
                     onKeyDown={(event) => {
                       if (event.nativeEvent.isComposing) return;
                       if (event.key === "Enter") {
@@ -240,7 +266,6 @@ export function AgentDetails({
                     shape="control"
                     variant="prominent"
                     loading={namePending}
-                    disabled={!name.trim()}
                     onClick={() => void saveName()}
                   >
                     Save
@@ -278,9 +303,13 @@ export function AgentDetails({
                 </>
               )}
             </div>
-            {editingName && nameError && (
-              <p role="alert" className="m-0 text-body-sm text-danger">
-                {nameError}
+            {editingName && nameMessage && (
+              <p
+                id={nameMessageId}
+                role="alert"
+                className="m-0 text-body-sm text-danger"
+              >
+                {nameMessage}
               </p>
             )}
             {editingIdentity && (

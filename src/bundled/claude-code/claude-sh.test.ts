@@ -1,8 +1,8 @@
 // The real claude.sh switching releases in a throwaway home, as Buzz builds
 // sharing one folder do.
 import { execFile, spawn } from "node:child_process";
+import { watch } from "node:fs";
 import {
-  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -151,6 +151,16 @@ it("starts the release in use when switches prune the one it read", async () => 
     `#!/bin/sh\n/bin/cat "$@"\n[ -e "${bin}/read" ] && exit\n: >"${bin}/read"\nuntil [ -e "${bin}/go" ]; do sleep 0.05; done\n`,
   );
   await chmod(join(bin, "cat"), 0o755);
+  let observed!: () => void;
+  let failed!: (error: Error) => void;
+  const read = new Promise<void>((resolve, reject) => {
+    observed = resolve;
+    failed = reject;
+  });
+  const watcher = watch(bin, (_event, name) => {
+    if (name === "read") observed();
+  });
+  watcher.once("error", failed);
   const launching = run(
     "bash",
     ["-c", script, "claude.sh", "run", "--version"],
@@ -158,18 +168,23 @@ it("starts the release in use when switches prune the one it read", async () => 
       env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home },
     },
   );
-  await expect
-    .poll(() =>
-      access(join(bin, "read")).then(
-        () => true,
-        () => false,
-      ),
-    )
-    .toBe(true);
-  // Two builds switch past the release the launcher read, pruning it.
-  await step("use", "0.2.0");
-  await step("use", "0.3.0");
-  expect(await folders()).not.toContain("0.1.0");
-  await writeFile(join(bin, "go"), "");
-  expect((await launching).stdout.trim()).toBe("0.3.0");
+  try {
+    // Observe the actual read event; process startup is not the behavior under test.
+    await Promise.race([
+      read,
+      launching.then(() => {
+        throw new Error("Launcher exited before reading current");
+      }),
+    ]);
+    // Two builds switch past the release the launcher read, pruning it.
+    await step("use", "0.2.0");
+    await step("use", "0.3.0");
+    expect(await folders()).not.toContain("0.1.0");
+    await writeFile(join(bin, "go"), "");
+    expect((await launching).stdout.trim()).toBe("0.3.0");
+  } finally {
+    watcher.close();
+    await writeFile(join(bin, "go"), "");
+    await launching.catch(() => {});
+  }
 });

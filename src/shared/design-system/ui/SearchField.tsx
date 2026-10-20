@@ -19,7 +19,7 @@ export function SearchField({
   ...inputProps
 }: {
   inputRef?: Ref<HTMLElement>;
-  variant?: "default" | "capsule";
+  variant?: "default" | "capsule" | "palette";
   prefix?: ReactNode;
   description?: ReactNode;
   error?: ReactNode;
@@ -32,19 +32,23 @@ export function SearchField({
   "value" | "onValueChange" | "className" | "ref" | "render" | "type" | "prefix"
 >) {
   const localRef = useRef<HTMLElement | null>(null);
-  const clear = value ? (
-    <IconButton
-      data-search-clear={variant === "capsule" ? "" : undefined}
-      aria-label={`Clear ${label.toLowerCase()}`}
-      icon={<XIcon size={16} aria-hidden="true" />}
-      size="sm"
-      disabled={inputProps.disabled || inputProps.readOnly}
-      onClick={() => {
-        onValueChange("");
-        localRef.current?.focus();
-      }}
-    />
-  ) : null;
+  const clear =
+    value || variant === "palette" ? (
+      <IconButton
+        data-search-clear={variant !== "default" ? "" : undefined}
+        data-empty={!value ? "" : undefined}
+        tabIndex={!value ? -1 : 0}
+        aria-hidden={!value || undefined}
+        aria-label={`Clear ${label.toLowerCase()}`}
+        icon={<XIcon size={16} aria-hidden="true" />}
+        size="sm"
+        disabled={inputProps.disabled || inputProps.readOnly}
+        onClick={() => {
+          onValueChange("");
+          localRef.current?.focus();
+        }}
+      />
+    ) : null;
   const input = (
     <Input
       autoCorrect="off"
@@ -52,7 +56,7 @@ export function SearchField({
       spellCheck={false}
       {...inputProps}
       data-buzz-ui=""
-      className={variant === "capsule" ? undefined : "buzz-input"}
+      className={variant !== "default" ? undefined : "buzz-input"}
       ref={(node) => {
         localRef.current = node;
         if (typeof inputRef === "function") return inputRef(node);
@@ -64,7 +68,10 @@ export function SearchField({
       placeholder={placeholder}
     />
   );
-  const icon = <MagnifyingGlassIcon size={16} aria-hidden="true" />;
+  const icon =
+    variant === "palette" ? null : (
+      <MagnifyingGlassIcon size={16} aria-hidden="true" />
+    );
   return (
     <Field
       label={label}
@@ -72,8 +79,8 @@ export function SearchField({
       description={description}
       error={error}
     >
-      {variant === "capsule" ? (
-        <div data-buzz-ui="" className="search-field">
+      {variant !== "default" ? (
+        <div data-buzz-ui="" className="search-field" data-variant={variant}>
           {icon}
           {prefix}
           {input}

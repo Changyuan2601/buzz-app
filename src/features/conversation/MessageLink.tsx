@@ -28,6 +28,10 @@ import {
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
+import {
+  fullSession,
+  type ComposerSession,
+} from "../messages/composer-session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import {
   LinkChannelPrivateContext,
@@ -72,7 +76,7 @@ export function MessageLink({
   /** The receiving community's name for a raw destination. Display only: a raw
    * link copies as its URL. */
   directoryLabel?: string | undefined;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   interactive?: boolean;
   channelPrivate?: boolean;
@@ -91,6 +95,7 @@ export function MessageLink({
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
+  const host = fullSession(session);
   // Channel-only links name a channel the reader may not have joined. A
   // composer decoration is the writer's own draft: it never looks one up.
   const referenced =
@@ -100,15 +105,15 @@ export function MessageLink({
     !destination.threadRootId
       ? destination.channelId
       : undefined;
-  const reference = useChannelReference(session?.channels, referenced);
+  const reference = useChannelReference(host?.channels, referenced);
   // Subscribe to the session's presentation, including chosen-name provenance.
   // A string snapshot stays stable when unrelated channel activity changes.
   const sessionName = useSyncExternalStore(
-    session?.channels.subscribeList ?? subscribe,
+    host?.channels.subscribeList ?? subscribe,
     () => {
       if (!destination || destination.messageId || destination.threadRootId)
         return "";
-      const channel = session?.channels
+      const channel = host?.channels
         .list()
         .channels.find((item) => item.id === destination.channelId);
       return channel?.channelType === "solo" && !channel.cached
@@ -183,7 +188,7 @@ export function MessageLink({
     }
   }
   const preview =
-    session && destination?.messageId
+    host && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
       : undefined;
   const openInternal = () => {
@@ -317,15 +322,15 @@ export function MessageLink({
       element
     );
     const card =
-      !active || !interactive || !session
+      !active || !interactive || !host
         ? undefined
         : preview
           ? {
               label: "Message preview",
               body: previewOpen && (
                 <BuzzLinkPreview
-                  key={messageViewKey(session, scope, url)}
-                  session={session}
+                  key={messageViewKey(host, scope, url)}
+                  session={host}
                   channelId={preview.channelId}
                   messageId={preview.messageId}
                 />

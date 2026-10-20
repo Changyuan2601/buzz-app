@@ -106,6 +106,59 @@ it.each(["bottom", "side"] as const)(
   },
 );
 
+it("opens the host member picker only while the launcher binding is current", async () => {
+  const openMembers = vi.fn();
+  let requested: (() => void) | undefined;
+  const panel = {
+    id: "huddles",
+    key: "buzz.huddles/huddles",
+    pluginId: "buzz.huddles",
+    revision: "1",
+    title: "Huddles",
+    matches: () => false,
+    component: () => null,
+    channelLauncher: (props: { openMembers?: (() => void) | undefined }) => {
+      requested = props.openMembers;
+      return (
+        <button type="button" onClick={props.openMembers}>
+          Add someone
+        </button>
+      );
+    },
+  } satisfies RegisteredPanel;
+  const available = [panel];
+  const panels: Panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    register: () => {},
+    resolve: () => panel,
+  };
+  function Harness() {
+    return useChannelPanels(
+      panels,
+      {
+        scope: "scope",
+        viewer: "viewer",
+        channelId: "alpha",
+        channelName: "Alpha",
+        relayUrl: "wss://example.com",
+      },
+      undefined,
+      undefined,
+      undefined,
+      openMembers,
+    ).launchers;
+  }
+  const view = render(<Harness />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Add someone" }));
+  expect(openMembers).toHaveBeenCalledTimes(1);
+  view.unmount();
+  requested?.();
+  expect(openMembers).toHaveBeenCalledTimes(1);
+});
+
 it.each(["bottom", "side"] as const)(
   "lets a %s panel and its launcher open targets as channel tabs",
   async (placement) => {

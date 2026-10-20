@@ -36,6 +36,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         relay={relay}
         navigator={navigator}
         extensions={ctx.conversation}
+        tabs={ctx.conversation.ui.Tabs}
         archive={archive}
       />
     ),

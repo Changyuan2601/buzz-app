@@ -66,11 +66,14 @@ export function UnreadBadge({
   channelId,
   dm = false,
   label,
+  labelUnread = "ordinary",
 }: {
   session: RelaySession;
   channelId: string;
   dm?: boolean;
   label?: ReactNode;
+  /** Solo labels emphasize every unread message, including directed attention. */
+  labelUnread?: "ordinary" | "all";
 }) {
   const { snapshot, activity, count, manual, unread, ordinary, threadCount } =
     useUnreadState(session, channelId, dm);
@@ -84,7 +87,13 @@ export function UnreadBadge({
   return (
     <>
       {label !== undefined && (
-        <span data-channel-unread-title={ordinary || undefined}>{label}</span>
+        <span
+          data-channel-unread-title={
+            (labelUnread === "all" ? unread : ordinary) || undefined
+          }
+        >
+          {label}
+        </span>
       )}
       {unread && (
         <span
@@ -154,7 +163,7 @@ export function UnreadOptions({
           onClick={() => {
             const last = session.channels
               .window(channelId)
-              .rows.filter((row) => !row.membership)
+              .rows.filter((row) => !row.membership && !row.huddle)
               .at(-1);
             if (last)
               run(

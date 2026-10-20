@@ -202,9 +202,10 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
       .getByRole("button", { name: "More actions for Channels" })
       .focus();
     await page.keyboard.press("Enter");
-    // Keyboard opening highlights the first item, Sort, asynchronously.
+    // Keyboard opening highlights the first item, Filter, asynchronously.
+    const filter = page.getByRole("menuitem", { name: "Filter", exact: true });
+    await expect(filter).toHaveAttribute("data-highlighted", "");
     const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
-    await expect(sort).toHaveAttribute("data-highlighted", "");
     await sort.focus();
     await page.keyboard.press("ArrowRight");
     return page.getByRole("menu", { name: "Sort", exact: true });

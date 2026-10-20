@@ -24,6 +24,8 @@ export function canShareConversation(
     canShareSoloChat(session, channel) ||
     !!(
       channel &&
+      !channel.huddle &&
+      !channel.metadataPending &&
       !channel.cached &&
       !channel.readOnly &&
       !channel.archived &&
@@ -114,6 +116,8 @@ export async function destinationShareAudience(
   if (
     !fresh ||
     !destination ||
+    destination.huddle ||
+    destination.metadataPending ||
     destination.cached ||
     destination.archived ||
     destination.readOnly ||
@@ -150,6 +154,8 @@ export async function publishSoloChatLink(
     await session.channelWrites.refreshMembership(destinationId);
   const eligible = (channel: ChannelSummary, soloChat: boolean) =>
     !!session.viewer &&
+    !channel.huddle &&
+    !channel.metadataPending &&
     !channel.cached &&
     !channel.readOnly &&
     !channel.archived &&

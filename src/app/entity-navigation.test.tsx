@@ -244,6 +244,13 @@ it("lists active primary pages in their sidebar and header placements", async ()
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(
+    within(search).queryByRole("option", { name: "Fixture notes" }),
+  ).not.toBeInTheDocument();
+  await userEvent.type(
+    within(search).getByRole("combobox", { name: "Search Buzz" }),
+    "Fixture notes",
+  );
+  expect(
     within(search).getByRole("option", { name: "Fixture notes" }),
   ).toBeInTheDocument();
   expect(
@@ -301,70 +308,71 @@ function legacyPageFixture(
   return current;
 }
 
-it.each(["Inbox", "Bestie"])(
-  "normalizes old %s links in the same visit and caller, retaining scope",
-  async (name) => {
+it.each(
+  ["Inbox", "Bestie"].flatMap((name) => [
+    { name, scope: undefined },
+    { name, scope: null },
+    { name, scope: { viewer, communityOrigin: origin } },
+  ]),
+)(
+  "normalizes old $name links in the same visit and caller, retaining $scope scope",
+  async ({ name, scope }) => {
     const current = legacyPageFixture();
     await screen.findByRole("navigation", { name: "Pages" });
     const pageId = name.toLowerCase();
-    for (const scope of [
-      undefined,
-      null,
-      { viewer, communityOrigin: origin },
-    ]) {
-      act(() => {
-        void current.navigation.open({
-          version: 1,
-          kind: "settings",
-          section: "appearance",
-        });
+
+    act(() => {
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "appearance",
       });
-      await waitFor(() =>
-        expect(current.navigation.snapshot().status).toBe("opened"),
-      );
-      const previous = current.navigation.snapshot().entry.id;
-      const old: OpenTarget = {
+    });
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    const previous = current.navigation.snapshot().entry.id;
+    const old: OpenTarget = {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      route: { version: 1, params: name },
+      ...(scope !== undefined ? { scope } : {}),
+    };
+    const bound = parseOpenTarget(old);
+    let visit = "";
+    let result!: ReturnType<typeof current.navigation.open>;
+    act(() => {
+      result = current.navigation.open(bound);
+      visit = current.navigation.snapshot().entry.id;
+    });
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    expect(await result).toEqual({ status: "opened" });
+    expect(current.navigation.snapshot().entry).toEqual({
+      id: visit,
+      target: {
         version: 1,
         kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
-        route: { version: 1, params: name },
+        pluginId: `buzz.${pageId}`,
+        pageId,
         ...(scope !== undefined ? { scope } : {}),
-      };
-      const bound = parseOpenTarget(old);
-      let visit = "";
-      let result!: ReturnType<typeof current.navigation.open>;
-      act(() => {
-        result = current.navigation.open(bound);
-        visit = current.navigation.snapshot().entry.id;
-      });
-      await waitFor(() =>
-        expect(current.navigation.snapshot().status).toBe("opened"),
-      );
-      expect(await result).toEqual({ status: "opened" });
-      expect(current.navigation.snapshot().entry).toEqual({
-        id: visit,
-        target: {
-          version: 1,
-          kind: "page",
-          pluginId: `buzz.${pageId}`,
-          pageId,
-          ...(scope !== undefined ? { scope } : {}),
-        },
-      });
-      expect(current.communities.snapshot().selected).toBe(
-        scope === null ? null : origin,
-      );
-      act(() => current.navigation.back());
-      await waitFor(() =>
-        expect(current.navigation.snapshot().entry.id).toBe(previous),
-      );
-      act(() => current.navigation.forward());
-      await waitFor(() => {
-        expect(current.navigation.snapshot().entry.id).toBe(visit);
-        expect(current.navigation.snapshot().status).toBe("opened");
-      });
-    }
+      },
+    });
+    expect(current.communities.snapshot().selected).toBe(
+      scope === null ? null : origin,
+    );
+    act(() => current.navigation.back());
+    await waitFor(() =>
+      expect(current.navigation.snapshot().entry.id).toBe(previous),
+    );
+    act(() => current.navigation.forward());
+    await waitFor(() => {
+      expect(current.navigation.snapshot().entry.id).toBe(visit);
+      expect(current.navigation.snapshot().status).toBe("opened");
+    });
   },
 );
 
@@ -456,7 +464,7 @@ it("restores legacy placeholder history but does not normalize unknown versions 
   expect(await result).toEqual({ status: "failed", reason: "unavailable" });
 });
 
-it("cold Settings Back uses required Messages when Inbox is disabled", async () => {
+it("cold Settings Close uses required Messages when Inbox is disabled", async () => {
   window.history.replaceState(
     null,
     "",
@@ -469,7 +477,7 @@ it("cold Settings Back uses required Messages when Inbox is disabled", async () 
     )}`,
   );
   const current = legacyPageFixture();
-  const back = await screen.findByRole("button", { name: "Back" });
+  const back = await screen.findByRole("button", { name: "Close Settings" });
   await act(() => current.plugins.change("disable", "buzz.inbox"));
   expect(
     current.pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
@@ -486,4 +494,48 @@ it("cold Settings Back uses required Messages when Inbox is disabled", async () 
   expect(
     screen.queryByText("This destination couldn’t open"),
   ).not.toBeInTheDocument();
+});
+
+it("Close returns to the immediately preceding failed destination, not an older retained workspace", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "notes",
+    });
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const failed: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "fixture.missing",
+    pageId: "missing",
+  };
+  await act(async () => {
+    void current.navigation.open(failed);
+  });
+  await screen.findByText("This destination couldn’t open");
+  const visit = current.navigation.snapshot().entry.id;
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await userEvent.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry).toEqual({
+      id: visit,
+      target: failed,
+    }),
+  );
 });

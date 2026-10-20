@@ -1,4 +1,5 @@
 import { projectSidebarRecord } from "./sidebar-registers.ts";
+import type { ReadFilter } from "./events.ts";
 import type { RelayEvent } from "./events.ts";
 import type { RelayReader } from "./reader.ts";
 
@@ -7,7 +8,39 @@ export const SIDEBAR_COORDINATES = [
   "channel-stars",
   "channel-mutes",
   "channel-sort",
+  "channel-filter",
 ] as const;
+/** Only the complete bounded account-preference batch may exceed the ordinary four-filter limit. */
+export function isSidebarPreferencesBatch(
+  filters: readonly ReadFilter[],
+): boolean {
+  const viewer = filters[0]?.authors?.[0];
+  return (
+    typeof viewer === "string" &&
+    !!viewer &&
+    filters.length === SIDEBAR_COORDINATES.length &&
+    new Set(filters.map((filter) => filter?.["#d"]?.[0])).size ===
+      SIDEBAR_COORDINATES.length &&
+    filters.every(
+      (filter) =>
+        Array.isArray(filter?.kinds) &&
+        filter.kinds.length === 1 &&
+        filter.kinds[0] === 30078 &&
+        Array.isArray(filter.authors) &&
+        filter.authors.length === 1 &&
+        filter.authors[0] === viewer &&
+        Array.isArray(filter["#d"]) &&
+        filter["#d"].length === 1 &&
+        SIDEBAR_COORDINATES.includes(
+          filter["#d"][0] as (typeof SIDEBAR_COORDINATES)[number],
+        ) &&
+        filter.limit === 1 &&
+        Object.keys(filter).every((key) =>
+          ["kinds", "authors", "#d", "limit"].includes(key),
+        ),
+    )
+  );
+}
 export type SidebarGroups = Readonly<{
   sections: readonly Readonly<{
     id: string;
@@ -17,6 +50,29 @@ export type SidebarGroups = Readonly<{
   }>[];
   assignments: Readonly<Record<string, string>>;
 }>;
+export type SidebarFilterMode = "all" | "unreads" | "active";
+export const DEFAULT_ACTIVE_WINDOW_SECONDS = 30 * 86400;
+export const MAX_ACTIVE_WINDOW_SECONDS = 365 * 86400;
+export function validActiveWindow(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 86400 &&
+    value <= MAX_ACTIVE_WINDOW_SECONDS &&
+    value % 86400 === 0
+  );
+}
+export type SidebarFilterSettings = Readonly<{
+  filters: Readonly<Record<string, SidebarFilterMode>>;
+  activeWindowSeconds: Readonly<Record<string, number>>;
+}>;
+export type SidebarFilterMutator = (
+  group: string,
+  mode: SidebarFilterMode,
+  sectionIds: readonly string[],
+  signal: AbortSignal,
+  activeWindowSeconds?: number | null,
+) => Promise<SidebarFilterSettings>;
 export type SidebarSortMode = "alpha" | "recent";
 export type SidebarSortMutator = (
   group: string,
@@ -33,6 +89,8 @@ export type SidebarPreferences = SidebarGroups &
     starred: readonly string[];
     muted: readonly string[];
     sort?: Readonly<Record<string, SidebarSortMode>>;
+    filters?: Readonly<Record<string, SidebarFilterMode>>;
+    activeWindowSeconds?: Readonly<Record<string, number>>;
   }>;
 export type SidebarAssignmentIntent = Readonly<{
   channelId: string;
@@ -81,12 +139,15 @@ export function projectSidebarPreferences(
   mutes?: unknown,
   sort?: unknown,
   sortSectionIds?: readonly string[],
+  filters?: unknown,
 ): SidebarPreferences {
   const result: {
     sections: { id: string; name: string; icon?: string; order: number }[];
     assignments: Record<string, string>;
     starred: string[];
     sort?: Record<string, SidebarSortMode>;
+    filters?: Record<string, SidebarFilterMode>;
+    activeWindowSeconds?: Record<string, number>;
     muted: string[];
   } = {
     sections: [],
@@ -175,6 +236,62 @@ export function projectSidebarPreferences(
         ),
     );
   }
+  if (filters !== undefined) {
+    const data = projectSidebarRecord("channel-filter", object(filters));
+    if (data.version !== 1) throw new Error("Unsupported sidebar filter");
+    const entries = Object.entries(object(data.groups));
+    if (entries.length > 104) throw new Error("Sidebar filter budget exceeded");
+    const fixed = new Set(["starred", "channels", "forums", "dms"]);
+    const liveSections = new Set(
+      (sortSectionIds ?? []).map((id) => `section:${id}`),
+    );
+    if (
+      entries.some(
+        ([, mode]) => mode !== "all" && mode !== "unreads" && mode !== "active",
+      )
+    )
+      throw new Error("Invalid sidebar filter mode");
+    const windows = Object.entries(
+      object(
+        data.activeWindowSeconds === undefined ? {} : data.activeWindowSeconds,
+      ),
+    );
+    if (
+      windows.length > 104 ||
+      windows.some(([, value]) => !validActiveWindow(value))
+    )
+      throw new Error("Invalid sidebar activity window");
+    result.activeWindowSeconds = Object.fromEntries(
+      windows
+        .map(([key, value]) => [text(key, 264), value as number] as const)
+        .filter(
+          ([key]) =>
+            fixed.has(key) ||
+            liveSections.has(key) ||
+            (sortSectionIds === undefined &&
+              key.startsWith("section:") &&
+              key.length > 8),
+        ),
+    );
+    result.filters = Object.fromEntries(
+      entries
+        .filter(
+          (entry): entry is [string, SidebarFilterMode] =>
+            entry[1] === "all" ||
+            entry[1] === "unreads" ||
+            entry[1] === "active",
+        )
+        .map(([key, mode]) => [text(key, 264), mode] as const)
+        .filter(
+          ([key]) =>
+            fixed.has(key) ||
+            liveSections.has(key) ||
+            (sortSectionIds === undefined &&
+              key.startsWith("section:") &&
+              key.length > 8),
+        ),
+    );
+  }
   if (mutes !== undefined) {
     const data = object(mutes);
     if (data.version !== 1) throw new Error("Unsupported channel mutes");
@@ -211,7 +328,6 @@ export async function readSidebarPreferences(
         "#d": [coordinate],
         limit: 1,
       })),
-      // One user-visible groups/stars read must not wait behind bulk profile enrichment.
       { signal, priority: "foreground" },
     );
     signal.throwIfAborted();

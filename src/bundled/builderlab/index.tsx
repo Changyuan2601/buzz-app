@@ -1,4 +1,7 @@
+import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
+import { handoffBackupSession } from "../../features/identity/backup";
+import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
 import {
   browserCredential,
@@ -10,9 +13,9 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
-export const inject = ["host", "settingsCards", "agents"];
+export const inject = ["host", "settingsCards", "agents", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -29,6 +32,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
+  const backupSession = () => {
+    if (!nativeIdentityEnabled()) return;
+    handoffBackupSession(
+      "builderlab",
+      session.snapshot().status === "signed-in"
+        ? session.credential().value
+        : null,
+    );
+  };
+  ctx.effect(() => {
+    const stop = session.subscribe(backupSession);
+    return () => {
+      stop();
+      if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
+    };
+  });
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
@@ -41,7 +60,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const state = session.snapshot();
       providerState = Object.freeze(
         state.status === "signed-in"
-          ? { readiness: "ready" }
+          ? state.account?.canUseRemoteAgents
+            ? { readiness: "ready" }
+            : { readiness: "attention", attentionLabel: "Coming soon" }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -52,19 +73,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
       for (const listener of providerListeners) listener();
     };
     const stopProvider = session.subscribe(updateProvider);
-    const ProviderDialogBody = () => (
-      <div className="grid gap-3">
-        <InlineHeader level={3} title="Connection" />
-        <Login
-          session={session}
-          available={loginAvailable}
-          active={() => true}
-          showHeading={false}
-        />
-      </div>
-    );
+    const ProviderDialogBody = () => {
+      const state = useSyncExternalStore(session.subscribe, session.snapshot);
+      return (
+        <div className="grid gap-3">
+          <InlineHeader level={3} title="Connection" />
+          <Login
+            session={session}
+            available={loginAvailable}
+            active={() => true}
+            showHeading={false}
+          />
+          {state.status === "signed-in" &&
+            !state.account?.canUseRemoteAgents && (
+              <p role="status" className="text-body-sm text-secondary">
+                Builderlab remote agents are coming soon for your account.
+              </p>
+            )}
+        </div>
+      );
+    };
     ctx.agents.register({
-      ...builderlabType(agents, session),
+      ...builderlabType(agents, session, ctx.relay),
       provider: {
         snapshot: () => providerState,
         subscribe: (listener) => {
@@ -91,11 +121,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   ctx.settingsCards.register({
     id: "login",
-    title: "Builderlab",
-    group: "Integrations",
+    title: "Builderlab agents",
+    group: "Plugins",
     component: ({ active }) => (
-      <>
+      <section aria-labelledby="builderlab-agents-title">
+        <Header id="builderlab-agents-title" title="Builderlab agents" />
         <Login
+          showHeading={false}
           session={session}
           available={loginAvailable}
           unavailableReason={
@@ -106,7 +138,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           active={active}
         />
         <RemoteAgents client={agents} session={session} active={active} />
-      </>
+      </section>
     ),
   });
 };

@@ -44,6 +44,7 @@ type ImageReviewStageProps = {
   media(url: string): string | undefined;
   select(url: string): void;
   onOpenLink(url: string): boolean;
+  allowCopy?: boolean;
 };
 
 export function ImageReviewStage({
@@ -52,6 +53,7 @@ export function ImageReviewStage({
   media,
   select,
   onOpenLink,
+  allowCopy = true,
 }: ImageReviewStageProps) {
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
@@ -93,7 +95,8 @@ export function ImageReviewStage({
   const selectedUrlRef = useRef(selectedUrl);
   selectedUrlRef.current = selectedUrl;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
-  const canCopyImage = proxySource && (nativeSource || supportsImageCopy());
+  const canCopyImage =
+    allowCopy && proxySource && (nativeSource || supportsImageCopy());
   const {
     zoom,
     offset,
@@ -406,7 +409,7 @@ export function ImageReviewStage({
             title="Download image"
             onClick={() => {
               setDownloadErrorSource(undefined);
-              void downloadNativeMedia(source).catch(() =>
+              void downloadNativeMedia(source, selected?.name ?? "").catch(() =>
                 setDownloadErrorSource(source),
               );
             }}

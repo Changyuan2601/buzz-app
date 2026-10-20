@@ -81,6 +81,42 @@ const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
   {
+    id: "agent-coordination",
+    title: "Agent coordination",
+    description: "Every compact entry keeps its author's avatar visible.",
+    examples: [
+      {
+        id: "repeated-agent",
+        title: "Consecutive agent updates",
+        description:
+          "Author icons remain visible before and after expanding a row.",
+        rows: [
+          message("coordination-first", "Investigating the missing icons.", {
+            authorId: agent,
+            audience: "agents",
+          }),
+          message(
+            "coordination-next",
+            "Found the cause.\n\nThe fix is ready to try.",
+            {
+              authorId: agent,
+              audience: "agents",
+            },
+          ),
+          message(
+            "coordination-addressed",
+            "@Sam Rivera please review the fix.",
+            {
+              authorId: agent,
+              audience: "agents",
+              mentions: [teammate],
+            },
+          ),
+        ],
+      },
+    ],
+  },
+  {
     id: "session-links",
     title: "Session links",
     description:
@@ -453,6 +489,42 @@ export const groups: Group[] = [
         "The current renderer shows the replacement body without a separate edited badge.",
         "Updated: the review is now at 3 pm.",
         { edited: true },
+      ),
+    ],
+  },
+  {
+    id: "diagrams",
+    title: "Mermaid diagrams",
+    description:
+      "Fenced mermaid blocks drawn by the bundled plugin inside the host code frame.",
+    examples: [
+      single(
+        "diagram-flowchart",
+        "Flowchart with a subgraph",
+        "Nodes, edges and a subgraph between surrounding prose.",
+        "Here is the release flow:\n\n```mermaid\nflowchart LR\n  draft[Draft PR] --> review{Review}\n  review -->|changes| draft\n  review -->|approved| ci\n  subgraph Checks\n    ci[CI] --> e2e[Browser tests]\n  end\n  e2e --> merge((Merge))\n```\n\nPing me if a step is unclear.",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-sequence",
+        "Sequence diagram",
+        "Participants, messages and a note.",
+        "```mermaid\nsequenceDiagram\n  participant App\n  participant Relay\n  App->>Relay: Publish event\n  Relay-->>App: OK\n  Note over App,Relay: Signed and verified\n```",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-pie",
+        "Pie chart",
+        "Series colors on the message surface.",
+        '```mermaid\npie title Review time\n  "Waiting" : 45\n  "Reviewing" : 30\n  "Fixing" : 15\n  "Merging" : 10\n```',
+        { authorId: agent },
+      ),
+      single(
+        "diagram-invalid",
+        "Invalid source",
+        "The parse error and the source replace the diagram.",
+        "```mermaid\nflowchart LR\n  A --> (\n```",
+        { authorId: agent },
       ),
     ],
   },

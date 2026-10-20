@@ -1,10 +1,10 @@
 import type { ChannelSummary } from "../relay/contracts";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { MentionRecipient } from "./mention-draft";
 import { archiveHides } from "../relay/identity-archives";
 
 /** The shared archive discovery rule applied to mention recipients. */
-export function archivedMention(session: RelaySession, pubkey: string) {
+export function archivedMention(session: ComposerSession, pubkey: string) {
   return archiveHides(session.archives, pubkey, session.viewer);
 }
 
@@ -27,7 +27,7 @@ export function allowsOutsideMentions(
  * addressing outside people.
  */
 export function mentionAdmission(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
@@ -56,7 +56,7 @@ export function mentionAdmission(
  * stays display-only, as the chooser would not offer it.
  */
 export function pastedMentionRecipient(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   pubkey: string,
   inviteAgents = false,

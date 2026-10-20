@@ -1,8 +1,8 @@
 // The real codex.sh switching releases in a throwaway home, as Buzz builds
 // sharing one folder do.
 import { execFile, spawn } from "node:child_process";
+import { watch } from "node:fs";
 import {
-  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -13,6 +13,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -97,18 +98,18 @@ it("prunes older releases but keeps a newer one another build may be testing", a
   expect(await folders()).toEqual(["0.10.0", "0.2.0", "0.3.0"]);
 });
 
-/** Holds the switch lock, as a build that is switching does, until killed. */
-async function hold(dir: string) {
+/** Holds the lock file `lock`, as another build's codex.sh does, until killed. */
+async function hold(lock: string) {
   const holder = spawn("perl", [
     "-MFcntl=:flock",
     "-e",
     'open(my $l, ">>", $ARGV[0]) or die; flock($l, LOCK_EX) or die; $| = 1; print "held\\n"; sleep 60',
-    join(dir, ".lock"),
+    lock,
   ]);
   await new Promise((resolve) => holder.stdout.once("data", resolve));
   return holder;
 }
-/** Resolves once the switch with process `pid` is waiting for the lock. */
+/** Resolves once the codex.sh with process `pid` is waiting for a lock. */
 const waiting = (pid: number | undefined) =>
   expect
     .poll(() =>
@@ -121,7 +122,7 @@ const waiting = (pid: number | undefined) =>
 
 it("waits for a switch in progress, and goes on once its holder is killed", async () => {
   const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.1.0");
-  const holder = await hold(dir);
+  const holder = await hold(join(dir, ".lock"));
   const switching = step("use", "0.2.0");
   await waiting(switching.child.pid);
   expect(await selected()).toBe("codex-cli 0.1.0");
@@ -132,7 +133,7 @@ it("waits for a switch in progress, and goes on once its holder is killed", asyn
 
 it("leaves the release in use when its switch's release is pruned while it waits", async () => {
   const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.2.0");
-  const holder = await hold(dir);
+  const holder = await hold(join(dir, ".lock"));
   const switching = step("use", "0.1.0");
   await waiting(switching.child.pid);
   // The holder's own prune removes the older release this switch named.
@@ -147,6 +148,8 @@ it("starts the release in use when switches prune the one it read", async () => 
     ["0.1.0", "0.2.0", "0.3.0"],
     "0.1.0",
   );
+  // Complete home setup before observing the release-read boundary.
+  await step("run", "--version");
   // A `cat` that stops after its first read, of `current`, until `go`.
   const bin = join(home, "bin");
   await mkdir(bin);
@@ -155,6 +158,16 @@ it("starts the release in use when switches prune the one it read", async () => 
     `#!/bin/sh\n/bin/cat "$@"\n[ -e "${bin}/read" ] && exit\n: >"${bin}/read"\nuntil [ -e "${bin}/go" ]; do sleep 0.05; done\n`,
   );
   await chmod(join(bin, "cat"), 0o755);
+  let observed!: () => void;
+  let failed!: (error: Error) => void;
+  const read = new Promise<void>((resolve, reject) => {
+    observed = resolve;
+    failed = reject;
+  });
+  const watcher = watch(bin, (_event, name) => {
+    if (name === "read") observed();
+  });
+  watcher.once("error", failed);
   const launching = run(
     "bash",
     ["-c", script, "codex.sh", "run", "--version"],
@@ -162,20 +175,25 @@ it("starts the release in use when switches prune the one it read", async () => 
       env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home },
     },
   );
-  await expect
-    .poll(() =>
-      access(join(bin, "read")).then(
-        () => true,
-        () => false,
-      ),
-    )
-    .toBe(true);
-  // Two builds switch past the release the launcher read, pruning it.
-  await step("use", "0.2.0");
-  await step("use", "0.3.0");
-  expect(await folders()).not.toContain("0.1.0");
-  await writeFile(join(bin, "go"), "");
-  expect((await launching).stdout.trim()).toBe("codex-cli 0.3.0");
+  try {
+    // Observe the actual read event; process startup is not the behavior under test.
+    await Promise.race([
+      read,
+      launching.then(() => {
+        throw new Error("Launcher exited before reading current");
+      }),
+    ]);
+    // Two builds switch past the release the launcher read, pruning it.
+    await step("use", "0.2.0");
+    await step("use", "0.3.0");
+    expect(await folders()).not.toContain("0.1.0");
+    await writeFile(join(bin, "go"), "");
+    expect((await launching).stdout.trim()).toBe("codex-cli 0.3.0");
+  } finally {
+    watcher.close();
+    await writeFile(join(bin, "go"), "");
+    await launching.catch(() => {});
+  }
 });
 
 // Buzz's own Codex home keeps its conversations out of the user's Codex
@@ -249,6 +267,154 @@ it("stops rather than replace a file in the way of a link", async () => {
     stderr: expect.stringContaining("setup conflicts"),
   });
   expect(await readFile(join(f.own, "config.toml"), "utf8")).toBe("keep me");
+});
+
+/** Signs in as `codex login` does in Buzz's home: it signs out, removing the
+ * link, and writes the new sign-in in its place. */
+async function signIn(own: string, auth: string) {
+  await rm(join(own, "auth.json"));
+  await writeFile(join(own, "auth.json"), auth, { mode: 0o600 });
+}
+
+it("hands a sign-in made in Buzz's home to the shared one, and links it again", async () => {
+  const f = await echoing();
+  await mkdir(f.codex, { recursive: true });
+  await writeFile(join(f.codex, "auth.json"), "revoked");
+  await f.step("run");
+  await signIn(f.own, "signed in");
+  await f.step("run");
+  expect(await readlink(join(f.own, "auth.json"))).toBe(
+    join(f.codex, "auth.json"),
+  );
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("signed in");
+});
+
+it("keeps a newer shared sign-in over the one in Buzz's home", async () => {
+  const f = await echoing();
+  await f.step("run");
+  await signIn(f.own, "older");
+  await utimes(join(f.own, "auth.json"), 1_000, 1_000);
+  await writeFile(join(f.codex, "auth.json"), "signed in");
+  await f.step("run");
+  expect(await readlink(join(f.own, "auth.json"))).toBe(
+    join(f.codex, "auth.json"),
+  );
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("signed in");
+});
+
+it("writes a handed-over sign-in through the user's own link, and privately when new", async () => {
+  const f = await echoing();
+  await f.step("run");
+  await signIn(f.own, "first");
+  await f.step("run");
+  expect((await stat(join(f.codex, "auth.json"))).mode & 0o777).toBe(0o600);
+  // The user keeps their sign-in elsewhere and links it into their Codex home.
+  const kept = join(f.home, "dotfiles-auth.json");
+  await rm(join(f.codex, "auth.json"));
+  await writeFile(kept, "first", { mode: 0o600 });
+  await symlink("../dotfiles-auth.json", join(f.codex, "auth.json"));
+  await signIn(f.own, "second");
+  await f.step("run");
+  expect(await readlink(join(f.codex, "auth.json"))).toBe(
+    "../dotfiles-auth.json",
+  );
+  expect(await readFile(kept, "utf8")).toBe("second");
+});
+
+it("leaves the shared sign-in alone when another run hands it over while it waits", async () => {
+  const f = await echoing();
+  await f.step("run");
+  await signIn(f.own, "signed in");
+  const holder = await hold(`${f.dir}-home.lock`);
+  const waiter = f.step("run");
+  let handed: number;
+  try {
+    await waiting(waiter.child.pid);
+    // The run holding the lock hands the sign-in over and links it again.
+    await writeFile(join(f.codex, "auth.json"), "signed in");
+    await rm(join(f.own, "auth.json"));
+    await symlink(join(f.codex, "auth.json"), join(f.own, "auth.json"));
+    handed = (await stat(join(f.codex, "auth.json"))).ino;
+  } finally {
+    holder.kill("SIGKILL");
+  }
+  await waiter;
+  // Replacing it again could undo a refresh Codex has written since.
+  expect((await stat(join(f.codex, "auth.json"))).ino).toBe(handed);
+});
+
+it("leaves a sign-in Codex is still writing in Buzz's home", async () => {
+  const f = await echoing();
+  await mkdir(f.codex, { recursive: true });
+  await writeFile(join(f.codex, "auth.json"), "signed in");
+  await f.step("run");
+  await signIn(f.own, "");
+  await expect(f.step("run")).rejects.toMatchObject({
+    stderr: expect.stringContaining("setup conflicts"),
+  });
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("signed in");
+  expect(await readFile(join(f.own, "auth.json"), "utf8")).toBe("");
+});
+
+it("keeps a sign-in it fails to hand over, and hands it over on the next run", async () => {
+  const f = await echoing();
+  await f.step("run");
+  await writeFile(join(f.codex, "auth.json"), "revoked");
+  await utimes(join(f.codex, "auth.json"), 500, 500);
+  await signIn(f.own, "signed in");
+  await utimes(join(f.own, "auth.json"), 1_000, 1_000);
+  // A `cat` that stops partway through writing the sign-in, as on a full disk.
+  const bin = join(f.home, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "cat"),
+    '#!/bin/sh\ncase "$1" in *-home/auth.json) printf partial; exit 1 ;; esac\nexec /bin/cat "$@"\n',
+  );
+  await chmod(join(bin, "cat"), 0o755);
+  await expect(
+    run("bash", ["-c", script, "codex.sh", "run"], {
+      env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: f.home },
+    }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("couldn't save the Codex sign-in"),
+  });
+  // Left as it was, so not newer than the sign-in still waiting in Buzz's home.
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("revoked");
+  expect(await readdir(f.codex)).not.toContain("auth.json.buzz");
+  await f.step("run");
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("signed in");
+  expect(await readlink(join(f.own, "auth.json"))).toBe(
+    join(f.codex, "auth.json"),
+  );
+});
+
+it("lets go of the hand-over lock before Codex starts", async () => {
+  const f = await echoing();
+  const started = join(f.home, "started");
+  await writeFile(
+    join(f.dir, "0.1.0/bin/codex"),
+    `#!/bin/sh\n[ -e "${started}" ] && exit\n: >"${started}"\nexec sleep 60\n`,
+  );
+  await mkdir(f.own, { recursive: true });
+  await writeFile(join(f.own, "auth.json"), "first", { mode: 0o600 });
+  // An app server that stays up, as Buzz's does, must not hold up the next run.
+  const first = f.step("run");
+  try {
+    await expect
+      .poll(() =>
+        stat(started).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+    await signIn(f.own, "second");
+    await f.step("run");
+    expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("second");
+  } finally {
+    first.child.kill();
+    await first.catch(() => {});
+  }
 });
 
 it("keeps Buzz's conversations when switching releases", async () => {

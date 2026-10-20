@@ -327,7 +327,9 @@ async function page(rpc: AppServer, threadId: string, limit: number) {
 const turns = async (rpc: AppServer, threadId: string, limit: number) =>
   (await page(rpc, threadId, limit))?.data ?? [];
 
-async function withServer<T>(
+/** Runs `use` with a short-lived app-server, closed when it ends or `signal`
+ * aborts. */
+export async function withServer<T>(
   spawn: Spawn,
   signal: AbortSignal,
   use: (rpc: AppServer) => Promise<T>,

@@ -313,6 +313,17 @@ export function createRelaySession(
             },
             needsReceipt: isWorkflowOperation,
             onReceipt: (event, message) => workflows.receipt(event, message),
+            // A chat this device is starting takes its events once the relay
+            // has its create; its local agents hear its owner's messages now.
+            // The start's own create and member adds never wait.
+            holdPublish: (event) => {
+              if (event.kind === 9007 || event.kind === 9000) return;
+              const id = event.tags.find(([name]) => name === "h")?.[1];
+              if (!id) return;
+              const ready = channelWrites.starting(id);
+              if (ready && event.kind === 9) hearStarting(event, id);
+              return ready;
+            },
             preparePublish: async (event, signal) => {
               workflows.validate(event);
               if (event.kind === 40100) {
@@ -420,7 +431,7 @@ export function createRelaySession(
       activity.accessChanged();
       memories.clear();
       presence.clear();
-      channelActivity.clear();
+      channelActivity.retain(canReadRemote);
       activityRosterKey = undefined;
       archives.clear();
       workflows.clear();
@@ -436,6 +447,26 @@ export function createRelaySession(
       }
     }
   }
+  /** Solo chats this device is starting; set once channel writes exist. */
+  let startingChannel: (id: string) => Promise<void> | undefined = () =>
+    undefined;
+  // Keep ordinary reads on their existing promise chain; page metadata is opt-in.
+  function readVerified(
+    filters: readonly ReadFilter[],
+    settings: ReadOptions | undefined,
+    channelTraffic: true,
+    beforeInbox: undefined,
+    page: { withRelayCount: true },
+  ): Promise<{ events: readonly RelayEvent[]; relayCount: number }>;
+  function readVerified(
+    filters: readonly ReadFilter[],
+    settings?: ReadOptions,
+    channelTraffic?: boolean,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
+  ): Promise<readonly RelayEvent[]>;
   async function readVerified(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
@@ -444,6 +475,7 @@ export function createRelaySession(
       events: readonly RelayEvent[],
       raw: readonly RelayEvent[],
     ) => void,
+    page?: { withRelayCount: true },
   ) {
     if (
       options.cachedOnly ||
@@ -455,6 +487,40 @@ export function createRelaySession(
         "unavailable",
         "Reconnect to refresh conversation access.",
       );
+    // A chat this device is still starting has nothing to read until the
+    // relay has its create; reading sooner would be refused as a denial.
+    const starts = [
+      ...new Set(filters.flatMap((filter) => filter["#h"] ?? [])),
+    ].flatMap((id) => {
+      const start = startingChannel(id);
+      // A start that made no chat has nothing to read; asking the relay
+      // would only be refused as lost access.
+      return start
+        ? [
+            start.catch(() => {
+              throw new ReadError("unavailable", "This chat isn't available.");
+            }),
+          ]
+        : [];
+    });
+    if (starts.length) {
+      const aborted = settings?.signal;
+      aborted?.throwIfAborted();
+      let stop = () => {};
+      await Promise.race([
+        Promise.all(starts),
+        ...(aborted
+          ? [
+              new Promise<void>((resolve) => {
+                const done = () => resolve();
+                aborted.addEventListener("abort", done, { once: true });
+                stop = () => aborted.removeEventListener("abort", done);
+              }),
+            ]
+          : []),
+      ]).finally(() => stop());
+      aborted?.throwIfAborted();
+    }
     const epoch = accessEpoch;
     let events: readonly RelayEvent[];
     try {
@@ -478,6 +544,7 @@ export function createRelaySession(
     }
     if (closed || epoch !== accessEpoch)
       throw new DOMException("Stale relay read", "AbortError");
+    const relayCount = events.length;
     // A broken or stale transport must not promote private sidecar events into
     // finite reads, retained views, or store discovery.
     events = events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
@@ -528,12 +595,14 @@ export function createRelaySession(
     );
     // Discovery must see signed grants/removals even when their channel is
     // currently denied; only the store interprets roster completeness.
-    return channelTraffic
+    const result = channelTraffic
       ? visible
       : events.filter(
           (event) =>
-            [39000, 39002].includes(event.kind) || visible.includes(event),
+            [39000, 39002, 9007].includes(event.kind) ||
+            visible.includes(event),
         );
+    return page ? { events: result, relayCount } : result;
   }
   /** The relay's verified answer only: no projection, discovery or inbox. */
   async function relayRead(
@@ -711,23 +780,26 @@ export function createRelaySession(
     transport?.viewer,
     transport &&
       writer &&
-      uploadAttachment &&
       (!writer.kinds || writer.kinds.includes(EMOJI_SET_KIND))
       ? {
           writer,
-          async upload(file, signal) {
-            const combined = AbortSignal.any([
-              signal,
-              lifetime.signal,
-              uploadLifetime.signal,
-            ]);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            const result = await uploadAttachment(file, combined);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            return result;
-          },
+          ...(uploadAttachment
+            ? {
+                async upload(file: File, signal: AbortSignal) {
+                  const combined = AbortSignal.any([
+                    signal,
+                    lifetime.signal,
+                    uploadLifetime.signal,
+                  ]);
+                  combined.throwIfAborted();
+                  if (closed) throw new UploadError("denied");
+                  const result = await uploadAttachment(file, combined);
+                  combined.throwIfAborted();
+                  if (closed) throw new UploadError("denied");
+                  return result;
+                },
+              }
+            : {}),
         }
       : undefined,
   );
@@ -779,12 +851,6 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-    transport?.activityArchive
-      ? {
-          host: transport.activityArchive,
-          canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
-        }
-      : undefined,
     (id) => recent.peek(id)?.event ?? retainedEvent(id),
     options.localAgents && transport
       ? { source: options.localAgents, scope: transportPartition(transport) }
@@ -894,10 +960,15 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        if (lastActivityAt === undefined) return channel;
+        if (!channelActivity.known(channel.id)) return channel;
         const previous = projectedChannels.get(channel);
-        if (previous?.lastActivityAt === lastActivityAt) return previous;
-        const next = Object.freeze({ ...channel, lastActivityAt });
+        if (previous && previous.lastActivityAt === lastActivityAt)
+          return previous;
+        const next = Object.freeze({
+          ...channel,
+          lastActivityAt,
+          activityKnown: true as const,
+        });
         projectedChannels.set(channel, next);
         return next;
       });
@@ -1056,6 +1127,20 @@ export function createRelaySession(
       traffic?.retry();
     },
   });
+  /** Hands the owner's signed message in a chat still starting to live
+   * listeners (local agents) before the relay can echo it. Listeners drop the
+   * later echo of the same event. */
+  function hearStarting(event: RelayEvent, channelId: string) {
+    if (closed) return;
+    const batch = Object.freeze({ events: Object.freeze([event]), channelId });
+    for (const listener of [...liveEventListeners, ...replayListeners]) {
+      try {
+        listener(batch);
+      } catch (error) {
+        console.error("Live listener failed", error);
+      }
+    }
+  }
   function validateMentions(channelId: string, pubkeys: readonly string[]) {
     if (!pubkeys.length) return;
     const channel = channels.queries
@@ -1237,6 +1322,7 @@ export function createRelaySession(
     { read: (filters, settings) => readVerified(filters, settings, false) },
     transport?.channelIdentity === true,
   );
+  startingChannel = (id) => channelWrites.starting(id);
   // Roster authority invalidates in-flight reads, including account-owned
   // preferences. Retry those once at the current epoch, never channel content
   // or a read cancelled by its caller/session/cache clear.
@@ -1397,6 +1483,23 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
+            )
+        : undefined;
+    })(),
+    writeFilter: (() => {
+      const write = transport?.writeSidebarFilter;
+      return write
+        ? (group, mode, sectionIds, signal, activeWindowSeconds) =>
+            write(
+              group,
+              mode,
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+              activeWindowSeconds,
             )
         : undefined;
     })(),
@@ -1806,7 +1909,10 @@ export function createRelaySession(
       };
     },
     /** Verified, access-filtered live-phase events of any kind, after reconciliation.
-     * Never finite reads or local intent, and replay only with `replay`: the
+     * Never finite reads or local intent, except the viewer's own messages in
+     * a Solo chat this device is starting: those arrive here before the relay
+     * has them, and their echo follows (see `hearStarting`). Replay only with
+     * `replay`: the
      * recent history each subscription sends again before it goes live, as after
      * a reconnect, marked `replay` on its batch. Includes the viewer's own echoes.
      * Overlapping routes and replays can deliver one event more than once;
@@ -1900,6 +2006,33 @@ export function createRelaySession(
                 throw new UploadError("denied");
               return result;
             },
+            // A chat being started has no channel to check yet. Media access is
+            // community-wide, not channel-scoped; its first send stays guarded.
+            ...(writes.outbox.supports(9007)
+              ? {
+                  async uploadForNewChat(
+                    file: File,
+                    signal: AbortSignal,
+                    progress?: UploadProgress,
+                  ) {
+                    const combined = AbortSignal.any([
+                      signal,
+                      lifetime.signal,
+                      uploadLifetime.signal,
+                    ]);
+                    combined.throwIfAborted();
+                    if (closed) throw new UploadError("denied");
+                    const result = await uploadAttachment(
+                      file,
+                      combined,
+                      progress,
+                    );
+                    combined.throwIfAborted();
+                    if (closed) throw new UploadError("denied");
+                    return result;
+                  },
+                }
+              : {}),
           })
         : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain
@@ -2096,9 +2229,22 @@ export function createRelaySession(
       return result;
     },
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
+      return (await session.readPage(filters, settings)).events;
+    },
+    /** Transport-page count precedes visibility filtering and local/live projection. */
+    async readPage(
+      filters: readonly ReadFilter[],
+      settings?: ReadOptions,
+    ): Promise<{ events: readonly VisibleEvent[]; relayCount: number }> {
       const began = revision;
       const epoch = accessEpoch;
-      const result = await verified.read(filters, settings);
+      const { events: result, relayCount } = await readVerified(
+        filters,
+        settings,
+        true,
+        undefined,
+        { withRelayCount: true },
+      );
       // Applying discovery can itself revoke access. Let that authority-only
       // read finish under current visibility; content/search completions must
       // still be fenced, including mixed discovery + content requests.
@@ -2120,8 +2266,17 @@ export function createRelaySession(
           merged.set(id, observation.event);
       }
       const events = [...merged.values()];
-      return projectEvents(events.filter(visibility(events)), local(), filters);
+      return {
+        events: projectEvents(
+          events.filter(visibility(events)),
+          local(),
+          filters,
+        ),
+        relayCount,
+      };
     },
+    /** Whether read() search filters may ask for `search_sort: "newest"`. */
+    searchSort: transport?.searchSort === true,
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().
      * Subscribe, refresh and dispose with the plugin's scope. */
@@ -2393,19 +2548,21 @@ export function createRelaySession(
   }
   const updateInterests = () => {
     if (closed) return;
+    // A chat still starting has no membership on the relay yet, which would
+    // refuse its live tail; it subscribes once the relay confirms it.
     const joined = channels.queries
       .list()
-      .channels.filter((channel) => !channel.cached)
+      .channels.filter((channel) => !channel.cached && !channel.pending)
       .map((channel) => channel.id);
     const ids = [
       ...new Set([
         ...joined,
-        ...channels
-          .demandedChannels()
-          .filter(
-            (id) =>
-              channels.canAccess(id) && !channels.queries.get?.(id)?.cached,
-          ),
+        ...channels.demandedChannels().filter((id) => {
+          const channel = channels.queries.get?.(id);
+          return (
+            channels.canAccess(id) && !channel?.cached && !channel?.pending
+          );
+        }),
       ]),
     ];
     const wanted = new Set(ids);
@@ -2531,7 +2688,6 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
-    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       reminders?.receive(events);
@@ -2780,10 +2936,10 @@ export function createRelaySession(
   let activityRosterKey: string | undefined;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
+    const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(
-        sidebarPreferences.queries.snapshot().data?.sort ?? {},
-      ).includes("recent")
+      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();
       activityRosterKey = undefined;
@@ -2802,10 +2958,9 @@ export function createRelaySession(
       if (activityRosterKey === key) activityRosterKey = undefined;
     });
   };
-  const stopActivityRoster = channels.queries.subscribeList(() => {
-    refreshChannelActivity();
-    activity.restoreHistory();
-  });
+  const stopActivityRoster = channels.queries.subscribeList(
+    refreshChannelActivity,
+  );
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
   );
@@ -2826,7 +2981,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        const activityCleared = activity.queries.clearHistory();
+        activity.clear();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -2853,10 +3008,7 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        const results = await Promise.allSettled([
-          channels.clearCache(),
-          activityCleared,
-        ]);
+        const results = await Promise.allSettled([channels.clearCache()]);
         updateInterests();
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;

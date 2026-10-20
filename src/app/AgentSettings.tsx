@@ -1,49 +1,54 @@
+import { useState } from "react";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
-import { useState, type ReactNode } from "react";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
+
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import { ToastNotice } from "../shared/design-system/ui/Toast";
+import { Button } from "../shared/design-system/ui/Button";
 import {
   setRememberAgentsPreference,
   useRememberAgentsPreference,
 } from "../features/messages/mention-preferences";
-import { Header, InlineHeader } from "../shared/design-system/ui/Header";
-import { Button } from "../shared/design-system/ui/Button";
-import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
-import { ToastNotice } from "../shared/design-system/ui/Toast";
 
 export function AgentSettings({
   agents,
-  archive,
   active = true,
 }: {
   agents?: Agents | undefined;
-  archive?: ReactNode;
   active?: boolean;
 }) {
-  const preference = useRememberAgentsPreference();
-  const [error, setError] = useState<string | null>(null);
-  const change = (enabled: boolean) =>
-    setError(setRememberAgentsPreference(enabled));
+  const rememberAgents = useRememberAgentsPreference();
+  const [mentionError, setMentionError] = useState<string | null>(null);
+  const changeRememberAgents = (enabled: boolean) =>
+    setMentionError(setRememberAgentsPreference(enabled));
   return (
     <section aria-labelledby="agent-settings-title">
-      <Header id="agent-settings-title" title="Agents" />
+      <Header id="agent-settings-title" title="Agent setup" />
       {agents && active && <AgentDefaults agents={agents} />}
-      {archive}
       <div className="mt-section-gap">
-        <InlineHeader title="Messages" />
+        <InlineHeader title="Agent behavior" />
         <SettingsGroup>
           <SwitchPreferenceRow
             label="Remember mentioned agents"
             description="Keep the same agents selected for your next message in this channel or thread."
-            checked={preference}
-            onCheckedChange={change}
+            checked={rememberAgents}
+            onCheckedChange={changeRememberAgents}
           />
         </SettingsGroup>
       </div>
-      {active && error && (
-        <ToastNotice title="Agent preference wasn’t saved" description={error}>
-          <Button type="button" size="sm" onClick={() => change(preference)}>
-            Retry saving
+      {active && mentionError && (
+        <ToastNotice
+          title="Agent preference wasn’t saved"
+          description={mentionError}
+        >
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => changeRememberAgents(rememberAgents)}
+          >
+            Retry saving mentioned agents
           </Button>
         </ToastNotice>
       )}

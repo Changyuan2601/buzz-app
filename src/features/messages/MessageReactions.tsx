@@ -379,6 +379,7 @@ export function MessageReactions(
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
       className={styles.reactions}
+      data-message-reactions={(active && reactions.length > 0) || undefined}
       data-testid="reaction-row"
       data-populated={(active && reactions.length > 0) || undefined}
       role="group"
@@ -440,10 +441,12 @@ export function MessageReactions(
           );
         })}
       {active &&
-        (reactions.length > 0 || row.audience === "agents") &&
+        reactions.length > 0 &&
+        row.audience !== "agents" &&
         !props.disabled && (
           <span
             className={styles.inlineReactionTool}
+            data-message-reactions
             data-testid="inline-add-reaction"
           >
             <ReactionTool

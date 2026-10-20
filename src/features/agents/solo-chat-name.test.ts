@@ -46,12 +46,20 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
     channelId: "chat",
     version: "v1",
   }));
+  // The owner's own thread reply is in the same history; it is not the original.
+  const reply = {
+    ...event,
+    id: "3".repeat(64),
+    created_at: 90,
+    tags: [...event.tags, ["e", "e".repeat(64), "", "reply"]],
+  };
+  const read = vi.fn(async () => [event, reply]);
   const relay = connection(() => ({
     status: "ready",
     viewer: owner,
     session: {
       channels: soloChannels,
-      read: async () => [event],
+      read,
       profiles: { snapshot: () => new Map() },
       agentChoices: { snapshot: () => ({ identities: [] }) },
       channelDetails: { available: true, load, save },
@@ -61,6 +69,17 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
   expect(load).not.toHaveBeenCalled();
   await nameSoloChat(relay, owner, first, event, "A useful title");
   expect(name).toBe("A useful title");
+  // A plain NIP-01 read: the relay rejects a channel-window `until` without a cursor.
+  expect(read).toHaveBeenLastCalledWith([
+    {
+      kinds: [9],
+      authors: [owner],
+      "#h": ["chat"],
+      until: event.created_at,
+      limit: 100,
+      consistency: "strong",
+    },
+  ]);
   await nameSoloChat(relay, owner, first, event, "Another title");
   expect(save).toHaveBeenCalledOnce();
   name = "My manual title";

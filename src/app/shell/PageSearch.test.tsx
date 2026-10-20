@@ -22,6 +22,13 @@ import { isApplePlatform } from "../../features/shortcuts/format";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -29,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });

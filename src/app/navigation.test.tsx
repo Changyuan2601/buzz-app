@@ -45,6 +45,10 @@ vi.mock("../bundled", async () => ({
         },
       },
     },
+    {
+      manifest: { id: "buzz.pairing", name: "Pair mobile", apiVersion: 1 },
+      module: await import("../bundled/pairing"),
+    },
   ],
 }));
 // jsdom has no media queries; responsive geometry is covered in browser tests.
@@ -101,6 +105,50 @@ it("waits for a starting plugin before opening its addressed Settings card", asy
   }
   expect(await screen.findByText("Gated card body")).toBeVisible();
   expect(current.navigation.snapshot().status).toBe("opened");
+});
+
+it("opens Pair mobile in Personal space with no saved communities", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "buzz.pairing/mobile",
+    scope: null,
+  };
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+  );
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  expect(
+    await screen.findByRole("heading", { name: "Pair mobile" }),
+  ).toBeVisible();
+  expect(current.communities.snapshot().memberships).toEqual([]);
+  expect(current.communities.snapshot().selected).toBeNull();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  expect(current.navigation.snapshot().entry.target).toEqual(target);
+  const [navigation] = screen.getAllByRole("navigation", {
+    name: "Settings sections",
+  });
+  const group = within(navigation as HTMLElement)
+    .getByText("Personal space")
+    .closest("section");
+  expect(group).not.toBeNull();
+  expect(
+    within(group as HTMLElement).getByRole("button", { name: "Pair mobile" }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 const viewer = keypair();
@@ -293,8 +341,9 @@ it.each([true, false])(
     const retry = await screen.findByRole("button", {
       name: "Retry navigation",
     });
-    const main = screen.getByRole("main");
-    const elsewhere = screen.getByRole("link", { name: "Skip to content" });
+    const main = document.getElementById("settings-content");
+    if (!main) throw new Error("Missing Settings content focus target");
+    const elsewhere = screen.getByRole("button", { name: "Close Settings" });
     (focused ? retry : elsewhere).focus();
     const before = fixture.rosterReads.length;
     expect(before).toBeGreaterThan(0);
@@ -421,4 +470,43 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
   });
   await screen.findByText("This destination couldn’t open");
   expect(current.navigation.snapshot().reason).toBe("denied");
+});
+
+it("opens removed Messages settings links at Appearance without adding a navigation entry", async () => {
+  // jsdom does not measure layout; this test exercises route normalization, not geometry.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "buzz.channels/messages",
+  };
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+  );
+  services = createServices();
+  render(<App services={services} />);
+  await screen.findByRole("heading", { name: "Conversations" });
+  expect(
+    screen.getByRole("combobox", { name: "Open threads in" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("switch", { name: "Remember mentioned agents" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(services?.navigation.snapshot().status).toBe("opened"),
+  );
+  expect(services.navigation.snapshot().entry.target).toEqual({
+    ...target,
+    section: "appearance",
+  });
+  expect(screen.queryByRole("button", { name: "Messages" })).toBeNull();
 });

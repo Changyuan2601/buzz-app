@@ -55,7 +55,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   await user.click(screen.getByRole("button", { name: "New" }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["New chat", "New project", "New DM", "New channel"]);
+  ).toEqual(["New chat", "New workspace", "New DM", "New channel"]);
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
   await user.click(solo);
@@ -72,7 +72,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
 });
 
 it.each([
-  ["New project", "New project", "Cancel"],
+  ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],
 ])(
   "opens %s from any filter and returns focus to New on cancel",
@@ -99,7 +99,7 @@ it("keeps unavailable creation actions disabled", async () => {
   fixture(true);
   await user.click(screen.getByRole("button", { name: "New" }));
   expect(
-    await screen.findByRole("menuitem", { name: "New project" }),
+    await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByRole("menuitem", { name: "New channel" })).toHaveAttribute(
     "aria-disabled",
@@ -107,37 +107,41 @@ it("keeps unavailable creation actions disabled", async () => {
   );
 });
 
-it("does not navigate to a replaced session after project creation completes", async () => {
-  const f = fixture(true, true);
-  const user = userEvent.setup();
-  let finish!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const create = vi
-    .spyOn(f.session.soloPreferences, "createSection")
-    .mockReturnValue(pending);
-  await user.click(screen.getByRole("button", { name: "New" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New project" }),
-  );
-  const dialog = await screen.findByRole("dialog", { name: "New project" });
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
-  );
-  try {
-    await user.click(within(dialog).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
-    f.replaceSession();
-  } finally {
-    await act(async () => {
-      finish();
-      await pending;
+it.each([
+  ["New", "New workspace"],
+  ["New in Solo", "New workspace…"],
+])(
+  "does not navigate to a replaced session after project creation from %s completes",
+  async (triggerName, itemName) => {
+    const f = fixture(true, true);
+    const user = userEvent.setup();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
     });
-  }
-  expect(f.open).not.toHaveBeenCalled();
-});
+    const create = vi
+      .spyOn(f.session.soloPreferences, "createSection")
+      .mockReturnValue(pending);
+    await user.click(screen.getByRole("button", { name: triggerName }));
+    await user.click(await screen.findByRole("menuitem", { name: itemName }));
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      "Planning",
+    );
+    try {
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      await waitFor(() => expect(create).toHaveBeenCalledOnce());
+      f.replaceSession();
+    } finally {
+      await act(async () => {
+        finish();
+        await pending;
+      });
+    }
+    expect(f.open).not.toHaveBeenCalled();
+  },
+);
 
 it("retains scope across Settings remounts and reveals navigation outside the filter", async () => {
   const f = fixture(true);
@@ -173,7 +177,7 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
 });
 
 it.each([
-  ["New project", "New project"],
+  ["New workspace", "New workspace"],
   ["New channel", "Create a channel"],
 ])(
   "retains typed %s input through cached reconnect and session replacement",
@@ -351,4 +355,62 @@ it("does not reveal or open a channel when its creation completes in a replaced 
     collapsed: ["channels", "starred"],
     width: 280,
   });
+});
+
+it.each(["empty", "chats", "projects", "both"])(
+  "keeps Solo creation available with %s, including the Solo filter",
+  async (inventory) => {
+    const user = userEvent.setup();
+    const f = fixture(true, true);
+    const channels = f.session.channels.list();
+    const preferences = f.session.soloPreferences.snapshot();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...channels,
+      channels:
+        inventory === "empty" || inventory === "projects"
+          ? []
+          : channels.channels,
+    });
+    vi.spyOn(f.session.soloPreferences, "snapshot").mockReturnValue({
+      ...preferences,
+      data: {
+        sections:
+          inventory === "projects" || inventory === "both"
+            ? [{ id: "project", name: "Work", order: 0 }]
+            : [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      },
+    });
+    f.connection({});
+    const nav = screen.getByRole("navigation", { name: "Solo conversations" });
+    if (inventory === "empty") {
+      await user.click(within(nav).getByRole("button", { name: "New chat" }));
+      expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
+    }
+    await user.click(screen.getByRole("tab", { name: "Solo" }));
+    const trigger = within(nav).getByRole("button", { name: "New in Solo" });
+    await user.click(trigger);
+    await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
+    expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New workspace…" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  },
+);
+
+it("keeps new Solo chats available when project creation is unavailable", async () => {
+  const user = userEvent.setup();
+  const f = fixture(true);
+  await user.click(screen.getByRole("button", { name: "New in Solo" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "New workspace…" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitem", { name: "New chat" }));
+  expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
 });

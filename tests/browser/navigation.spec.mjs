@@ -1,5 +1,11 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import {
+  openSettings,
+  settingsDialog,
+  settingsSections,
+} from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
@@ -36,15 +42,12 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   app,
 }) => {
   await open(page, app);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  const sections = page.getByRole("navigation", { name: "Settings sections" });
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
-  const pairingEnabled = page.getByRole("switch", {
-    name: "Enable Pair mobile",
-    exact: true,
-  });
-  if (!(await pairingEnabled.isChecked())) await pairingEnabled.click();
+  await openSettings(page);
+  const sections = settingsSections(page);
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  await setPluginEnabled(page, "Pair mobile", true);
   const pairing = sections.getByRole("button", {
     name: "Pair mobile",
     exact: true,
@@ -52,10 +55,13 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await expect(pairing).toBeVisible();
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
-  await pairingEnabled.click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  await setPluginEnabled(page, "Pair mobile", false);
   await expect(pairing).toHaveCount(0);
-  await button(page, "Go back").click();
+  // The shell toolbar is inert behind the Settings modal; traverse history.
+  await page.goBack();
   await expect(
     page.getByRole("alert").getByRole("heading", {
       name: "This destination couldn’t open",
@@ -89,9 +95,8 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(composer(page, "Alpha")).toBeVisible();
   await page.goForward();
   await expect(composer(page, "Beta")).toBeVisible();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await openSettings(page);
+  const sections = settingsSections(page);
   await expect(
     sections.getByRole("button", { name: "Profile", exact: true }),
   ).toHaveAttribute("aria-current", "page");
@@ -111,10 +116,12 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await button(page, "Go back").click();
+  // The shell toolbar is inert behind the Settings modal; traverse history.
+  await page.goBack();
   await expect(
     sections.getByRole("button", { name: "Profile", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await button(page, "Go back").click();
+  await page.goBack();
+  await expect(settingsDialog(page)).toHaveCount(0);
   await expect(composer(page, "Beta")).toBeVisible();
 });

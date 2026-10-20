@@ -12,11 +12,12 @@ use std::path::PathBuf;
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
 /// (9), a channel member change (9000, 9001), edit (9002), creation (9007),
 /// deletion (9008), join (9021) or leave (9022), typing (20002), an edit of its
-/// own message (40003), a channel canvas (40100) or a request to open a DM
-/// (41010). The relay decides which channel changes it may make. Its profile
-/// (0) is the app's, and its memory (30174) is written by `memory`.
-const KINDS: [u16; 14] = [
-    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+/// own message (40003), a shared note (30023), a channel canvas (40100) or a
+/// request to open a DM (41010). The relay decides which channel changes it may
+/// make. Its profile (0) is the app's, and its memory (30174) is written by
+/// `memory`.
+const KINDS: [u16; 15] = [
+    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100, 41010,
 ];
 
 /// One saved identity. The key itself stays in the OS credential store.
@@ -106,9 +107,9 @@ impl AppAgent {
         }
         Ok(format!("{base}{name}"))
     }
-    /// Confirms a downloaded media body matches the hash in its community URL.
-    pub fn verify_media_hash(&self, url: &str, bytes: &[u8]) -> Result<()> {
-        use sha2::{Digest, Sha256};
+    /// Confirms a downloaded media body's SHA-256 (lowercase hex) matches the
+    /// hash in its community URL.
+    pub fn verify_media_hash(&self, url: &str, sha256: &str) -> Result<()> {
         let canonical = self.media_url(url)?;
         let expected = canonical
             .rsplit('/')
@@ -119,8 +120,7 @@ impl AppAgent {
             // Thumbnails are derived JPEGs, but keep the source blob's name.
             return Ok(());
         }
-        let actual = format!("{:x}", Sha256::digest(bytes));
-        if actual != expected {
+        if sha256 != expected {
             return Err("Media did not match its SHA-256".into());
         }
         Ok(())
@@ -143,7 +143,7 @@ impl AppAgent {
     ) -> Result<serde_json::Value> {
         if !KINDS.contains(&kind) {
             return Err(
-                "Agents can sign messages, edits, reactions, deletions and channel changes only"
+                "Agents can sign messages, edits, reactions, deletions, notes and channel changes only"
                     .into(),
             );
         }

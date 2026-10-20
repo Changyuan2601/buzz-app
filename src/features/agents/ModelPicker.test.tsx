@@ -279,6 +279,77 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   ).toHaveAttribute("aria-selected", "true");
 });
 
+it("opens a family before selecting a model and strips only its display prefix", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      modelLabelPrefixes={["databricks-", "goose-"]}
+      models={[
+        { id: "databricks-gpt-6", label: "databricks-gpt-6" },
+        { id: "databricks-gpt-6-codex", label: "databricks-gpt-6-codex" },
+        { id: "databricks-kimi-k2", label: "databricks-kimi-k2" },
+        { id: "unrecognized-model", label: "unrecognized-model" },
+      ]}
+      value="databricks-gpt-6"
+      defaultLabel="Provider default"
+      onChange={onChange}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: /^Model:/ });
+  expect(trigger).toHaveTextContent("gpt-6");
+  expect(trigger).not.toHaveTextContent("databricks-");
+  await user.click(trigger);
+  expect(screen.queryByRole("menuitemradio", { name: "kimi-k2" })).toBeNull();
+  expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Codex" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "GPT" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Other" })).toBeVisible();
+  screen.getByRole("menuitem", { name: "OpenAI" }).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "gpt-6" }),
+  ).toBeVisible();
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "gpt-6-codex" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-gpt-6-codex");
+});
+
+it("keeps custom entry and default selection in the family menu", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      allowCustomModel
+      models={models}
+      value="sonnet"
+      defaultLabel="Provider default"
+      onChange={onChange}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: /^Model:/ }));
+  await user.click(
+    await screen.findByRole("menuitemradio", {
+      name: "Provider default · Default",
+    }),
+  );
+  expect(onChange).toHaveBeenLastCalledWith("");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await user.click(screen.getByRole("button", { name: /^Model:/ }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Custom model" }),
+  );
+  await user.type(screen.getByRole("textbox"), "new-model");
+  await user.click(screen.getByRole("button", { name: "Use model" }));
+  expect(onChange).toHaveBeenLastCalledWith("new-model");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toHaveFocus(),
+  );
+});
+
 it("keeps a Default suffix beside inherited card models as defaults change", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();

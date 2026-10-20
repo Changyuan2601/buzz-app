@@ -84,9 +84,9 @@ export type FakeMcpServer = {
   stop(): void;
 };
 
-/** A spawn whose `goose` processes answer like `goose-acp`, and whose
- * `workspace` process prints `home` for a `~/…` directory; and a `serve` that
- * starts in-memory MCP servers those processes reach. */
+/** A spawn whose `goose` processes answer like `goose-acp`; a
+ * `resolveDirectory` that puts `home` for `~`; and a `serve` that starts
+ * in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
     /** Whether goose says it can reach HTTP MCP servers. */
@@ -104,6 +104,8 @@ export function fakeSpawn(
     supported?: readonly string[];
     /** Saved sessions `session/list` and `session/export` read. */
     history?: readonly FakeSession[];
+    /** How many sessions a `session/list` page holds; all by default. */
+    page?: number;
     /** Requests each process never answers. */
     silent?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
@@ -113,6 +115,11 @@ export function fakeSpawn(
     >;
   }> = {},
 ) {
+  let defaults = options.defaults;
+  // Stored provider models are distinct from catalog defaultModel metadata.
+  const providerModels = new Map<string, string>();
+  if (defaults?.providerId && defaults.modelId)
+    providerModels.set(defaults.providerId, defaults.modelId);
   const processes: FakeGoose[] = [];
   const servers: FakeMcpServer[] = [];
   const serve = async (handler: McpHandler): Promise<HostMcpServer> => {
@@ -147,21 +154,6 @@ export function fakeSpawn(
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
     });
-    if (id === "workspace") {
-      const cwd = process.cwd ?? "";
-      queueMicrotask(() => {
-        process.onStdout?.(
-          `${cwd.replace(/^~/, options.home ?? "/home/test")}\n`,
-        );
-        resolveExit(0);
-      });
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited,
-      };
-    }
     let alive = true;
     let sessions = 0;
     let requests = 0;
@@ -355,8 +347,29 @@ export function fakeSpawn(
                 Boolean(options.saved?.get(String(entry.providerId))?.size),
             })),
           });
+        case "_goose/unstable/config/read":
+          return reply(id, {
+            value:
+              params.key === "providers"
+                ? Object.fromEntries(
+                    [...providerModels].map(([id, model]) => [id, { model }]),
+                  )
+                : null,
+          });
         case "_goose/unstable/defaults/read":
-          return reply(id, options.defaults ?? {});
+          return reply(id, defaults ?? {});
+        case "_goose/unstable/defaults/save": {
+          const providerId = String(params.providerId);
+          const modelId = String(
+            params.modelId || providerModels.get(providerId) || "",
+          );
+          providerModels.set(providerId, modelId);
+          defaults = { providerId, ...(modelId ? { modelId } : {}) };
+          return reply(id, {
+            providerId,
+            ...(params.modelId ? { modelId: String(params.modelId) } : {}),
+          });
+        }
         case "_goose/unstable/providers/config/read": {
           const set = options.saved?.get(String(params.providerId));
           return reply(id, {
@@ -382,18 +395,22 @@ export function fakeSpawn(
           );
           const mentions = (session: FakeSession) =>
             JSON.stringify(session.conversation).includes(query);
+          const listed = (options.history ?? []).filter(
+            (session) =>
+              session.cwd === params.cwd && (!query || mentions(session)),
+          );
+          const from = Number(params.cursor ?? 0);
+          const to = from + (options.page ?? listed.length);
           return reply(id, {
-            sessions: (options.history ?? [])
-              .filter(
-                (session) =>
-                  session.cwd === params.cwd && (!query || mentions(session)),
-              )
+            sessions: listed
+              .slice(from, to)
               .map(({ sessionId, title, cwd, updatedAt }) => ({
                 sessionId,
                 title,
                 cwd,
                 updatedAt,
               })),
+            nextCursor: to < listed.length ? String(to) : null,
           });
         }
         case "_goose/unstable/session/export": {
@@ -447,6 +464,8 @@ export function fakeSpawn(
   };
   return {
     spawn,
+    resolveDirectory: async (path: string) =>
+      path.replace(/^~/, options.home ?? "/home/test"),
     serve,
     processes,
     /** The MCP servers `serve` started, in order. */

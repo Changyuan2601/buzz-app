@@ -9,7 +9,7 @@ import {
   ChatCircleIcon,
 } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
-import { membershipRows } from "./membership-rows";
+import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -31,6 +31,7 @@ import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
+import { correctScrollTop } from "./scroll-correction";
 import { readingPositioned, useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -137,6 +138,8 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
+  /** False: rows open existing threads but offer none to start; see MessageRow. */
+  startsThreads?: boolean | undefined;
   /** A following composer shows conversation activity; the jump button leaves it a lane. */
   activityLane?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
@@ -196,6 +199,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
+  startsThreads = true,
   activityLane = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
@@ -206,7 +210,29 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const profiles = useRowProfiles(queries.profiles, window.rows);
+  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  const visibleRows = useMemo(
+    () =>
+      chatPresentation
+        ? withoutStartingAgents(
+            window.rows,
+            viewer,
+            agentPubkeys,
+            // Live trimming can drop the chat's start without restoring hasMore.
+            !window.hasMore && !window.historyLimited,
+          )
+        : window.rows,
+    [
+      window.rows,
+      window.hasMore,
+      window.historyLimited,
+      chatPresentation,
+      viewer,
+      agentPubkeys,
+    ],
+  );
+  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -244,8 +270,6 @@ function Timeline({
     ),
   );
   const resolveName = useChannelIdentityNames(queries, channelId);
-  const profiles = useRowProfiles(queries.profiles, window.rows);
-  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [focusedActivityId, setFocusedActivityId] = useState<string>();
@@ -272,8 +296,8 @@ function Timeline({
     ),
   );
   const contentSignature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () => geometrySignature(visibleRows, profiles, resolveName),
+    [visibleRows, profiles, resolveName],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
@@ -305,10 +329,16 @@ function Timeline({
     undefined,
   );
   const edges = useRef<{
-    first?: string | undefined;
-    last?: string | undefined;
+    order: readonly string[];
     ids: ReadonlySet<string>;
-  }>({ ids: new Set() });
+    floor: number;
+    paging: boolean;
+  }>({ order: [], ids: new Set(), floor: 0, paging: false });
+  // The reader's anchor row and its offset before this render's rows.
+  const reader = useRef<{ id: string | undefined; top: number }>({
+    id: undefined,
+    top: 0,
+  });
   const intent = useRef(0);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
@@ -504,13 +534,110 @@ function Timeline({
     channelId,
     scroller,
     settled,
-    latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
+    latestMessageId: window.rows
+      .filter((row) => !row.membership && !row.huddle)
+      .at(-1)?.id,
     enabled: marksRead,
   });
+  // Shift keeps the distance from the end, so it holds the reader only while
+  // the rows from their first visible item to the end are kept. Relay pages
+  // break same-second ties by id, rows by send time: a page can land below the
+  // first row, or around the reader, who is then scrolled back to their row.
+  const previous = edges.current.order;
+  const reading = previous.slice(
+    handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
+  );
+  const held = previous.indexOf(savedPosition.current?.anchor?.id ?? "");
+  reader.current = {
+    id: previous[held],
+    top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
+  };
   const prepend =
-    !!edges.current.first &&
-    edges.current.first !== rows[0]?.id &&
-    edges.current.last === rows.at(-1)?.id;
+    !!previous.length &&
+    (previous[0] !== rows[0]?.id || rows.length !== previous.length) &&
+    reading.every(
+      (id, index) => rows[rows.length - reading.length + index]?.id === id,
+    );
+  // Without shift, rows landing above the reader push them down. Scroll by
+  // that height before paint, so input that follows starts from the reader's
+  // row. Rows that moved keep another row's size until they measure; hold the
+  // reader's latest row through those measurements, until reader input that
+  // follows them ends.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const list = element?.querySelector("ol");
+    const index = rows.findIndex((row) => row.id === reader.current.id);
+    if (
+      prepend ||
+      !settled.current ||
+      follow.current ||
+      index < 0 ||
+      !element ||
+      !list ||
+      !handle.current
+    )
+      return;
+    const moved = handle.current.getItemOffset(index) - reader.current.top;
+    const id = reader.current.id;
+    if (!moved || !id) return;
+    correctScrollTop(element, moved);
+    const top = () =>
+      element
+        .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
+        ?.getBoundingClientRect().top;
+    // The row's offset from the viewport, as last placed by the reader.
+    let y = savedPosition.current?.anchor?.y ?? 0;
+    const read = () => {
+      const row = top();
+      if (row !== undefined) y = row - element.getBoundingClientRect().top;
+    };
+    let height = list.style.height;
+    const since = intent.current;
+    // Virtua re-observes moved rows in the next frame and, as patched, applies
+    // their sizes in the frame after (patches/README.md), whether or not their
+    // height changed. Input that ended before then releases the frame after.
+    let measured = false;
+    let ended = false;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        measured = true;
+        if (ended) frame = requestAnimationFrame(release);
+      });
+    });
+    const hold = new MutationObserver(() => {
+      const row = top();
+      if (list.style.height === height) return;
+      height = list.style.height;
+      if (row !== undefined && settled.current && !follow.current)
+        correctScrollTop(
+          element,
+          row - element.getBoundingClientRect().top - y,
+        );
+    });
+    const release = () => {
+      cancelAnimationFrame(frame);
+      hold.disconnect();
+      element.removeEventListener("scroll", read);
+      element.removeEventListener("scrollend", end);
+      element.ownerDocument.removeEventListener("pointerup", done);
+      element.ownerDocument.removeEventListener("pointercancel", done);
+    };
+    const done = () => {
+      if (measured) release();
+      else ended = true;
+    };
+    // A held pointer can drag across more moved rows; it ends when released.
+    const end = () => {
+      if (intent.current !== since && !pointerHeld.current) done();
+    };
+    hold.observe(list, { attributes: true, attributeFilter: ["style"] });
+    element.addEventListener("scroll", read);
+    element.addEventListener("scrollend", end);
+    // A drag can end outside the scroller.
+    element.ownerDocument.addEventListener("pointerup", done);
+    element.ownerDocument.addEventListener("pointercancel", done);
+    return release;
+  }, [rows, prepend]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -578,6 +705,13 @@ function Timeline({
   const pendingReveal = useRef<{ id: string; intent: number } | undefined>(
     undefined,
   );
+  // A page lands in the commit that ends its load. Track loading apart from
+  // positioning, which must not rerun when a load starts.
+  const loadingOlder = useRef(false);
+  useLayoutEffect(() => {
+    loadingOlder.current = window.loadingOlder;
+    if (window.loadingOlder) edges.current.paging = true;
+  }, [window.loadingOlder]);
   useLayoutEffect(() => {
     if (
       pendingReveal.current &&
@@ -599,13 +733,23 @@ function Timeline({
           )
         : -1;
     const previousIds = edges.current.ids;
-    const arrivals = prepend
-      ? 0
-      : rows.filter((row) => !previousIds.has(row.id)).length;
+    // Rows before the loaded first row's second are history. A page also
+    // returns rows of that second, and can land after a retained first row:
+    // when one lands, only rows after the previous last row are new.
+    const { floor, order } = edges.current;
+    const paged = edges.current.paging && !loadingOlder.current;
+    const tail = rows.findIndex((row) => row.id === order.at(-1));
+    const arrivals = rows.filter(
+      (row, index) =>
+        !previousIds.has(row.id) &&
+        (!paged || index > tail) &&
+        (row.createdAt > floor || (row.createdAt === floor && !paged)),
+    ).length;
     edges.current = {
-      first: rows[0]?.id,
-      last: rows.at(-1)?.id,
+      order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),
+      floor: rows[0]?.createdAt ?? 0,
+      paging: loadingOlder.current,
     };
     if (
       arrivals > 0 &&
@@ -750,6 +894,10 @@ function Timeline({
     updateJumpToLatest,
     revealMessageId,
   ]);
+  // After positioning reads it: a load that ends without rows lands no page.
+  useLayoutEffect(() => {
+    if (!window.loadingOlder) edges.current.paging = false;
+  }, [window.loadingOlder]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -838,6 +986,15 @@ function Timeline({
       onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
       onPointerDown={() => {
         pointerHeld.current = true;
+        // A press can end outside history.
+        const document = scroller.current?.ownerDocument;
+        const up = () => {
+          pointerHeld.current = false;
+          document?.removeEventListener("pointerup", up);
+          document?.removeEventListener("pointercancel", up);
+        };
+        document?.addEventListener("pointerup", up);
+        document?.addEventListener("pointercancel", up);
         gesture();
       }}
       onPointerUp={() => {
@@ -1044,6 +1201,7 @@ function Timeline({
                       onOpenLink={onOpenLink}
                       canOpenLink={canOpenLink}
                       onOpenThread={onOpenThread}
+                      startsThreads={startsThreads}
                       {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                       retry={queries.outbox?.retry}
                       keepMounted={keepRowMounted}

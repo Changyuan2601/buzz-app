@@ -1,14 +1,13 @@
 import {
   ACCENT_KEY,
-  COLOR_LEVEL_KEY,
+  CONTRAST_KEY,
+  parseContrast,
+  type Contrast,
   DEFAULT_ACCENT,
-  DEFAULT_COLOR_LEVEL,
   LEGACY_BUBBLE_KEY,
   parseAccent,
-  parseColorLevel,
   parseLegacyBubbleColor,
   type Accent,
-  type ColorLevel,
 } from "./accent";
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
@@ -41,8 +40,8 @@ export interface AppearanceSnapshot {
   readonly fontError: string | null;
   readonly accent: Accent;
   readonly accentError: string | null;
-  readonly colorLevel: ColorLevel;
-  readonly colorLevelError: string | null;
+  readonly contrast: Contrast;
+  readonly contrastError: string | null;
   readonly error: string | null;
 }
 
@@ -64,8 +63,8 @@ export function createAppearance(
     fontError: null,
     accent: DEFAULT_ACCENT,
     accentError: null,
-    colorLevel: DEFAULT_COLOR_LEVEL,
-    colorLevelError: null,
+    contrast: "low",
+    contrastError: null,
   };
   let disposed = false;
   const listeners = new Set<() => void>();
@@ -76,7 +75,8 @@ export function createAppearance(
       root.dataset.colorMode &&
       (root.dataset.colorMode !== state.mode ||
         root.dataset.accent !== state.accent ||
-        root.dataset.colorLevel !== state.colorLevel);
+        root.dataset.colorLevel !==
+          (state.contrast === "low" ? "touch" : state.contrast));
     const transitionGuard = changingPalette
       ? host.document.createElement("style")
       : undefined;
@@ -87,7 +87,9 @@ export function createAppearance(
     }
     root.dataset.colorMode = state.mode;
     root.dataset.accent = state.accent;
-    root.dataset.colorLevel = state.colorLevel;
+    // Keep the existing low-accent scope; old vibe preferences are ignored.
+    root.dataset.colorLevel =
+      state.contrast === "low" ? "touch" : state.contrast;
     if (transitionGuard) {
       // Commit the new palette before restoring interactive transitions.
       void root.offsetHeight;
@@ -173,19 +175,17 @@ export function createAppearance(
     }
     notify();
   };
-  const restoreColorLevel = () => {
+  const restoreContrast = () => {
     try {
       state = {
         ...state,
-        colorLevel: parseColorLevel(
-          host?.localStorage.getItem(COLOR_LEVEL_KEY),
-        ),
-        colorLevelError: null,
+        contrast: parseContrast(host?.localStorage.getItem(CONTRAST_KEY)),
+        contrastError: null,
       };
     } catch {
       state = {
         ...state,
-        colorLevelError:
+        contrastError:
           "Vibe level could not be restored. Choose a level to try saving it again.",
       };
     }
@@ -196,8 +196,8 @@ export function createAppearance(
       event.key !== APPEARANCE_KEY &&
       event.key !== FONT_SCALE_KEY &&
       event.key !== ACCENT_KEY &&
+      event.key !== CONTRAST_KEY &&
       event.key !== LEGACY_BUBBLE_KEY &&
-      event.key !== COLOR_LEVEL_KEY &&
       event.key !== null
     )
       return;
@@ -206,31 +206,29 @@ export function createAppearance(
       if (event.storageArea !== host?.localStorage) return;
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
         event.key === LEGACY_BUBBLE_KEY
       )
         restoreAccent();
-      if (event.key === null || event.key === COLOR_LEVEL_KEY)
-        restoreColorLevel();
     } catch {
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
         event.key === LEGACY_BUBBLE_KEY
       )
         restoreAccent();
-      if (event.key === null || event.key === COLOR_LEVEL_KEY)
-        restoreColorLevel();
     }
   };
   restore();
   restoreFont();
   restoreAccent();
-  restoreColorLevel();
+  restoreContrast();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -291,18 +289,18 @@ export function createAppearance(
       state = { ...state, accent, accentError };
       notify();
     },
-    setColorLevel(value: ColorLevel) {
+    setContrast(value: Contrast) {
       if (disposed) return;
-      const colorLevel = parseColorLevel(value);
-      let colorLevelError: string | null = null;
+      const contrast = parseContrast(value);
+      let contrastError: string | null = null;
       try {
         if (!host) throw new Error("No browser storage");
-        host.localStorage.setItem(COLOR_LEVEL_KEY, colorLevel);
+        host.localStorage.setItem(CONTRAST_KEY, contrast);
       } catch {
-        colorLevelError =
+        contrastError =
           "This vibe level is active, but could not be saved on this device. Try again.";
       }
-      state = { ...state, colorLevel, colorLevelError };
+      state = { ...state, contrast, contrastError };
       notify();
     },
     dispose() {

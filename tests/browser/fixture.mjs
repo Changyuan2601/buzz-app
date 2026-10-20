@@ -36,7 +36,6 @@ export const test = base.extend({
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
-  archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
@@ -75,9 +74,16 @@ export const test = base.extend({
   inboxThreadWindow: [false, { option: true }],
   inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
+  // in most corpus rows instead of inert prose.
+  markdownMessages: [false, { option: true }],
+  // Opt-in perf workload: let modeled HTTP pages arrive during wheel input.
+  olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
+  // Rows sharing each history second; above the page size, pages split seconds.
+  historyRowsPerSecond: [1, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
@@ -93,7 +99,6 @@ export const test = base.extend({
       browser,
       productionBroker,
       liveSetupTimeoutMs,
-      archiveOnDisk,
       actionProfile,
       agentMessageDeletion,
       profilePicture,
@@ -132,9 +137,12 @@ export const test = base.extend({
       inboxThreadWindow,
       inboxSoloAgent,
       tallMessages,
+      markdownMessages,
+      olderPageDelayMs,
       membershipActivity,
       launchAnimation,
       historyCounts,
+      historyRowsPerSecond,
       channelIds: channels,
       pluginFixtures,
       developmentReact,
@@ -174,7 +182,11 @@ export const test = base.extend({
         time,
       );
     const peerKeys =
-      dmLabels || readState || exactMessages || actionProfile
+      dmLabels ||
+      readState ||
+      exactMessages ||
+      actionProfile ||
+      markdownMessages
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
@@ -396,19 +408,57 @@ export const test = base.extend({
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
     const historyStarted = performance.now();
+    // One row in eight stays inert prose. The others end with common chat
+    // content: colon or multi-paragraph prose, links, a bound mention, a list,
+    // code and a quote. Bullet lists only: browser helpers address the
+    // timeline through its single ordered list.
+    const markdown = [
+      () => "",
+      (i) =>
+        `Update: deploy ${i} finished at 14:${String(i % 60).padStart(2, "0")}, then the relay restarted.`,
+      () => "\nA second paragraph follows the blank line.",
+      (i) =>
+        `Notes: https://example.com/notes/${i} and [the design doc](https://example.com/design/${i % 5}#history).`,
+      (i) => `@Alice Fixture can you check item ${i}? Thanks!`,
+      () =>
+        "Follow-ups:\n- update the fixture\n- rerun `bin/pnpm perf`\n  - compare **medians**",
+      (i) =>
+        `Repro:\n\`\`\`js\nconst page = await reader.read({ limit: ${20 + (i % 5)} });\nconsole.log(page.length);\n\`\`\``,
+      () =>
+        "> Can we ship _this_ today?\n\n**Yes**, after ~~one more~~ review.",
+    ];
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from({ length: historyCounts[channel] }, (_, i) =>
-            sign(
+          Array.from({ length: historyCounts[channel] }, (_, i) => {
+            const syntax = markdownMessages ? markdown[i % 8](i) : "";
+            return sign(
               9,
-              [["h", channel]],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}`,
+              [
+                ["h", channel],
+                // Mentions bind a known profile name through a p tag.
+                ...(syntax.startsWith("@")
+                  ? [["p", getPublicKey(peerKey)]]
+                  : []),
+                // Shared seconds keep the send order real messages carry.
+                ...(historyRowsPerSecond > 1
+                  ? [
+                      [
+                        "ms",
+                        String(
+                          (i % historyRowsPerSecond) *
+                            Math.floor(1000 / historyRowsPerSecond),
+                        ),
+                      ],
+                    ]
+                  : []),
+              ],
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
-              1700000100 + i,
-            ),
-          ),
+              1700000100 + Math.floor(i / historyRowsPerSecond),
+            );
+          }),
         );
     const ownerAgentMessage = agentMessageDeletion
       ? sign(
@@ -795,6 +845,8 @@ export const test = base.extend({
         dmLabels,
         agentPeers,
         tallMessages,
+        markdownMessages,
+        olderPageDelayMs,
         browserVersion: browser.version(),
         node: process.version,
         platform: platform(),
@@ -816,6 +868,7 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    const olderPageTimers = new Set();
     const retiredStreams = new Set();
     const observerFailures = [];
     const consoleLocations = new Map();
@@ -884,6 +937,8 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      // These ordinary fixture channels have no Huddle creation receipt.
+      if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
       // The real relay can return both current metadata and rosters in one query.
       if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
         return [39000, 39002].flatMap((kind) =>
@@ -1745,6 +1800,7 @@ export const test = base.extend({
           "channel-sections",
           "channel-stars",
           "channel-sort",
+          "channel-filter",
         ].includes(sidebarCoordinate) ||
         (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
@@ -2002,7 +2058,13 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(3);
+        expect(body.length).toBeLessThanOrEqual(
+          body.every(
+            (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 9007,
+          )
+            ? 4
+            : 3,
+        );
         const filter = body[0];
         const result = [
           ...new Map(
@@ -2019,13 +2081,26 @@ export const test = base.extend({
           filter.until !== undefined &&
           filter["#h"]?.length
         ) {
-          pending.push({
+          const queuedAt = performance.now();
+          const receipt = {
             community,
             channel: filter["#h"][0],
             filter,
             events: result.filter((event) => event.kind === 9),
-            release: () => send(response, result),
-          });
+            release: () => {
+              if (response.destroyed || response.writableEnded) return;
+              receipt.releaseDelayMs = performance.now() - queuedAt;
+              send(response, result);
+            },
+          };
+          pending.push(receipt);
+          if (olderPageDelayMs !== null) {
+            const timer = setTimeout(() => {
+              olderPageTimers.delete(timer);
+              receipt.release();
+            }, olderPageDelayMs);
+            olderPageTimers.add(timer);
+          }
         } else send(response, result);
       } catch (error) {
         report.unexpected.push(String(error));
@@ -2086,9 +2161,7 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
-                  archiveFile: archiveOnDisk
-                    ? testInfo.outputPath("archive.sqlite3")
-                    : ":memory:",
+                  archiveFile: ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
@@ -2204,10 +2277,8 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
-        archiveFile: archiveOnDisk
-          ? testInfo.outputPath("archive.sqlite3")
-          : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
@@ -2459,7 +2530,11 @@ export const test = base.extend({
             Math.floor(Date.now() / 1000) + 1,
           );
           threadSummaries.push(event);
-          relay.publish("primary", event);
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              if (client.channels.includes("alpha"))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
         reply(rootId, own = false, deliver = true) {
@@ -2604,6 +2679,7 @@ export const test = base.extend({
       // All page errors stay in the evidence; only known engine reports pass.
       expect(unexplainedPageErrors()).toEqual([]);
     } finally {
+      for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)
         for (const response of heldIcons)
           if (!response.writableEnded) send(response, {});

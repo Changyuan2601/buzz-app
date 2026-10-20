@@ -129,7 +129,7 @@ export function kitRecordFits(record: KitRecord) {
   );
 }
 export const soloCapacityMessage =
-  "Solo project storage is full. Remove a chat from a project, then try again.";
+  "Solo workspace storage is full. Remove a chat from a workspace, then try again.";
 
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),

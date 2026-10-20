@@ -23,3 +23,10 @@ export const expectMessageActionsHidden = (actions) =>
       }),
     )
     .toEqual({ painted: false, takesPointer: false });
+
+/** Reveal actions from visible message content, never its full-width row. */
+export const hoverMessage = (row) =>
+  row
+    .locator("[data-message-action-anchor], [data-message-attachments] > *")
+    .first()
+    .hover();

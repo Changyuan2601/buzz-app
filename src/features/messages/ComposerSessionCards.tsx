@@ -1,4 +1,4 @@
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons";
@@ -16,7 +16,7 @@ export function ComposerSessionCards({
   remove,
 }: {
   cards: readonly string[];
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   extensions: ConversationExtensions | undefined;

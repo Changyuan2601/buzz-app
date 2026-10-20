@@ -1,11 +1,13 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
+mod huddle;
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
     relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -1619,11 +1621,22 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     source: String,
     name: String,
 ) -> Result<()> {
     use tauri::Manager as _;
+    let allowed = match webview.label() {
+        "main" => true,
+        "huddle" => app
+            .try_state::<crate::huddle_window::HuddleWindow>()
+            .is_some_and(|host| host.permits_download(&source, &name)),
+        _ => false,
+    };
+    if !allowed {
+        return Err("This attachment is no longer available in this window".into());
+    }
     let url = download_target(&source).ok_or("Invalid media URL")?;
     let filename = download_name(&name, &url).to_owned();
     let directory = app

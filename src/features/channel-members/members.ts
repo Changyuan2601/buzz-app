@@ -5,14 +5,24 @@ import type { LocalEvents } from "../relay/outbox";
 
 const keyPattern = /^[0-9a-f]{64}$/;
 
+/** Channel types whose members may add people. A system channel's members
+ * are its readers, for example the agents a plugin shares its records with. */
+const expandable = new Set(["stream", "forum", "system"]);
+
 /** The relay remains authoritative; never offer role changes or DM expansion. */
-export function canAddMembers(session: RelaySession, channel?: ChannelSummary) {
+export function canAddMembers(
+  session: {
+    viewer?: string | undefined;
+    outbox?: { supports(kind: number): boolean } | undefined;
+  },
+  channel?: ChannelSummary,
+) {
   return !!(
     session.viewer &&
     session.outbox?.supports(9000) &&
     channel &&
     !channel.archived &&
-    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    expandable.has(channel.channelType ?? "") &&
     (channel.members?.includes(session.viewer) ||
       (channel.readOnly && !channel.private))
   );

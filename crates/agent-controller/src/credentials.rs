@@ -93,6 +93,29 @@ fn account(id: &str) -> Result<String> {
     Ok(format!("agent:{id}"))
 }
 
+impl PlatformCredentials {
+    fn legacy_map(&self, source: LegacySource) -> std::result::Result<SecretMap, Failure> {
+        let bytes = self.keychain.legacy(source.keyring_service(), "secrets")?;
+        if bytes.len() > MAX_BLOB {
+            return Err(Failure::Corrupt);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| Failure::Corrupt)
+    }
+    /// The human key the selected earlier app saved, for a person's explicit
+    /// bring-over. Read-only; the caller validates and persists it.
+    pub fn read_legacy_human(&self, source: LegacySource) -> Result<Zeroizing<String>> {
+        match self.legacy_map(source) {
+            Ok(map) => map
+                .0
+                .get("identity")
+                .map(|value| Zeroizing::new(value.clone())),
+            Err(Failure::Absent) => None,
+            Err(failure) => return Err(failure.message()),
+        }
+        .ok_or_else(|| "No identity from the earlier Buzz app was found".into())
+    }
+}
+
 impl Credentials for PlatformCredentials {
     fn retry(&self) {
         #[cfg(any(target_os = "macos", test))]
@@ -104,15 +127,7 @@ impl Credentials for PlatformCredentials {
         if !crate::config::canonical_key(pubkey) {
             return Err("Invalid selected agent identity".into());
         }
-        let bytes = self
-            .keychain
-            .legacy(source.keyring_service(), "secrets")
-            .map_err(Failure::message)?;
-        if bytes.len() > MAX_BLOB {
-            return Err(Failure::Corrupt.message());
-        }
-        let map: SecretMap =
-            serde_json::from_slice(&bytes).map_err(|_| Failure::Corrupt.message())?;
+        let map = self.legacy_map(source).map_err(Failure::message)?;
         let value = map
             .0
             .get(&format!("agent:{pubkey}"))

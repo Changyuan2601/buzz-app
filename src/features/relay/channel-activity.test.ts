@@ -221,3 +221,31 @@ it("includes diff messages in both historical and live recency", async () => {
   expect(activity.last("alpha")).toBe(90);
   activity.dispose();
 });
+
+it("retains known inactivity through refresh failure, prunes removed rows and resets on clear", async () => {
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  expect(activity.known("quiet")).toBe(false);
+  const initial = activity.refresh(["quiet"]);
+  take(wire.pending).resolve([]);
+  await initial;
+  expect(activity.known("quiet")).toBe(true);
+  expect(activity.last("quiet")).toBeUndefined();
+  const refresh = activity.refresh(["quiet", "new"]);
+  expect(activity.known("quiet")).toBe(true);
+  expect(activity.known("new")).toBe(false);
+  take(wire.pending).reject(new Error("offline"));
+  await expect(refresh).rejects.toThrow("offline");
+  expect(activity.known("quiet")).toBe(true);
+  expect(activity.known("new")).toBe(false);
+  activity.cancel();
+  expect(activity.known("quiet")).toBe(true);
+  const replacement = activity.refresh(["new"]);
+  take(wire.pending).resolve([]);
+  await replacement;
+  expect(activity.known("quiet")).toBe(false);
+  expect(activity.known("new")).toBe(true);
+  activity.clear();
+  expect(activity.known("new")).toBe(false);
+  activity.dispose();
+});

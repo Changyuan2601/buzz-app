@@ -61,6 +61,11 @@ export function useAgent(agents: Agents | undefined, pubkey: string) {
 /** The app's Agents, for surfaces such as the composer that plugins do not own. */
 export const AgentsContext = createContext<Agents | undefined>(undefined);
 
+export const MentionModelsContext = createContext<
+  | ((pubkeys: readonly string[]) => Promise<readonly MentionModelChoice[]>)
+  | undefined
+>(undefined);
+
 export type MentionModelChoice = Models &
   Readonly<{ pubkey: string; name: string; loading?: boolean }>;
 /** The mentioned agents, of the viewer's own, whose type offers a choice of
@@ -68,6 +73,7 @@ export type MentionModelChoice = Models &
 export function useMentionModels(
   pubkeys: readonly string[],
 ): readonly MentionModelChoice[] {
+  const remote = useContext(MentionModelsContext);
   const agents = useContext(AgentsContext);
   const subscribe = agents?.subscribe ?? noSubscribe;
   const snapshot = useSyncExternalStore(
@@ -82,6 +88,7 @@ export function useMentionModels(
   );
   const key = [...new Set(pubkeys)].join(":");
   const [resolved, setResolved] = useState<{
+    remote: typeof remote;
     snapshot: typeof snapshot;
     types: typeof types;
     key: string;
@@ -89,42 +96,53 @@ export function useMentionModels(
   }>();
   useEffect(() => {
     let current = true;
-    void Promise.all(
-      key.split(":").map(async (pubkey): Promise<MentionModelChoice[]> => {
-        const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);
-        const type = agent && types?.find((item) => item.key === agent.type);
-        if (!agent || !type?.models) return [];
-        try {
-          const { current, models, sendDefaults } = await type.models(agent);
-          return models.length > 1 || models.some((m) => m.efforts.length)
-            ? [
-                {
-                  pubkey,
-                  name: agent.name,
-                  current,
-                  models,
-                  ...(sendDefaults ? { sendDefaults: true } : {}),
-                },
-              ]
-            : [];
-        } catch (error) {
-          console.warn(
-            `Agent type ${type.key} could not list its models`,
-            error,
-          );
-          return [];
-        }
-      }),
+    void (
+      remote
+        ? remote(key ? key.split(":") : []).catch(() => [])
+        : Promise.all(
+            key
+              .split(":")
+              .map(async (pubkey): Promise<MentionModelChoice[]> => {
+                const agent = snapshot?.agents.find(
+                  (item) => item.pubkey === pubkey,
+                );
+                const type =
+                  agent && types?.find((item) => item.key === agent.type);
+                if (!agent || !type?.models) return [];
+                try {
+                  const { current, models, sendDefaults } =
+                    await type.models(agent);
+                  return models.length > 1 ||
+                    models.some((m) => m.efforts.length)
+                    ? [
+                        {
+                          pubkey,
+                          name: agent.name,
+                          current,
+                          models,
+                          ...(sendDefaults ? { sendDefaults: true } : {}),
+                        },
+                      ]
+                    : [];
+                } catch (error) {
+                  console.warn(
+                    `Agent type ${type.key} could not list its models`,
+                    error,
+                  );
+                  return [];
+                }
+              }),
+          ).then((choices) => choices.flat())
     ).then((choices) => {
-      if (current)
-        setResolved({ snapshot, types, key, choices: choices.flat() });
+      if (current) setResolved({ remote, snapshot, types, key, choices });
     });
     return () => {
       current = false;
     };
-  }, [snapshot, types, key]);
+  }, [snapshot, types, key, remote]);
   // Never offer a previous agent/config's choices while the new lookup settles.
-  return resolved?.snapshot === snapshot &&
+  return resolved?.remote === remote &&
+    resolved?.snapshot === snapshot &&
     resolved?.types === types &&
     resolved?.key === key
     ? resolved.choices

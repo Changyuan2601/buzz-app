@@ -70,7 +70,9 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       );
       assert.equal(
         plugin.enabledByDefault,
-        !["buzz.bestie", "buzz.todos"].includes(plugin.manifest.id),
+        !["buzz.bestie", "buzz.todos", "buzz.usage"].includes(
+          plugin.manifest.id,
+        ),
         plugin.manifest.id,
       );
     }
@@ -122,21 +124,25 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.hosted-communities",
         "buzz.agents",
         "buzz.channels",
-        "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",
       ],
     );
-    // Messages owns thread placement through the plugin-settings boundary.
-    assert.equal(services.settingsCards.has("buzz.channels/messages"), true);
-    const messageSettings = services.settingsCards
-      .snapshot()
-      .find((card) => card.key === "buzz.channels/messages");
-    assert.equal(messageSettings.title, "Messages");
+    // The device-local template library remains reachable without a selected community.
+    assert.equal(
+      services.settingsCards
+        .snapshot()
+        .find((card) => card.key === "buzz.channels/templates")?.group,
+      "App",
+    );
+    // Conversation presentation is host-owned in Appearance, not a second plugin page.
+    assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards
       .snapshot()
       .find((card) => card.key === "buzz.pairing/mobile");
     assert.ok(pairingCard);
+    // Pairing collects its own address, so it also belongs in Personal space.
+    assert.equal(pairingCard.personal, true);
     await services.plugins.change("disable", "buzz.pairing");
     assert.equal(services.settingsCards.has("buzz.pairing/mobile"), false);
     await services.plugins.change("enable", "buzz.pairing");
@@ -190,7 +196,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.builderlab",
         "block.hosted-communities",
         "buzz.agents",
-        "buzz.channels",
         "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",
@@ -250,30 +255,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         services.panels.resolve(profileTarget)?.pluginId,
         "buzz.profiles",
-      ),
-    );
-
-    const usage = services.panels
-      .snapshot()
-      .find((panel) => panel.pluginId === "buzz.channel-usage");
-    assert.equal(usage.channelMenu.label, "View channel usage");
-    assert.equal(usage.matches("channel"), false);
-    await services.plugins.change("disable", "buzz.channel-usage");
-    assert.equal(services.panels.snapshot().includes(usage), false);
-    assert.ok(
-      services.pages
-        .snapshot()
-        .some((page) => page.pluginId === "buzz.channels"),
-    );
-    await services.plugins.change("enable", "buzz.channel-usage");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels
-          .snapshot()
-          .some(
-            (panel) =>
-              panel.pluginId === "buzz.channel-usage" && panel !== usage,
-          ),
       ),
     );
 

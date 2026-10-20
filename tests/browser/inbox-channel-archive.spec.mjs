@@ -26,7 +26,7 @@ test("excludes a channel-archived conversation across reload without clearing lo
     .getByRole("listitem");
   await expect(rows).toHaveCount(1);
   await rows.getByRole("button", { name: /^Open / }).click();
-  const detail = inbox.getByRole("region", { name: "Inbox detail" });
+  const detail = inbox.getByRole("region", { name: /^Conversation in / });
   await expect(
     detail.locator(`[data-message-id="${app.inboxWindow.root.id}"]`),
   ).toBeVisible();

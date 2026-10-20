@@ -177,3 +177,39 @@ it("rejects other-community attachment URLs, invalid roots and genuinely empty m
   expect(() => h.session.messages.send("c", " ")).toThrow(/empty/);
   expect(h.sign).not.toHaveBeenCalled();
 });
+
+it.each(["dispose", "clear"])(
+  "uploads for a chat not yet created and still cancels on %s",
+  async (action) => {
+    const ready = setup(async () => attachment);
+    assert.exists(ready.session.attachments?.uploadForNewChat);
+    await expect(
+      ready.session.attachments.uploadForNewChat(
+        file,
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual(attachment);
+
+    let signal!: AbortSignal;
+    let release!: (value: UploadedAttachment) => void;
+    const h = setup(async (_file, supplied) => {
+      signal = supplied;
+      return new Promise<UploadedAttachment>((resolve) => {
+        release = resolve;
+      });
+    });
+    assert.exists(h.session.attachments?.uploadForNewChat);
+    const pending = h.session.attachments.uploadForNewChat(
+      file,
+      new AbortController().signal,
+    );
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    if (action === "dispose") h.dispose();
+    else await h.clearCache();
+    expect(signal.aborted).toBe(true);
+    release(attachment);
+    await rejected;
+  },
+);

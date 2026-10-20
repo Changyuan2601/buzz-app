@@ -1,7 +1,7 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
-import { decode } from "nostr-tools/nip19";
+import { decode, npubEncode } from "nostr-tools/nip19";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -18,13 +18,16 @@ import {
   listSharedSessions,
   readSharedSession,
 } from "../features/sessions/shared-sessions";
+import {
+  attachmentMarkdown,
+  attachmentName,
+} from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
-const int = { type: "integer" } as const;
 const tool = (
   name: string,
   description: string,
@@ -76,7 +79,28 @@ export const TOOLS: readonly Tool[] = [
   tool(
     "read",
     "Read a thread (default: current), a channel's latest, or search with q.",
-    { channel: str, thread: str, q: str, limit: int, before: int },
+    {
+      channel: str,
+      thread: str,
+      q: str,
+      author: {
+        type: "string",
+        description: "With q or channel: only this hex pubkey or npub.",
+      },
+      since: {
+        type: "integer",
+        description: "With q or channel: Unix seconds, at or after.",
+      },
+      before: { type: "integer", description: "Unix seconds, at or before." },
+      before_id: {
+        type: "string",
+        description: "For paginating: with before, from a continue line.",
+      },
+      limit: {
+        type: "integer",
+        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
+      },
+    },
   ),
   tool(
     "shared_sessions",
@@ -153,14 +177,35 @@ export const TOOLS: readonly Tool[] = [
   tool("mem_set", "Write memory.", { slug: str, text: str, path: str }, [
     "slug",
   ]),
+  tool(
+    "notes_get",
+    "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
+    {
+      name: str,
+      author: str,
+      latest: { type: "boolean" },
+      tag: str,
+      limit: { type: "integer" },
+    },
+  ),
+  tool(
+    "notes_set",
+    "Publish your note under name, replacing your earlier one. title is needed the first time; title, summary and tags carry over when left out.",
+    { name: str, title: str, summary: str, tags: strs, text: str, path: str },
+    ["name"],
+  ),
+  tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
   tool("canvas", "Read a channel's canvas, or replace it.", {
     channel: str,
     text: str,
     path: str,
   }),
-  tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
-    "url",
-  ]),
+  tool(
+    "media_get",
+    "Get a file of any type from a Buzz media URL: saves it locally and gives its path; an image is also shown.",
+    { url: str },
+    ["url"],
+  ),
   tool(
     "tabs",
     "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
@@ -177,6 +222,8 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** A NIP-23 long-form note, as `buzz notes` writes it. */
+const NOTE = 30023;
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -196,8 +243,11 @@ const ACTIONS: Readonly<Record<string, readonly string[]>> = {
 };
 
 type Args = Readonly<Record<string, unknown>>;
-/** A tool's answer: text, or an image (base64 `data`) for the agent to see. */
-export type Reply = string | Readonly<{ data: string; type: string }>;
+/** A tool's answer: text, or an image (base64 `data`) for the agent to see,
+ * with any `text` about it. */
+export type Reply =
+  | string
+  | Readonly<{ data: string; type: string; text?: string }>;
 type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
@@ -380,24 +430,72 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async read(tools, args) {
     const { client, context } = tools;
     const limit = typeof args.limit === "number" ? args.limit : undefined;
-    const before = typeof args.before === "number" ? args.before : undefined;
+    const before = unixTime(args, "before");
+    const since = unixTime(args, "since");
+    if (since !== undefined && before !== undefined && since > before)
+      throw new Error("since must not be after before.");
+    let author: string | undefined;
+    if (args.author !== undefined)
+      try {
+        author = pubkey(args.author as string);
+      } catch {
+        throw new Error(
+          "author must be a hex pubkey or npub; users finds one by name.",
+        );
+      }
+    const beforeId = args.before_id;
+    if (beforeId !== undefined && before === undefined)
+      throw new Error("before_id needs before, from the same continue line.");
+    if (
+      beforeId !== undefined &&
+      (typeof beforeId !== "string" || !HEX.test(beforeId))
+    )
+      throw new Error("before_id must be a 64-character event ID.");
+    const filters = {
+      ...(author ? { authors: [author] } : {}),
+      ...(since !== undefined ? { since } : {}),
+    };
+    // The relay's cursor: at or before `until`, after `before_id` at a tie.
+    const cursor = {
+      ...(before !== undefined ? { until: before } : {}),
+      ...(beforeId ? { before_id: beforeId } : {}),
+    };
     const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    let events: readonly BuzzEvent[];
-    if (q)
-      events = await client.query([
+    if (q) {
+      if (beforeId)
+        throw new Error(
+          "before_id pages thread and channel reads; narrow a search with before or since.",
+        );
+      const max = bound(limit, 20, 100);
+      const found = await client.query([
         {
           kinds: SEARCH,
           search: q,
-          limit: bound(limit, 20, 100),
+          limit: max,
           ...(args.channel ? { "#h": [channel] } : {}),
-          ...(before ? { until: before } : {}),
+          ...cursor,
+          ...filters,
         },
       ]);
-    else if (
-      text(args.thread) ||
-      (args.channel === undefined && context.root)
-    ) {
+      const lines = await tools.messages(found, {});
+      if (!lines.length) return "No messages.";
+      if (found.length >= max)
+        lines.push(
+          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
+        );
+      return lines.join("\n");
+    }
+    let scope: { channel?: string; root?: string };
+    let max: number;
+    let more: Args;
+    let found: readonly BuzzEvent[];
+    let first: BuzzEvent | undefined;
+    if (text(args.thread) || (args.channel === undefined && context.root)) {
+      if (author || since !== undefined)
+        throw new Error(
+          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+        );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
       if (id !== context.root) {
@@ -406,40 +504,64 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         channel = tag(event, "h") ?? channel;
       }
       if (!channel) throw new Error("channel is required here.");
-      events = await client.query([
+      max = bound(limit, 100, 500);
+      // The root comes on the first page only, apart from the replies' limit
+      // and cursor.
+      const events = await client.query([
         {
           kinds: THREAD,
           "#h": [channel],
           "#e": [root],
-          limit: bound(limit, 100, 500),
+          limit: max + 1,
+          ...cursor,
         },
-        { ids: [root], kinds: [...THREAD, 45001], limit: 1 },
+        ...(before === undefined
+          ? [{ ids: [root], kinds: [...THREAD, 45001], limit: 1 }]
+          : []),
       ]);
+      first = events.find((event) => event.id === root);
+      found = events.filter((event) => event.id !== root);
+      scope = { channel, root };
+      more = { thread: root, limit: max };
     } else {
       if (!channel) throw new Error("channel is required here.");
-      events = await client.query([
+      max = bound(limit, 30, 200);
+      found = await client.query([
         {
           kinds: MESSAGES,
           "#h": [channel],
-          limit: bound(limit, 30, 200),
-          ...(before ? { until: before } : {}),
+          limit: max + 1,
+          ...cursor,
+          ...filters,
         },
       ]);
+      scope = { channel };
+      more = {
+        channel,
+        ...(author ? { author } : {}),
+        ...(since !== undefined ? { since } : {}),
+        limit: max,
+      };
     }
-    // An edit tags only the message it changes, so a thread's are not in it.
-    const ids = events.filter((event) => event.kind !== 40003).map((e) => e.id);
-    const edits = ids.length
-      ? await client.query([{ kinds: [40003], "#e": ids, limit: 500 }])
-      : [];
-    const messages = edited([...events, ...edits]);
-    if (!messages.length) return "No messages.";
-    const names = await tools.names(messages.map((event) => event.pubkey));
-    return messages
-      .map(
-        (event) =>
-          `${event.id} ${names.get(event.pubkey) ?? event.pubkey} ${time(event.created_at)}: ${event.content}`,
-      )
-      .join("\n");
+    // One more than the limit tells whether older messages remain; the last
+    // shown, in the relay's newest-first order, is where the next page starts.
+    // A short page is only what the relay returned: serving-time filtering and
+    // retention can leave older history unseen.
+    const shown = found.slice(0, max);
+    const last = shown.at(-1);
+    const lines = await tools.messages(
+      first ? [first, ...shown] : shown,
+      scope,
+    );
+    if (!lines.length) return "No messages.";
+    const noun = scope.root ? "replies" : "messages";
+    return [
+      scope.root ? `thread ${scope.root} in ${channel}` : `channel ${channel}`,
+      ...lines,
+      last && found.length > max
+        ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
+        : `The relay returned no older ${noun}.`,
+    ].join("\n");
   },
 
   async channels(tools, args) {
@@ -693,6 +815,173 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "saved";
   },
 
+  async notes_get(tools, args) {
+    const { client } = tools;
+    const name = args.name === undefined ? undefined : noteSlug(args.name);
+    const author = optional(args, "author");
+    if (name === undefined) {
+      if (args.latest !== undefined)
+        throw new Error("latest is for reading a note by name.");
+      const who = author || "me";
+      const topic = optional(args, "tag");
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      const notes = latestNotes(
+        await client.query([
+          {
+            kinds: [NOTE],
+            ...(who === "all" ? {} : { authors: [await tools.author(who)] }),
+            ...(topic ? { "#t": [topic] } : {}),
+            limit: bound(limit, 50, 200),
+          },
+        ]),
+      );
+      if (!notes.length) return "No notes.";
+      const names = await tools.names(notes.map((note) => note.pubkey));
+      return notes
+        .map(
+          (note) =>
+            `${tag(note, "d")} ${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+        )
+        .join("\n");
+    }
+    if (args.tag !== undefined || args.limit !== undefined)
+      throw new Error("tag and limit are for listing notes, without name.");
+    if (author === "all")
+      throw new Error("author all is for listing; leave author out instead.");
+    if (author && args.latest === true)
+      throw new Error("Give author or latest, not both.");
+    const notes = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          "#d": [name],
+          ...(author ? { authors: [await tools.author(author)] } : {}),
+          limit: 50,
+        },
+      ]),
+    );
+    const names = await tools.names(notes.map((note) => note.pubkey));
+    if (!notes.length) return `No note ${name}.`;
+    if (notes.length > 1 && args.latest !== true)
+      throw new Error(
+        `${notes.length} authors have a note ${name}; give author or latest.\n${notes
+          .map(
+            (note) =>
+              `${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+          )
+          .join("\n")}`,
+      );
+    const note = notes[0] as BuzzEvent;
+    const topics = note.tags.filter((t) => t[0] === "t" && t[1]);
+    return [
+      `${NOTE}:${note.pubkey}:${name} by ${names.get(note.pubkey) ?? note.pubkey}, ${time(note.created_at)}`,
+      `title: ${tag(note, "title") ?? ""}`,
+      ...(has(note, "summary") ? [`summary: ${tag(note, "summary")}`] : []),
+      ...(topics.length ? [`tags: ${topics.map((t) => t[1]).join(", ")}`] : []),
+      "",
+      note.content,
+    ].join("\n");
+  },
+
+  async notes_set(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    const body = (await tools.body(args, true)) as string;
+    if (!body.trim()) throw new Error("A note needs text.");
+    const given = (key: string) => {
+      const value = args[key];
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${key} must be text.`);
+      return value;
+    };
+    const title = given("title");
+    const summary = given("summary");
+    if (
+      args.tags !== undefined &&
+      (!Array.isArray(args.tags) ||
+        !args.tags.every((item) => typeof item === "string" && item.trim()))
+    )
+      throw new Error("tags must be a list of words.");
+    // Read from the writer, so a lagging replica cannot hide the version
+    // this write replaces or the one it saved.
+    const own = {
+      kinds: [NOTE],
+      authors: [client.pubkey],
+      "#d": [name],
+      limit: 1,
+      consistency: "strong",
+    };
+    const [prior] = latestNotes(await client.query([own]));
+    if (title === undefined && !prior)
+      throw new Error("title is required for a new note.");
+    const kept = (key: string) =>
+      prior?.tags.filter((t) => t[0] === key && t[1]).map((t) => t[1]) ?? [];
+    const topics =
+      args.tags === undefined
+        ? kept("t")
+        : (args.tags as string[]).map((t) => t.trim());
+    const about = summary ?? (prior && tag(prior, "summary"));
+    // The newest version wins, so a write must be dated after the one it
+    // replaces.
+    const after = prior ? (prior.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const saved = await client.publish({
+      kind: NOTE,
+      content: body,
+      tags: [
+        ["d", name],
+        ["title", title ?? tag(prior as BuzzEvent, "title") ?? ""],
+        ...(about === undefined ? [] : [["summary", about]]),
+        ...topics.map((topic) => ["t", topic as string]),
+        [
+          "published_at",
+          kept("published_at")[0] ?? String(Math.floor(Date.now() / 1000)),
+        ],
+      ],
+    });
+    // The community accepts a write that loses to another version of the
+    // same second, so only a read shows whether this one is the note now.
+    const [current] = latestNotes(await client.query([own]));
+    if (!current)
+      throw new Error(
+        `conflict: note ${name} was not found after this write. Read it with notes_get, then write again.`,
+      );
+    if (current.id !== saved.id)
+      throw new Error(
+        `conflict: note ${name} now holds another version (${current.id}, ${time(current.created_at)}), not this text. Read it with notes_get, then write again.`,
+      );
+    return `saved ${NOTE}:${client.pubkey}:${name}`;
+  },
+
+  async notes_rm(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    // Read from the writer, so a lagging replica cannot hide a new note.
+    const [mine] = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          authors: [client.pubkey],
+          "#d": [name],
+          limit: 1,
+          consistency: "strong",
+        },
+      ]),
+    );
+    if (!mine) throw new Error(`You have no note ${name}.`);
+    // A deletion removes only versions dated at or before it, so it must be
+    // dated after the note, even one from a writer whose clock runs ahead.
+    const after = (mine.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const coordinate = `${NOTE}:${client.pubkey}:${name}`;
+    await client.publish({ kind: 5, content: "", tags: [["a", coordinate]] });
+    return `deleted ${coordinate}`;
+  },
+
   async canvas(tools, args) {
     const { client, context } = tools;
     const channel = text(args.channel) ?? context.channel;
@@ -704,21 +993,25 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!head && !(await tools.metadata(channel))) throw unseen(channel);
     if (content === undefined) return head?.content || "No canvas.";
     // The newest canvas wins, so a write must be dated after the current one.
-    const wait = head ? (head.created_at + 1) * 1000 - Date.now() : 0;
-    if (wait > 5000) throw new Error("The canvas was just changed; try again.");
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    const after = head ? (head.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The canvas was just changed; try again.");
+    await waitUntil(after);
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
   },
 
   async media_get(tools, args) {
-    const data = await tools.client.media(required(args, "url"));
-    // The first 12 bytes name the type.
-    const head = atob(data.slice(0, 16));
-    const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
-    if (!type?.startsWith("image/"))
-      throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
-    return { data, type };
+    const media = await tools.client.media(required(args, "url"));
+    const saved = `Saved ${media.path} (${media.type}, ${media.size} bytes).`;
+    if (media.data) {
+      // The first 12 bytes name the type.
+      const head = atob(media.data.slice(0, 16));
+      const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
+      if (type?.startsWith("image/"))
+        return { data: media.data, type, text: saved };
+    }
+    return `${saved} Open it with your own tools.`;
   },
 
   async tabs(tools, args) {
@@ -1058,6 +1351,33 @@ class Tools {
     };
   }
 
+  /** The author `value` names: me, a pubkey or npub, or one display name. */
+  async author(value: string) {
+    if (value === "me") return this.client.pubkey;
+    try {
+      return pubkey(value);
+    } catch {}
+    const q = value.toLowerCase();
+    const named =
+      [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await this.client.query([{ kinds: [0], search: q, limit: 100 }]));
+    const found = newest(profiles).filter(
+      (event) => profileName(parse(event.content))?.toLowerCase() === q,
+    );
+    if (found.length > 1)
+      throw new Error(
+        `${found.length} people are named ${value}; give their npub.\n${found
+          .map((event) => npubEncode(event.pubkey))
+          .join("\n")}`,
+      );
+    if (!found[0]) throw new Error(`No one is named ${value}.`);
+    return found[0].pubkey;
+  }
+
   /** Display names of `pubkeys` that have a profile. */
   async names(pubkeys: readonly string[]) {
     const wanted = [...new Set(pubkeys)];
@@ -1071,6 +1391,36 @@ class Tools {
       if (name) names.set(event.pubkey, name);
     }
     return names;
+  }
+
+  /** Messages oldest first with their latest edits, a line each: its ID,
+   * author, channel and thread, leaving out those `scope` already names. */
+  async messages(
+    events: readonly BuzzEvent[],
+    scope: Readonly<{ channel?: string; root?: string }>,
+  ) {
+    // An edit tags only the message it changes, so a thread's are not in it.
+    const ids = events.filter((event) => event.kind !== 40003).map((e) => e.id);
+    const edits = ids.length
+      ? await this.client.query([{ kinds: [40003], "#e": ids, limit: 500 }])
+      : [];
+    const messages = edited([...events, ...edits]);
+    const names = await this.names(messages.map((event) => event.pubkey));
+    return messages.map((event) => {
+      const name = names.get(event.pubkey);
+      const channel = tag(event, "h");
+      const thread = threadReference(event)?.rootId;
+      return [
+        event.id,
+        `from ${event.pubkey}`,
+        name && JSON.stringify(name),
+        channel && channel !== scope.channel && `in ${channel}`,
+        thread && thread !== scope.root && `re ${thread}`,
+        `at ${time(event.created_at)}: ${event.content}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    });
   }
 
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
@@ -1128,18 +1478,20 @@ class Tools {
     return [...keys].slice(0, 50);
   }
 
-  /** Uploads each file and returns its `imeta` tags and the links to append. */
+  /** Uploads each file and returns its `imeta` tags and the links to append.
+   * Any file the community accepts attaches; it decides the type. */
   async attach(paths: readonly string[]) {
     const tags: string[][] = [];
     let links = "";
     for (const path of paths) {
       const data = await this.client.read(path);
-      const mime = sniff(data);
-      if (!mime)
-        throw new Error(`${path}: only JPEG, PNG, GIF, WebP and MP4 attach.`);
-      const upload = await this.client.upload(data, mime);
-      tags.push(imeta(upload));
-      links += `\n![${mime.startsWith("video/") ? "video" : "image"}](${upload.url})`;
+      const upload = await this.client.upload(
+        data,
+        sniff(data) ?? "application/octet-stream",
+      );
+      const name = attachmentName(path.split(/[\\/]/).pop() ?? "");
+      tags.push([...imeta(upload), `filename ${name}`]);
+      links += `\n${attachmentMarkdown(name, upload)}`;
     }
     return { tags, links };
   }
@@ -1200,7 +1552,7 @@ function imeta(upload: Upload) {
   ];
 }
 
-/** An attachable type, by the file's leading bytes. */
+/** An image or MP4's type, by the file's leading bytes. */
 function sniff(data: Uint8Array) {
   const at = (offset: number, ...bytes: number[]) =>
     bytes.every((byte, index) => data[offset + index] === byte);
@@ -1225,6 +1577,41 @@ function memorySlug(slug: string) {
       `Bad slug ${slug}: use lowercase parts like notes or team/plan.`,
     );
   return key;
+}
+
+/** A note's name, as the CLI allows it. */
+function noteSlug(value: unknown) {
+  if (typeof value !== "string" || !/^[a-z0-9._-]{1,80}$/.test(value))
+    throw new Error(
+      `Bad note name ${String(value)}: use up to 80 of a-z, 0-9, - _ and .`,
+    );
+  return value;
+}
+
+/** Waits until `at`. A timer can fire a moment early, which would date the
+ * write in the second it must follow. */
+async function waitUntil(at: number) {
+  while (Date.now() < at)
+    await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+}
+
+/** Each author's newest version of each note, newest first. */
+function latestNotes(events: readonly BuzzEvent[]) {
+  const latest = new Map<string, BuzzEvent>();
+  for (const event of events) {
+    const name = tag(event, "d");
+    if (event.kind !== NOTE || name === undefined) continue;
+    const key = `${event.pubkey}:${name}`;
+    const seen = latest.get(key);
+    // Of two versions from the same second, the lower id is kept.
+    if (
+      !seen ||
+      seen.created_at < event.created_at ||
+      (seen.created_at === event.created_at && event.id < seen.id)
+    )
+      latest.set(key, event);
+  }
+  return [...latest.values()].sort((a, b) => b.created_at - a.created_at);
 }
 
 function pubkey(value: string) {
@@ -1311,6 +1698,22 @@ function seconds(value: unknown) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error("ttl must be a whole number of seconds.");
   return value;
+}
+
+/** A `since` or `before` argument: a Unix time in seconds, inclusive. */
+function unixTime(args: Args, key: string) {
+  const value = args[key];
+  if (value === undefined) return undefined;
+  // In milliseconds, a time from this century is past the year 5000.
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) >= 1e11
+  )
+    throw new Error(
+      `${key} must be Unix seconds: a whole number, not milliseconds.`,
+    );
+  return value as number;
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

@@ -226,10 +226,10 @@ export function ComposerFormattingTools({
             >
               {formatToggle}
             </motion.div>
+            {trailing}
           </ToolGroup>
         )}
       </AnimatePresence>
-      {trailing && !open && <div className={styles.trailing}>{trailing}</div>}
     </div>
   );
 }

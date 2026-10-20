@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
@@ -234,6 +235,41 @@ test("explicit Allow releases the first fresh alert; master off preserves catego
   expect(await systemCount(page)).toBe(1);
 });
 
+// Layout and real focus retention need an engine; Vitest covers check ordering.
+test("keyboard permission check keeps focus and geometry while busy", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await ready(page, app);
+  const status = page.locator("#setting-delivery").getByRole("status");
+  await expect(status).toHaveCount(0);
+  const button = page.getByRole("button", {
+    name: "Check permission",
+    exact: true,
+  });
+  const before = await button.boundingBox();
+  await page.evaluate(() => {
+    window.Notification.permission = "denied";
+  });
+  await button.focus();
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  await page.keyboard.press("Enter");
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(100);
+  // A screenshot crosses a real rendered frame, where a disabled control blurs.
+  await button.screenshot();
+  await expect(button).toBeFocused();
+  expect(await button.boundingBox()).toEqual(before);
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(400);
+  await expect(button).not.toHaveAttribute("aria-busy", "true");
+  await expect(button).toBeFocused();
+  await expect(status).toHaveText(
+    "Notifications are off. Turn them on in your browser or system settings.",
+  );
+});
+
 test("a fully visible incoming row stays quiet without publishing read intent", async ({
   page,
   app,
@@ -286,7 +322,38 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 30_000);
   const row = liveMessage(app, "Visible mention");
-  await observed(page, row.id);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+            .status,
+        row.id,
+      ),
+    )
+    .toBe("eligible");
+  // The paused clock must not run presentation's deadline ahead of the new
+  // row's commit/positioning. Pump frames until viewing is established, yielding
+  // between steps for native ResizeObserver and React work. Cap clock progress
+  // below presentation's 100ms fallback and reading's 300ms dwell.
+  let positioningTime = 0;
+  await expect
+    .poll(async () => {
+      if (positioningTime < 96) {
+        await page.clock.runFor(16);
+        positioningTime += 16;
+      }
+      if (!(await history.locator(`[data-message-id="${row.id}"]`).isVisible()))
+        return false;
+      return page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+            .viewing,
+        row.id,
+      );
+    })
+    .toBe(true);
+  await page.clock.runFor(100);
   expect(await systemCount(page)).toBe(0);
   expect(
     await page.evaluate(
@@ -298,7 +365,7 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
   ).toBe(true);
   await page.clock.resume();
   // The paused clock also owned requestAnimationFrame, so the frames that
-  // re-pin the bottom after an append only ran inside observed()'s runFor.
+  // re-pin the bottom after an append ran in the explicit clock steps above.
   // Check the row's full visibility on the running clock, while it is mounted.
   await expect(history.locator(`[data-message-id="${row.id}"]`)).toBeInViewport(
     { ratio: 1 },
@@ -477,9 +544,7 @@ test("an installed producer shares policy and OS click navigation, including aft
       section: "plugins",
     }),
   );
-  await page
-    .getByRole("switch", { name: "Enable Notification fixture", exact: true })
-    .click();
+  await pluginAction(page, "Notification fixture").click();
   expect(
     await page.evaluate((input) => window.fixtureNotify(input), {
       ...input,

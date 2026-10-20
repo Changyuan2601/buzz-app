@@ -10,6 +10,7 @@ import {
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
+import { usePendingRequest } from "../../features/messages/use-pending-request";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
 import { SoloColumn, SoloTitle } from "../../features/solo/SoloPresentation";
@@ -20,6 +21,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   active: boolean;
+  /** Showing the tab visits its conversation, as Channels does. */
+  visit?: boolean | undefined;
   focusOnMount?: boolean;
   channel: ChannelSummary;
   session: RelaySession;
@@ -39,6 +42,7 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   active,
+  visit = true,
   focusOnMount = true,
   channel,
   session,
@@ -68,6 +72,13 @@ export function ConversationTab({
       ? tab.revealRequest
       : undefined;
   const opening = tab.kind === "conversation" ? tab : undefined;
+  // Likewise a saved focus request.
+  const focus = tab.focusRequest;
+  const restoredFocus = useRef(focusOnMount ? undefined : focus);
+  if (focus !== restoredFocus.current) restoredFocus.current = undefined;
+  const focusRequest = usePendingRequest(
+    focus === restoredFocus.current ? undefined : focus,
+  );
   const target = opening?.messageId && asked ? opening.messageId : undefined;
   const revealRequest = target ? asked : undefined;
   const threadReveal = tab.kind === "thread" ? asked : undefined;
@@ -96,7 +107,7 @@ export function ConversationTab({
       scope={scope}
       extensions={extensions}
       channel={channel}
-      active={active}
+      active={active && visit}
       interactions={{
         onOpenLink: openLink,
         canOpenLink,
@@ -122,6 +133,7 @@ export function ConversationTab({
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}
             replyRequest={reply === restoredReply.current ? undefined : reply}
+            focusRequest={focusRequest}
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
             close={close}
@@ -157,7 +169,10 @@ export function ConversationTab({
               }
               marksRead={opening?.markRead !== false}
             />
-            <ConversationComposer onSend={setSent} />
+            <ConversationComposer
+              onSend={setSent}
+              {...(focusRequest ? { focusRequest } : {})}
+            />
           </SoloColumn>
         )}
       </section>

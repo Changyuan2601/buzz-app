@@ -1,7 +1,9 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import {
+  closeSettings,
   openPage,
+  openSettings,
   selectSettingsSection,
-  settleShellToggle,
 } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
@@ -64,14 +66,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   });
   const button = (name) => page.getByRole("button", { name, exact: true });
   const plugins = async () => {
-    await button("Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
   };
   const messages = async () => {
-    await settleShellToggle(page);
-    const disclosure = button("Show navigation");
-    if (await disclosure.isVisible()) await disclosure.click();
     await openPage(page, "Messages");
     await expect(
       page
@@ -84,13 +82,11 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const launcher = button("Toggle channel todos");
   await expect(launcher).toHaveCount(0);
   await plugins();
-  const enabled = page.getByRole("switch", {
-    name: "Enable Todos",
-    exact: true,
-  });
-  await expect(enabled).not.toBeChecked();
+  const enabled = pluginAction(page, "Todos");
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
   await enabled.click();
-  await expect(enabled).toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await messages();
   await launcher.click();
   const drawer = page.getByRole("region", {
@@ -247,7 +243,8 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   ).toBeChecked();
   await plugins();
   await enabled.click();
-  await expect(enabled).not.toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
+  await closeSettings(page);
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);

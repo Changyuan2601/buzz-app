@@ -183,9 +183,10 @@ no pending jump cost a few milliseconds.
 The store moves the held range by the shift's item delta, so the rows it kept
 mounted stay mounted and the scroll event's live range is computed as before.
 A shift can also remove rows from the head, since the timeline reports one
-whenever the first row changes and the last does not; a removal past the held
-range's start would move the range above the list, so it then holds the same
-number of rows from the top instead. A partial removal holds a range wider
+whenever rows above the reader change and the rows from their first visible
+row to the end do not; a removal past the held range's start would move the
+range above the list, so it then holds the same number of rows from the top
+instead. A partial removal holds a range wider
 than the live one for that frame; a removal of every held row, which would
 otherwise leave an inverted range that renders no row, lands with the
 corrected offset at the top. Nothing changes when no jump is pending, for

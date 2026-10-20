@@ -2402,7 +2402,7 @@ it("opening Settings sends one probe and shows each role its entries before any 
   ]);
   expect(sent("probe")).toHaveLength(1);
   for (const card of cards(operator, (node) => node))
-    expect(card.group).toBe("Relay admin");
+    expect(card.group).toBe("Moderation");
 
   routes.probe = () => probe();
   const moderator = createStaff(backend, () => ({ relay, signer }));

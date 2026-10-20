@@ -23,17 +23,26 @@ function rememberAvatar(src: string) {
     const oldest = loadedAvatarSources.values().next().value;
     if (oldest !== undefined) loadedAvatarSources.delete(oldest);
   }
+  for (const retry of failedAvatars.get(src) ?? []) retry();
 }
+// A failed request may be transient (relay, network or native proxy), and a
+// mounted avatar gets no new source to reset it. Behind the fallback, retry the
+// same source a bounded number of times, and whenever another mount loads it.
+const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
+const failedAvatars = new Map<string, Set<() => void>>();
 
 function AvatarArtwork({
   src,
   fallback,
+  loading,
 }: {
   src: string;
   fallback: ReactNode;
+  loading: "eager" | "lazy" | undefined;
 }) {
   const [status, setStatus] = useState<ImageStatus>("loading");
   const [showFallback, setShowFallback] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [previouslyLoaded] = useState(() => loadedAvatarSources.has(src));
   const image = useRef<HTMLImageElement>(null);
   useLayoutEffect(() => {
@@ -54,6 +63,23 @@ function AvatarArtwork({
     const timer = window.setTimeout(() => setShowFallback(true), 150);
     return () => window.clearTimeout(timer);
   }, [status]);
+  useEffect(() => {
+    if (status !== "failed") return;
+    const retry = () => {
+      setShowFallback(true);
+      setAttempt(attempt + 1);
+      setStatus("loading");
+    };
+    const waiting = failedAvatars.get(src) ?? new Set();
+    failedAvatars.set(src, waiting.add(retry));
+    const delay = RETRY_DELAYS_MS[attempt];
+    const timer = delay === undefined ? 0 : window.setTimeout(retry, delay);
+    return () => {
+      window.clearTimeout(timer);
+      waiting.delete(retry);
+      if (!waiting.size) failedAvatars.delete(src);
+    };
+  }, [src, status, attempt]);
   if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
   return (
     <>
@@ -62,7 +88,7 @@ function AvatarArtwork({
         src={src}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
-        loading={previouslyLoaded ? "eager" : "lazy"}
+        loading={loading ?? (previouslyLoaded ? "eager" : "lazy")}
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={() => {
@@ -89,6 +115,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  loading,
 }: {
   src?: string | null | undefined;
   alt: string;
@@ -97,6 +124,8 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
+  loading?: "eager" | "lazy";
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
@@ -119,7 +148,12 @@ export function Avatar({
         aria-hidden={!alt || undefined}
       >
         {src ? (
-          <AvatarArtwork key={src} src={src} fallback={content} />
+          <AvatarArtwork
+            key={src}
+            src={src}
+            fallback={content}
+            loading={loading}
+          />
         ) : (
           <span aria-hidden="true">{content}</span>
         )}

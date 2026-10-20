@@ -13,7 +13,7 @@ import {
   SIDEBAR_COORDINATES,
 } from "../src/features/relay/sidebar-preferences.ts";
 
-export const SIDEBAR_REQUEST_BYTES = 768 * 1024; // Four bounded encrypted coordinates.
+export const SIDEBAR_REQUEST_BYTES = 960 * 1024; // Five bounded encrypted coordinates.
 export const SIDEBAR_HEAD_BYTES = 192 * 1024 + 4096; // One signed coordinate plus response framing.
 export const SIDEBAR_UPLOAD_SLOTS = 2;
 export const SIDEBAR_UPLOAD_MS = 10_000;
@@ -61,6 +61,8 @@ export function decodeSidebarPreferences(events, secret) {
       decoded.get("channel-stars"),
       decoded.get("channel-mutes"),
       decoded.get("channel-sort"),
+      undefined,
+      decoded.get("channel-filter"),
     );
   } finally {
     key.fill(0);

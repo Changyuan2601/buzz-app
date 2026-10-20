@@ -149,6 +149,10 @@ function fixture() {
         tags: [["h", "c"]],
       },
     ],
+    async readPage() {
+      const events = await session.read([]);
+      return { events, relayCount: events.length };
+    },
   } as unknown as RelaySession;
   const names = bindNames(session, {
     snapshot: () => [createAgentDirectory()],

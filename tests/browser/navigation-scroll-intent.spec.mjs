@@ -28,11 +28,13 @@ for (const cachedStartup of [false, true]) {
       // Save the settled combined inventory, before cold-loading it with Team
       // preferences held. Solo's two independent reads also change its height.
       const solo = page.getByRole("navigation", { name: "Solo conversations" });
+      // The empty inventory retains its creation action before scroll restoration.
       await expect(
-        solo.getByText("Start a conversation with your agents."),
+        solo.getByRole("button", { name: "New chat", exact: true }),
       ).toBeVisible();
+      await expect(solo.getByRole("status")).toHaveCount(0);
       await expect(
-        solo.getByText("Loading projects…", { exact: true }),
+        solo.getByText("Loading workspaces…", { exact: true }),
       ).toHaveCount(0);
       // Save a nonzero position, then cold-load that community with preferences held.
       await sidebar.evaluate((element) => {

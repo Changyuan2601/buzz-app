@@ -21,13 +21,13 @@ env:
 jobs:
   javascript:
     if: github.event_name != 'workflow_dispatch'
-    name: JavaScript (${{ matrix.shard }}/2)
+    name: JavaScript (${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -42,7 +42,7 @@ jobs:
         env:
           # Bound contention between suites that sign and verify large fixtures.
           BUZZ_TEST_WORKERS: "2"
-        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest shard ${{ matrix.shard }}/2" -- ./bin/pnpm exec vitest run --shard=${{ matrix.shard }}/2 --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest shard ${{ matrix.shard }}/3" -- ./bin/pnpm exec vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
       - name: Vitest timing evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -69,6 +69,8 @@ jobs:
         with:
           key: native
           save-if: ${{ github.event_name == 'push' }}
+      - name: Dependency policy
+        run: ./bin/cargo-deny --locked check
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
       - name: Rust lint
@@ -139,7 +141,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser measurements" -- ./bin/pnpm test:browser:ci --project '*-measurements' --workers=1 --reporter=list,json
       # Cases tagged @classic-scrollbars need Chromium's platform scrollbars,
       # which Linux always draws as classic ones. One file cannot join the
-      # nine-way engine matrix (empty shards are errors), so it runs here, and
+      # sharded engine matrix (empty shards are errors), so it runs here, and
       # CI required already blocks on this job. The project writes to its own
       # outputDir so this run does not clear the measurement evidence above.
       - name: Chromium classic-scrollbar layout
@@ -193,7 +195,7 @@ jobs:
 
   browser:
     if: github.event_name != 'workflow_dispatch'
-    name: Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/9)
+    name: Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
     needs: [browser_fixture]
@@ -209,14 +211,22 @@ jobs:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
     # Playwright sizes file-level shards by test count, not duration, so costly
-    # files can share one. Nine shards keep the slowest WebKit shard well inside
-    # this deadline on slower runners, setup included.
+    # files can share one. WebKit runs slower, so it gets twelve shards to keep
+    # its slowest well inside this deadline on slower runners, setup included;
+    # Chromium keeps nine.
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         engine: [chromium, webkit]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        exclude:
+          - { engine: chromium, shard: 10 }
+          - { engine: chromium, shard: 11 }
+          - { engine: chromium, shard: 12 }
+        include:
+          - { engine: chromium, shards: 9 }
+          - { engine: webkit, shards: 12 }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -245,7 +255,7 @@ jobs:
       - name: Functional journeys
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
-        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/9)" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/9 --reporter=list,json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=list,json
       - name: Browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -306,11 +316,15 @@ jobs:
         run: ./bin/node scripts/flake-check.mjs select HEAD^1 HEAD
 
   flake_vitest:
-    name: Flake check (Vitest)
+    name: Flake check (Vitest, ${{ matrix.batch }}/2)
     needs: [flake_select]
     if: needs.flake_select.outputs.vitest != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [1, 2]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -321,12 +335,14 @@ jobs:
           # Match the JavaScript lane's worker contention.
           BUZZ_TEST_WORKERS: "2"
           SELECTED: ${{ needs.flake_select.outputs.vitest }}
-        run: ./bin/node scripts/flake-check.mjs vitest $SELECTED
+        # Keep ten independent repetitions without serial setup consuming
+        # the job budget; each batch retains two-worker contention.
+        run: ./bin/node scripts/flake-check.mjs vitest --iterations=5 $SELECTED
       - name: Vitest iteration reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: flake-vitest
+          name: flake-vitest-${{ matrix.batch }}
           path: test-results/flake
           retention-days: 7
 

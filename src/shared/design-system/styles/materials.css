@@ -214,7 +214,9 @@
    distinct from quieter control fills and hover. Keep composite channel-row
    paint and shared NavigationItem in agreement. */
 @utility interaction-navigation {
-  --interaction-selected: var(--affordance-selected);
+  --interaction-selected: var(--affordance-navigation-selected);
+  --interaction-selected-text: var(--text-row-selected-subtle);
+  --interaction-selected-metadata: var(--text-row-selected-metadata);
 }
 
 /* The profile's compact availability badge retains the shared status colors. */

@@ -3,9 +3,11 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
-import type { Models } from "../../features/agents/service";
-import { GooseProcess, type Choice, type Spawn } from "./goose";
-import { absolute } from "./sessions";
+import type {
+  AgentProviderSnapshot,
+  Models,
+} from "../../features/agents/service";
+import { GooseProcess, type Choice, type GooseHost } from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -86,7 +88,117 @@ export class GooseSetup {
   private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
   private readonly thinking = new Map<string, Promise<Efforts>>();
 
-  constructor(private readonly spawn: Spawn | undefined) {}
+  private state: AgentProviderSnapshot = { readiness: "checking" };
+  private readonly listeners = new Set<() => void>();
+  private checkedDefaults: string | undefined;
+  private checking: Promise<void> | undefined;
+
+  constructor(
+    private readonly host: GooseHost | undefined,
+    private readonly defaultsChanged: () => void = () => {},
+  ) {}
+
+  snapshot = () => this.state;
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+  private update(state: AgentProviderSnapshot) {
+    this.state = {
+      ...state,
+      blocking: state.blocking ?? this.state.blocking ?? false,
+    };
+    for (const listener of this.listeners) listener();
+  }
+
+  /** A fresh read also notices changes made by `goose configure`. */
+  check = (): Promise<void> => {
+    if (this.checking) return this.checking;
+    this.listing = undefined;
+    this.live.clear();
+    this.thinking.clear();
+    this.update({ readiness: "checking" });
+    this.checking = this.providers()
+      .then(
+        ({ defaults, providers }) => {
+          const key = JSON.stringify(defaults);
+          if (
+            this.checkedDefaults !== undefined &&
+            this.checkedDefaults !== key
+          )
+            this.defaultsChanged();
+          this.checkedDefaults = key;
+          const ready = providers.some(
+            (provider) =>
+              provider.id === defaults.provider &&
+              provider.configured &&
+              Boolean(defaults.model?.trim()),
+          );
+          this.update(
+            ready
+              ? { readiness: "ready" }
+              : { readiness: "attention", attentionLabel: "Set up Goose" },
+          );
+        },
+        () =>
+          this.update({
+            readiness: "attention",
+            attentionLabel: "Check Goose setup",
+          }),
+      )
+      .finally(() => {
+        this.checking = undefined;
+      });
+    return this.checking;
+  };
+
+  /** Writes Goose's own defaults, never a parallel Buzz preference. */
+  async saveDefaults(
+    choice: Choice,
+    fields: Readonly<Record<string, string>> = {},
+  ) {
+    await this.checking;
+    this.update({ ...this.state, blocking: true });
+    try {
+      if (Object.keys(fields).length) await this.save(choice.provider, fields);
+      const providerId = choice.provider.trim();
+      const { defaults, providers } = await this.providers();
+      await this.with(async (goose) => {
+        let modelId =
+          choice.model.trim() ||
+          (providerId === defaults.provider ? defaults.model?.trim() : "");
+        if (!modelId) {
+          // Goose stores per-provider choices separately from catalog metadata.
+          const { value } = (await goose.request(
+            "_goose/unstable/config/read",
+            {
+              key: "providers",
+              isSecret: false,
+            },
+          )) as { value?: Record<string, { model?: unknown }> | null };
+          const stored = value?.[providerId]?.model;
+          modelId =
+            (typeof stored === "string" ? stored.trim() : "") ||
+            providers
+              .find((provider) => provider.id === providerId)
+              ?.defaultModel.trim();
+        }
+        if (!modelId)
+          throw new Error(
+            "Choose a default model with goose configure, then try again.",
+          );
+        await goose.request("_goose/unstable/defaults/save", {
+          providerId,
+          modelId,
+        });
+      });
+      this.defaultsChanged();
+      this.checkedDefaults = undefined;
+      await this.check();
+    } finally {
+      this.update({ ...this.state, blocking: false });
+    }
+  }
 
   /** The models an agent on `choice` can be asked to run a turn on: those of
    * its provider, or goose's config's, and the one it runs on without. */
@@ -144,14 +256,16 @@ export class GooseSetup {
     return this.listing;
   }
 
-  /** A provider's models: goose's catalog, or else what its API lists. */
+  /** Databricks catalogs can lag its endpoints and AI Gateway services;
+   * configured providers use live discovery for both Databricks versions. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
     const prefixes = PREFIXES[id];
     const models =
-      listed?.configured && (prefixes || !listed.models.length)
+      listed?.configured &&
+      (prefixes || id === "databricks_v2" || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes
@@ -293,20 +407,20 @@ export class GooseSetup {
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},
   ): Promise<T> {
-    return briefly(this.spawn, run, env);
+    return briefly(this.host, run, env);
   }
 }
 
 /** Runs `run` against a `goose-acp` started for it in the home folder, and
  * stops it after. It serves no Buzz tools. */
 export async function briefly<T>(
-  spawn: Spawn | undefined,
+  host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
 ): Promise<T> {
-  if (!spawn) throw new Error("goose runs only in the desktop app");
-  const cwd = await absolute(spawn, "~");
-  const goose = await GooseProcess.start(spawn, {
+  if (!host) throw new Error("goose runs only in the desktop app");
+  const cwd = await host.resolveDirectory("~");
+  const goose = await GooseProcess.start(host.spawn, {
     cwd,
     env,
   });

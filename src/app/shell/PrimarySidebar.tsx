@@ -213,7 +213,6 @@ function ScopedSidebar({
                     className={styles.sidebarGroup}
                     hidden={filter === "team"}
                   >
-                    {label("Solo")}
                     <SoloInventory
                       key={`${scope}:${connection.generation}`}
                       session={connection.session}

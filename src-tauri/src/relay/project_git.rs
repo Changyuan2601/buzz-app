@@ -341,7 +341,7 @@ impl Git {
         #[cfg(windows)]
         let job = crate::host_command::windows_job::WindowsJob::new().ok_or(502u16)?;
         #[cfg(windows)]
-        let mut child = job.spawn_hidden(&mut command).ok_or(502u16)?;
+        let mut child = job.spawn_hidden(&mut command).map_err(|_| 502u16)?;
         #[cfg(not(windows))]
         let mut child = command.spawn().map_err(|_| 502u16)?;
         #[cfg(unix)]

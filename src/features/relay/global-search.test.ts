@@ -114,7 +114,7 @@ it("preserves one server ranking above 128 joined channels and opens a public ex
             filter.kinds?.includes(39000) && !filter["#d"]?.includes("open"),
         )
       )
-        return Promise.resolve([]);
+        return Promise.resolve([publicMetadata(relay, "joined-0")]);
       return wire.transport.query(filters, signal);
     },
   });

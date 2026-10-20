@@ -5,23 +5,29 @@ import { MediaViewer } from "./MediaAttachment";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
+import type { RelaySession } from "../relay/session";
+import { imageDimensions, rememberImageDimensions } from "./image-dimensions";
 import { validatedBlurhash } from "../relay/blurhash";
 import { BLURHASH_SIZE, paintBlurhash } from "./blurhash";
 import styles from "./Messages.module.css";
 
 export function AttachmentImage({
   attachment,
+  session,
   source,
   cached = false,
   onOpenReview,
+  onOpenLink,
   keepMounted,
   label = "Open image attachment",
 }: {
   label?: string;
   attachment: Attachment;
+  session?: RelaySession | undefined;
   source: string | undefined;
   cached?: boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
+  onOpenLink?: ((url: string) => boolean) | undefined;
   /** Pins the owning row in a virtualized list; returns the release. */
   keepMounted?: (() => () => void) | undefined;
 }) {
@@ -38,18 +44,26 @@ export function AttachmentImage({
   }, [viewerOpen, keepMounted]);
   const [decoded, setDecoded] = useState<{
     source: string | undefined;
+    session: RelaySession | undefined;
     dimensions?: NonNullable<Attachment["dimensions"]>;
-  }>({ source });
-  if (decoded.source !== source) setDecoded({ source });
+  }>({ source, session });
+  if (decoded.source !== source || decoded.session !== session)
+    setDecoded({ source, session });
   const onDecoded = useCallback(
     (dimensions: NonNullable<Attachment["dimensions"]>) => {
-      if (source) setDecoded({ source, dimensions });
+      if (source) {
+        rememberImageDimensions(session, source, dimensions);
+        setDecoded({ source, session, dimensions });
+      }
     },
-    [source],
+    [source, session],
   );
   const decodedDimensions =
-    decoded.source === source ? decoded.dimensions : undefined;
-  const dimensions = decodedDimensions ?? attachment.dimensions;
+    decoded.source === source && decoded.session === session
+      ? decoded.dimensions
+      : undefined;
+  const knownDimensions = decodedDimensions ?? imageDimensions(session, source);
+  const dimensions = knownDimensions ?? attachment.dimensions;
   const width = dimensions
     ? Math.min(
         360,
@@ -60,8 +74,8 @@ export function AttachmentImage({
   const height = dimensions
     ? (width * dimensions.height) / dimensions.width
     : 0;
-  const previewWidth = decodedDimensions ? Math.max(1, width) : width;
-  const previewHeight = decodedDimensions ? Math.max(1, height) : height;
+  const previewWidth = knownDimensions ? Math.max(1, width) : width;
+  const previewHeight = knownDimensions ? Math.max(1, height) : height;
   const style =
     dimensions &&
     Number.isFinite(previewWidth) &&
@@ -70,7 +84,7 @@ export function AttachmentImage({
     previewHeight >= 1
       ? {
           width: previewWidth,
-          aspectRatio: decodedDimensions
+          aspectRatio: knownDimensions
             ? `${previewWidth} / ${previewHeight}`
             : `${dimensions.width} / ${dimensions.height}`,
         }
@@ -112,7 +126,7 @@ export function AttachmentImage({
           event.preventDefault();
           prepareReviewEntrance(event);
           if (onOpenReview) onOpenReview(attachment, 0);
-          else setViewerOpen(true);
+          else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
         }}
       >
         {/* Retargeting retires both the DOM pixels and all pending callbacks before

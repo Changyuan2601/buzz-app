@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 
 type Person = Awaited<
-  ReturnType<RelaySession["directMessages"]["people"]>
+  ReturnType<ComposerSession["directMessages"]["people"]>
 >["people"][number];
 type Page = { people: readonly Person[]; more: boolean };
 const empty: readonly Person[] = [];
@@ -16,11 +16,11 @@ const CACHE_LIMIT = 100;
 // Session lifetime bounds staleness; errors are not cached, so Retry reads
 // again. Empty results are not cached: `exhausted` owns that evidence, and a
 // fresh search for the same query reads again.
-const pages = new WeakMap<RelaySession, Map<string, Page>>();
-function cached(session: RelaySession, query: string) {
+const pages = new WeakMap<ComposerSession, Map<string, Page>>();
+function cached(session: ComposerSession, query: string) {
   return pages.get(session)?.get(query);
 }
-function remember(session: RelaySession, query: string, page: Page) {
+function remember(session: ComposerSession, query: string, page: Page) {
   let queries = pages.get(session);
   if (!queries) {
     queries = new Map();
@@ -33,9 +33,9 @@ function remember(session: RelaySession, query: string, page: Page) {
 }
 // The last settled page per chooser lifetime. Inline completion remounts its
 // provider on every keystroke, so a component-local copy would be lost.
-const settled = new WeakMap<RelaySession, Map<string, Page>>();
+const settled = new WeakMap<ComposerSession, Map<string, Page>>();
 const LIFETIME_LIMIT = 20;
-function settle(session: RelaySession, lifetime: string, page: Page) {
+function settle(session: ComposerSession, lifetime: string, page: Page) {
   let lifetimes = settled.get(session);
   if (!lifetimes) {
     lifetimes = new Map();
@@ -49,7 +49,7 @@ function settle(session: RelaySession, lifetime: string, page: Page) {
 }
 // Last complete, empty word-prefix search; queries strictly extending it
 // cannot match anyone. Re-entering the same query searches afresh.
-const exhausted = new WeakMap<RelaySession, string>();
+const exhausted = new WeakMap<ComposerSession, string>();
 const refutedPage: Page = { people: empty, more: false };
 
 /**
@@ -60,7 +60,7 @@ const refutedPage: Page = { people: empty, more: false };
  * and must outlive provider remounts within it.
  */
 export function useMentionDirectory(
-  session: RelaySession,
+  session: ComposerSession,
   channel: ChannelSummary | undefined,
   query: string,
   enabled: boolean,
@@ -73,7 +73,7 @@ export function useMentionDirectory(
     !channel?.readOnly;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
-    session: RelaySession;
+    session: ComposerSession;
     query: string;
     attempt: number;
     /** The chooser opening this result belongs to. */

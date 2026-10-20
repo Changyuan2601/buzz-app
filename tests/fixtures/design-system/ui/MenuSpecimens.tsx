@@ -301,7 +301,7 @@ export function MenuSpecimen() {
       </p>
       <Example
         title="Choices and nested menus"
-        description="A check marks a persistent choice. Highlight follows navigation; a submenu keeps its parent highlighted while open."
+        description="A check marks a persistent choice. Highlight follows navigation; a submenu keeps its parent highlighted while open. Disabled rows mute their trailing text and indicators with the label."
         code={`function ActionMenu() {
   const [sort, setSort] = useState("recent");
   const [notifications, setNotifications] = useState(true);

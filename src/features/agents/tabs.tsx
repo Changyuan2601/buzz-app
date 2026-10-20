@@ -1,7 +1,7 @@
 // An agent's sections, wherever they are shown (its Build view and its
-// profile panel): the type's own tabs, then the app's Attention and Memory tabs.
-// Hosted agents' tabs are their type's alone; an agent on another device has
-// none here.
+// profile panel): the type's tabs, local-only Attention, and Memory.
+// Memory is relay-backed for both local and hosted agents. Agents classified
+// as `elsewhere` expose no sections in these views.
 import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
@@ -77,16 +77,16 @@ export function agentSections({
       label: "Settings",
       render: () => <HostSettings host={settingsHost} />,
     });
-  if (agent.place === "hosted") return tabs;
-  return [
-    ...tabs,
-    {
+  if (agent.place === "here")
+    tabs.push({
       value: "agent:attention",
       label: "Attention",
       render: () => (
         <AttentionSection agents={agents} agent={agent} channels={channels} />
       ),
-    },
+    });
+  return [
+    ...tabs,
     {
       value: "agent:memory",
       label: "Memory",

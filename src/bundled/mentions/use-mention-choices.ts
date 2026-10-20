@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
@@ -27,7 +27,7 @@ const none: readonly Person[] = [];
  * Local rows install first; directory rows only append after them.
  */
 export function useMentionChoices(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   invite: boolean | undefined,
   query: string,
@@ -59,7 +59,7 @@ export function useMentionChoices(
   const archives = useMentionArchives(session, open);
   const resolve = useIdentityNames(session.names);
   const [installed, install] = useState<{
-    session: RelaySession;
+    session: ComposerSession;
     key: string;
     rows: MentionChoice[];
     /** Directory people behind installed outside rows, kept while later pages load. */

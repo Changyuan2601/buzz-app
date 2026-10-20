@@ -75,7 +75,13 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await page.mouse.down();
   await page.mouse.move(x, y - 40, { steps: 4 });
   await expect(laptop).toHaveAttribute("data-section-dragging");
+  await expect(
+    page.locator('[data-sidebar-section="group:missing"]'),
+  ).toHaveAttribute("data-drop-edge", "before");
   await page.mouse.move(x, y, { steps: 4 });
+  // Returning the pointer does not mean dnd-kit has rendered its new target.
+  // Release only after the old neighbour's insertion edge is gone.
+  await expect(page.locator("[data-drop-edge]")).toHaveCount(0);
   await page.mouse.up();
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");

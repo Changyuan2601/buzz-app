@@ -6,7 +6,8 @@ import {
   useReducedMotion,
 } from "motion/react";
 import { XIcon } from "../icons";
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 
@@ -18,8 +19,14 @@ export type DialogProps = {
     typeof BaseDialog.Root
   >["onOpenChangeComplete"];
   title: ReactNode;
+  /** Search palettes keep an accessible title without visible header chrome. */
+  presentation?: "default" | "search";
   description?: ReactNode;
   children: ReactNode;
+  /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
+  navigation?: { label: string; content: ReactNode };
+  /** Fill a positioned host frame; null waits for its callback ref on cold opens. */
+  container?: HTMLElement | null;
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
   headerGap?: "default" | "compact";
@@ -56,8 +63,11 @@ export function Dialog({
   onOpenChange,
   onOpenChangeComplete,
   title,
+  presentation = "default",
   description,
   children,
+  navigation,
+  container,
   actions,
   headerGap = "default",
   chromeSpacing = "default",
@@ -67,7 +77,7 @@ export function Dialog({
   headerActions,
   onEscape,
   placement = "center",
-  dismissOnOutsideClick = false,
+  dismissOnOutsideClick = true,
   closeLabel = "Close",
   size = "default",
   preventClose = false,
@@ -78,56 +88,106 @@ export function Dialog({
   finalFocus,
 }: DialogProps) {
   const [instantClose, setInstantClose] = useState(false);
+  const windowDrag = useModalWindowDrag();
+  const detail = useRef<HTMLDivElement>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   const transition =
     motion === "none" || (!open && instantClose) ? "none" : "default";
   const contents = (
     <>
-      <header
-        className="buzz-dialog-header"
-        data-chrome-spacing={chromeSpacing}
-      >
-        <div className="buzz-dialog-heading">
-          {step ? (
-            <div className="text-label" aria-hidden="true">
-              {title}
-            </div>
-          ) : (
-            <BaseDialog.Title className="text-label">{title}</BaseDialog.Title>
+      {presentation === "search" ? (
+        <>
+          {!step && (
+            <BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>
           )}
-          {description &&
-            (step ? (
-              <p className="buzz-dialog-description" aria-hidden="true">
-                {description}
-              </p>
+          {description && !step && (
+            <BaseDialog.Description className="sr-only">
+              {description}
+            </BaseDialog.Description>
+          )}
+        </>
+      ) : (
+        <header
+          className="buzz-dialog-header"
+          data-chrome-spacing={chromeSpacing}
+        >
+          <div className="buzz-dialog-heading">
+            {step ? (
+              <div className="text-label" aria-hidden="true">
+                {title}
+              </div>
             ) : (
-              <BaseDialog.Description className="buzz-dialog-description">
-                {description}
-              </BaseDialog.Description>
-            ))}
-        </div>
-        <div className="buzz-dialog-header-actions">
-          {headerActions}
-          <BaseDialog.Close
-            disabled={preventClose}
-            render={
-              <IconButton
-                aria-label={closeLabel}
-                disabled={preventClose}
-                size="compact"
-                icon={<XIcon size={16} aria-hidden="true" />}
-              />
-            }
-          />
-        </div>
-      </header>
+              <BaseDialog.Title className="text-label">
+                {title}
+              </BaseDialog.Title>
+            )}
+            {description &&
+              (step ? (
+                <p className="buzz-dialog-description" aria-hidden="true">
+                  {description}
+                </p>
+              ) : (
+                <BaseDialog.Description className="buzz-dialog-description">
+                  {description}
+                </BaseDialog.Description>
+              ))}
+          </div>
+          <div className="buzz-dialog-header-actions">
+            {headerActions}
+            <BaseDialog.Close
+              disabled={preventClose}
+              render={
+                <IconButton
+                  aria-label={closeLabel}
+                  disabled={preventClose}
+                  size="compact"
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              }
+            />
+          </div>
+        </header>
+      )}
       <div
         className="buzz-dialog-body buzz-dialog-content"
         data-chrome-spacing={chromeSpacing}
         data-header-gap={headerGap}
         data-footer-gap={footerGap}
       >
-        {children}
+        {navigation ? (
+          <div className="buzz-dialog-navigation-layout">
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: Delegated buttons emit click for both keyboard and pointer activation. */}
+            <nav
+              aria-label={navigation.label}
+              className="buzz-dialog-navigation"
+              onClick={() => {
+                const content = detail.current;
+                if (!content) return;
+                const nav = content.previousElementSibling;
+                if (
+                  nav &&
+                  nav.getBoundingClientRect().width > 0 &&
+                  nav.getBoundingClientRect().bottom <=
+                    content.getBoundingClientRect().top
+                ) {
+                  content.focus();
+                  content.scrollIntoView({ block: "start" });
+                }
+              }}
+            >
+              {navigation.content}
+            </nav>
+            <div
+              className="buzz-dialog-navigation-detail"
+              ref={detail}
+              tabIndex={-1}
+            >
+              {children}
+            </div>
+          </div>
+        ) : (
+          children
+        )}
       </div>
       {(actions || leadingActions) && (
         <footer
@@ -148,7 +208,11 @@ export function Dialog({
       onOpenChangeComplete={onOpenChangeComplete}
       disablePointerDismissal={!dismissOnOutsideClick}
       onOpenChange={(next, details) => {
-        if (!next && preventClose) {
+        if (
+          !next &&
+          (preventClose ||
+            (details.reason === "outside-press" && windowDrag.wasWindowDrag()))
+        ) {
           details.cancel();
           return;
         }
@@ -160,9 +224,14 @@ export function Dialog({
         onOpenChange(next);
       }}
     >
-      <BaseDialog.Portal>
+      <BaseDialog.Portal container={container}>
         <BaseDialog.Backdrop
-          forceRender={placement === "right" || dismissOnOutsideClick}
+          forceRender
+          onPointerDown={windowDrag.onPointerDown}
+          onPointerMove={windowDrag.onPointerMove}
+          onPointerUp={windowDrag.onPointerUp}
+          onPointerCancel={windowDrag.onPointerCancel}
+          onLostPointerCapture={windowDrag.onLostPointerCapture}
           data-outside-dismissal={dismissOnOutsideClick || undefined}
           data-placement={placement}
           data-buzz-ui=""
@@ -173,10 +242,13 @@ export function Dialog({
           data-buzz-ui=""
           className="buzz-dialog gap-0"
           data-placement={placement}
+          data-presentation={presentation}
           data-height={height}
           data-body-layout={bodyLayout}
           data-stepped={step ? "" : undefined}
-          data-size={size}
+          data-size={navigation ? "expanded" : size}
+          data-navigation={navigation ? "" : undefined}
+          data-contained={container ? "" : undefined}
           data-motion={transition}
           aria-modal="true"
           initialFocus={initialFocus}

@@ -18,7 +18,7 @@ export function NavigationItem({
   /** Transient picker focus; persistent navigation selection stays separate. */
   highlighted?: boolean;
   inset?: boolean;
-  variant?: "row" | "pill" | "option";
+  variant?: "row" | "pill" | "option" | "search";
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {
   return (
     <BaseButton

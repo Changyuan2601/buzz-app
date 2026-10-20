@@ -10,43 +10,8 @@
   margin: 0;
 }
 .capture {
-  min-height: 40px;
+  min-height: var(--size-control-sm);
   animation: capture-in 180ms var(--easing-enter);
-}
-.iconButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-icon-button);
-  background: transparent;
-  color: var(--text-subtle);
-  cursor: pointer;
-  transition:
-    transform 120ms var(--easing-state),
-    background-color 120ms var(--easing-state);
-}
-.iconButton:active:not(:disabled) {
-  transform: scale(0.96);
-}
-.iconButton:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.iconButton:disabled {
-  cursor: default;
-  color: var(--text-unavailable);
-}
-.divider {
-  flex-shrink: 0;
-  width: 1px;
-  height: 20px;
-  margin-inline: var(--space-1);
-  background: var(--border-standard);
 }
 .timer {
   font-size: var(--text-caption);
@@ -132,24 +97,16 @@
     fill 150ms var(--easing-state),
     stroke 150ms var(--easing-state);
 }
-.play,
-.discard {
+.play {
   display: inline-flex;
   border-radius: var(--radius-icon-button);
 }
-.play[data-smooth-corners] > button,
-.discard[data-smooth-corners] > button {
+.play[data-smooth-corners] > button {
   clip-path: var(--media-corner-clip);
 }
-.play:has(:focus-visible),
-.discard:has(:focus-visible) {
+.play:has(:focus-visible) {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
-}
-.discard {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
 }
 .play {
   flex-shrink: 0;
@@ -281,9 +238,6 @@
     opacity: 1;
     transform: none;
   }
-  .iconButton:hover:not(:disabled) {
-    background: var(--affordance-subtle-hover);
-  }
   .card:hover {
     --voice-card-background: var(--affordance-panel-hover);
   }
@@ -324,15 +278,11 @@
   .spinner {
     animation: none;
   }
-  .iconButton,
   .card,
   .cardSurface > path,
   .details > *,
   .playIcon > svg {
     transition: none;
-  }
-  .iconButton:active:not(:disabled) {
-    transform: none;
   }
 }
 

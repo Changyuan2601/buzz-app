@@ -170,7 +170,25 @@ it("carries a verified mention through host handover into all three scopes witho
     const second = run.mock.calls[1]?.[0];
     // A harness acknowledgment changes presentation only; execution still waits
     // for its own outcome. The same agent stays working in this thread/channel.
+    // The harness's stopper lands on the request's own row, and goes with it
+    // once a newer message supersedes that request.
+    const stopFirst = vi.fn(async () => {});
+    const stopSecond = vi.fn(async () => {});
+    first.interruptible(stopFirst);
+    second.interruptible(stopSecond);
+    const stoppable = (id: string) =>
+      snapshot().local?.find((work) => work.messageId === id)?.stoppable;
+    expect(stoppable(root.id)).toBe(true);
+    expect(stoppable(followup.id)).toBe(true);
+    expect(
+      messageActivity(snapshot(), channel, followup.id)[0]?.stoppable,
+    ).toBe(true);
     first.superseded();
+    expect(stoppable(root.id)).toBeUndefined();
+    await owner.session.agentActivity.interrupt(agent.pubkey, channel, root.id);
+    expect(stopFirst).not.toHaveBeenCalled();
+    expect(stopSecond).not.toHaveBeenCalled();
+    expect(stoppable(followup.id)).toBe(true);
     second.acknowledged();
     second.step("Read", "notes.txt");
     expect(messageActivity(snapshot(), channel, root.id)).toEqual([]);

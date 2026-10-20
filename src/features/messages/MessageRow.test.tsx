@@ -77,6 +77,43 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { recognized: undefined, handled: true },
+  { recognized: false, handled: true },
+  { recognized: true, handled: false },
+  { recognized: true, handled: true },
+])(
+  "opens images through an explicitly accepting host or the local viewer: %j",
+  ({ recognized, handled }) => {
+    const url = "https://relay.test/media/image.png";
+    const open = vi.fn(() => handled);
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, attachments: [{ url, kind: "image" }] }}
+          profile={undefined}
+          media={() => url}
+          onOpenLink={open}
+          canOpenLink={recognized === undefined ? undefined : () => recognized}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("link", { name: "Open image attachment" }),
+      );
+      if (recognized)
+        expect(open).toHaveBeenCalledWith(url, { rootId: row.id });
+      else expect(open).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog") !== null).toBe(
+        !recognized || !handled,
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("tells link handlers the thread a reply was opened from", () => {
   const open = vi.fn(() => true);
   const authorId = "ab".repeat(32);
@@ -1227,6 +1264,140 @@ function renderMessage(
   );
 }
 
+it.each([true, false])(
+  "offers thread starts only where the conversation starts threads (startsThreads=%s)",
+  (startsThreads) => {
+    const agent = "a".repeat(64);
+    const prompt = { ...row, id: "prompt", replyCount: 0 };
+    const channels = { channels: [], status: "ready" };
+    const library = { identities: [{ pubkey: agent, name: "Brain" }] };
+    // Local work records a top-level prompt as its thread root.
+    const typing: readonly TypingEntry[] = [
+      { channelId: row.channelId, threadRootId: "prompt", pubkey: agent },
+    ];
+    const session = {
+      channels: { list: () => channels, subscribeList: () => () => {} },
+      messages: {},
+      agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+      typing: { snapshot: () => typing, subscribe: () => () => {} },
+    } as unknown as RelaySession;
+    const thread = vi.fn();
+    const view = renderMessage({
+      row: prompt,
+      viewer: row.authorId,
+      session,
+      onOpenThread: thread,
+      startsThreads,
+    });
+    try {
+      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
+        startsThreads,
+      );
+      expect(
+        !!screen.queryByRole("button", { name: /^View thread.*working$/ }),
+      ).toBe(startsThreads);
+      // An existing thread still opens.
+      view.rerender(
+        <MessageRow
+          row={row}
+          viewer={row.authorId}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+          onOpenThread={thread}
+          startsThreads={startsThreads}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /^View thread: 23 replies/ }),
+      );
+      expect(thread).toHaveBeenCalledWith("root", "root");
+      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
+        startsThreads,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it.each([
+  { startsThreads: true, replyCount: 0, thread: true },
+  { startsThreads: false, replyCount: 0, thread: false },
+  { startsThreads: false, replyCount: 23, thread: true },
+])(
+  "gives message accessories a thread only where the row has one to open (%o)",
+  ({ startsThreads, replyCount, thread }) => {
+    const subscribe = () => () => {};
+    const channels = { channels: [], status: "ready" };
+    const noTyping: never[] = [];
+    const catalog = { entries: [] };
+    const profiles = new Map();
+    const library = { identities: [] };
+    const session = {
+      channels: { list: () => channels, subscribeList: subscribe },
+      messages: {},
+      emoji: { snapshot: () => catalog, subscribe },
+      profiles: { snapshot: () => profiles, subscribe },
+      agentChoices: { snapshot: () => library, subscribe },
+      typing: { snapshot: () => noTyping, subscribe },
+    } as unknown as RelaySession;
+    const seen = vi.fn();
+    const noEntries: never[] = [];
+    const empty = { snapshot: () => noEntries, subscribe };
+    const entries = [
+      {
+        id: "activity",
+        key: "test:activity",
+        pluginId: "test",
+        revision: "1",
+        title: "Agent activity",
+        placement: "message" as const,
+        decoratesMessageSummary: true,
+        component: ({
+          renderMessageSummary,
+          openThread,
+        }: import("../conversation/contracts").ComposerAccessoryProps) => {
+          seen(!!renderMessageSummary, !!openThread);
+          return (
+            renderMessageSummary?.({
+              participants: ["a".repeat(64)],
+              content: <span>Brain working</span>,
+              label: "Brain, working",
+              ref: null,
+            }) ?? <span>Brain working</span>
+          );
+        },
+      },
+    ];
+    const view = renderMessage({
+      row: { ...row, replyCount },
+      session,
+      scope: "test",
+      onOpenThread: () => {},
+      startsThreads,
+      extensions: {
+        inline: empty,
+        links: empty,
+        messages: empty,
+        tools: empty,
+        accessories: { snapshot: () => entries, subscribe },
+      },
+    });
+    try {
+      expect(seen).toHaveBeenLastCalledWith(thread, thread);
+      expect(screen.getByText("Brain working")).toBeInTheDocument();
+      expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
+        thread,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
 it("rejects attachment URLs outside the shared safe-link policy", () => {
   const media = vi.fn((url: string) => url);
   const view = renderMessage({
@@ -1799,12 +1970,15 @@ it("presents automation, links the owner and discloses the separate relay signer
         signerId: signer,
         workflowOwnerId: ownerId,
       },
+      viewer: ownerId,
       profile: { name: "Wes" },
       participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
       onOpenLink: open,
       canOpenLink: () => true,
     });
     expect(screen.getByText("Workflow")).toBeTruthy();
+    expect(document.querySelector("[data-viewer-message]")).toBeNull();
+    expect(document.querySelector("[data-own]")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "View workflow owner Wes profile" }),
     );
@@ -2763,7 +2937,7 @@ it("lets message plugins open targets through the row's link handler", async () 
   }
 });
 
-it("keeps coordination attribution accessible while suppressing repeated author artwork", () => {
+it("keeps coordination author artwork visible across grouping and disclosure changes", () => {
   const props = {
     row: {
       ...row,
@@ -2783,15 +2957,19 @@ it("keeps coordination attribution accessible while suppressing repeated author 
     );
   expect(authorArtwork()).not.toBeNull();
   view.rerender(<MessageRow {...props} stackPrevious />);
-  expect(authorArtwork()).toBeNull();
+  expect(authorArtwork()).not.toBeNull();
   const disclosure = screen.getByRole("button", {
     name: "Working agent: Still working on this",
   });
   fireEvent.click(disclosure);
   expect(authorArtwork()).not.toBeNull();
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(authorArtwork()).not.toBeNull();
   view.rerender(<MessageRow {...props} stackPrevious day />);
   expect(authorArtwork()).not.toBeNull();
+  cleanup();
 });
 
 it.each([0, 23])(

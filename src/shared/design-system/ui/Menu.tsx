@@ -137,10 +137,12 @@ export function MenuPopup(props: PopupProps) {
   return <PositionedPopup {...props} />;
 }
 
-export function MenuSubmenu({ children }: { children: ReactNode }) {
+export function MenuSubmenu(
+  props: ComponentProps<typeof BaseMenu.SubmenuRoot>,
+) {
   return (
     <ContextMenuPresence value={null}>
-      <BaseMenu.SubmenuRoot>{children}</BaseMenu.SubmenuRoot>
+      <BaseMenu.SubmenuRoot {...props} />
     </ContextMenuPresence>
   );
 }

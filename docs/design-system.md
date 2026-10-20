@@ -342,14 +342,13 @@ profile avatar editor, shortcut recorder, native emoji file input,
 plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
-Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode, interface size, accent color and vibe level rows share one Appearance
-group. Vibe level uses `StepSlider`, the shared control for a few ordered steps:
-each step is a visible stop and its name follows the thumb. The
-System, Light, and Dark previews retain shared radio semantics, accessible names,
-and a persistent selection outline without visible captions. Their nested light/dark
-scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label
-when its container is narrow. Palette changes suppress transitions for the swap.
+Use a compact shared Select at the trailing edge of a PreferenceRow for Mode,
+with System, Light, and Dark options. Mode, interface size, accent color, and
+vibe level rows share one Appearance group beneath the live illustrative preview.
+Accent applies to actions, links, and selections. Buzzin’ gives own messages and
+selected controls solid accent fills; app backgrounds stay neutral. Use another
+compact Select for Snoozin’, Hummin’, and Buzzin’. Rows wrap controls below their
+labels when narrow. Palette changes suppress transitions during the swap.
 Hide desktop delivery options and permission actions when
 desktop alerts are off, preserving saved choices. Keep a development-pause notice
 visible so it explains the disabled alert switch. Show sound choices whenever

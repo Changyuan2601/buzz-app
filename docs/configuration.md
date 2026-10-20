@@ -9,6 +9,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -19,8 +20,32 @@ The retired v1 inputs `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`
 and `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` are no longer read or compiled. Agents
 uses each plugin agent type's settings. Remove these old defaults from local/CI
 configuration; they do not configure Agents. Restart Vite to change broker or
-routing configuration. Production frontend builds neither load the dev broker
-nor expose the auto-open seed.
+routing configuration. Production frontend builds never load the dev broker or
+expose its auto-open seed. They can separately opt into the packaged community
+default below.
+
+## Packaged community default
+
+Internal packagers can set a public community origin for fresh installs:
+
+```sh
+BUZZ_DEFAULT_COMMUNITY_URL=wss://relay.example.com bin/pnpm tauri build
+```
+
+The frontend build reads this value from repository-root `.env.local` or the build
+process environment (process wins, including an explicit empty value). It accepts
+only `wss://` or `https://` origins without credentials, paths, queries or fragments;
+invalid values fail the build. It is compiled into the frontend, so changing the
+launched app's environment cannot override it. Leave it unset for OSS builds.
+The dev server ignores it; live development retains its existing opt-in inputs.
+
+After native identity restoration, creation or import, the existing community
+service selects and saves this origin only if the viewer has no `buzz-client.v1`
+record on this device. Any saved record wins, including Personal space, malformed
+records and unresolvable aliases. A later build default cannot change that saved
+choice. Selection starts the normal authenticated relay session; it grants no
+membership or admission bypass. If the relay refuses admission or is offline,
+the normal connection error/retry flow applies. No legacy preferences are copied.
 
 ## Builderlab URL build input
 
@@ -37,7 +62,8 @@ For desktop, supply the full URL in `.env.local` or the build process environmen
 so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
 explicit empty value. When unset or empty, login is unconfigured and no network
-origin is granted. The repository supplies no deployment default.
+origin is granted. Local builds have no deployment default. The desktop release
+workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.
@@ -83,7 +109,7 @@ copied here.
 
 | OG/release input | Why it is not implemented here |
 | --- | --- |
-| `BUZZ_DESKTOP_BUILD_RELAY_URL`; packaged auto-connect | No packaged default or auto-join is configured. Native macOS, Windows and Linux use the persisted identity and restore only the selected saved community; new admission uses Add a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
+| `BUZZ_DESKTOP_BUILD_RELAY_URL` | Retired name; internal builds use `BUZZ_DEFAULT_COMMUNITY_URL` above. No legacy input alias or admission bypass is added. Native macOS, Windows and Linux otherwise restore the selected saved community; new admission uses Add a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
 | `BUZZ_BUILD_RELAY_RECONNECT_CMD` | No reconnect-command feature; arbitrary deployment command execution is not added. |
 | Updater helper fallback aliases | Only the two canonical updater names above are read. Private signing keys never belong in app defaults. |
 | `--features mesh-llm` | No mesh/provider integration is supplied by the native identity crate. Import carries identities, not legacy runtimes. |

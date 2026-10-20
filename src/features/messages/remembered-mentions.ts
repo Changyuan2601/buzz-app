@@ -1,12 +1,12 @@
 import { knownAgentPubkeys } from "../agents/known";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { archivedMention } from "./mention-admission";
 import { followupDraft, type MentionDraft } from "./mention-draft";
 import { rememberAgentsPreference } from "./mention-preferences";
 
 /** The next scoped draft remembers only exact agents notified by the sent message. */
 export function rememberedMentions(
-  session: RelaySession,
+  session: ComposerSession,
   draft: MentionDraft,
   notified: readonly string[],
 ): MentionDraft {

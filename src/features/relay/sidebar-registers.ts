@@ -1,7 +1,7 @@
-/** Desktop-compatible section/sort registers. No persistence or publication owner. */
+/** Section and section-choice registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
 type Tree = { [key: string]: Tree | SidebarRegister };
-type Coordinate = "channel-sections" | "channel-sort";
+type Coordinate = "channel-sections" | "channel-sort" | "channel-filter";
 const legacyDevice = "0".repeat(16);
 let device: string | undefined;
 const object = (value: unknown): Record<string, unknown> => {
@@ -73,10 +73,17 @@ function metadata(
     coordinate === "channel-sections" ? ["v", "s", "a"] : ["v", "g"];
   if (data.v !== 1 || Object.keys(data).some((key) => !allowed.includes(key)))
     throw new Error("Unsupported sidebar metadata");
-  if (coordinate === "channel-sort")
+  if (coordinate !== "channel-sections")
     return {
       g: map(data.g === undefined ? {} : data.g, 264, (v) =>
-        register(v, (v) => v === null || v === "alpha" || v === "recent"),
+        register(
+          v,
+          (v) =>
+            v === null ||
+            (coordinate === "channel-filter"
+              ? v === "unreads" || v === "active"
+              : v === "alpha" || v === "recent"),
+        ),
       ),
     };
   return {
@@ -103,7 +110,7 @@ const val = (node: Tree, key: string) => {
   return Array.isArray(entry) ? entry[2] : undefined;
 };
 function projection(coordinate: Coordinate, tree: Tree) {
-  if (coordinate === "channel-sort")
+  if (coordinate !== "channel-sections")
     return {
       groups: Object.fromEntries(
         Object.entries(tree.g ?? {}).flatMap(([key, reg]) =>
@@ -164,11 +171,15 @@ function importLegacy(
     legacyDevice,
     v,
   ];
-  if (coordinate === "channel-sort")
+  if (coordinate !== "channel-sections")
     return {
       g: Object.fromEntries(
         Object.entries(object(value.groups))
-          .filter(([, v]) => v === "alpha" || v === "recent")
+          .filter(([, v]) =>
+            coordinate === "channel-filter"
+              ? v === "unreads" || v === "active"
+              : v === "alpha" || v === "recent",
+          )
           .map(([key, v]) => [key, stamp(v)]),
       ),
     };

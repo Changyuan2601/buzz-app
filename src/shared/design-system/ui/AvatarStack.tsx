@@ -12,9 +12,12 @@ type StackAvatar = {
 export function AvatarStack({
   items,
   size = "compact",
+  max = 3,
 }: {
   items: readonly StackAvatar[];
-  size?: "compact" | "small" | "mini";
+  size?: "compact" | "small" | "mini" | "hero";
+  /** How many avatars show before the overflow count. */
+  max?: number;
 }) {
   if (!items.length) return null;
   return (
@@ -24,10 +27,12 @@ export function AvatarStack({
       data-avatar-stack=""
       data-size={size}
     >
-      {items.slice(0, 3).map((item) => (
+      {items.slice(0, max).map((item, index) => (
         <span
           key={item.id}
           className={styles.item}
+          // Each overlaps the one before it.
+          style={{ zIndex: index + 1 }}
           data-avatar-shape={item.shape}
           title={item.name}
         >
@@ -47,9 +52,24 @@ export function AvatarStack({
           />
         </span>
       ))}
-      {items.length > 3 && (
-        <span className={styles.count}>+{items.length - 3}</span>
-      )}
+      {items.length > max &&
+        (size === "hero" ? (
+          // A hero count is one more stack item, shaped like the avatars.
+          <span
+            className={styles.item}
+            data-avatar-shape={items[0]?.shape}
+            style={{ zIndex: max + 1 }}
+          >
+            <span
+              className={`${styles.countFill} text-label`}
+              data-avatar-shape={items[0]?.shape}
+            >
+              +{items.length - max}
+            </span>
+          </span>
+        ) : (
+          <span className={styles.count}>+{items.length - max}</span>
+        ))}
     </span>
   );
 }

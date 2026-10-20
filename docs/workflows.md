@@ -9,15 +9,19 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- Cards open a modal editor over the workflow list. Create begins with channel
-  selection in that editor; the empty draft's primary action adds its first step.
+- The landing is a card grid filtered in place by channel. Each card runs the
+  saved configuration in one click and toggles its configured state. Selecting
+  a card shows its detail, actions and run history in a resizable side pane, as
+  on Agents; a created run rereads that history. Editing opens a modal over the
+  grid. Create begins with channel selection in that editor; the empty draft's
+  primary action adds its first step.
   Form mode uses a selectable flow and contextual inspector, with insertion
   menus and removal. On narrow screens the inspector is a nested side dialog.
   Escape closes a menu, then inspector, then editor with a dirty-draft warning.
-  Trigger and step-action choices use labelled field selectors. Pencil name
-  editing commits on Enter/blur and reverts on Escape; invalid names remain
-  explained outside edit mode. Settings and
-  run history are disclosed separately; operation recovery stays visible.
+  Trigger and step-action choices use labelled field selectors. With nothing
+  selected, the inspector shows the workflow's name, description, channel and
+  enabled state; draft errors stay visible while their field is hidden. Form,
+  YAML and Runs tabs switch views; save recovery stays visible.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay/Call Webhook actions. Basic conditions cover text, author,
   reaction and message-ID comparisons; unrepresentable expressions stay Advanced.
@@ -47,7 +51,9 @@ See the [capability contract](../src/features/workflows/types.ts).
   it and never enters the outbox journal, operation errors or logs. The hook
   URL needs the relay HTTP base the host advertises; without it the dialog
   shows the relative `/hooks/{id}` route only.
-- Destructive deletion confirmation, manual run, and on-demand run/trace history in
+- Destructive deletion confirmation, unconfirmed manual run of the saved
+  configuration (the editor's Run now is unavailable while the draft has
+  unsaved changes), and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
 - No approval UI, lifecycle negotiation, plugin command-replay API or JSON
   trigger inputs.

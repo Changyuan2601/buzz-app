@@ -15,9 +15,14 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { WarningCircleIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  StopIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
   PopoverRoot,
@@ -27,6 +32,7 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageActivity } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
+import type { Agents } from "../../features/agents/service";
 import {
   requestWork,
   type RequestWork,
@@ -40,8 +46,14 @@ import styles from "./ActivityAccessory.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 const noSubscribe = () => () => {};
+/** How long a hosted stop shows as stopping before Stop can be tried again:
+ * its provider may never report the turn's end. */
+const HOSTED_STOP_MS = 30_000;
+/** What Stop needs of Agents: a hosted agent's provider stops its turns. */
+export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
+type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 /** Activity belongs to the exact triggering message, not the composer. */
-export function ActivityAccessory(props: ComposerAccessoryProps) {
+export function ActivityAccessory(props: ActivityProps) {
   const { session, channelId, message, canOpen } = props;
   const messageId = message?.id;
   // Every row mounts this; only rows with work subscribe to each activity
@@ -107,6 +119,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
       state: entry.state,
       reason: entry.reason,
       ...(entry.step ? { step: entry.step } : {}),
+      ...(entry.stoppable ? { stoppable: true } : {}),
       lifecycle: entry.lifecycle,
       records: entry.selected.records,
       turns: entry.turns,
@@ -202,6 +215,7 @@ type Entry = {
   state: RequestWork["state"];
   reason: string | undefined;
   step?: WorkStep;
+  stoppable?: boolean;
   lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
@@ -210,9 +224,101 @@ type Entry = {
 function ActivityBubble({
   entries,
   interactive,
+  agents,
   ...props
-}: ComposerAccessoryProps & { entries: Entry[]; interactive: boolean }) {
+}: ActivityProps & { entries: Entry[]; interactive: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  // Agents asked to stop whose work has not stopped yet.
+  const [stops, setStops] = useState<ReadonlySet<string>>(new Set());
+  // The latest stop asked of each agent, so a late timeout knows its own.
+  const attempts = useRef(new Map<string, symbol>());
+  const notify = useToastNotification();
+  // A hosted stop still pending when its activity goes away needs no retry.
+  useEffect(() => {
+    const pending = attempts.current;
+    return () => pending.clear();
+  }, []);
+  const message = props.message;
+  const stoppable = (entry: Entry) =>
+    !!message &&
+    (entry.lifecycle
+      ? !!entry.stoppable &&
+        (entry.state === "working" || entry.state === "waiting")
+      : entry.working && !!agents?.interruptible(entry.agent));
+  const forget = (agent: string) => {
+    attempts.current.delete(agent);
+    setStops((prior) => {
+      if (!prior.has(agent)) return prior;
+      const next = new Set(prior);
+      next.delete(agent);
+      return next;
+    });
+  };
+  const stop = (entry: Entry) => {
+    if (!message) return;
+    const attempt = Symbol(entry.agent);
+    attempts.current.set(entry.agent, attempt);
+    setStops((prior) => new Set(prior).add(entry.agent));
+    const newer = () => {
+      const latest = attempts.current.get(entry.agent);
+      return !!latest && latest !== attempt;
+    };
+    // A local request settles as stopped; a hosted turn ends when its
+    // provider reports it, so it shows as stopping until then.
+    const asked = entry.lifecycle
+      ? props.session.agentActivity.interrupt(
+          entry.agent,
+          props.channelId,
+          message.id,
+        )
+      : agents?.interrupt(entry.agent, {
+          channelId: props.channelId,
+          threadRootId: message.threadRootId ?? message.id,
+        });
+    void Promise.resolve(asked).then(
+      (running) => {
+        // A newer stop of this agent reports its own result.
+        if (newer()) return;
+        if (entry.lifecycle) {
+          forget(entry.agent);
+          notify(`Stopped ${entry.name}`, "success");
+        } else if (running === false) {
+          forget(entry.agent);
+          notify(`${entry.name} had nothing running to stop`, "info");
+        } else {
+          notify(`Stopping ${entry.name}`, "success");
+          setTimeout(() => {
+            if (attempts.current.get(entry.agent) !== attempt) return;
+            forget(entry.agent);
+            notify(`${entry.name} hasn’t stopped yet. Try again.`, "error");
+          }, HOSTED_STOP_MS);
+        }
+      },
+      (error: unknown) => {
+        if (newer()) return;
+        forget(entry.agent);
+        notify(
+          `Couldn’t stop ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      },
+    );
+  };
+  // A stop is forgotten once its agent's work here has ended.
+  const live = entries
+    .filter((entry) => entry.working || entry.state === "waiting")
+    .map((entry) => entry.agent)
+    .join(":");
+  useEffect(() => {
+    const agents = new Set(live.split(":"));
+    for (const agent of attempts.current.keys())
+      if (!agents.has(agent)) attempts.current.delete(agent);
+    setStops((prior) =>
+      [...prior].every((agent) => agents.has(agent))
+        ? prior
+        : new Set([...prior].filter((agent) => agents.has(agent))),
+    );
+  }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -363,7 +469,6 @@ function ActivityBubble({
         finalFocus={interactive ? undefined : false}
         side="top"
         padding="list"
-        size="compact"
         aria-label="Agent activity"
       >
         {expanded && (
@@ -374,6 +479,7 @@ function ActivityBubble({
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
+              const stopping = stops.has(entry.agent);
               return (
                 <div key={entry.agent} className={styles.row}>
                   <NavigationItem
@@ -406,12 +512,13 @@ function ActivityBubble({
                               : entry.working
                           }
                         >
-                          {entry.lifecycle
-                            ? label(entry)
-                            : !entry.working
-                              ? "Activity interrupted or out of date"
-                              : (preview?.title ??
-                                "Waiting for activity details")}
+                          {(stopping ? "Stopping…" : undefined) ??
+                            (entry.lifecycle
+                              ? label(entry)
+                              : !entry.working
+                                ? "Activity interrupted or out of date"
+                                : (preview?.title ??
+                                  "Waiting for activity details"))}
                         </ShimmerText>
                         {preview?.detail && (
                           <span className={styles.detail}>
@@ -438,6 +545,20 @@ function ActivityBubble({
                           );
                       }}
                     />
+                  ) : stoppable(entry) ? (
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      aria-label={`Stop ${entry.name}`}
+                      loading={stopping}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        stop(entry);
+                      }}
+                    >
+                      <StopIcon size={16} aria-hidden="true" />
+                      <span>Stop</span>
+                    </Button>
                   ) : undefined}
                 </div>
               );

@@ -138,7 +138,7 @@ preferences relocated it during the transaction. Read actions require
 The packaged host decodes verified self-encrypted sidebar records and signs
 only validated sidebar coordinates; it uses its signed HTTP writer and confirms
 via readback. Sidebar records and channel recipes share kind 30078, so that
-writer selects the admission contract by the event's `d` coordinate: the four
+writer selects the admission contract by the event's `d` coordinate: the five
 sidebar coordinates must match what the sidebar signer produces, and every
 other coordinate must satisfy the recipe contract.
 
@@ -168,11 +168,30 @@ hide its Retry. Move stays gated until that read succeeds. Mute optimism remains
 presentation-only; notification policy continues to use confirmed mutes. This
 composition does not change the whole-record cross-device limitation below.
 
-Collapsed section keys and sidebar scroll remain separate, scoped view intent.
+Sections collapse and expand through their headers; the ellipsis menu does not
+repeat that action. Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that
 sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
-palette; legacy sidebar filters are ignored. The saved-groups
+palette; legacy sidebar filters are ignored. Each section's ellipsis menu offers
+**Filter → All, Unreads, Active in the last**. Unreads shows channels with observed or
+manually marked unread messages or unread thread activity. Active in the last opens a compact,
+content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
+Apply saves the selected rolling window and activates the filter;
+Cancel leaves the saved choice unchanged. The dialog retains its draft after a
+failed save, and the menu shows the selected window. Activity uses verified timestamps. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
+separate kind-30078 `channel-filter` record. They leave saved sorting and section
+membership unchanged; earlier device-only filter choices are ignored, not automatically published.
+Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
+The currently open channel remains visible in its section regardless of its filter,
+however it was opened. Navigating away removes that exception. When a filter hides
+channels, the **Filter** submenu appends those eligible channels below its three
+options and a separator, in the existing section order; choosing one opens
+the section and channel without changing the filter. Choices reuse the sidebar's
+channel-type icons, unread emphasis, attention/thread dots and working-agent
+indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
+their header and menu so the filter can be changed or a hidden row opened.
+Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 
@@ -217,7 +236,24 @@ conversation content and unmount when leaving Messages.
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
 kind-30078 `channel-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
-A–Z writes a null register and removes that group's legacy override. Sections use
+A–Z writes a null register and removes that group's legacy override.
+Filters use the same bounded group-register shape in a separate `channel-filter`
+coordinate: Unreads is `unreads`, Active in the last is `active`, and All
+writes a null reset tombstone. An optional top-level `activeWindowSeconds` map
+stores each group’s duration in whole-day seconds; absence means 30 days. Presets
+and custom values share this representation. Apply publishes mode and duration
+in one encrypted update, and both hosts confirm both values on readback. Other
+modes preserve the last duration; section removal clears it. Older fixed-window
+clients still read `active` as 30 days until upgraded. Keeping this record separate leaves older clients'
+sort records unchanged. Both hosts validate, encrypt, publish and confirm filter
+writes through the existing preference queue. The UI projects pending choices,
+rolls back a failed save, and offers explicit Retry/Dismiss; a confirmed full read
+is required before writes. Removing a saved section resets its filter before
+removing the section. A saved startup copy is display-only until relay reads recover.
+Like sorting, this is whole-record last-write-wins; another client sees changes
+when it loads or refreshes preferences, without a new automatic reconciliation loop.
+
+Sections use
 `meta: { v: 1, s: { ... }, a: { ... } }`: per-section name/icon/order/live registers
 and per-channel assignments. Upgraded readers project metadata as authoritative;
 writers regenerate the legacy fields and preserve unrelated registers, including
@@ -238,7 +274,7 @@ Actual rewrites still reject
 out-of-policy retained values rather than dropping or truncating them.
 Unsupported/malformed metadata fails closed, including unknown fields;
 this is not general forward-schema salvage. Live projection caps remain 100
-sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
+sections, 1,000 assignments and 104 overrides per section-choice record; retained tombstones are bounded
 by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
 additionally requires legacy fields to equal the validated register projection.
 
@@ -1106,6 +1142,9 @@ mixed arrivals do not invent an adder. Grouping is presentation-only: signed eve
 IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
 shared background directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
+A Solo chat omits its owner's additions and removals of agents before its first
+message once history reaches its start; later changes, people and agents added by others still
+show. Membership, access and pagination are unchanged.
 
 An already-running development broker needs a coordinated restart to load the
 expanded live filter; frontend hot reload alone changes only the history/rendering
@@ -1164,7 +1203,7 @@ moves focus to the first revealed reply; deleting a focused reply returns focus 
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
-notice. Solo chats remain flat.
+notice.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.

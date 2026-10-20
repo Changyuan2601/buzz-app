@@ -14,12 +14,13 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
-import { createChannelWrites } from "../relay/channel-writes";
+import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
+import { attachmentDraft } from "../messages/attachment-draft";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -42,6 +43,7 @@ function taggedDraft(
     recipients: [{ pubkey: key, name, start: 0, end: mention.length }],
   };
 }
+const noOperations: readonly never[] = [];
 function setup(available = true) {
   const rows = [
     { pubkey: "a".repeat(64), name: "Member agent" },
@@ -67,6 +69,27 @@ function setup(available = true) {
     refresh: vi.fn(async () => {}),
     failed: (_id: string) => false,
     discardFailed: vi.fn(async (_id: string) => {}),
+    ready: Promise.resolve() as Promise<void>,
+    start: vi.fn(
+      (
+        id: string,
+        title: string,
+        members: readonly string[],
+        ttlSeconds?: number,
+        named = false,
+        setup?: { canvas: string; apply(): Promise<void> },
+      ) => {
+        const create = channelWrites.create(
+          id,
+          title,
+          ttlSeconds,
+          named,
+          members,
+        );
+        void channelWrites.ready.then(() => setup?.apply()).catch(() => {});
+        return { create, ready: channelWrites.ready };
+      },
+    ),
   };
   const messages = {
     send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
@@ -127,7 +150,12 @@ function setup(available = true) {
       subscribe: () => () => {},
       ensure: async () => {},
     },
-    outbox: { supports: () => true },
+    outbox: {
+      supports: () => true,
+      snapshot: () => noOperations,
+      subscribe: () => () => {},
+      dismiss: vi.fn(async () => {}),
+    },
     media: (url: string) => url,
   } as unknown as RelaySession;
   return { session, channelWrites, messages };
@@ -150,38 +178,87 @@ it("uses restored explicit mentions, not a separate picker", async () => {
   await user.keyboard("{Enter}");
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   const id = test.channelWrites.create.mock.calls[0]?.[0];
-  expect(test.channelWrites.addAgents.mock.calls).toEqual([
-    [id, ["b".repeat(64)], expect.any(Function)],
-  ]);
+  // The create names the agent; no separate add.
+  expect(test.channelWrites.start).toHaveBeenCalledWith(
+    id,
+    expect.any(String),
+    ["b".repeat(64)],
+    undefined,
+    false,
+    undefined,
+  );
+  expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
     "b".repeat(64),
   ]);
 });
-it("retries a rejected creation as a new request after discarding it", async () => {
+it("a refused start reports why and leaves New chat to the user", async () => {
   const test = setup(),
     onStarted = vi.fn(),
+    onFailed = vi.fn(),
     user = userEvent.setup();
-  let rejected = true;
-  test.channelWrites.failed = (id: string) => rejected && id === "c".repeat(64);
-  test.channelWrites.discardFailed.mockImplementation(async () => {
-    rejected = false;
+  let refuse = () => {};
+  test.channelWrites.ready = new Promise<void>((_resolve, reject) => {
+    refuse = () => reject(new ChatNotStarted("Channel creation rejected"));
   });
-  test.channelWrites.delivered.mockRejectedValueOnce(
-    new Error("Channel creation rejected"),
+  test.channelWrites.ready.catch(() => {});
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />
   );
-  render(
-    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
-  );
-  await user.type(screen.getByRole("textbox"), "Try again");
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Channel creation rejected",
-  );
-  expect(test.channelWrites.discardFailed).toHaveBeenCalledWith("c".repeat(64));
+  const first = render(view());
+  await user.type(screen.getByRole("textbox"), "Lost start");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-  expect(test.channelWrites.create).toHaveBeenCalledTimes(2);
-  expect(test.messages.send).toHaveBeenCalledOnce();
+  const id = test.channelWrites.create.mock.calls[0]?.[0];
+  first.unmount();
+  // A new chat is being written when the relay refuses the first.
+  render(view());
+  await user.type(screen.getByRole("textbox"), "Next idea");
+  await act(async () => {
+    refuse();
+    await test.channelWrites.ready.catch(() => {});
+  });
+  await waitFor(() =>
+    expect(onFailed).toHaveBeenCalledWith(
+      id,
+      expect.stringMatching(/^Couldn't start ".+": Channel creation rejected$/),
+    ),
+  );
+  expect(screen.getByRole("textbox")).toHaveTextContent("Next idea");
+  expect(screen.getByRole("textbox")).not.toHaveTextContent("Lost start");
+  expect(readView("test", `draft:${id}`, null)).toBeNull();
+});
+
+it("a start that is only unconfirmed keeps the chat and its message", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onFailed = vi.fn(),
+    user = userEvent.setup();
+  test.channelWrites.ready = Promise.reject(
+    new Error("Still waiting for confirmation"),
+  );
+  test.channelWrites.ready.catch(() => {});
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Maybe made");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  await act(() => test.channelWrites.ready.catch(() => {}));
+  expect(onFailed).not.toHaveBeenCalled();
+  expect(test.session.outbox?.dismiss).not.toHaveBeenCalled();
+  expect(test.channelWrites.discardFailed).not.toHaveBeenCalled();
+  expect(readView("test", "solo:new-draft", null)).toBe("");
 });
 it("cannot send on an unsupported community", async () => {
   const test = setup(false),
@@ -194,29 +271,28 @@ it("cannot send on an unsupported community", async () => {
   expect(test.channelWrites.create).not.toHaveBeenCalled();
 });
 
-it("keeps the prompt through an uncertain creation and retries it without another create", async () => {
+it("opens the chat and sends its message before the relay confirms the create", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     user = userEvent.setup();
-  test.channelWrites.delivered.mockRejectedValueOnce(
-    new Error("Still waiting for delivery"),
-  );
+  test.channelWrites.ready = new Promise(() => {});
   render(
     <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
   );
-  await user.type(screen.getByRole("textbox"), "Recover this prompt");
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByRole("alert");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Recover this prompt");
-  expect(test.messages.send).not.toHaveBeenCalled();
+  await user.type(screen.getByRole("textbox"), "Right away");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-  expect(test.channelWrites.create).toHaveBeenCalledOnce();
-  expect(test.messages.send).toHaveBeenCalledOnce();
+  expect(test.channelWrites.start).toHaveBeenCalledOnce();
+  expect(test.channelWrites.delivered).not.toHaveBeenCalled();
+  expect(test.messages.send).toHaveBeenCalledWith(
+    test.channelWrites.create.mock.calls[0]?.[0],
+    "Right away@Member agent ",
+    ["a".repeat(64)],
+  );
 });
 
 it.each([false, true])(
-  "applies section defaults before first send; failed setup still opens the chat (failure=%s)",
+  "applies section defaults once the chat starts; failed setup still keeps the chat (failure=%s)",
   async (failure) => {
     vi.stubGlobal("crypto", webcrypto);
     try {
@@ -287,8 +363,10 @@ it.each([false, true])(
       await user.keyboard("{Enter}");
       await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
       expect(test.channelWrites.create).toHaveBeenCalledOnce();
-      expect(sequence).toEqual(
-        failure ? ["canvas", "send"] : ["canvas", "placement", "send"],
+      await waitFor(() =>
+        // The chat joins its workspace at once and its message goes out;
+        // the Canvas is saved behind them.
+        expect(sequence).toEqual(["placement", "send", "canvas"]),
       );
     } finally {
       vi.unstubAllGlobals();
@@ -296,7 +374,7 @@ it.each([false, true])(
   },
 );
 
-it("edits draft settings before creation, restores them, and applies Canvas before the first send", async () => {
+it("edits draft settings before creation, restores them, and applies Canvas once the chat starts", async () => {
   const test = setup();
   const order: string[] = [];
   const saveCanvas = vi.fn(async () => {
@@ -309,9 +387,6 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     order.push("send");
     return "d".repeat(64);
   });
-  test.channelWrites.delivered.mockRejectedValueOnce(
-    new Error("Unknown creation"),
-  );
   const onStarted = vi.fn();
   const user = userEvent.setup();
   const view = (focusRequest: number | AbortSignal = 0) => (
@@ -328,6 +403,15 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   expect(canvas).toHaveValue("");
   await user.clear(canvas);
   await user.type(canvas, "Keep the change small");
+  // A stray outside click keeps the dialog and the typed instructions.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "Keep the change small",
+  );
   await user.click(screen.getByRole("radio", { name: /^Temporary/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() =>
@@ -349,19 +433,17 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   expect(composer).toHaveFocus();
   await user.type(composer, "Build this");
   await user.keyboard("{Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Unknown creation",
-  );
-  expect(test.channelWrites.create.mock.calls[0]?.[2]).toBe(604800);
-  await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalled());
+  expect(test.channelWrites.create.mock.calls[0]?.[2]).toBe(604800);
   expect(test.channelWrites.create).toHaveBeenCalledOnce();
-  expect(saveCanvas).toHaveBeenCalledWith(
-    expect.any(String),
-    "Keep the change small",
-    undefined,
+  await waitFor(() =>
+    expect(saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "Keep the change small",
+      undefined,
+    ),
   );
-  expect(order).toEqual(["canvas", "send"]);
+  expect(order).toEqual(["send", "canvas"]);
 });
 
 it("a new Solo chat for a named agent starts tagged with it, not the default", async () => {
@@ -391,6 +473,53 @@ it("a new Solo chat for a named agent starts tagged with it, not the default", a
   );
 });
 
+it("a named agent replaces a saved new-chat draft that holds only another agent's tag", async () => {
+  const f = setup();
+  const scope = "me-route-agent-after-default";
+  const first = render(
+    <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
+  );
+  const initial = screen.getByRole("textbox");
+  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  first.unmount();
+  render(
+    <SoloDraft
+      agent={"b".repeat(64)}
+      session={f.session}
+      scope={scope}
+      onStarted={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await waitFor(() => expect(input).toHaveTextContent("@Outside agent"));
+  expect(input).not.toHaveTextContent("@Member agent");
+});
+
+it("a named agent keeps a saved new-chat draft that has the person's own text", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const scope = "me-route-agent-after-text";
+  const first = render(
+    <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
+  );
+  const initial = screen.getByRole("textbox");
+  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  await user.type(initial, "Keep this");
+  first.unmount();
+  render(
+    <SoloDraft
+      agent={"b".repeat(64)}
+      session={f.session}
+      scope={scope}
+      onStarted={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await waitFor(() => expect(input).toHaveTextContent("Keep this"));
+  expect(input).toHaveTextContent("@Member agent");
+  expect(input).not.toHaveTextContent("@Outside agent");
+});
+
 it("a new Solo chat needs a tagged agent to send", async () => {
   const f = setup();
   const user = userEvent.setup();
@@ -416,7 +545,11 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
   try {
     const f = setup();
     const refreshSolo = vi.fn(async () => {});
-    refreshSolo.mockRejectedValueOnce(new Error("Settings unavailable"));
+    // Both the workspace's preload on mount and the settings dialog's read
+    // fail.
+    refreshSolo
+      .mockRejectedValueOnce(new Error("Settings unavailable"))
+      .mockRejectedValueOnce(new Error("Settings unavailable"));
     Object.assign(f.session, {
       soloPreferences: {
         writable: true,
@@ -458,9 +591,10 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
       release = resolve;
     });
     refreshSolo.mockImplementationOnce(() => held);
+    const reads = refreshSolo.mock.calls.length;
     try {
       await user.click(screen.getByRole("button", { name: "Retry settings" }));
-      await waitFor(() => expect(refreshSolo).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(refreshSolo).toHaveBeenCalledTimes(reads + 1));
       expect(screen.getByRole("status")).toHaveTextContent("Loading settings…");
       expect(screen.queryByRole("alert")).toBeNull();
       expect(
@@ -474,7 +608,7 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
       "Keep this Solo draft",
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(refreshSolo).toHaveBeenCalledTimes(2);
+    expect(refreshSolo).toHaveBeenCalledTimes(reads + 1);
     mounted.unmount();
     render(view());
     await open();
@@ -546,8 +680,46 @@ async function projectSetup() {
     },
     canvas: { read: async () => undefined, save: saveCanvas },
   });
-  return { ...f, saveCanvas, assign };
+  return { ...f, saveCanvas, assign, entries };
 }
+
+it("a workspace's defaults changed while New chat is open start the chat", async () => {
+  const f = await projectSetup();
+  const refresh = vi.fn(async () => {});
+  Object.assign(f.session.channelKit, { refresh });
+  const user = userEvent.setup();
+  const started = vi.fn();
+  render(
+    <SoloDraft
+      session={f.session}
+      scope="changed-defaults"
+      projectId="work"
+      onStarted={started}
+    />,
+  );
+  // The defaults load once the workspace is picked; then they are saved anew.
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  await act(async () => {});
+  const [work] = f.entries;
+  if (!work) throw new Error("missing work defaults");
+  f.entries[0] = {
+    ...work,
+    eventId: "work-2",
+    record: {
+      value: { ...work.record.value, canvas: "new work instructions" },
+    },
+  };
+  await user.type(screen.getByRole("textbox"), "Go");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "new work instructions",
+      undefined,
+    ),
+  );
+});
 
 it("re-entering a mounted project clears changed defaults", async () => {
   const f = await projectSetup();
@@ -564,10 +736,12 @@ it("re-entering a mounted project clears changed defaults", async () => {
       onStarted={started}
     />,
   );
-  expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Workspace: Other" }),
+  ).toBeVisible();
   act(() => resetNewChatProject(scope, "work"));
   expect(
-    await screen.findByRole("button", { name: "Project: Work" }),
+    await screen.findByRole("button", { name: "Workspace: Work" }),
   ).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Chat settings" }));
   expect(
@@ -607,13 +781,13 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
         onStarted={started}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Other" }),
     );
     await user.type(screen.getByRole("textbox"), "Keep this project");
     expect(
-      screen.getByRole("button", { name: "Project: Other" }),
+      screen.getByRole("button", { name: "Workspace: Other" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
@@ -636,15 +810,19 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
         onStarted={started}
       />,
     );
-    expect(screen.getByRole("button", { name: "Project: Work" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Workspace: Work" }),
+    ).toBeVisible();
     await user.type(screen.getByRole("textbox"), `Chat ${index}`);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledTimes(index + 1));
-    expect(f.saveCanvas).toHaveBeenNthCalledWith(
-      index + 1,
-      expect.any(String),
-      "work instructions",
-      undefined,
+    await waitFor(() =>
+      expect(f.saveCanvas).toHaveBeenNthCalledWith(
+        index + 1,
+        expect.any(String),
+        "work instructions",
+        undefined,
+      ),
     );
     view.unmount();
   }
@@ -691,7 +869,7 @@ it.each([
     }
     await user.click(
       screen.getByRole("button", {
-        name: fromProject ? "Project: Work" : "Add project",
+        name: fromProject ? "Workspace: Work" : "Add workspace",
       }),
     );
     await user.click(
@@ -711,17 +889,20 @@ it.each([
     await user.type(screen.getByRole("textbox"), "New project chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.saveCanvas).toHaveBeenCalledWith(
-      expect.any(String),
-      "other instructions",
-      undefined,
-    );
-    expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
     expect(f.channelWrites.create).toHaveBeenCalledWith(
       expect.any(String),
       "My chosen title",
       600,
       true,
+      ["a".repeat(64)],
+    );
+    await waitFor(() =>
+      expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other"),
+    );
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "other instructions",
+      undefined,
     );
   },
 );
@@ -811,9 +992,9 @@ it.each([{ fields: { name: 7 } }, { fields: { name: "x".repeat(121) } }])(
     );
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/name/i);
+    // The workspace's defaults load when it is picked; that is a read, not a
+    // start.
     for (const operation of [
-      refreshPreferences,
-      refreshSetup,
       readCanvas,
       saveCanvas,
       refreshAgents,
@@ -998,10 +1179,9 @@ it("starting titles omit structured leading tags but retain literal @ text", asy
   expect(f.channelWrites.create.mock.calls[0]?.[1]).toBe(content);
 });
 
-it.each(["remember", "off", "storage-failure"])(
+it.each(["remember", "off"])(
   "first Solo send transfers all tagged agents into the saved chat draft (%s)",
   async (mode) => {
-    const { readView } = await import("../../shared/view-state");
     const { setRememberAgentsPreference } = await import(
       "../messages/mention-preferences"
     );
@@ -1017,14 +1197,6 @@ it.each(["remember", "off", "storage-failure"])(
       text: `${tags.text}Start here`,
     });
     if (mode === "off") setRememberAgentsPreference(false);
-    const setItem = Storage.prototype.setItem;
-    const storage = vi
-      .spyOn(Storage.prototype, "setItem")
-      .mockImplementation(function (this: Storage, key, value) {
-        if (mode === "storage-failure" && key.includes('"draft:'))
-          throw new Error("Storage unavailable");
-        setItem.call(this, key, value);
-      });
     const started = vi.fn();
     render(
       <SoloDraft
@@ -1037,16 +1209,6 @@ it.each(["remember", "off", "storage-failure"])(
       await userEvent.click(
         screen.getByRole("button", { name: "Send message" }),
       );
-      if (mode === "storage-failure") {
-        expect(await screen.findByRole("alert")).toHaveTextContent(
-          "message couldn’t be saved",
-        );
-        expect(started).not.toHaveBeenCalled();
-        storage.mockRestore();
-        await userEvent.click(
-          screen.getByRole("button", { name: "Send message" }),
-        );
-      }
       await waitFor(() => expect(started).toHaveBeenCalledOnce());
       expect(f.messages.send).toHaveBeenCalledOnce();
       expect(f.channelWrites.create).toHaveBeenCalledOnce();
@@ -1058,8 +1220,160 @@ it.each(["remember", "off", "storage-failure"])(
         recipients.map((r) => r.pubkey),
       );
     } finally {
-      storage.mockRestore();
       setRememberAgentsPreference(true);
     }
   },
 );
+
+const notes = {
+  name: "notes.txt",
+  url: `https://relay.test/media/${"f".repeat(64)}.txt`,
+  type: "text/plain",
+  size: 5,
+  sha256: "f".repeat(64),
+};
+
+it("uploads files as soon as they are attached to a new chat, then sends them", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const upload = vi.fn();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { upload, uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(test.channelWrites.create).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(uploadForNewChat).toHaveBeenCalledOnce();
+  expect(upload).not.toHaveBeenCalled();
+  const id = test.channelWrites.create.mock.calls[0]?.[0];
+  expect(test.messages.send).toHaveBeenCalledWith(
+    id,
+    expect.stringContaining("See attached"),
+    ["a".repeat(64)],
+    [notes],
+  );
+  if (!id) throw new Error("Expected a created chat");
+  expect(
+    attachmentDraft(test.session, `test:draft:${id}`, id).snapshot(),
+  ).toEqual([]);
+});
+
+it("a file dropped anywhere on the new chat page attaches to its composer", async () => {
+  const test = setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, {
+    attachments: { upload: vi.fn(), uploadForNewChat },
+  });
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  const page = screen.getByRole("region", { name: "New chat" });
+  const dataTransfer = {
+    types: ["Files"],
+    files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+    dropEffect: "uninitialized",
+  };
+  fireEvent.dragEnter(page, { dataTransfer });
+  expect(
+    await screen.findByText("Drop files into this conversation"),
+  ).toBeInTheDocument();
+  fireEvent.drop(page, { dataTransfer });
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(screen.queryByText("Drop files into this conversation")).toBeNull();
+});
+
+it("a failed upload blocks a new chat before anything is created", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => {
+    throw new Error("Upload failed. Retry or remove this file.");
+  });
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Retry notes.txt" }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  expect(test.channelWrites.create).not.toHaveBeenCalled();
+  expect(test.messages.send).not.toHaveBeenCalled();
+});
+
+it("a first message that can't go out waits in the new chat's composer with its files", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  Object.assign(test.session, {
+    attachments: { uploadForNewChat: vi.fn(async () => notes) },
+  });
+  test.messages.send.mockImplementationOnce(() => {
+    throw new Error("offline");
+  });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const [id] = onStarted.mock.calls[0] ?? [];
+  expect(readView("test", `draft:${id}`, null)).toEqual(
+    taggedDraft("See attached"),
+  );
+  expect(
+    attachmentDraft(test.session, `test:draft:${id}`, id)
+      .snapshot()
+      .map((item) => item.uploaded),
+  ).toEqual([notes]);
+});
+
+it("resumes a new chat's interrupted upload after navigating away and back", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(
+    (_file: File, signal: AbortSignal) =>
+      new Promise<typeof notes>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      ),
+  );
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  const view = render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  view.unmount();
+
+  uploadForNewChat.mockImplementation(async () => notes);
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.messages.send).toHaveBeenCalledWith(
+    test.channelWrites.create.mock.calls[0]?.[0],
+    expect.stringContaining("See attached"),
+    ["a".repeat(64)],
+    [notes],
+  );
+});

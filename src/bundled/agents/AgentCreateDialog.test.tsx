@@ -3,7 +3,9 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -22,7 +24,21 @@ import type {
 } from "../../features/agents/service";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 
+const motion = vi.hoisted(() => ({ reduced: false }));
+vi.mock("motion/react", async (actual) => ({
+  ...(await actual<typeof import("motion/react")>()),
+  useReducedMotion: () => motion.reduced,
+}));
+
 afterEach(cleanup);
+// jsdom lacks both; tests that need them install stubs, removed here along
+// with stubbed frames and media queries.
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  Reflect.deleteProperty(Element.prototype, "animate");
+  vi.unstubAllGlobals();
+  motion.reduced = false;
+});
 
 type Echo = { reply: string };
 type Notes = { notes: string; instructions: string };
@@ -175,22 +191,135 @@ it("shows the sole harness as a disabled choice", () => {
   expect(screen.getByRole("combobox", { name: "Harness" })).toBeDisabled();
 });
 
-it("disables Create agent with an empty name and says why", async () => {
+it("flags an empty name on Create and clears it once named", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  const animate = vi.fn();
+  Element.prototype.animate = animate;
   const { agents, dialog, user } = setup([echo]);
-  const hint = () => within(dialog).queryByText("Name your agent to continue");
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Name"), "   ");
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  const name = () => within(dialog).getByLabelText("Name");
+  const alert = () => within(dialog).queryByRole("alert");
   expect(createButton()).toBeEnabled();
-  expect(hint()).not.toBeInTheDocument();
-  await user.clear(within(dialog).getByLabelText("Name"));
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Reply"), "x{Enter}");
+  expect(alert()).not.toBeInTheDocument();
+  await user.type(name(), "   ");
+  await user.click(createButton());
   expect(agents.create).not.toHaveBeenCalled();
+  expect(alert()).toHaveTextContent("Add a name to create your agent");
+  expect(name()).toHaveAccessibleDescription("Add a name to create your agent");
+  expect(name()).toHaveAttribute("placeholder", "Name your agent");
+  expect(name()).toHaveAttribute("aria-invalid", "true");
+  expect(name()).toHaveFocus();
+  // Already in view, so nothing scrolls.
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  expect(animate).toHaveBeenCalledOnce();
+  expect(name()).toHaveValue("   ");
+  // Each further empty submit shakes again.
+  await user.click(createButton());
+  expect(animate).toHaveBeenCalledTimes(2);
+  expect(agents.create).not.toHaveBeenCalled();
+  await user.type(name(), "Nova");
+  expect(alert()).not.toBeInTheDocument();
+  expect(name()).not.toHaveAttribute("aria-invalid");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledOnce();
+});
+
+/** Hands each animation frame to the test, so it can step a scroll. */
+const stepFrames = () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) =>
+    frames.push(frame),
+  );
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  // One tick runs every frame requested before it, like the browser.
+  return () =>
+    act(() => {
+      for (const frame of frames.splice(0)) frame(performance.now());
+    });
+};
+
+/** An out-of-view name whose position the test moves frame by frame. */
+const scrolledName = (dialog: HTMLElement) => {
+  const name = within(dialog).getByLabelText("Name");
+  // Just below the fold.
+  const position = { top: window.innerHeight - 38 };
+  name.getBoundingClientRect = () =>
+    ({ top: position.top, bottom: position.top + 40 }) as DOMRect;
+  const scrollIntoView = vi.fn();
+  name.scrollIntoView = scrollIntoView;
+  return { name, position, scrollIntoView };
+};
+
+it("scrolls an out-of-view name to center, then flags it as the glide slows", async () => {
+  Element.prototype.animate = vi.fn();
+  const step = stepFrames();
+  const { dialog, user } = setup([echo]);
+  const { position, scrollIntoView } = scrolledName(dialog);
+  const alert = () => within(dialog).queryByRole("alert");
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+    block: "center",
+    behavior: "smooth",
+  });
+  // Pressing again mid-scroll doesn't start a second scroll.
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledOnce();
+  step();
+  // Easing in: barely moving, and just in view, but not yet past the glide.
+  position.top = window.innerHeight - 41;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  position.top = 600;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  position.top = 300;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  // In view and slowing: the prompt plays while the glide lands.
+  position.top = 298;
+  step();
+  expect(alert()).toHaveTextContent("Add a name to create your agent");
+  expect(Element.prototype.animate).toHaveBeenCalledOnce();
+});
+
+it("does not flag a name typed while it scrolls into view", async () => {
+  Element.prototype.animate = vi.fn();
+  const step = stepFrames();
+  const { dialog, user } = setup([echo]);
+  const { name, position } = scrolledName(dialog);
+  await user.click(createButton());
+  step();
+  fireEvent.change(name, { target: { value: "Nova" } });
+  position.top = 300;
+  step();
+  position.top = 300;
+  step();
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  expect(Element.prototype.animate).not.toHaveBeenCalled();
+});
+
+it("jumps instead of gliding, and skips the shake, under reduced motion", async () => {
+  Element.prototype.animate = vi.fn();
+  const step = stepFrames();
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(prefers-reduced-motion: reduce)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  motion.reduced = true;
+  const { dialog, user } = setup([echo]);
+  const { position, scrollIntoView } = scrolledName(dialog);
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledWith(
+    expect.objectContaining({ behavior: "auto" }),
+  );
+  position.top = 300;
+  step();
+  step();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Add a name to create your agent",
+  );
+  expect(Element.prototype.animate).not.toHaveBeenCalled();
 });
 
 it("switches type from the corner menu, resetting the config to the new type's defaults", async () => {

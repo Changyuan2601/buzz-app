@@ -4,6 +4,7 @@ import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -19,13 +20,16 @@ export type TargetOpener = Readonly<{
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
   /** Sessions may offer library agents; the host confirms channel admission before sending. */
   inviteAgents?: boolean | undefined;
   disabled: boolean;
+  /** Read-only: who the draft mentions, in draft order. The tool re-renders when
+   * this changes; the array keeps its identity while only the prose changes. */
+  recipients: readonly Readonly<{ pubkey: string; name: string }>[];
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
@@ -107,6 +111,16 @@ export type LinkRenderer = Readonly<{
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;
+/** Presentation for a fenced code block, chosen by its info-string language.
+ * The host retains the frame and copy action; failure or removal restores the code. */
+export type CodeBlockRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(language: string): boolean;
+  component: ComponentType<{ code: string; language: string }>;
+  /** A control the host places before its copy action, such as expanding the block. */
+  action?: ComponentType<{ code: string; language: string }> | undefined;
+}>;
 export type ContributionReader<T> = Readonly<{
   snapshot(): readonly Contribution<T>[];
   subscribe(listener: () => void): () => void;
@@ -186,6 +200,7 @@ export type ConversationExtensions = Readonly<{
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
+  codeBlocks?: ContributionReader<CodeBlockRenderer>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */
@@ -258,7 +273,9 @@ export type ComposerCompletion = Readonly<{
 
 /** A conversation a page opens in a tab beside its own. `messageId` opens at
  * that message: in its thread when `threadId` is given, or else in the
- * conversation, or its thread if it is a reply or too old to find. */
+ * conversation, or its thread if it is a reply or too old to find. Without
+ * `messageId`, keyboard focus moves to the tab's composer once it is ready,
+ * unless the user clicks or types first. */
 export type PageTabTarget = {
   channelId: string;
   threadId?: string;
@@ -278,5 +295,10 @@ export type PageTabsProps = {
   /** The page's own first tab. `open` shows a joined conversation in a host tab. */
   children(
     open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+    close: (target: PageTabTarget) => boolean,
+    isOpen: (target: PageTabTarget) => boolean,
   ): ReactNode;
+  /** `false` keeps showing a tab out of its channel visit, so the page decides
+   * what is read; tabs visit as Channels tabs do by default. */
+  visits?: boolean | undefined;
 };

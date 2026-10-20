@@ -11,6 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
@@ -64,6 +65,7 @@ import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
+import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
 import {
   sidebarSections,
   isChannelSectionKey,
@@ -205,6 +207,8 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
+      !channel.huddle &&
+      !channel.metadataPending &&
       // Solo lists the viewer's own Solo chats.
       !ownSolo(channel, queries.viewer) &&
       (!preparingDm ||
@@ -282,9 +286,13 @@ export function ChannelInventory({
     const trigger = lifecycleTrigger.current;
     lifecycleTrigger.current = undefined;
     // The pending operation is nonmodal; keep focus where the user moved it.
-    if (document.activeElement && document.activeElement !== document.body)
+    if (
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      !document.activeElement.closest("[inert]")
+    )
       return;
-    if (trigger?.isConnected) {
+    if (trigger?.isConnected && !trigger.closest("[inert]")) {
       trigger.focus({ preventScroll: true });
       return;
     }
@@ -432,18 +440,55 @@ export function ChannelInventory({
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
+  const filteredSections = useSidebarFilters(
+    sections,
+    Object.fromEntries(
+      Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
+        key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+        mode,
+      ]),
+    ),
+    current?.id,
+    queries.unread,
+    Object.fromEntries(
+      Object.entries(preferences.data?.activeWindowSeconds ?? {}).map(
+        ([key, seconds]) => [
+          key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+          seconds,
+        ],
+      ),
+    ),
+    list.activityStatus === "ready",
+  );
+  // Menu dismissal may run before a moved row mounts at its new placement.
+  // Only an actual filter exclusion should return focus to a section summary.
+  const hiddenRowSections = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    hiddenRowSections.current = new Map(
+      filteredSections.flatMap((section) =>
+        section.hiddenRows.map(({ id }) => [id, section.key] as const),
+      ),
+    );
+  }, [filteredSections]);
+  const channelSectionKey = useCallback(
+    (channelId: string) => {
+      const data = queries.sidebarPreferences.snapshot().data;
+      const sectionId = data?.assignments[channelId];
+      const channel = queries.channels
+        .list()
+        .channels.find((row) => row.id === channelId);
+      return data?.starred.includes(channelId)
+        ? "starred"
+        : sectionId
+          ? `group:${sectionId}`
+          : channel?.channelType === "dm"
+            ? "dms"
+            : "channels";
+    },
+    [queries],
+  );
   const focusChannelPlacement = (channelId: string) => {
-    const data = queries.sidebarPreferences.snapshot().data;
-    const sectionId = data?.assignments[channelId];
-    const channel = sidebarChannels.find((row) => row.id === channelId);
-    const sectionKey = data?.starred.includes(channelId)
-      ? "starred"
-      : sectionId
-        ? `group:${sectionId}`
-        : channel?.channelType === "dm"
-          ? "dms"
-          : "channels";
-    sidebar.toggle(sectionKey, true);
+    sidebar.toggle(channelSectionKey(channelId), true);
     setRowFocus(channelId);
   };
   const moveChannel = (
@@ -508,6 +553,19 @@ export function ChannelInventory({
         preferences.data?.sections.map((section) => section.id) ?? [],
       )
       .catch(() => {});
+  };
+  const setSectionFilter = (
+    key: string,
+    mode: "all" | "unreads" | "active",
+    activeWindowSeconds?: number | null,
+  ) => {
+    return preferences.setFilter(
+      key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+      mode,
+      preferences.data?.sections.map((section) => section.id) ?? [],
+      undefined,
+      activeWindowSeconds,
+    );
   };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
@@ -678,6 +736,7 @@ export function ChannelInventory({
         <ChannelLifecycleMenu
           key="lifecycle"
           separator={false}
+          noun={lifecycleNoun(channel)}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}
@@ -732,7 +791,7 @@ export function ChannelInventory({
     rowMenu,
     open: openMenu,
     close: closeMenu,
-  } = useChannelRowMenu(sections, rowActions);
+  } = useChannelRowMenu(filteredSections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       readAction.reset();
@@ -751,23 +810,35 @@ export function ChannelInventory({
       pendingCreate.current = undefined;
     }
   }, []);
+  const rowFocusTarget = useCallback(
+    (channelId: string) => {
+      const list = sidebar.list.current;
+      const row = list?.querySelector<HTMLElement>(
+        `[data-channel-id="${CSS.escape(channelId)}"]`,
+      );
+      if (row) return row;
+      const sectionKey = hiddenRowSections.current.get(channelId);
+      return sectionKey
+        ? list?.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(sectionKey)}"] details > summary`,
+          )
+        : undefined;
+    },
+    [sidebar.list],
+  );
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>
       pendingCreate.current
         ? false
         : removedDmFocus.current?.channelId === channelId
           ? removedDmFocus.current.target
-          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-              `[data-channel-id="${CSS.escape(channelId)}"]`,
-            ) ?? false),
-    [sidebar.list],
+          : (rowFocusTarget(channelId) ?? false),
+    [rowFocusTarget],
   );
   useLayoutEffect(() => {
     if (!rowFocus) return;
     (
-      sidebar.list.current?.querySelector<HTMLButtonElement>(
-        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
-      ) ??
+      rowFocusTarget(rowFocus) ??
       [
         ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
           "[data-channel-id]",
@@ -778,7 +849,7 @@ export function ChannelInventory({
         ?.querySelector<HTMLButtonElement>("button")
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus, sidebar.list]);
+  }, [rowFocus, rowFocusTarget, sidebar.list]);
   const [groupFocus, setGroupFocus] = useState<string>();
   // Group recovery removes its focused notice; return focus to the group header.
   useLayoutEffect(() => {
@@ -828,8 +899,35 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  // The shown rows nearest the confirmed channel: its own section's, then the
+  // nearest expanded sections'. Captured while it is still listed: completion
+  // can arrive after the roster has dropped it.
+  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
   useLayoutEffect(() => {
     if (!lifecycleCallbacks) return;
+    const dialogId = lifecycleDialog?.channel.id;
+    if (!dialogId) lifecycleNeighbors.current = undefined;
+    const at = sections.findIndex((section) =>
+      section.rows.some((row) => row.id === dialogId),
+    );
+    const placement = sections[at];
+    if (dialogId && placement) {
+      const shown = (section: typeof placement) =>
+        sidebar.collapsed.includes(section.key)
+          ? []
+          : section.rows.map((row) => row.id);
+      const own = shown(placement);
+      const index = Math.max(own.indexOf(dialogId), 0);
+      lifecycleNeighbors.current = {
+        id: dialogId,
+        ids: [
+          ...own.slice(index + 1),
+          ...own.slice(0, index).reverse(),
+          ...sections.slice(at + 1).flatMap(shown),
+          ...sections.slice(0, at).flatMap(shown).reverse(),
+        ],
+      };
+    }
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -851,16 +949,22 @@ export function ChannelInventory({
                 : lifecycleDialog.focusFallback;
               return;
             }
+            // Its neighbor takes its place, so the sidebar stays where it is.
+            const listed = sections.flatMap((section) => section.rows);
+            const next =
+              (lifecycleNeighbors.current?.id === id
+                ? lifecycleNeighbors.current.ids
+                : []
+              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
+              listed.find((channel) => channel.id !== id)?.id;
+            if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
                 ? target.channelId
                 : undefined) === id
             ) {
-              const next = sections
-                .flatMap((section) => section.rows)
-                .find((channel) => channel.id !== id);
-              if (next) select(next.id);
+              if (next) select(next);
               else {
                 writeView(scope, "selected-channel", undefined);
                 void navigator.open({
@@ -980,7 +1084,7 @@ export function ChannelInventory({
             );
           }}
         >
-          {sections.map((section) => (
+          {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
@@ -1012,7 +1116,39 @@ export function ChannelInventory({
               session={queries}
               open={!sidebar.collapsed.includes(section.key)}
               onToggle={(open) => sidebar.toggle(section.key, open)}
-              channelCount={section.rows.length}
+              channelCount={section.allRows.length}
+              filter={
+                preferences.data
+                  ? {
+                      value:
+                        preferences.data.filters?.[
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key
+                        ] ?? "all",
+                      disabled: !preferences.filterWritable,
+                      activeWindowSeconds:
+                        preferences.data.activeWindowSeconds?.[
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key
+                        ],
+                      change: (mode, seconds) =>
+                        setSectionFilter(section.key, mode, seconds),
+                      dismissError: () =>
+                        preferences.dismissFilterError(
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key,
+                        ),
+                    }
+                  : undefined
+              }
+              channels={{
+                rows: section.hiddenRows,
+                selected: current?.id,
+                select,
+              }}
               onRemove={
                 preferences.removeSectionWritable &&
                 section.key.startsWith("group:")
@@ -1183,6 +1319,39 @@ export function ChannelInventory({
             </button>
           </div>
         ))}
+        {preferences.filterErrors?.map(
+          ({ group, mode, activeWindowSeconds, error }) => (
+            <div key={group} className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the filter for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key ===
+                    (group.startsWith("section:")
+                      ? `group:${group.slice(8)}`
+                      : group),
+                )?.title ?? "this section"}
+                . {error}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  void setSectionFilter(group, mode, activeWindowSeconds).catch(
+                    () => {},
+                  )
+                }
+              >
+                Retry filter
+              </button>
+              <button
+                type="button"
+                onClick={() => preferences.dismissFilterError(group)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ),
+        )}
         {[...mute.intents.values()]
           .filter((intent) => !intent.pending)
           .map((intent) => (
@@ -1320,7 +1489,7 @@ export function ChannelInventory({
         {list.activityStatus === "error" && !activityErrorDismissed && (
           <ToastNotice
             title="Couldn’t refresh recent activity"
-            description="Sections sorted by Recent may be out of date."
+            description="Activity filters and Recent sorting may be out of date."
             tone="warning"
             onDismiss={() => setActivityErrorDismissed(true)}
           >

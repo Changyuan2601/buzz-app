@@ -278,15 +278,18 @@ test("delete confirmation without typing purges the selected channel and survive
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
+  // Its neighbor (not the sidebar's first row) takes its place, so a long
+  // sidebar does not scroll away from where the channel was. It opens as it
+  // does from its row: current, with its composer focused.
   await expect(
-    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(row).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
@@ -475,7 +478,7 @@ test.describe("Solo chat lifecycle", () => {
       name: "Actions for Lifecycle channel",
     });
     await menu
-      .getByRole("menuitem", { name: "Delete channel", exact: true })
+      .getByRole("menuitem", { name: "Delete chat", exact: true })
       .click();
     const deletion = page.getByRole("dialog", {
       name: "Delete Lifecycle channel?",
@@ -491,13 +494,13 @@ test.describe("Solo chat lifecycle", () => {
     });
     await header.click();
     await page
-      .getByRole("menuitem", { name: "Archive channel", exact: true })
+      .getByRole("menuitem", { name: "Archive chat", exact: true })
       .click();
     const archive = page.getByRole("dialog", {
-      name: "Archive channel: Lifecycle channel",
+      name: "Archive chat: Lifecycle channel",
     });
     await archive
-      .getByRole("button", { name: "Archive channel", exact: true })
+      .getByRole("button", { name: "Archive chat", exact: true })
       .click();
     await expect(archive).toHaveCount(0);
     await expect(row).toHaveCount(0);
@@ -530,7 +533,7 @@ test.describe("Solo chat lifecycle", () => {
     const result = search
       .getByRole("group", { name: "Channels" })
       .getByRole("option", { name: /Lifecycle channel/ });
-    await expect(result).toContainText("Archived channel");
+    await expect(result).toContainText("Archived chat");
     await result.click();
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
@@ -540,13 +543,13 @@ test.describe("Solo chat lifecycle", () => {
       page.getByRole("button", { name: "View members" }),
     ).toHaveCount(0);
     await page
-      .getByRole("menuitem", { name: "Unarchive channel", exact: true })
+      .getByRole("menuitem", { name: "Unarchive chat", exact: true })
       .click();
     const restore = page.getByRole("dialog", {
-      name: "Unarchive channel: Lifecycle channel",
+      name: "Unarchive chat: Lifecycle channel",
     });
     await restore
-      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .getByRole("button", { name: "Unarchive chat", exact: true })
       .click();
     await expect(restore).toHaveCount(0);
     await expect(row).toBeVisible();
@@ -557,10 +560,10 @@ test.describe("Solo chat lifecycle", () => {
     await expect(page).toHaveURL(url);
     await header.click();
     await page
-      .getByRole("menuitem", { name: "Delete channel", exact: true })
+      .getByRole("menuitem", { name: "Delete chat", exact: true })
       .click();
     await deletion
-      .getByRole("button", { name: "Delete channel", exact: true })
+      .getByRole("button", { name: "Delete chat", exact: true })
       .click();
     await expect(deletion).toHaveCount(0);
     await expect(row).toHaveCount(0);

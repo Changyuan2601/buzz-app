@@ -6,6 +6,7 @@ import type {
   SidebarStarMutator,
   SidebarMuteMutator,
   SidebarSortMutator,
+  SidebarFilterMutator,
   SidebarPreferences,
 } from "./sidebar-preferences";
 
@@ -31,6 +32,7 @@ function setup(
   writeStar?: SidebarStarMutator,
   writeSidebarMute?: SidebarMuteMutator,
   writeSidebarSort?: SidebarSortMutator,
+  writeSidebarFilter?: SidebarFilterMutator,
 ) {
   const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
   const owner = createRelaySession({
@@ -38,6 +40,7 @@ function setup(
     decodeSidebarPreferences: decode,
     ...(writeSidebarMute ? { writeSidebarMute } : {}),
     ...(writeSidebarSort ? { writeSidebarSort } : {}),
+    ...(writeSidebarFilter ? { writeSidebarFilter } : {}),
     ...(write || writeStar
       ? {
           writeSidebarAssignment:
@@ -793,6 +796,124 @@ it("retains confirmed placement but gates moves after a failed refresh until a s
     expect(write).toHaveBeenCalledOnce();
     expect(star).toHaveBeenCalledOnce();
   } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps newer filter intent visible, rolls back failures, and retries without losing sort state", async () => {
+  const first =
+    deferred<import("./sidebar-preferences").SidebarFilterSettings>();
+  const started = deferred<void>();
+  const write = vi
+    .fn<SidebarFilterMutator>()
+    .mockImplementationOnce(async () => {
+      started.resolve();
+      return first.promise;
+    })
+    .mockResolvedValueOnce({
+      filters: { channels: "active" },
+      activeWindowSeconds: { channels: 7 * 86400 },
+    });
+  const { owner, wire, preferences } = setup(
+    vi.fn(async () => ({ ...data, sort: { channels: "recent" as const } })),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    write,
+  );
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    const older = preferences.setFilter("channels", "unreads", ["work"]);
+    const olderFailure = expect(older).rejects.toThrow("older failed");
+    await started.promise;
+    expect(preferences.snapshot().data?.filters).toEqual({
+      channels: "unreads",
+    });
+    const newer = preferences.setFilter(
+      "channels",
+      "active",
+      ["work"],
+      undefined,
+      7 * 86400,
+    );
+    expect(preferences.snapshot().data?.filters).toEqual({
+      channels: "active",
+    });
+    expect(preferences.snapshot().data?.activeWindowSeconds).toEqual({
+      channels: 7 * 86400,
+    });
+    first.reject(new Error("older failed"));
+    await olderFailure;
+    await newer;
+    expect(preferences.snapshot().filterErrors).toBeUndefined();
+    write.mockRejectedValueOnce(new Error("not confirmed"));
+    await expect(
+      preferences.setFilter(
+        "channels",
+        "active",
+        ["work"],
+        undefined,
+        90 * 86400,
+      ),
+    ).rejects.toThrow("not confirmed");
+    expect(preferences.snapshot().data).toMatchObject({
+      filters: { channels: "active" },
+      sort: { channels: "recent" },
+      activeWindowSeconds: { channels: 7 * 86400 },
+    });
+    expect(preferences.snapshot().filterErrors).toEqual([
+      {
+        group: "channels",
+        mode: "active",
+        activeWindowSeconds: 90 * 86400,
+        error: "not confirmed",
+      },
+    ]);
+    write.mockResolvedValueOnce({ filters: {}, activeWindowSeconds: {} });
+    await preferences.setFilter("channels", "all", ["work"]);
+    expect(preferences.snapshot().data?.filters).toEqual({});
+    expect(preferences.snapshot().filterErrors).toBeUndefined();
+  } finally {
+    first.resolve({ filters: {}, activeWindowSeconds: {} });
+    owner.dispose();
+  }
+});
+
+it("fences an in-flight filter write when the session cache is cleared", async () => {
+  const gate =
+    deferred<import("./sidebar-preferences").SidebarFilterSettings>();
+  const started = deferred<AbortSignal>();
+  const write: SidebarFilterMutator = async (_group, _mode, _ids, signal) => {
+    started.resolve(signal);
+    return gate.promise;
+  };
+  const { owner, wire, preferences } = setup(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    write,
+  );
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    const change = preferences.setFilter("channels", "unreads", ["work"]);
+    const rejection = expect(change).rejects.toThrow("unavailable");
+    const signal = await started.promise;
+    await owner.clearCache();
+    expect(signal.aborted).toBe(true);
+    gate.resolve({ filters: { channels: "unreads" }, activeWindowSeconds: {} });
+    await rejection;
+    expect(preferences.snapshot().data).toBeUndefined();
+  } finally {
+    gate.resolve({ filters: {}, activeWindowSeconds: {} });
     owner.dispose();
   }
 });

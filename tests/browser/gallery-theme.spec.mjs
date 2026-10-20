@@ -1,7 +1,13 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 
 // Resolve on the app root, independently of the gallery subtree: a stale or
 // incorrectly scoped gallery palette must not supply its own expected colors.
@@ -51,7 +57,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
   const row = page
     .getByRole("region", { name: "Channel message history" })
     .locator(`[data-message-id="${event.id}"]`);
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const thread = page.getByRole("complementary", {
     name: "Thread",
@@ -78,13 +84,13 @@ test("an open image gallery follows host appearance while retaining its dark sta
   const other = await context.newPage();
   try {
     await other.goto(app.origin);
-    await other
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await other
-      .getByRole("menuitem", { name: "Settings", exact: true })
-      .click();
-    await expect(other.getByRole("main")).toBeFocused();
+    await openSettings(other);
+    await expect(
+      settingsDialog(other).getByRole("button", {
+        name: "Close Settings",
+        exact: true,
+      }),
+    ).toBeFocused();
     await selectSettingsSection(other, "Appearance");
     for (const [index, mode] of ["light", "dark", "light"].entries()) {
       await chooseColorMode(other, mode === "light" ? "Light" : "Dark");
@@ -152,15 +158,12 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(
       thread.getByRole("link", { name: "Open image attachment", exact: true }),
     ).toBeFocused();
-    // The app can go fully colorful without tinting the media canvas. Shared
-    // controls and surrounding surfaces remain themed; only media roles stay fixed.
-    const vibe = other.getByRole("slider", { name: "Vibe level" });
-    await vibe.focus();
-    await vibe.press("End");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-color-level",
-      "full",
-    );
+    // Accent changes propagate without tinting the media canvas.
+    await other
+      .getByRole("button", { name: "Cobalt accent color", exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+
     await chooseColorMode(other, "Dark");
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-mode",
@@ -170,7 +173,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await thread
       .getByRole("link", { name: "Open image attachment", exact: true })
       .press("Enter");
-    // Buzzin’ themes the comments pane but the image stage remains pure black.
+    // Comments follow the app surface; the image stage remains pure black.
     await expect(comments).toHaveCSS(
       "background-color",
       await hostColor(page, "--surface-panel"),

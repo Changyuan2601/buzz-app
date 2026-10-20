@@ -225,6 +225,16 @@ export async function fetchKlipyGifs(
   }
 }
 
+/** Pickers can delegate relay access to their owning window. */
+export type GifRequests = {
+  supports: typeof relaySupportsKlipy;
+  search: typeof fetchKlipyGifs;
+};
+export const relayGifRequests: GifRequests = {
+  supports: relaySupportsKlipy,
+  search: fetchKlipyGifs,
+};
+
 /** URL-only media keeps provider bytes and credentials out of Buzz storage. */
 export function gifMarkdown(gif: KlipyGif) {
   const title = gif.title

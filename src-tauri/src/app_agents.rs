@@ -625,15 +625,22 @@ async fn search_profiles(
         .map_err(|_| "Invalid profile search".into())
 }
 
-/// Media an agent may upload, as the community accepts them.
-const UPLOAD_TYPES: [&str; 5] = [
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "video/mp4",
-];
+/// The largest file an agent uploads, as base64 through the WebView.
 const UPLOAD_LIMIT: usize = 50 * 1024 * 1024;
+
+/// A `type/subtype` MIME, lowercase, without parameters.
+fn mime_type(value: &str) -> Option<String> {
+    let mime = value.split(';').next()?.trim().to_ascii_lowercase();
+    let (kind, subtype) = mime.split_once('/')?;
+    let token = |part: &str| {
+        !part.is_empty()
+            && part.len() <= 127
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".+-_".contains(&b))
+    };
+    (token(kind) && token(subtype)).then_some(mime)
+}
 
 /// Uploads one file (base64 `data` of type `mime`) to the agent's community
 /// as the agent, and returns the community's description of it.
@@ -645,8 +652,11 @@ pub(crate) async fn app_agent_upload(
     mime: String,
 ) -> Result<Value, String> {
     use base64::Engine;
-    if !UPLOAD_TYPES.contains(&mime.as_str()) || data.len() > UPLOAD_LIMIT / 3 * 4 + 4 {
-        return Err("Agents upload images or MP4 video up to 50 MB".into());
+    // The type is a hint: the community sniffs the bytes and decides what it
+    // accepts, as it does for the owner's own attachments.
+    let mime = mime_type(&mime).ok_or("Invalid upload type")?;
+    if data.len() > UPLOAD_LIMIT / 3 * 4 + 4 {
+        return Err("Agents upload files up to 50 MB".into());
     }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
@@ -697,24 +707,44 @@ async fn upload(
 
 /// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
 /// strictest hosts, and base64 is 4 characters per 3 bytes.
-const MEDIA_LIMIT: usize = 5 * 1024 * 1024 / 4 * 3;
+const MEDIA_LIMIT: u64 = 5 * 1024 * 1024 / 4 * 3;
+/// The largest file an agent saves: the community's largest upload, a video.
+const MEDIA_FILE_LIMIT: u64 = 500 * 1024 * 1024;
+/// Images an agent can be shown.
+const SHOWN_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+/// One media blob saved for an agent, and the image itself when it can be shown.
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct AgentMedia {
+    path: String,
+    #[serde(rename = "type")]
+    mime: String,
+    size: u64,
+    /// Base64, only for an image within [`MEDIA_LIMIT`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+}
 
 /// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
-/// as the agent, base64.
+/// as the agent, of any type the community serves. It is saved to a local file
+/// so the agent's own tools can open it; an image is also returned to be shown.
+/// The file goes in the OS temp dir, as the Node MCP server saves it, so the OS
+/// removes it later; the agent needs it only for its turn.
 #[tauri::command]
 pub(crate) async fn app_agent_media(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     url: String,
-) -> Result<String, String> {
+) -> Result<AgentMedia, String> {
     use base64::Engine;
+    let dir = std::env::temp_dir().join("buzz-agent-media");
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let url = agent.media_url(&url)?;
     let auth =
         serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
     let response = client()?
         .get(&url)
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(600))
         .header(
             "Authorization",
             format!(
@@ -726,16 +756,78 @@ pub(crate) async fn app_agent_media(
         .send()
         .await
         .map_err(|_| "Agent media request failed")?;
+    save_media(&agent, &url, response, &dir).await
+}
+
+/// Streams a media response to `dir`, named by its hash, checking the hash.
+async fn save_media(
+    agent: &AppAgent,
+    url: &str,
+    mut response: reqwest::Response,
+    dir: &Path,
+) -> Result<AgentMedia, String> {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
     let status = response.status();
-    let body = bounded(response, MEDIA_LIMIT).await?;
     if !status.is_success() {
+        let body = bounded(response, 64 * 1024).await.unwrap_or_default();
         return Err(format!(
             "The community refused the media: {}",
             reason(status, &body)
         ));
     }
-    agent.verify_media_hash(&url, &body)?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(body))
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(mime_type)
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let shown = SHOWN_TYPES.contains(&mime.as_str());
+    std::fs::create_dir_all(dir).map_err(|_| "Media storage unavailable")?;
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|_| "Media storage unavailable")?;
+    let mut hash = Sha256::new();
+    let mut size = 0u64;
+    let mut image = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Agent media request failed")?
+    {
+        size += chunk.len() as u64;
+        if size > MEDIA_FILE_LIMIT {
+            return Err("Media over 500 MiB cannot be saved".into());
+        }
+        hash.update(&chunk);
+        file.write_all(&chunk)
+            .map_err(|_| "Media could not be saved")?;
+        if shown && size <= MEDIA_LIMIT {
+            image.extend_from_slice(&chunk);
+        }
+    }
+    agent.verify_media_hash(url, &format!("{:x}", hash.finalize()))?;
+    // The blob's own name, so the same media is saved once; with an extension
+    // from its type when the URL gives none.
+    let mut name = url.rsplit('/').next().unwrap_or_default().to_owned();
+    if !name.contains('.') {
+        if let Some(ext) = mime
+            .split_once('/')
+            .map(|(_, subtype)| subtype)
+            .filter(|ext| ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()))
+        {
+            name = format!("{name}.{ext}");
+        }
+    }
+    let path = dir.join(name);
+    file.persist(&path)
+        .map_err(|_| "Media could not be saved")?;
+    Ok(AgentMedia {
+        path: path.to_string_lossy().into_owned(),
+        data: (shown && size <= MEDIA_LIMIT)
+            .then(|| base64::engine::general_purpose::STANDARD.encode(&image)),
+        mime,
+        size,
+    })
 }
 
 /// Writes one memory entry, encrypted to the agent's owner. `after` is the
@@ -966,6 +1058,109 @@ mod tests {
             about: None,
             deleted: false,
             deleting: false,
+        }
+    }
+
+    /// Serves `body` as `mime` once, and returns the response to a GET of `path`.
+    async fn media_response(
+        mime: &'static str,
+        body: &'static [u8],
+        path: &str,
+    ) -> (String, reqwest::Response) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: {mime}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            socket.write_all(body).await.unwrap();
+        });
+        let response = reqwest::get(format!("{origin}{path}")).await.unwrap();
+        (origin, response)
+    }
+
+    #[tokio::test]
+    async fn media_of_any_type_is_saved_by_its_hash_and_only_images_are_shown() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let key = Secret::generate().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let video: &'static [u8] = b"\0\0\0\x18ftypmp42 not really a video";
+        let sha = format!("{:x}", Sha256::digest(video));
+        let path = format!("/media/{sha}");
+        let (origin, response) = media_response("video/mp4", video, &path).await;
+        let agent = agent_at(origin.clone(), &key);
+        let saved = save_media(&agent, &format!("{origin}{path}"), response, dir.path())
+            .await
+            .unwrap();
+        let file = dir.path().join(format!("{sha}.mp4"));
+        assert_eq!(
+            saved,
+            AgentMedia {
+                path: file.to_string_lossy().into_owned(),
+                mime: "video/mp4".into(),
+                size: video.len() as u64,
+                data: None,
+            }
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), video);
+
+        let image: &'static [u8] = b"\x89PNG\r\n\x1a\n pixels";
+        let sha = format!("{:x}", Sha256::digest(image));
+        let path = format!("/media/{sha}.png");
+        let (origin, response) = media_response("image/png; charset=binary", image, &path).await;
+        let saved = save_media(
+            &agent_at(origin.clone(), &key),
+            &format!("{origin}{path}"),
+            response,
+            dir.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved.mime, "image/png");
+        assert_eq!(
+            saved.data,
+            Some(base64::engine::general_purpose::STANDARD.encode(image))
+        );
+        assert!(saved.path.ends_with(&format!("{sha}.png")));
+    }
+
+    #[tokio::test]
+    async fn media_that_does_not_match_its_hash_is_not_saved() {
+        let key = Secret::generate().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("/media/{}.pdf", "0".repeat(64));
+        let (origin, response) = media_response("application/pdf", b"%PDF-1.7", &path).await;
+        let saved = save_media(
+            &agent_at(origin.clone(), &key),
+            &format!("{origin}{path}"),
+            response,
+            dir.path(),
+        )
+        .await;
+        assert_eq!(saved, Err("Media did not match its SHA-256".into()));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn upload_types_are_hints_of_any_kind_but_must_be_well_formed() {
+        assert_eq!(
+            mime_type("Application/PDF; x=1").as_deref(),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            mime_type("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                .as_deref(),
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        );
+        for bad in ["", "pdf", "a/", "/b", "a/b c", "a/b\r\nx: y"] {
+            assert_eq!(mime_type(bad), None, "{bad:?}");
         }
     }
 

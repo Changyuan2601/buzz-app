@@ -95,6 +95,7 @@ function fixture({
     { status: loading ? "loading" : "ready", entries: loading ? [] : entries };
   const none = () => () => {};
   const session = {
+    unread: undefined,
     directMessages: {
       people: vi.fn(async () => ({ people: [], hasMore: false })),
     },

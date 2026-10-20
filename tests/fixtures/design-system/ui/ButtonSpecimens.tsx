@@ -136,6 +136,7 @@ function ButtonMatrix({ kind }: { kind: "text" | "icon" }) {
 export function ButtonSpecimen() {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [labelled, setLabelled] = useState(false);
   return (
     <div className="component-specimen-stack">
       <ExamplePreview
@@ -145,6 +146,18 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview code='<Button size="sm" shape={labelled ? "capsule" : "icon"} aria-label="Toggle label">…</Button>'>
+        <Button
+          size="sm"
+          variant="ghost"
+          shape={labelled ? "capsule" : "icon"}
+          aria-label="Toggle label"
+          onClick={() => setLabelled(!labelled)}
+        >
+          <PlusIcon aria-hidden="true" />
+          {labelled && "Labelled action"}
+        </Button>
+      </ExamplePreview>
       <ExamplePreview
         code={`<Button size="inline" variant="plain" aria-expanded={expanded}>Previous steps <CaretDownIcon aria-hidden="true" /></Button>`}
       >
@@ -360,7 +373,7 @@ export function IconButtonSpecimen() {
       <ExamplePreview
         label="Glyph-state toggle"
         code={
-          '<IconButton variant="bare" size="sm" aria-pressed={unread} aria-label="Unread only" icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />} />'
+          '<IconButton variant="bare" size="sm" aria-pressed={unread} aria-label="Unread only" icon={unread ? <NotificationFilledIcon size="1.25rem" /> : <NotificationIcon size="1.25rem" />} />'
         }
       >
         <IconButton
@@ -370,7 +383,13 @@ export function IconButtonSpecimen() {
           aria-pressed={unread}
           title="Show unread only"
           onClick={() => setUnread(!unread)}
-          icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />}
+          icon={
+            unread ? (
+              <NotificationFilledIcon size="1.25rem" />
+            ) : (
+              <NotificationIcon size="1.25rem" />
+            )
+          }
         />
       </ExamplePreview>
       <ButtonMatrix kind="icon" />

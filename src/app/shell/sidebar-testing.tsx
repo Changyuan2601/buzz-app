@@ -23,7 +23,12 @@ export const outsider = "b".repeat(64);
 export const viewer = "c".repeat(64);
 export const root = "d".repeat(64);
 export const scope = `https://relay.test:${viewer}`;
-export function fixture(combined = false, canCreate = false, agents?: Agents) {
+export function fixture(
+  combined = false,
+  canCreate = false,
+  agents?: Agents,
+  counts = { observedCount: 2, attentionCount: 1 },
+) {
   const owner = createRelaySession(null);
   owners.push(owner);
   const base = owner.session;
@@ -41,8 +46,7 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
   };
   let unread: ReturnType<RelaySession["unread"]["snapshot"]> = {
     target: { kind: "channel", channelId: id },
-    observedCount: 2,
-    attentionCount: 1,
+    ...counts,
     coverage: "observed",
     freshness: "observed",
     manual: "none",

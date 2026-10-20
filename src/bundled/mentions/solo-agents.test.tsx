@@ -84,6 +84,7 @@ function setup(parent: boolean | null = true, archived = false) {
     for (const listener of listeners) listener();
   };
   const session = {
+    unread: undefined,
     directMessages: {
       people: vi.fn(async () => ({ people: [], hasMore: false })),
     },

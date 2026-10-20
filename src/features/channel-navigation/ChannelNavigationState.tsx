@@ -1,4 +1,7 @@
-import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import {
+  ChannelLifecycleDialog,
+  lifecycleNoun,
+} from "../../bundled/channels/ChannelLifecycleDialog";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   createContext,
@@ -257,6 +260,7 @@ export function ChannelNavigationProvider({
             key={`${scope}:${connection.generation}`}
             channelId={state.lifecycleDialog.channel.id}
             channelName={state.lifecycleDialog.channel.name}
+            noun={lifecycleNoun(state.lifecycleDialog.channel)}
             action={state.lifecycleDialog.action}
             lifecycle={connection.session.channelLifecycle}
             onSubmit={value.beginLifecycle}

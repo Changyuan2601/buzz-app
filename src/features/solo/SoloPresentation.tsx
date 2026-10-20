@@ -15,7 +15,11 @@ export function SoloDraftView({
   children: ReactNode;
 }) {
   return (
-    <section className={styles.work} aria-label="New chat">
+    <section
+      className={styles.work}
+      data-attachment-drop-zone=""
+      aria-label="New chat"
+    >
       <SoloTitle channel={{ name: "New chat" }}>{actions}</SoloTitle>
       <div className={styles.start}>
         <div className={styles.startContent}>{children}</div>

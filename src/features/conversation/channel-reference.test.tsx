@@ -29,6 +29,7 @@ function fixture(status: ChannelList["status"] = "ready") {
   };
   const refer = vi.fn();
   const session = {
+    unread: undefined,
     channels: {
       list: () => list,
       get: () => undefined,

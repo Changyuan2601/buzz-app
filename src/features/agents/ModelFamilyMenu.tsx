@@ -1,0 +1,227 @@
+import { useState, type ReactNode } from "react";
+import { ModelIcon, type ModelChoice } from "./ModelPicker";
+import { CaretDownIcon, CheckIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+} from "../../shared/design-system/ui/Menu";
+
+/** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
+export function modelFamily(model: ModelChoice): string {
+  const name = `${model.id} ${model.label}`.toLowerCase();
+  for (const [family, pattern] of [
+    ["OpenAI", /codex|gpt|openai|(?:^|[\s/._-])o[134](?:[\s/._-]|$)/],
+    ["Claude", /claude|anthropic|sonnet|opus|haiku/],
+    ["Kimi", /kimi|moonshot/],
+    ["Gemini", /gemini/],
+    ["DeepSeek", /deepseek/],
+    ["Qwen", /qwen/],
+    ["Llama", /llama/],
+    ["Mistral", /mistral|mixtral|codestral/],
+    ["Grok", /grok/],
+  ] as const)
+    if (pattern.test(name)) return family;
+  return "Other";
+}
+
+export function ModelFamilyMenu({
+  leading,
+  inherited = false,
+  appearance = "outlined",
+  resetLabel,
+  label,
+  effort,
+  effortLabel,
+  onEffortChange,
+  compact = false,
+  onConfigure,
+  models,
+  selected,
+  defaultChoice,
+  disabled,
+  loading = false,
+  description,
+  onChange,
+  onCustom,
+}: {
+  leading?: ReactNode;
+  inherited?: boolean;
+  appearance?: "outlined" | "subtle";
+  resetLabel?: string | undefined;
+  label: string;
+  effort?: string | undefined;
+  effortLabel?: string | undefined;
+  onEffortChange?: ((model: string, effort: string) => void) | undefined;
+  compact?: boolean;
+  onConfigure?: (() => void) | undefined;
+  models: readonly ModelChoice[];
+  selected: ModelChoice;
+  defaultChoice?: ModelChoice | undefined;
+  disabled: boolean;
+  loading?: boolean;
+  description?: string | undefined;
+  onChange(id: string): void;
+  onCustom?: (() => void) | undefined;
+}) {
+  const families = new Map<string, ModelChoice[]>();
+  for (const model of models) {
+    const family = modelFamily(model);
+    families.set(family, [...(families.get(family) ?? []), model]);
+  }
+  const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
+  const menu = (
+    <MenuRoot>
+      <MenuTrigger
+        disabled={disabled || loading}
+        render={(props) => (
+          <Button
+            {...props}
+            disabled={disabled}
+            loading={loading}
+            focusableWhenDisabled={loading && !disabled}
+            variant={appearance === "subtle" ? "subtle" : "outline"}
+            shape="control"
+            size="sm"
+            aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
+            title={selectedLabel}
+          >
+            {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            <span className="buzz-select-value">
+              {selected.label}
+              {inherited && <span className="text-subtle"> · Default</span>}
+            </span>
+            {effortLabel && (
+              <span className="text-body-sm text-subtle">{effortLabel}</span>
+            )}
+            <CaretDownIcon size={16} aria-hidden="true" />
+          </Button>
+        )}
+      />
+      <MenuPopup aria-label={label}>
+        {defaultChoice && (
+          <MenuRadioGroup
+            value={inherited ? "" : selected.id}
+            onValueChange={(id) => onChange(id)}
+          >
+            <MenuRadioItem value="" closeOnClick>
+              {defaultChoice.label} · Default
+            </MenuRadioItem>
+          </MenuRadioGroup>
+        )}
+        {[...families]
+          .sort(([a], [b]) =>
+            a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b),
+          )
+          .map(([family, choices]) => (
+            <MenuSubmenu key={family}>
+              <MenuSubmenuTrigger>
+                <ModelIcon model={family} />
+                {family}
+              </MenuSubmenuTrigger>
+              <MenuSubmenuPopup aria-label={`${family} models`}>
+                <MenuRadioGroup
+                  value={selected.id}
+                  onValueChange={(id) => onChange(id)}
+                >
+                  {choices.map((model) =>
+                    onEffortChange &&
+                    (model.efforts?.length || model.loadEfforts) ? (
+                      <EffortMenu
+                        key={`${model.effortScope ?? ""}:${model.id}`}
+                        model={model}
+                        selected={selected.id === model.id}
+                        effort={effort ?? ""}
+                        onChange={onEffortChange}
+                      />
+                    ) : (
+                      <MenuRadioItem
+                        key={model.id}
+                        value={model.id}
+                        closeOnClick
+                      >
+                        {model.label}
+                      </MenuRadioItem>
+                    ),
+                  )}
+                </MenuRadioGroup>
+              </MenuSubmenuPopup>
+            </MenuSubmenu>
+          ))}
+        {resetLabel && (
+          <MenuItem onClick={() => onChange("")}>{resetLabel}</MenuItem>
+        )}
+        {onConfigure && (
+          <MenuItem onClick={onConfigure}>Edit configuration</MenuItem>
+        )}
+        {onCustom && <MenuItem onClick={onCustom}>Custom model</MenuItem>}
+      </MenuPopup>
+    </MenuRoot>
+  );
+  return compact ? (
+    <div className="buzz-select" data-variant="compact">
+      {menu}
+    </div>
+  ) : (
+    <PreferenceRow title={label} subtitle={description} trailing={menu} />
+  );
+}
+
+function EffortMenu({
+  model,
+  selected,
+  effort,
+  onChange,
+}: {
+  model: ModelChoice;
+  selected: boolean;
+  effort: string;
+  onChange(model: string, effort: string): void;
+}) {
+  const [levels, setLevels] = useState(model.efforts);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <MenuSubmenu
+      onOpenChange={(open) => {
+        if (!open || levels || loading || !model.loadEfforts) return;
+        setLoading(true);
+        setError("");
+        void model
+          .loadEfforts()
+          .then(setLevels, (reason) => setError(String(reason)))
+          .finally(() => setLoading(false));
+      }}
+    >
+      <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
+        {model.label}
+        {selected && <CheckIcon size={16} aria-hidden="true" />}
+      </MenuSubmenuTrigger>
+      <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>
+        {loading && <MenuItem disabled>Loading thinking levels…</MenuItem>}
+        {error && <MenuItem disabled>Could not load thinking levels</MenuItem>}
+        {(!levels?.length || error) && (
+          <MenuItem onClick={() => onChange(model.id, "")}>Use model</MenuItem>
+        )}
+        <MenuRadioGroup
+          value={selected ? effort : null}
+          onValueChange={(level) => onChange(model.id, level)}
+        >
+          {(levels ?? []).map((level) => (
+            <MenuRadioItem key={level.id} value={level.id} closeOnClick>
+              {level.label}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuSubmenuPopup>
+    </MenuSubmenu>
+  );
+}

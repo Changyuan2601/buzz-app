@@ -29,7 +29,11 @@ async function fixture() {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject: "user", email: "a@example.com" },
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+    },
   }));
   await session.signIn();
   const request = vi.fn(async (_input: HostRequest) => response([row]));

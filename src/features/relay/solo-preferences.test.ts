@@ -1,4 +1,3 @@
-import { applyChatSetup } from "../solo/workspace";
 import { createSoloPreferences } from "./solo-preferences";
 import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
@@ -352,32 +351,6 @@ it("confirms native-shaped reordered assignment maps without losing group order"
   }
 });
 
-it("files a new chat's frozen section once through setup", async () => {
-  const f = fixture();
-  try {
-    f.install(groups);
-    const setup = () =>
-      applyChatSetup(
-        {
-          ...f.session,
-          canvas: { ...f.session.canvas, read: async () => undefined },
-        },
-        channel,
-        { projectId: "work", canvas: "", agents: [] },
-        () => true,
-      );
-    await setup();
-    expect(f.publish).toHaveBeenCalledOnce();
-    expect(
-      f.session.soloPreferences.snapshot().data?.assignments[channel],
-    ).toBe("work");
-    await setup();
-    expect(f.publish).toHaveBeenCalledOnce();
-  } finally {
-    f.dispose();
-  }
-});
-
 it("checks the exact project capacity before saving and reclaims a removed filing", async () => {
   const f = fixture();
   const value: Groups = {
@@ -406,7 +379,7 @@ it("checks the exact project capacity before saving and reclaims a removed filin
   try {
     await f.session.soloPreferences.ensure();
     await expect(f.session.soloPreferences.assign(id, "work")).rejects.toThrow(
-      "Solo project storage is full",
+      "Solo workspace storage is full",
     );
     expect(f.publish).not.toHaveBeenCalled();
     const removed = Object.keys(value.assignments)[0];

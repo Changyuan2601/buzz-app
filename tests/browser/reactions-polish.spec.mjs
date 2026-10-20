@@ -325,10 +325,14 @@ test.describe("reaction control rendering", () => {
     await row.evaluate((el) => {
       el.style.translate = "0 0.25px";
     });
-    // Keep the overlapping message hover highlight unchanged while comparing
-    // the whole button before, during, and after neighboring emoji motion.
-    await message.hover({ position: { x: 1, y: 1 } });
-    await expect(message).toHaveAttribute("data-actions-revealed", "");
+    // Stay inside the reaction area so the message hover highlight is absent
+    // before, during, and after neighboring emoji motion.
+    const rest = { x: 2, y: (await row.boundingBox()).height / 2 };
+    await row.hover({ position: rest });
+    await expect(message).not.toHaveAttribute("data-actions-revealed", "");
+    await expect
+      .poll(() => plus.evaluate((el) => el.matches(":hover")))
+      .toBe(false);
     const bounds = await plus.boundingBox();
     const original = await plus.screenshot();
     await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
@@ -364,7 +368,7 @@ test.describe("reaction control rendering", () => {
         for (const animation of el.getAnimations()) animation.finish();
       });
     }
-    await message.hover({ position: { x: 1, y: 1 } });
+    await row.hover({ position: rest });
     await expect(emoji.locator("[data-reaction-glyph]")).toHaveCSS(
       "transform",
       "none",

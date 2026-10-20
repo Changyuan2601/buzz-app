@@ -229,6 +229,43 @@ fn legacy_blob_rejects_wrong_keys_duplicates_and_unbounded_data() {
 }
 
 #[test]
+fn legacy_human_reads_only_the_installed_identity_entry() {
+    let human = serde_json::to_vec(&json!({"identity":"nsec-text", format!("agent:{PUB}"):KEY}));
+    let human = human.unwrap();
+    let agents_only = serde_json::to_vec(&json!({format!("agent:{PUB}"):KEY})).unwrap();
+    let duplicate = br#"{"identity":"a","identity":"b"}"#.to_vec();
+    let oversized = [human.clone(), vec![b' '; MAX_BLOB]].concat();
+    for (bytes, failure, expected) in [
+        (Some(human), None, Ok("nsec-text")),
+        (Some(agents_only), None, Err("No identity")),
+        (None, None, Err("No identity")),
+        (Some(duplicate), None, Err("malformed")),
+        (Some(oversized), None, Err("malformed")),
+        (None, Some(Failure::Denied), Err("denied")),
+    ] {
+        let (credentials, fake) = fixture();
+        *fake.failure.lock().unwrap() = failure;
+        if let Some(bytes) = bytes {
+            fake.put("buzz-desktop", "secrets", bytes);
+        }
+        fake.put("buzz-desktop-dev", "secrets", blob());
+        match (
+            credentials.read_legacy_human(LegacySource::Installed),
+            expected,
+        ) {
+            (Ok(value), Ok(text)) => assert_eq!(value.as_str(), text),
+            (Err(error), Err(text)) => assert!(error.contains(text), "{error}"),
+            (result, _) => panic!("unexpected {:?}", result.map(|_| ())),
+        }
+        // One read of the selected source; nothing is written or deleted.
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            vec![("legacy".into(), "buzz-desktop".into(), "secrets".into())]
+        );
+    }
+}
+
+#[test]
 fn destination_is_separate_exact_bound_create_only_and_verified() {
     let (credentials, fake) = fixture();
     let id = agent_id(PUB, "wss://relay.example");

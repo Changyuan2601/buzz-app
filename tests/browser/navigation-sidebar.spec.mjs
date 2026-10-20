@@ -1,6 +1,11 @@
 import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
 import { checkDurationConsumer } from "./duration-layout.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  pageChoice,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -102,6 +107,19 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       };
     });
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  // Hover must resolve to the resize target across the grip and both gutter edges.
+  expect(
+    await handle.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return [1, bounds.width / 2, bounds.width - 1].map((offset) => {
+        const hit = document.elementFromPoint(
+          bounds.left + offset,
+          bounds.top + bounds.height / 2,
+        );
+        return hit === element && getComputedStyle(hit).cursor === "ew-resize";
+      });
+    }),
+  ).toEqual([true, true, true]);
   await expect.poll(async () => (await tooltip()).delay).toBe("0.6s");
   await expect.poll(tooltip).toMatchObject({
     opacity: "1",
@@ -130,7 +148,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
         return hovered ? getComputedStyle(hovered).cursor : undefined;
       }),
     )
-    .toBe("col-resize");
+    .toBe("ew-resize");
   await page.mouse.up();
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("");
   await expect
@@ -260,6 +278,46 @@ creationSidebar(
     await expect(createContainer).toHaveCSS("opacity", "0");
   },
 );
+
+test("hovering a sidebar row inks only that row, not its siblings", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  // Buzzin' light is where hover ink differs from resting navigation ink.
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "light";
+    document.documentElement.dataset.colorLevel = "high";
+  });
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const inbox = pages.getByRole("button", { name: "Inbox", exact: true });
+  // The fixture registers one sidebar page; real communities list several
+  // as siblings in this list. Add an inert sibling row with the same markup.
+  const sibling = pages.locator("[data-sibling-probe]");
+  const [hoverInk, restInk] = await inbox.evaluate((row) => {
+    const copy = row.cloneNode(true);
+    copy.setAttribute("data-sibling-probe", "");
+    copy.setAttribute("tabindex", "-1");
+    copy.setAttribute("aria-hidden", "true");
+    row.after(copy);
+    const probe = (color) => {
+      const span = document.createElement("span");
+      span.style.color = color;
+      row.append(span);
+      const value = getComputedStyle(span).color;
+      span.remove();
+      return value;
+    };
+    return [probe("var(--text-row)"), probe("var(--text-navigation)")];
+  });
+  expect(hoverInk).not.toBe(restInk);
+  // Rows transition into the new level's ink; settle before hovering.
+  await expect(inbox).toHaveCSS("color", restInk);
+  await expect(sibling).toHaveCSS("color", restInk);
+  await inbox.hover();
+  await expect(inbox).toHaveCSS("color", hoverInk);
+  await expect(sibling).toHaveCSS("color", restInk);
+});
 
 test("channel navigation preserves sidebar DOM and group state", async ({
   page,
@@ -425,16 +483,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
             .getByRole("tab", { name, exact: true });
     const leave = async () => {
       if (destination === "Settings") {
-        await button(page, "Your profile").click();
-        await page
-          .getByRole("menuitem", { name: "Settings", exact: true })
-          .click();
-        await expect(
-          page.getByRole("complementary", {
-            name: "Settings sidebar",
-            exact: true,
-          }),
-        ).toBeVisible();
+        await openSettings(page);
       } else {
         await openPage(
           page,
@@ -442,10 +491,16 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
         );
       }
       if (destination === "Settings") {
+        // The Settings modal retains the sidebar behind it, hidden from
+        // assistive technology and inert until Settings closes.
         await expect(sidebar).toHaveCount(0);
-        expect(await node.evaluate((element) => element.isConnected)).toBe(
-          false,
-        );
+        expect(
+          await node.evaluate(
+            (element) =>
+              element.isConnected &&
+              !!element.closest('[aria-hidden="true"], [inert]'),
+          ),
+        ).toBe(true);
       } else {
         await expect(sidebar).toBeVisible();
         expect(await node.evaluate((element) => element.isConnected)).toBe(
@@ -460,11 +515,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
       if (destination === "Back/Forward") await button(page, "Go back").click();
-      else if (destination === "Settings")
-        await page
-          .getByRole("complementary", { name: "Settings sidebar" })
-          .getByRole("button", { name: "Back", exact: true })
-          .click();
+      else if (destination === "Settings") await closeSettings(page);
       else await openPage(page, "Messages");
     };
     await group.locator("summary").click();
@@ -474,7 +525,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
     await leave();
     await expect(group).not.toHaveAttribute("open");
     if (destination === "Settings")
-      // Settings replaces the sidebar; returning to the same channel restores
+      // Settings retains the sidebar; returning to the same channel keeps
       // the saved position instead of revealing it again.
       await expect
         .poll(() => sidebar.evaluate((element) => element.scrollTop))
@@ -635,9 +686,10 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(search).toBeFocused();
   await search.pressSequentially("Messages");
-  await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(pageChoice(dialog, "Messages")).toHaveAttribute(
+    "data-highlighted",
+    "true",
+  );
   await search.press("Enter");
   await expect(composer).toBeVisible();
   await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(

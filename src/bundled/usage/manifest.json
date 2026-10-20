@@ -1,0 +1,7 @@
+{
+  "id": "buzz.usage",
+  "name": "Usage",
+  "apiVersion": 1,
+  "description": "See what your agents' sessions on this computer cost: spend, tokens and cache hits.",
+  "discovery": { "category": "agents" }
+}

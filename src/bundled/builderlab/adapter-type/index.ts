@@ -1,5 +1,7 @@
+import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
 import type { AgentType } from "../../../features/agents/service";
+import type { RelayData } from "../../../features/relay/service";
 import type { AgentClient } from "../agents/client";
 import {
   clearRegistration,
@@ -20,6 +22,7 @@ type Identity = {
 export function builderlabType(
   client: AgentClient,
   session: OAuthSession,
+  relay: RelayData,
 ): AgentType {
   const scope = () => ({
     target: oauthTarget(),
@@ -56,6 +59,19 @@ export function builderlabType(
       );
     return value;
   }
+  /** The agent's saved identity, else the signed-in account's listing of it. */
+  async function resolve(pubkey: string, signal: AbortSignal) {
+    const saved = identity(pubkey);
+    if (saved) return saved;
+    const credential = session.credential();
+    const agent = (await client.list(signal)).find(
+      (row) => row.pubkey === pubkey,
+    );
+    if (session.credential() !== credential)
+      throw new DOMException("Builderlab session changed.", "AbortError");
+    if (!agent) throw new Error("Agent not found in this Builderlab account.");
+    return remember(pubkey, agent.id);
+  }
   return {
     id: "builderlab",
     title: "Builderlab",
@@ -68,6 +84,12 @@ export function builderlabType(
         role: "settings",
         splitSettings: true,
         component: createSettingsTab(client, session),
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: createActivityTab(relay),
       },
     ],
     remote: {
@@ -90,20 +112,14 @@ export function builderlabType(
           "Builderlab agent profile updates are not supported yet.",
         );
       },
+      async interrupt({ pubkey, signal, ...place }) {
+        // A stop is urgent: it never waits on an interactive sign-in.
+        session.credential();
+        return client.cancelTurn(await resolve(pubkey, signal), place, signal);
+      },
       async remove({ pubkey, signal }) {
         await session.ensureSignedIn(signal);
-        let saved = identity(pubkey);
-        if (!saved) {
-          const credential = session.credential();
-          const agent = (await client.list(signal)).find(
-            (row) => row.pubkey === pubkey,
-          );
-          if (session.credential() !== credential)
-            throw new DOMException("Builderlab session changed.", "AbortError");
-          if (!agent)
-            throw new Error("Agent not found in this Builderlab account.");
-          saved = remember(pubkey, agent.id);
-        }
+        const saved = await resolve(pubkey, signal);
         await client.delete(saved, signal);
         if (saved.registration) clearRegistration(saved.registration);
       },

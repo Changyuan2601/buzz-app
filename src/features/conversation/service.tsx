@@ -16,6 +16,7 @@ import {
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type {
   AttachmentRenderer,
+  CodeBlockRenderer,
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
@@ -42,6 +43,8 @@ export type Conversation = {
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
   registerLink(renderer: LinkRenderer): void;
+  codeBlocks: ContributionReader<CodeBlockRenderer>;
+  registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
   ui: {
@@ -81,6 +84,7 @@ function validate(
     | ComposerCompletion
     | ComposerAccessory
     | LinkRenderer
+    | CodeBlockRenderer
     | MessageRenderer
     | MessageAction,
 ) {
@@ -110,6 +114,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly inlineEntries;
   readonly links;
   private readonly linkEntries;
+  readonly codeBlocks;
+  private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
   private readonly tabEntries;
@@ -149,6 +155,12 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+    const codeBlocks = createContributions<CodeBlockRenderer>(ctx);
+    this.codeBlockEntries = codeBlocks;
+    this.codeBlocks = {
+      snapshot: codeBlocks.snapshot,
+      subscribe: codeBlocks.subscribe,
+    };
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
@@ -241,6 +253,14 @@ export class ConversationService extends Service implements Conversation {
     if (value.className !== undefined && typeof value.className !== "string")
       throw new Error("A link renderer class must be a string");
     this.linkEntries.register(this.ctx, value);
+  }
+  registerCodeBlock(value: CodeBlockRenderer) {
+    validate(value);
+    if (typeof value.matches !== "function")
+      throw new Error("A code block renderer needs a matcher");
+    if (value.action !== undefined && typeof value.action !== "function")
+      throw new Error("A code block action must be a component");
+    this.codeBlockEntries.register(this.ctx, value);
   }
   readonly format = Object.freeze({
     itemTimestamp: formatItemTimestamp,

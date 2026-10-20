@@ -41,6 +41,13 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -48,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
   vi.useRealTimers();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
@@ -474,10 +482,173 @@ it("scopes conversation search at the relay and discards out-of-scope hits", asy
     expect(
       screen.queryByRole("option", { name: /scope elsewhere/ }),
     ).toBeNull();
+    // A relay without `buzz-search-sort` would rank "Most recent" anyway.
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /Remove .* search scope/ }),
     );
     expect(changeScope).toHaveBeenCalledExactlyOnceWith();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("sorts a conversation newest first across pages and restarts paging when the order changes", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+    metadata(relay, "other", "other"),
+    roster(relay, "other", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    searchSort: true,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const request = async () => {
+    await waitFor(() => expect(wire.pending).toHaveLength(1));
+    return wire.next();
+  };
+  const hits = (count: number, newest: number) =>
+    Array.from({ length: count }, (_, n) =>
+      message(viewer, "crew", `sortword ${newest - n}`, newest - n),
+    );
+  const rows = () =>
+    within(screen.getByRole("listbox", { name: "Search results" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+  const scoped = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    scopedChannelId: "crew",
+    onScopeChange: () => {},
+    openConversation: () => {},
+  };
+  const text = {
+    kinds: [40002, 40008, 9],
+    search: "sortword",
+    search_mode: "prefix",
+    limit: 20,
+    "#h": ["crew"],
+  };
+  try {
+    const mounted = render(<SearchResults {...scoped} query="sortword" />);
+    const relevance = await request();
+    expect(relevance.filters).toEqual([text]);
+    await act(async () => relevance.respond(hits(20, 1700000020)));
+    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Most relevant" }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Most recent" }));
+    const first = await request();
+    expect(first.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    const page1 = hits(20, 1700000100);
+    const tail = page1.pop();
+    assert(tail);
+    // Order two signed hits instead of searching random hashes for a lower id.
+    const [tie, last] = [
+      tail,
+      message(viewer, "crew", "sortword tie", tail.created_at),
+    ].sort((a, b) => (a.id < b.id ? -1 : 1));
+    assert(tie && last);
+    page1.push(last);
+    await act(async () => first.respond(page1));
+    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(rows().at(-1)).toMatch(/Show more messages/);
+
+    fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
+    const failed = await request();
+    expect(failed.filters).toEqual([
+      { ...text, search_sort: "newest", page: 2 },
+    ]);
+    await act(async () =>
+      failed.fail(new ReadError("unavailable", "Relay read timed out")),
+    );
+    expect(
+      screen.getByText("More messages couldn’t load: Relay read timed out"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
+    const second = await request();
+    expect(second.filters).toEqual([
+      { ...text, search_sort: "newest", page: 2 },
+    ]);
+    // Offsets drift: a repeat, a backdated tie that sorts before it by id,
+    // and an out-of-scope hit.
+    const older = hits(2, last.created_at - 1);
+    await act(async () =>
+      second.respond([
+        last,
+        tie,
+        message(viewer, "other", "sortword elsewhere", 1700000200),
+        ...older,
+      ]),
+    );
+    expect(screen.queryByText(/More messages couldn’t load/)).toBeNull();
+    const ordered = [...page1, tie, ...older].sort(
+      (a, b) =>
+        b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    expect(rows()).toHaveLength(ordered.length);
+    for (const [index, row] of rows().entries())
+      expect(row).toContain(ordered[index]?.content);
+
+    // Without text the relay reads newest-first history; there is no choice.
+    mounted.rerender(<SearchResults {...scoped} query="before:2026-10-01" />);
+    const history = await request();
+    expect(history.filters).toEqual([
+      {
+        kinds: [40002, 40008, 9],
+        limit: 20,
+        "#h": ["crew"],
+        until: expect.any(Number),
+      },
+    ]);
+    await act(async () => history.respond(hits(1, 1700000001)));
+    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+
+    mounted.rerender(<SearchResults {...scoped} query="sortword" />);
+    const resumed = await request();
+    expect(resumed.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    await act(async () => resumed.respond(hits(20, 1700000100)));
+
+    // Global search has no sort control, so it keeps relevance.
+    const { scopedChannelId: _, ...unscoped } = scoped;
+    mounted.rerender(<SearchResults {...unscoped} query="sortword" />);
+    const global = await request();
+    const { "#h": __, ...unscopedText } = text;
+    expect(global.filters).toEqual([unscopedText]);
+    await act(async () => global.respond(hits(1, 1700000001)));
+    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+
+    mounted.rerender(<SearchResults {...scoped} query="sortword" />);
+    const rescoped = await request();
+    expect(rescoped.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    await act(async () => rescoped.respond(hits(20, 1700000100)));
+    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", { name: "Most relevant" }),
+    );
+    const reset = await request();
+    expect(reset.filters).toEqual([text]);
   } finally {
     cleanup();
     owner.dispose();
@@ -652,7 +823,10 @@ it.each(["", "Crew"])(
       );
       const pending = wire.next();
       expect(owner.session.channels.list().status).toBe("loading");
-      expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      if (query)
+        expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      else
+        expect(screen.queryByRole("option", { name: /Settings/ })).toBeNull();
       if (query) {
         expect(screen.getByText("Loading joined conversations…")).toBeVisible();
         expect(screen.queryByText("Loading recent conversations…")).toBeNull();
@@ -663,7 +837,10 @@ it.each(["", "Crew"])(
       await act(async () => pending.respond(discovery));
       expect(await screen.findByRole("option", { name: /Crew/ })).toBeVisible();
       expect(screen.queryByText("Loading joined conversations…")).toBeNull();
-      expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      if (query)
+        expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      else
+        expect(screen.queryByRole("option", { name: /Settings/ })).toBeNull();
     } finally {
       cleanup();
       owner.dispose();
@@ -756,7 +933,11 @@ it.each(["stream", "forum", "solo"] as const)(
           name: /Past project/,
         }),
       );
-      expect(screen.getByText("Archived channel")).toBeTruthy();
+      expect(
+        screen.getByText(
+          channelType === "solo" ? "Archived chat" : "Archived channel",
+        ),
+      ).toBeTruthy();
       expect(open).toHaveBeenCalledExactlyOnceWith("archive");
     } finally {
       cleanup();
@@ -2241,7 +2422,7 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     expect(input).toHaveValue("");
     expect(input).toHaveFocus();
-    expect(chip.closest(".buzz-input-group")).toContainElement(input);
+    expect(chip.closest(".search-field")).toContainElement(input);
     await waitFor(() =>
       expect(reads.at(-1)?.[0]).toMatchObject({ authors: [human.pubkey] }),
     );
@@ -3103,7 +3284,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
       expect(
         within(group)
           .getAllByRole("option")
-          .map((row) => row.querySelector(".text-caption")?.textContent),
+          .map((row) => row.querySelector(".text-subtle")?.textContent),
       ).toEqual(["@ally · Direct message", "Start a direct message"]),
     );
     fireEvent.click(within(group).getByRole("option", { name: /Alice Chen/ }));
@@ -3365,3 +3546,209 @@ it.each([true, false])(
     }
   },
 );
+
+it("preserves remembered page ranking when inline settings match", async () => {
+  localStorage.clear();
+  recordChoice(usage, "sound", "Ultrasound");
+  const owner = usageSession(["sound-chat"]);
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="sound"
+        onQueryChange={() => {}}
+        input={createRef()}
+        usageScope={usage}
+        openConversation={() => {}}
+        pages={[
+          {
+            key: "Ultrasound",
+            label: "Ultrasound",
+            icon: ChatCircleIcon,
+            run: open,
+          },
+        ]}
+        inlineSettings={[
+          {
+            label: "Settings",
+            destinations: [
+              {
+                key: "sound-setting",
+                label: "Notifications",
+                detail: "Sound",
+                rank: 0,
+                icon: ChatCircleIcon,
+                content: <button type="button">Sound</button>,
+                run: vi.fn(),
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    await screen.findByRole("row", { name: /^sound-chat/ });
+    const names = screen
+      .getAllByRole("rowgroup")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(names.indexOf("Pages")).toBeLessThan(names.indexOf("Channels"));
+    expect(screen.getByRole("row", { name: "Ultrasound" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(open).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});
+
+it("excludes proven Huddles but keeps ordinary hits after mutable metadata changes", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  let live: LiveCallbacks | undefined;
+  const marker = (id: string, time: number) =>
+    metadata(relay, id, id, time, [
+      ["t", "stream"],
+      ["private"],
+      ["P", viewer.pubkey],
+      [
+        "about",
+        "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+      ],
+    ]);
+  const discovery = [
+    marker("hidden", 1700000000),
+    signed(viewer, {
+      kind: 9007,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", "hidden"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        [
+          "about",
+          "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+        ],
+      ],
+    }),
+    metadata(relay, "later", "later"),
+    roster(relay, "hidden", [viewer.pubkey]),
+    roster(relay, "later", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.search)
+        ? [
+            message(viewer, "hidden", "hidden match", 1700000001),
+            message(viewer, "later", "later match", 1700000001),
+          ]
+        : discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          );
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: /hidden match/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /later match/ })).toBeVisible();
+    act(() => live?.receive([marker("later", 1700000002)]));
+    expect(screen.getByRole("option", { name: /later match/ })).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary destinations", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search))
+        return [
+          message(viewer, "room", "match private", 1700000001),
+          message(viewer, "ordinary", "match ordinary", 1700000001),
+        ];
+      if (filters.some((filter) => filter.kinds?.includes(39000))) {
+        await gate;
+        return [
+          metadata(relay, "room", "Room", 1700000000, [
+            ["private"],
+            [
+              "about",
+              "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+            ],
+          ]),
+          metadata(relay, "ordinary", "Ordinary"),
+        ];
+      }
+      if (filters.some((filter) => filter.kinds?.includes(39002)))
+        return [
+          roster(relay, "room", [viewer.pubkey]),
+          roster(relay, "ordinary", [viewer.pubkey]),
+        ];
+      return [];
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(owner.session.channels.get?.("room")?.metadataPending).toBe(true);
+    expect(
+      screen.queryByRole("option", { name: /match private|match ordinary/ }),
+    ).toBeNull();
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.getByRole("option", { name: /match private/ })).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: /match ordinary/ }),
+    ).toBeVisible();
+  } finally {
+    release();
+    cleanup();
+    owner.dispose();
+  }
+});

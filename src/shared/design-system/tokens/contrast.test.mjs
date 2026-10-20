@@ -130,7 +130,7 @@ describe("semantic contrast contract", () => {
     ],
     [
       "faint insertion line",
-      "--accent-11-light: #a32e65;",
+      "--accent-11-light: #6c3149;",
       "--accent-11-light: #feedf3;",
       "magenta/neutral/light: --border-accent",
     ],
@@ -151,42 +151,57 @@ describe("semantic contrast contract", () => {
   );
 
   it("checks shared color groups at every applicable level", () => {
-    const from = "--text-subtle: var(--accent-11);";
+    const from = "--text-row-subtle: var(--accent-11);";
     expect(tokens).toContain(from);
     const result = check(
-      tokens.replaceAll(from, "--text-subtle: var(--accent-6);"),
+      tokens.replaceAll(from, "--text-row-subtle: var(--accent-6);"),
     );
     expect(result.status, result.output).toBe(1);
-    for (const level of ["full"])
+    for (const level of ["touch", "high"])
       expect(result.output).toContain(
-        `chartreuse/${level}/light --text-subtle`,
+        `citrus/${level}/light --text-row-subtle`,
       );
   });
 
   it("rejects a gray role left on an accent ground", () => {
-    const from = "--text-chrome-subtle: var(--accent-11);";
+    const from = "--text-row-subtle: var(--accent-11);";
     expect(tokens).toContain(from);
     const result = check(
-      tokens.replaceAll(from, "--text-chrome-subtle: var(--neutral-10);"),
+      tokens.replaceAll(from, "--text-row-subtle: var(--neutral-10);"),
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
-      "chartreuse/more/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
+      "citrus/touch/light: --text-row-subtle #525252 is gray on --affordance-selected",
     );
   });
 
-  it("rejects a slider mark that disappears into the unfilled track", () => {
-    const from = "--affordance-subtle-pressed: var(--neutral-4);";
-    expect(tokens).toContain(from);
-    // A gray middle step still contrasts on white, but not on this track.
-    const result = check(
-      tokens.replace(from, "--affordance-subtle-pressed: var(--neutral-12);"),
-    );
-    expect(result.status, result.output).toBe(1);
-    expect(result.output).toContain(
-      "step-slider --affordance-prominent-mark on --affordance-subtle-pressed",
-    );
-  });
+  it.each([
+    ["#000000", false],
+    ["#262626", false],
+    ["#404040", true],
+  ])(
+    "distinguishes black ink %s from gray on the brand-filled selection",
+    (ink, gray) => {
+      const from =
+        "--text-row-selected-subtle: var(--text-navigation-selected);";
+      expect(tokens).toContain(from);
+      const result = check(
+        tokens.replaceAll(from, `--text-row-selected-subtle: ${ink};`),
+      );
+      if (gray) {
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain(
+          `citrus/high/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
+        );
+      } else {
+        // A literal ink applies to every family, so saturated accents may fail
+        // contrast; only the gray verdict is under test here.
+        expect(result.output).not.toContain(
+          "is gray on --affordance-navigation-selected",
+        );
+      }
+    },
+  );
 
   it("rejects a shell color that hides navigation text", () => {
     const result = check(
@@ -221,7 +236,7 @@ describe("semantic contrast contract", () => {
     ],
     [
       "accent hover",
-      "--accent-10-light: #2343d4;",
+      "--accent-10-light: #2176d9;",
       "--accent-10-light: #9a5cd0;",
       "--text-on-accent",
     ],

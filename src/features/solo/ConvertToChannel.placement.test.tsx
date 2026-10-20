@@ -225,7 +225,7 @@ it("retains recovery on a failed project read after conversion, reopens and unfi
   );
   expect(
     screen.getByText(
-      "Channel converted. Finish removing it from its Solo project.",
+      "Channel converted. Finish removing it from its Solo workspace.",
     ),
   ).toBeVisible();
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);

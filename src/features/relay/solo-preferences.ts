@@ -169,7 +169,7 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         if (existing) {
           if (existing.name !== name)
             throw new Error(
-              "The new Solo project changed; refresh before retrying",
+              "The new Solo workspace changed; refresh before retrying",
             );
           return project(value);
         }

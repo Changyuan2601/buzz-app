@@ -92,6 +92,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     new HostService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -123,13 +124,256 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
+      // With no agent type to create, the empty page's Create tile is off.
+      expect(
+        await screen.findByRole("button", { name: "Create your first agent" }),
+      ).toBeDisabled();
+    } finally {
+      cleanup();
+      await runtime.dispose();
+      await root.fiber.dispose();
+      await community.dispose();
+    }
+  },
+);
+
+it.each([undefined, false, true])(
+  "gates remote agents on the login capability %s and refreshes it on sign-in",
+  async (initialCapability) => {
+    let capability = initialCapability;
+    native.invoke.mockImplementation(async (command, input) => {
+      if (command === "oauth_callback_begin")
+        return {
+          id: "attempt",
+          callbackUrl: "http://127.0.0.1:12345/callback",
+        };
+      if (command === "oauth_callback_wait")
+        return { parameters: [["code", "one-time"]] };
+      if (command === "oauth_callback_cancel") return;
+      if (command !== "plugin_host_request") return;
+      const { url } = input.request;
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify(
+          url.endsWith("/exchange")
+            ? { session_credential: "private-token" }
+            : url.endsWith("/me")
+              ? {
+                  subject: "user",
+                  capabilities: { can_use_remote_agents: capability },
+                }
+              : { status: 1, agents: [] },
+        ),
+      };
+    });
+    const root = new Context();
+    const runtime = new PluginRuntime(root, async () => builderlab);
+    new HostService(root);
+    const cards = new SettingsCardsService(root);
+    const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
+    const agents = provideAgents(root, community);
+    try {
+      runtime.reconcile([
+        {
+          manifest: { ...manifest, apiVersion: 1 },
+          source: "bundled",
+          revision: "bundled",
+          enabled: true,
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ]);
+      await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      const card = cards.snapshot()[0];
+      if (!card) throw new Error("Missing Builderlab card");
+      const Card = card.component;
+      render(
+        <>
+          <Card active={() => true} />
+          <AgentDefaults agents={agents} />
+        </>,
+      );
       const user = userEvent.setup();
       await user.click(
-        await screen.findByRole("button", { name: "New agent" }),
+        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      );
+      await screen.findByRole("button", { name: "Sign out" });
+      const type = agents.types()[0];
+      if (!type?.remote) throw new Error("Missing Builderlab agent type");
+      if (capability === true) {
+        expect(
+          await screen.findByText("No remote agents yet."),
+        ).toBeInTheDocument();
+        expect(type.provider?.snapshot().readiness).toBe("ready");
+      } else {
+        expect(
+          screen.getByRole("heading", { name: "Coming soon" }),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: "Coming soon, attention" }),
+        ).toBeEnabled();
+        await expect(
+          type.remote.provision({
+            name: "Helper",
+            community: "wss://community.example",
+            signal: new AbortController().signal,
+          }),
+        ).rejects.toThrow("coming soon");
+        expect(
+          native.invoke.mock.calls.filter(
+            ([command, input]) =>
+              command === "plugin_host_request" &&
+              !/\/(exchange|me)$/.test(input.request.url),
+          ),
+        ).toHaveLength(0);
+        expect(localStorage.length).toBe(0);
+        await user.click(
+          screen.getByRole("button", { name: "Coming soon, attention" }),
+        );
+        const dialog = screen.getByRole("dialog", { name: "Builderlab" });
+        expect(
+          within(dialog).getByText(/remote agents are coming soon/),
+        ).toBeVisible();
+        await user.keyboard("{Escape}");
+      }
+      capability = capability !== true;
+      await user.click(screen.getByRole("button", { name: "Sign out" }));
+      await user.click(
+        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      );
+      await screen.findByRole("button", { name: "Sign out" });
+      if (capability) {
+        expect(
+          await screen.findByText("No remote agents yet."),
+        ).toBeInTheDocument();
+        expect(type.provider?.snapshot().readiness).toBe("ready");
+      } else {
+        expect(
+          screen.getByRole("heading", { name: "Coming soon" }),
+        ).toBeInTheDocument();
+        expect(type.provider?.snapshot().readiness).toBe("attention");
+      }
+    } finally {
+      cleanup();
+      await runtime.dispose();
+      await root.fiber.dispose();
+      await community.dispose();
+    }
+  },
+);
+
+it.each([
+  ["1", true],
+  ["0", true],
+  ["0", false],
+] as const)(
+  "desktop login respects identity ownership in VITE_BUZZ_LIVE=%s with remote agents=%s",
+  async (live, canUseRemoteAgents) => {
+    vi.stubEnv("VITE_BUZZ_LIVE", live);
+    const viewer = "01".repeat(32);
+    const linkFinished = deferred<void>();
+    native.invoke.mockImplementation(async (command, input) => {
+      if (command === "nsec_backup_session" || command === "nsec_backup_retry")
+        return;
+      if (command === "identity_restore") return viewer;
+      if (command === "oauth_callback_begin")
+        return {
+          id: "synthetic-attempt",
+          callbackUrl: "http://127.0.0.1:12345/callback",
+        };
+      if (command === "oauth_callback_wait")
+        return { parameters: [["code", "synthetic-code"]] };
+      if (command === "oauth_callback_cancel") return;
+      if (command !== "plugin_host_request")
+        throw new Error(`Unexpected command ${command}`);
+      const { url } = input.request;
+      let result: unknown;
+      if (url.endsWith("/exchange"))
+        result = { session_credential: "synthetic-credential" };
+      else if (url.endsWith("/me"))
+        result = {
+          subject: "synthetic-account",
+          capabilities: { can_use_remote_agents: canUseRemoteAgents },
+        };
+      else if (url.endsWith("/list-agents")) result = { status: 1, agents: [] };
+      else if (url.endsWith("/nostr-identities/current")) {
+        result = { identity: { pubkey_hex: viewer } };
+        linkFinished.resolve();
+      } else throw new Error(`Unexpected request ${url}`);
+      return { status: 200, headers: {}, body: JSON.stringify(result) };
+    });
+    const root = new Context();
+    const runtime = new PluginRuntime(root, async () => builderlab);
+    new HostService(root);
+    const cards = new SettingsCardsService(root);
+    const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
+    provideAgents(root, community);
+    const backupCalls = () =>
+      native.invoke.mock.calls.filter(([command]) =>
+        command.startsWith("nsec_backup_"),
+      );
+    try {
+      runtime.reconcile([
+        {
+          manifest: { ...manifest, apiVersion: 1 },
+          source: "bundled",
+          revision: "bundled",
+          enabled: true,
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ]);
+      await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      const card = cards.snapshot()[0];
+      if (!card) throw new Error("Missing Builderlab login card");
+      const Card = card.component;
+      render(<Card active={() => true} />);
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByRole("button", { name: "Sign in with Builderlab" }),
       );
       expect(
-        await screen.findByRole("menuitem", { name: "Create a new agent" }),
-      ).toHaveAttribute("aria-disabled", "true");
+        await screen.findByRole("button", { name: "Sign out" }),
+      ).toBeEnabled();
+      expect(
+        await screen.findByText(
+          canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
+        ),
+      ).toBeInTheDocument();
+      if (live === "0") {
+        await linkFinished.promise;
+        await waitFor(() =>
+          expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
+            source: "builderlab",
+          }),
+        );
+        expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
+          source: "builderlab",
+          generation: expect.any(Number),
+          credential: "synthetic-credential",
+        });
+      }
+      await user.click(screen.getByRole("button", { name: "Sign out" }));
+      expect(
+        await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+      ).toBeEnabled();
+      if (live === "0")
+        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
+      await runtime.dispose();
+      if (live === "1") {
+        expect(backupCalls()).toEqual([]);
+        expect(
+          native.invoke.mock.calls.filter(
+            ([command]) => command === "identity_restore",
+          ),
+        ).toEqual([]);
+      } else
+        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
     } finally {
       cleanup();
       await runtime.dispose();
@@ -147,6 +391,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   let browserInstructions = "Be concise.";
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
   let loginCallback: ReturnType<typeof deferred<OAuthCallback>> | undefined;
+  const backupHandoff = deferred<void>();
   const hostRequests = () =>
     native.invoke.mock.calls
       .filter(([command]) => command === "plugin_host_request")
@@ -160,6 +405,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       ([command]) => command === "oauth_callback_wait",
     );
   native.invoke.mockImplementation(async (command, input) => {
+    if (command === "nsec_backup_session") return backupHandoff.promise;
+    if (command === "nsec_backup_retry") return;
     if (command === "oauth_callback_begin")
       return {
         id: "native-attempt-id",
@@ -178,7 +425,11 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     if (url.endsWith("/exchange")) {
       result = { session_credential: "private-token" };
     } else if (url.endsWith("/me")) {
-      result = { subject: "user", email: "a@example.com" };
+      result = {
+        subject: "user",
+        email: "a@example.com",
+        capabilities: { can_use_remote_agents: true },
+      };
     } else if (url.endsWith("/list-agents")) {
       result = {
         status: 1,
@@ -223,6 +474,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   new HostService(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
+  root.provide("relay", community.relay as never);
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
@@ -258,9 +510,14 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       await within(providerDialog).findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();
+    expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
+      source: "builderlab",
+      generation: expect.any(Number),
+      credential: "private-token",
+    });
     picker.unmount();
     const card = cards.snapshot()[0];
-    expect(card?.group).toBe("Integrations");
+    expect(card?.group).toBe("Plugins");
     if (!card) throw new Error("Missing Builderlab login card");
     const Card = card.component;
     const mounted = render(<Card active={() => true} />);
@@ -394,9 +651,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     // Creating while signed out starts the same browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
-    await user.click(screen.getByRole("button", { name: "New agent" }));
     await user.click(
-      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+      screen.getByRole("button", { name: "Create your first agent" }),
     );
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     expect(
@@ -514,6 +770,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     await waitFor(() => expect(agents.find(browserKey)).toBeUndefined());
     expect(requestsTo("delete-agent")).toHaveLength(beforeDelete + 1);
   } finally {
+    backupHandoff.resolve();
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();

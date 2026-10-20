@@ -87,3 +87,18 @@ Hermes Agent: the bundled `icons/hermes.png` is reused unchanged from Block Buzz
 cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
+
+## Plugin catalog artwork
+
+The generated plugin PNG artwork in `src/bundled/*/icon.png` was created by
+Taylor Ho using GPT Image 2.5 and supplied for Buzz, including the Claude Code,
+Codex, goose and GitHub catalog illustrations. These generated integration
+illustrations incorporate third-party marks; those marks remain the property of their respective
+owners. Claude is a trademark of Anthropic; OpenAI and the Blossom logo are
+trademarks of OpenAI; goose is a trademark of LF Projects; GitHub and Octocat
+are trademarks of GitHub, Inc. Their inclusion identifies the corresponding
+integrations and does not imply endorsement.
+
+The Huddles, Voice Notes, Usage and Mermaid diagrams illustrations were supplied
+separately by Taylor Ho and resized for the catalog; the generation attribution
+above does not cover these four assets.

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
 import type { MentionRecipient } from "./mention-draft";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -16,7 +16,7 @@ type Pending = {
 
 /** One consent decision for a captured send. The session owns durable additions. */
 export function useNonmemberMentions(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   restoreFocus: () => void,
 ) {

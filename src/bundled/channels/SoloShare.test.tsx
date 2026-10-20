@@ -35,7 +35,7 @@ import {
   shareHistoryKey,
 } from "../../features/solo/share-history";
 import { ChatAccessIndicator, SoloShare } from "./SoloShare";
-import { SoloProjects } from "./SoloProjects";
+import { SoloWorkspaces } from "./SoloWorkspaces";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   formatPublicKey,
@@ -1118,7 +1118,7 @@ it("row Share conversion retains its captured visit when the sidebar survives na
   const user = userEvent.setup();
   const view = (signal: AbortSignal) => (
     <ToastProvider>
-      <SoloProjects
+      <SoloWorkspaces
         visit={signal}
         session={t.session}
         scope={t.session.scope}
@@ -1735,7 +1735,7 @@ it("updates the row conversion guard for a share owned by another mounted entry 
   await t.ready();
   const user = userEvent.setup();
   render(
-    <SoloProjects
+    <SoloWorkspaces
       session={t.session}
       scope={t.session.scope}
       chats={[{ id: source, title: "Work" }]}

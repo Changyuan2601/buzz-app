@@ -1,4 +1,9 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   hasIntegratedWindowControls,
@@ -8,6 +13,7 @@ import { macTitleBarDragHandlers } from "../../app/shell/title-bar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { Identity } from "./service";
+import { RestoreIdentity } from "./RestoreIdentity";
 
 export function IdentitySetup({
   identity,
@@ -19,6 +25,30 @@ export function IdentitySetup({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
+  const [backupAvailable, setBackupAvailable] = useState(false);
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
+  const missing = state.status === "missing";
+  useEffect(() => {
+    if (!missing) return;
+    let active = true;
+    void identity.backupAvailable().then(
+      (available) => active && setBackupAvailable(available),
+      () => active && setBackupAvailable(false),
+    );
+    void identity.legacyAvailable().then(
+      (available) => active && setLegacyAvailable(available),
+      () => active && setLegacyAvailable(false),
+    );
+    return () => {
+      active = false;
+    };
+  }, [identity, missing]);
+  useEffect(
+    () => () => {
+      void identity.cancelRecovery();
+    },
+    [identity],
+  );
   const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
   const integratedWindowControls = hasIntegratedWindowControls();
   if (state.status === "ready") return children;
@@ -27,6 +57,7 @@ export function IdentitySetup({
       {(macDesktop || integratedWindowControls) && (
         <header
           className="-mx-8 -mt-8 mb-8 flex h-14 items-center justify-end px-3"
+          data-buzz-window-drag=""
           data-tauri-drag-region={integratedWindowControls || undefined}
           {...(macDesktop ? macTitleBarDragHandlers : {})}
         >
@@ -56,7 +87,9 @@ export function IdentitySetup({
             automatically.
           </p>
           {state.error && <p role="alert">{state.error}</p>}
-          {importing ? (
+          {state.recovery ? (
+            <RestoreIdentity identity={identity} recovery={state.recovery} />
+          ) : importing ? (
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -101,9 +134,18 @@ export function IdentitySetup({
             </form>
           ) : (
             <div className="flex flex-wrap gap-3">
+              {legacyAvailable && (
+                <Button
+                  disabled={state.busy}
+                  variant="primary"
+                  onClick={() => void identity.importLegacy()}
+                >
+                  Continue with your Buzz identity
+                </Button>
+              )}
               <Button
                 disabled={state.busy}
-                variant="primary"
+                variant={legacyAvailable ? "subtle" : "primary"}
                 onClick={() => setImporting(true)}
               >
                 Use an existing key
@@ -114,9 +156,19 @@ export function IdentitySetup({
               >
                 Create a new identity
               </Button>
+              {backupAvailable && (
+                <Button
+                  disabled={state.busy}
+                  onClick={() => void identity.beginRecovery()}
+                >
+                  Restore from backup
+                </Button>
+              )}
             </div>
           )}
-          {state.busy && <p role="status">Saving your identity securely…</p>}
+          {state.busy && !state.recovery && (
+            <p role="status">Saving your identity securely…</p>
+          )}
         </>
       )}
     </main>

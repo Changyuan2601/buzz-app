@@ -526,7 +526,7 @@ test.describe("owner-role agent without direct ownership", () => {
     await expect(panel).toHaveCount(0);
     await expect(row).toHaveCount(0);
     await expect(
-      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
     expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual(
       [9008],

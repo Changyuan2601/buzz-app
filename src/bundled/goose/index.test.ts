@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 afterEach(() => vi.restoreAllMocks());
 
 it("observes saved conversations with the status of open sessions", () => {
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
   vi.spyOn(GooseRuntime.prototype, "conversations").mockReturnValue([
     { key: "room/r", at: 3 },
     { key: "dm", at: 2 },

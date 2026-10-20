@@ -8,44 +8,60 @@ import {
   useToastNotification,
 } from "../../shared/design-system/ui/Toast";
 
-const copy = {
-  archive: {
-    pending: "Archiving channel…",
-    done: "Channel archived",
-    title: "Archive channel",
-    detail:
+export type LifecycleNoun = "channel" | "chat";
+
+/** Solo chats are channels on the relay; people should read them as chats. */
+export const lifecycleNoun = (
+  channel: Readonly<{ channelType?: string | undefined }> | undefined,
+): LifecycleNoun => (channel?.channelType === "solo" ? "chat" : "channel");
+
+const details = {
+  channel: {
+    archive:
       "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
-  },
-  unarchive: {
-    pending: "Unarchiving channel…",
-    done: "Channel unarchived",
-    title: "Unarchive channel",
-    detail:
+    unarchive:
       "Unarchive this channel for everyone and return it to the sidebar. Members can send messages again.",
-  },
-  delete: {
-    pending: "Deleting channel…",
-    done: "Channel deleted",
-    title: "Delete channel",
-    detail: "This deletes the channel for everyone. You can’t undo this.",
-  },
-  leave: {
-    pending: "Leaving channel…",
-    done: "Channel left",
-    title: "Leave channel",
-    detail:
+    delete: "This deletes the channel for everyone. You can’t undo this.",
+    leave:
       "Leave this channel and remove it from your sidebar. You may need an invitation to rejoin a private channel.",
   },
-  hide: {
-    pending: "Hiding conversation…",
-    done: "Conversation hidden",
-    title: "Hide conversation",
-    detail:
-      "Hide this conversation from your sidebar only. Messages and membership are kept; other participants are not removed.",
+  chat: {
+    archive:
+      "Archive this chat for everyone in it and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.",
+    unarchive:
+      "Unarchive this chat and return it to the sidebar. Messages can be sent again.",
+    delete: "This deletes the chat for everyone in it. You can’t undo this.",
+    leave:
+      "Leave this chat and remove it from your sidebar. You may need an invitation to rejoin.",
   },
 } as const;
 
-// Enter confirms reversible actions; irreversible ones default to Cancel.
+function copyFor(action: ChannelLifecycleAction, noun: LifecycleNoun) {
+  if (action === "hide")
+    return {
+      pending: "Hiding conversation…",
+      done: "Conversation hidden",
+      title: "Hide conversation",
+      detail:
+        "Hide this conversation from your sidebar only. Messages and membership are kept; other participants are not removed.",
+    };
+  const Noun = noun === "chat" ? "Chat" : "Channel";
+  const verb = {
+    archive: ["Archive", "Archiving", "archived"],
+    unarchive: ["Unarchive", "Unarchiving", "unarchived"],
+    delete: ["Delete", "Deleting", "deleted"],
+    leave: ["Leave", "Leaving", "left"],
+  }[action];
+  return {
+    pending: `${verb[1]} ${noun}…`,
+    done: `${Noun} ${verb[2]}`,
+    title: `${verb[0]} ${noun}`,
+    detail: details[noun][action],
+  };
+}
+
+// Enter confirms reversible actions; irreversible ones focus Cancel, which
+// stays neutral so it never competes with a red confirm.
 const reversible = new Set<ChannelLifecycleAction>([
   "archive",
   "unarchive",
@@ -55,6 +71,7 @@ const reversible = new Set<ChannelLifecycleAction>([
 export function ChannelLifecycleDialog({
   channelId,
   channelName,
+  noun = "channel",
   action,
   lifecycle,
   close,
@@ -65,6 +82,7 @@ export function ChannelLifecycleDialog({
 }: {
   channelId: string;
   channelName: string;
+  noun?: LifecycleNoun;
   action: ChannelLifecycleAction;
   lifecycle: ChannelLifecycleCapability;
   close(): void;
@@ -80,6 +98,7 @@ export function ChannelLifecycleDialog({
   const cancel = useRef<HTMLButtonElement>(null);
   const confirm = useRef<HTMLButtonElement>(null);
   const confirms = reversible.has(action);
+  const copy = copyFor(action, noun);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const notify = useToastNotification();
@@ -99,14 +118,14 @@ export function ChannelLifecycleDialog({
     try {
       await lifecycle.run(action, channelId, controller.signal);
       if (!controller.signal.aborted) {
-        notify(`${copy[action].done}: ${channelName}`, "success");
+        notify(`${copy.done}: ${channelName}`, "success");
         callbacks.current.completed();
       }
     } catch (error) {
       if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : String(error);
         if (callbacks.current.failed)
-          callbacks.current.failed(`${copy[action].title} failed`, message);
+          callbacks.current.failed(`${copy.title} failed`, message);
         else setError(message);
       }
     } finally {
@@ -120,7 +139,7 @@ export function ChannelLifecycleDialog({
     <>
       {(busy || error) && (
         <ToastNotice
-          title={busy ? copy[action].pending : `${copy[action].title} failed`}
+          title={busy ? copy.pending : `${copy.title} failed`}
           description={busy ? channelName : error}
           tone={busy ? "info" : "error"}
           {...(!busy && { onDismiss: close })}
@@ -138,17 +157,12 @@ export function ChannelLifecycleDialog({
         title={
           action === "delete"
             ? `Delete ${channelName}?`
-            : `${copy[action].title}: ${channelName}`
+            : `${copy.title}: ${channelName}`
         }
-        description={copy[action].detail}
+        description={copy.detail}
         actions={
           <>
-            <Button
-              ref={cancel}
-              type="button"
-              variant={confirms ? "subtle" : "prominent"}
-              onClick={close}
-            >
+            <Button ref={cancel} type="button" onClick={close}>
               Cancel
             </Button>
             <Button
@@ -163,7 +177,7 @@ export function ChannelLifecycleDialog({
               }
               onClick={() => void submit()}
             >
-              {copy[action].title}
+              {copy.title}
             </Button>
           </>
         }

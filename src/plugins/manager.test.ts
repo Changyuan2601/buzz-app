@@ -318,6 +318,7 @@ it("installs a selected preview through the management boundary, rejecting overl
   const install = deferred();
   const imports = {
     folder: vi.fn(async () => null),
+    files: vi.fn(async () => null),
     git: vi.fn(async () => null),
     discard: vi.fn(async () => {}),
     install: vi.fn(() => install.promise),

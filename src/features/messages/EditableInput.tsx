@@ -1424,8 +1424,11 @@ export function EditableInput({
           beforeinput(_view, event) {
             // Native insertion can restore focus before its input/selectionchange
             // events. That focus must not overwrite the just-advanced caret.
+            // Hold until the task ends: ProseMirror reads the inserted text in
+            // a microtask, and a focus before that read would restore the caret
+            // from before the character ("any" typed as "nya").
             nativeEditing.current = true;
-            queueMicrotask(() => {
+            setTimeout(() => {
               nativeEditing.current = false;
             });
             if (!event.isComposing) syncNativeSelection();

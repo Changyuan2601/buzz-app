@@ -330,7 +330,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100, 41010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -420,12 +420,10 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     );
     assert_eq!(agent.media_url(&media).unwrap(), media);
     assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
-    assert!(agent.verify_media_hash(&media, bytes).is_ok());
-    assert!(agent.verify_media_hash(&media, b"different body").is_err());
+    assert!(agent.verify_media_hash(&media, &sha).is_ok());
+    assert!(agent.verify_media_hash(&media, &"0".repeat(64)).is_err());
     let thumbnail = format!("{}/media/{sha}.thumb.jpg", agent.endpoint(""));
-    assert!(agent
-        .verify_media_hash(&thumbnail, b"derived thumbnail")
-        .is_ok());
+    assert!(agent.verify_media_hash(&thumbnail, &"0".repeat(64)).is_ok());
     for input in [
         format!("https://elsewhere.test/media/{sha}.png"),
         format!("{media}?x=1"),

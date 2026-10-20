@@ -18,15 +18,21 @@ export type ChannelSummary = Readonly<{
   name: string;
   /** Ordinary channel prose; session machine metadata is not a description. */
   description?: string | undefined;
+  /** Initial classification is unresolved until the metadata read completes. */
+  metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
+  /** Activity has been observed or read successfully, including an empty result. */
+  activityKnown?: true;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
+  /** A Solo chat this device is starting; the relay has not confirmed it yet. */
+  pending?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -35,6 +41,10 @@ export type ChannelSummary = Readonly<{
   channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
+  /** Presentation-only parent from signed channel metadata; never grants access. */
+  parentChannelId?: string | undefined;
+  /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
+  huddle?: true;
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
@@ -120,6 +130,11 @@ export type ChannelMessage = Readonly<{
     truncated: boolean;
   }>;
   membership?: MembershipChange;
+  huddle?: Readonly<{
+    room: string;
+    state: "started" | "ended";
+    endedAt?: number;
+  }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
   /** Offsets in `content` where attachment removal joined once-separate text; a
@@ -247,6 +262,20 @@ export interface ChannelQueries {
     channelId: string,
     options?: ChannelReadOptions,
   ): Promise<boolean>;
+  /** Lists a Solo chat this device is creating, as `pending`, until the
+   * relay's signed metadata and roster for it arrive. It has no history to
+   * read meanwhile. Local display and intent only; never saved. */
+  start?(
+    channel: Readonly<{
+      id: string;
+      name: string;
+      members: readonly string[];
+      labels: readonly string[];
+      ttlSeconds?: number | undefined;
+    }>,
+  ): void;
+  /** Drops a started chat the relay did not confirm. */
+  abandon?(channelId: string): void;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

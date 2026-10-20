@@ -1,12 +1,16 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import {
+  openSettings,
+  selectCommunity,
+  settingsSections,
+} from "./navigation.mjs";
 test.use({ pairingFixture: true });
 async function settings(page, app) {
   await open(page, app);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
+  await openSettings(page);
+  await settingsSections(page)
     .getByRole("button", { name: "Pair mobile", exact: true })
     .click();
 }
@@ -88,20 +92,18 @@ test("legacy phone confirmation, retry after expiry, and leaving Settings cancel
   await expect(
     page.getByAltText("Scan this QR code with Buzz on your phone"),
   ).toBeVisible();
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Plugins", exact: true })
+  await settingsSections(page)
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
   await expect
     .poll(() => page.evaluate(() => window.pairingFixture.calls.at(-1)?.action))
     .toBe("cancel");
-  await page
-    .getByRole("switch", { name: "Enable Pair mobile", exact: true })
-    .click();
+  await pluginAction(page, "Pair mobile").click();
   await expect(
-    page
-      .getByRole("complementary", { name: "Settings sidebar" })
-      .getByRole("button", { name: "Pair mobile", exact: true }),
+    settingsSections(page).getByRole("button", {
+      name: "Pair mobile",
+      exact: true,
+    }),
   ).toHaveCount(0);
 });
 test("leaving during native setup cancels its late result", async ({
@@ -112,11 +114,8 @@ test("leaving during native setup cancels its late result", async ({
   await page.evaluate(() => {
     window.pairingFixture.delay = true;
   });
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  const sections = page.getByRole("complementary", {
-    name: "Settings sidebar",
-  });
+  await openSettings(page);
+  const sections = settingsSections(page);
   await sections
     .getByRole("button", { name: "Pair mobile", exact: true })
     .click();
@@ -183,8 +182,7 @@ test("expired QR refreshes automatically and leaving stops it", async ({
   await expect(
     page.getByRole("button", { name: "Cancel pairing", exact: true }),
   ).toHaveCount(0);
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
+  await settingsSections(page)
     .getByRole("button", { name: "Appearance", exact: true })
     .click();
   await expect
@@ -261,4 +259,31 @@ test("cancel retains publication outcome before the next status poll", async ({
   await expect(
     page.getByText("Pairing was canceled.", { exact: true }),
   ).toHaveCount(0);
+});
+
+// The real shell, contributed route, and native-boundary fixture must work
+// together; the no-membership and prefilled-origin cases stay in Vitest.
+test("Personal space pairs with a manually entered community address", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await selectCommunity(page, "Personal space");
+  await openSettings(page);
+  const pairing = settingsSections(page).getByRole("button", {
+    name: "Pair mobile",
+    exact: true,
+  });
+  await pairing.click();
+  await expect(pairing).toHaveAttribute("aria-current", "page");
+  const qr = page.getByAltText("Scan this QR code with Buzz on your phone");
+  // With no community selected, pairing waits for the address it needs.
+  await expect(qr).toHaveCount(0);
+  const address = page.getByLabel("Community address", { exact: true });
+  await address.fill("https://community.example");
+  await address.blur();
+  await expect(qr).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.pairingFixture.calls.at(-1)?.action))
+    .toBe("start");
 });

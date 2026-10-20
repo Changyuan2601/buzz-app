@@ -460,6 +460,14 @@ it("admits only bounded name/about/visibility/lifetime metadata and preserves ex
       ],
     },
   ];
+  invalid.push({
+    ...template,
+    tags: [
+      ["h", id],
+      ["name", "name"],
+      ["about", `Buzz Huddle (buzz.huddles/v1)\nparent:${id}`],
+    ],
+  });
   for (const event of invalid)
     expect(() => validateDetailsTemplate(event)).toThrow();
   const h = harness();
@@ -804,6 +812,19 @@ it("refuses a label change without signing when the relay does not advertise NIP
     "t",
     "for-you",
   ]);
+});
+
+it("rejects the Huddle marker before signing an ordinary channel edit", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  await expect(
+    h.owner.capability.save(base, {
+      ...draft,
+      description: `Buzz Huddle (buzz.huddles/v1)\nparent:${id}`,
+    }),
+  ).rejects.toThrow("Buzz Huddle (");
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
 });
 it.each([undefined, 600])(
   "Solo naming preserves other NIP-CL labels with lifetime %s",

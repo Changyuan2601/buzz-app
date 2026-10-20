@@ -424,7 +424,7 @@ it("retries only project unfiling after confirmed conversion and remount", async
   );
   expect(
     screen.getByText(
-      "Channel converted. Finish removing it from its Solo project.",
+      "Channel converted. Finish removing it from its Solo workspace.",
     ),
   ).toBeVisible();
   expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();

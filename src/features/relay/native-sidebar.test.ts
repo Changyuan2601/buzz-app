@@ -18,7 +18,7 @@ const records = new Map<string, ReturnType<typeof finalizeEvent>>();
 const defaultValue = (coordinate: string) =>
   coordinate === "channel-sections"
     ? { version: 1, sections: [], assignments: {} }
-    : coordinate === "channel-sort"
+    : coordinate === "channel-sort" || coordinate === "channel-filter"
       ? { version: 1, groups: {} }
       : { version: 1, channels: {} };
 function signedRecord(
@@ -54,6 +54,7 @@ function decode(events: ReturnType<typeof finalizeEvent>[]) {
         "channel-stars",
         "channel-mutes",
         "channel-sort",
+        "channel-filter",
       ].includes(coordinate)
     )
       throw new Error("Invalid sidebar record");
@@ -782,3 +783,94 @@ it.each([
       });
   },
 );
+
+it("uses the native filter signer and confirmed writer without changing sort", async () => {
+  const transport = await connectNativeTransport(community);
+  await transport.writeSidebarSort?.("channels", "recent", [], signal);
+  const sort = records.get("channel-sort");
+  expect(
+    await transport.writeSidebarFilter?.(
+      "section:work",
+      "unreads",
+      ["work"],
+      signal,
+    ),
+  ).toEqual({
+    filters: { "section:work": "unreads" },
+    activeWindowSeconds: {},
+  });
+  expect(
+    await transport.writeSidebarFilter?.(
+      "channels",
+      "active",
+      ["work"],
+      signal,
+      7 * 86400,
+    ),
+  ).toEqual({
+    filters: { "section:work": "unreads", channels: "active" },
+    activeWindowSeconds: { channels: 7 * 86400 },
+  });
+  expect(
+    await transport.writeSidebarFilter?.(
+      "section:work",
+      "all",
+      ["work"],
+      signal,
+    ),
+  ).toEqual({
+    filters: { channels: "active" },
+    activeWindowSeconds: { channels: 7 * 86400 },
+  });
+  expect(records.get("channel-sort")).toEqual(sort);
+  const record = records.get("channel-filter");
+  expect(record).toBeDefined();
+  expect(decode(record ? [record] : [])["channel-filter"]).toMatchObject({
+    meta: {
+      g: { "section:work": [expect.any(Number), expect.any(String), null] },
+    },
+  });
+  await expect(
+    transport.writeSidebarFilter?.("section:missing", "active", [], signal),
+  ).rejects.toThrow("Invalid sidebar filter intent");
+});
+
+it("rejects a same-mode native readback with a conflicting duration", async () => {
+  const transport = await connectNativeTransport(community);
+  records.set(
+    "channel-filter",
+    signedRecord("channel-filter", {
+      version: 1,
+      groups: { channels: "active" },
+    }),
+  );
+  const original = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const result = await original?.(command, args);
+    if (
+      command === "relay_http" &&
+      (args as { path: string }).path === "/events"
+    )
+      records.set(
+        "channel-filter",
+        signedRecord(
+          "channel-filter",
+          {
+            version: 1,
+            groups: { channels: "active" },
+            activeWindowSeconds: { channels: 90 * 86400 },
+          },
+          2_000_000_000,
+        ),
+      );
+    return result;
+  });
+  await expect(
+    transport.writeSidebarFilter?.("channels", "active", [], signal, 7 * 86400),
+  ).rejects.toThrow("changed on another device");
+  const before = vi.mocked(invoke).mock.calls.length;
+  await expect(
+    transport.writeSidebarFilter?.("channels", "active", [], signal, 86401),
+  ).rejects.toThrow("Invalid sidebar filter intent");
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(before);
+});

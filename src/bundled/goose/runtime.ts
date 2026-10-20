@@ -40,7 +40,8 @@ import {
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
-import type { ServeMcp, Spawn, ToolServer } from "./goose";
+import { ownerCanvas, readProject } from "../../features/agent-harness/project";
+import type { ServeMcp, ToolServer } from "./goose";
 import {
   AgentSessions,
   localSessions,
@@ -119,7 +120,10 @@ export class GooseRuntime {
   private readonly pool = new ServerPool();
   /** The goose every agent's sessions open in. */
   private readonly goose = new SharedProcess(
-    (id, options) => this.spawn(id, options),
+    {
+      spawn: (id, options) => this.desktop.spawn(id, options),
+      resolveDirectory: (path) => this.desktop.resolveDirectory(path),
+    },
     (handler) => this.serve(handler),
   );
   private readonly reading = new Map<string, Promise<Memories>>();
@@ -140,10 +144,16 @@ export class GooseRuntime {
     private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
-  private get spawn(): Spawn {
-    const spawn = this.host.spawn?.bind(this.host);
-    if (!spawn) throw new Error("goose agents run only in the desktop app");
-    return spawn;
+  /** The desktop host's methods goose agents run with. */
+  private get desktop() {
+    const { host } = this;
+    if (!host.spawn || !host.resolveDirectory || !host.readFile)
+      throw new Error("goose agents run only in the desktop app");
+    return {
+      spawn: host.spawn.bind(host),
+      resolveDirectory: host.resolveDirectory.bind(host),
+      readFile: host.readFile.bind(host),
+    };
   }
   private get serve(): ServeMcp {
     const serve = this.host.serveMcp?.bind(this.host);
@@ -154,6 +164,15 @@ export class GooseRuntime {
   /** Brings the runtime in line with this type's agents: changed settings
    * reopen idle sessions, and removed agents stop. goose stops with the
    * last. */
+  private defaultsRevision = 0;
+
+  /** Reopen inherited sessions on their next idle turn after Goose defaults save. */
+  defaultsChanged() {
+    this.defaultsRevision++;
+    for (const entry of this.agents.values())
+      if (!entry.config.provider.trim()) entry.sessions.reconfigure();
+  }
+
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.agents)
@@ -224,6 +243,7 @@ export class GooseRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -310,6 +330,7 @@ export class GooseRuntime {
       ...(superseded ? { superseded } : {}),
     });
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     void done
       .then((result) => {
@@ -425,6 +446,21 @@ export class GooseRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const owner = entry.handle?.owner;
+    const reading = topLevel
+      ? readProject(
+          session && owner
+            ? () =>
+                ownerCanvas(
+                  session.canvas,
+                  owner,
+                  channelId,
+                  session.channelWrites.startingCanvas(channelId),
+                )
+            : undefined,
+        )
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel))
       try {
@@ -467,6 +503,7 @@ export class GooseRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = (await reading)?.section;
     return {
       key,
       event,
@@ -484,6 +521,7 @@ export class GooseRuntime {
         session?.names.resolve(pubkey, undefined, members) ??
         session?.profiles.snapshot().get(pubkey)?.name ??
         undefined,
+      ...(project ? { project } : {}),
     };
   }
 
@@ -507,8 +545,8 @@ export class GooseRuntime {
             this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
-          spawn: this.spawn,
-          cwd: entry.config.workspace,
+          read: async (path) =>
+            this.desktop.readFile(path, { cwd: entry.config.workspace }),
           memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
@@ -520,7 +558,7 @@ export class GooseRuntime {
       return respond(client, context, message, this.added());
     };
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawn(id, options),
+      resolveDirectory: (path) => this.desktop.resolveDirectory(path),
       tools,
       process: this.goose,
       pool: this.pool,
@@ -534,6 +572,7 @@ export class GooseRuntime {
       }),
       fingerprint: () =>
         JSON.stringify([
+          entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,

@@ -5,11 +5,15 @@ import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
+import huddlesManifest from "./huddles/manifest.json";
+import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
+import mermaidManifest from "./mermaid/manifest.json";
+import * as mermaid from "./mermaid";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -33,13 +37,13 @@ import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import channelsManifest from "./channels/manifest.json";
-import usageManifest from "./channel-usage/manifest.json";
-import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import usageManifest from "./usage/manifest.json";
+import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -62,6 +66,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...canvasManifest, apiVersion: 1 },
     module: canvas,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...huddlesManifest, apiVersion: 1 },
+    module: huddles,
     enabledByDefault: true,
   },
   {
@@ -92,6 +101,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...diffsManifest, apiVersion: 1 },
     module: diffs,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...mermaidManifest, apiVersion: 1 },
+    module: mermaid,
     enabledByDefault: true,
   },
   {
@@ -135,11 +149,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...usageManifest, apiVersion: 1 },
-    module: usage,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
@@ -147,6 +156,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
     enabledByDefault: false,
   },
   {

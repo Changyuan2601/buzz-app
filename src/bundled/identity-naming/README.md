@@ -1,3 +1,13 @@
+# Identity Naming
+
+Helps you tell people and agents apart when they share a name, by adding a short label like “Sam’s Helper” or “(agent)”.
+
+## Getting started
+
+Names across Buzz are labeled automatically.
+
+---
+
 # Contextual identity names
 
 `version 1` · `client display contract` · `no wire changes`

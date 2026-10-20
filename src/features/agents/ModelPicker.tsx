@@ -1,8 +1,16 @@
 // A type's model choice, shared by agent types for the New agent dialog and
 // their settings. Each type decides whether its catalog accepts custom IDs.
-import { useId, useRef, useState, type ComponentProps } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type ComponentProps,
+} from "react";
 import {
   ClaudeLogoIcon,
+  GoogleLogoIcon,
+  MetaLogoIcon,
   OpenAILogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
@@ -10,6 +18,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { ModelFamilyMenu } from "./ModelFamilyMenu";
 import { Select } from "../../shared/design-system/ui/Select";
 
 export type ModelChoice = Readonly<{
@@ -17,6 +26,9 @@ export type ModelChoice = Readonly<{
   id: string;
   label: string;
   description?: string | undefined;
+  efforts?: readonly { id: string; label: string }[];
+  effortScope?: string;
+  loadEfforts?: () => Promise<readonly { id: string; label: string }[]>;
 }>;
 
 const CUSTOM_MODEL_ACTION: ModelChoice = {
@@ -32,7 +44,11 @@ export function ModelIcon({ model }: { model: string }) {
     ? ClaudeLogoIcon
     : /(?:^|[\s/._-])(?:gpt|codex|o[134](?:[\s/._-]|$))|openai/.test(name)
       ? OpenAILogoIcon
-      : RobotIcon;
+      : /gemini/.test(name)
+        ? GoogleLogoIcon
+        : /llama/.test(name)
+          ? MetaLogoIcon
+          : RobotIcon;
   return <Icon size={18} aria-hidden="true" />;
 }
 
@@ -104,6 +120,15 @@ export function CustomModelDialog({
 
 /** `value` is a model ID, or "" for the type's default, `defaultLabel`. */
 export function ModelPicker({
+  label = "Model",
+  groupByFamily = false,
+  leading,
+  onConfigure,
+  resetLabel,
+  modelLabelPrefixes,
+  effort,
+  effortLabel,
+  onEffortChange,
   models,
   allowCustomModel = false,
   value,
@@ -118,6 +143,15 @@ export function ModelPicker({
   includeDefault = true,
   description,
 }: {
+  label?: string;
+  resetLabel?: string;
+  groupByFamily?: boolean;
+  leading?: ReactNode;
+  onConfigure?: (() => void) | undefined;
+  modelLabelPrefixes?: readonly string[] | undefined;
+  effort?: string | undefined;
+  effortLabel?: string | undefined;
+  onEffortChange?: ((model: string, effort: string) => void) | undefined;
   models: readonly ModelChoice[];
   /** Whether text absent from `models` may be committed as its model ID. */
   allowCustomModel?: boolean;
@@ -155,13 +189,23 @@ export function ModelPicker({
       label: value,
       description: allowCustomModel ? "Custom model" : "Unavailable model",
     });
-  const selected = items.find((model) => model.id === value) ?? fallback;
-  const inherited = includeDefault && selected.id === "";
+  const shown = items.map((model) => {
+    const prefix = modelLabelPrefixes?.find((prefix) =>
+      model.label.toLowerCase().startsWith(prefix.toLowerCase()),
+    );
+    return {
+      ...model,
+      label: prefix ? model.label.slice(prefix.length) : model.label,
+    };
+  });
+  const selected =
+    shown.find((model) => model.id === (value || defaultModel)) ?? fallback;
+  const inherited = value === "";
   const selectedLabel = inherited
     ? `${selected.label} · Default`
     : selected.label;
   const choices =
-    allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
+    allowCustomModel && !compact ? [...shown, CUSTOM_MODEL_ACTION] : shown;
   const openCustomDialog = () => {
     const listed = !value || models.some((model) => model.id === value);
     const initialValue = listed ? "" : value;
@@ -170,37 +214,70 @@ export function ModelPicker({
   return (
     <>
       <div ref={control}>
-        <Select
-          label="Model"
-          value={selected.id}
-          valueLabel={loading ? "Loading models…" : selected.label}
-          valueSuffix={!loading && inherited ? " · Default" : undefined}
-          valueTitle={loading ? "Loading models…" : selectedLabel}
-          leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
-          variant={compact ? "compact" : "preference"}
-          appearance={appearance}
-          align={compact ? "end" : "start"}
-          groups={[
-            {
-              label: "",
-              options: choices.map((model) => ({
-                value: model.id,
-                label:
-                  includeDefault && model.id === ""
-                    ? `${model.label} · Default`
-                    : model.label,
-                description: model.description,
-                leading: <ModelIcon model={`${model.id} ${model.label}`} />,
-              })),
-            },
-          ]}
-          disabled={disabled || loading}
-          description={description}
-          onValueChange={(model) => {
-            if (model === CUSTOM_MODEL_ACTION.id) openCustomDialog();
-            else onChange(model);
-          }}
-        />
+        {groupByFamily ? (
+          <ModelFamilyMenu
+            leading={leading}
+            appearance={appearance}
+            resetLabel={resetLabel}
+            effort={effort}
+            effortLabel={effortLabel}
+            onEffortChange={
+              onEffortChange
+                ? (model, level) =>
+                    onEffortChange(
+                      inherited && model === defaultModel ? "" : model,
+                      level,
+                    )
+                : undefined
+            }
+            inherited={!loading && inherited}
+            label={label}
+            compact={compact}
+            onConfigure={onConfigure}
+            models={shown.filter((model) => model.id !== "")}
+            selected={
+              loading ? { ...selected, label: "Loading models…" } : selected
+            }
+            defaultChoice={includeDefault ? fallback : undefined}
+            disabled={disabled}
+            loading={loading}
+            description={description}
+            onChange={onChange}
+            onCustom={allowCustomModel ? openCustomDialog : undefined}
+          />
+        ) : (
+          <Select
+            label={label}
+            value={selected.id}
+            valueLabel={loading ? "Loading models…" : selected.label}
+            valueSuffix={!loading && inherited ? " · Default" : undefined}
+            valueTitle={loading ? "Loading models…" : selectedLabel}
+            leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
+            variant={compact ? "compact" : "preference"}
+            appearance={appearance}
+            align={compact ? "end" : "start"}
+            groups={[
+              {
+                label: "",
+                options: choices.map((model) => ({
+                  value: model.id,
+                  label:
+                    includeDefault && model.id === ""
+                      ? `${model.label} · Default`
+                      : model.label,
+                  description: model.description,
+                  leading: <ModelIcon model={`${model.id} ${model.label}`} />,
+                })),
+              },
+            ]}
+            disabled={disabled || loading}
+            description={description}
+            onValueChange={(model) => {
+              if (model === CUSTOM_MODEL_ACTION.id) openCustomDialog();
+              else onChange(model);
+            }}
+          />
+        )}
       </div>
       {allowCustomModel && customModel !== null && (
         <CustomModelDialog
@@ -211,8 +288,9 @@ export function ModelPicker({
             setCustomModel(null);
           }}
           finalFocus={() =>
-            control.current?.querySelector<HTMLElement>("[role=combobox]") ??
-            false
+            control.current?.querySelector<HTMLElement>(
+              "[role=combobox], [aria-haspopup=menu]",
+            ) ?? false
           }
         />
       )}

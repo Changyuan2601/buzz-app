@@ -1,5 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fakeSpawn, flush } from "./claude-testing";
+import { fileStore, localStore } from "../../features/agents/state";
+import {
+  backgroundTasks,
+  fakeSpawn,
+  flush,
+  sessionState,
+} from "./claude-testing";
 import type { ToolServer } from "./claude";
 import {
   AgentSessions,
@@ -285,6 +291,50 @@ it("steers a conversation that is still working instead of queueing", async () =
   await expect(second).resolves.toEqual({ ok: true });
 });
 
+const interruptsOf = (process: { received: Record<string, unknown>[] }) =>
+  process.received.filter(
+    (message) =>
+      message.type === "control_request" &&
+      (message.request as { subtype?: string }).subtype === "interrupt",
+  );
+
+it("interrupts the process working on a conversation, and only that one", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const first = pool.deliver("c/one", "first", 1);
+  const other = pool.deliver("c/two", "other", 2);
+  await flush();
+  const [one, two] = claudes().filter((process) => process.prompts.length);
+  if (!one || !two) throw new Error("no processes");
+  await pool.interrupt("c/one");
+  expect(interruptsOf(one)).toHaveLength(1);
+  expect(interruptsOf(two)).toHaveLength(0);
+  one.finish();
+  two.finish();
+  await Promise.all([first, other]);
+});
+
+it("interrupts a conversation whose process is still starting once it has the message", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const delivered = pool.deliver("c/root", "first", 1);
+  // Asked before the process exists.
+  const stopped = pool.interrupt("c/root");
+  await stopped;
+  const process = claudes().find((claude) => claude.prompts.length);
+  expect(process?.prompts).toEqual(["first"]);
+  expect(process && interruptsOf(process)).toHaveLength(1);
+  process?.finish();
+  await delivered;
+});
+
+it("does nothing when asked to interrupt a conversation with no running turn", async () => {
+  const { pool, claudes } = sessions();
+  await expect(pool.interrupt("c/none")).resolves.toBeUndefined();
+  await pool.deliver("c/root", "first", 1);
+  await pool.interrupt("c/root");
+  for (const process of claudes())
+    expect(interruptsOf(process)).toHaveLength(0);
+});
+
 it("opens one process for messages that arrive together in a new conversation", async () => {
   const { pool, claudes } = sessions();
   await Promise.all([
@@ -328,6 +378,53 @@ it("saves when a session takes in a message or ends a turn, not while a long tur
   claudes()[0]?.finish();
   await done;
   expect(at()).toBeGreaterThan(started);
+});
+
+it("keeps a conversation's process while its background work runs", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "start a build", 1);
+  const [process] = claudes();
+  backgroundTasks(process, {});
+  vi.advanceTimersByTime(IDLE_MS * 3 - 1000);
+  expect(process?.killed).toBe(false);
+  // The build ends, and Claude reports it in a turn of its own.
+  backgroundTasks(process);
+  sessionState(process, "running");
+  sessionState(process, "idle");
+  vi.advanceTimersByTime(IDLE_MS - 1);
+  expect(process?.killed).toBe(false);
+  vi.advanceTimersByTime(1);
+  expect(process?.killed).toBe(true);
+});
+
+it("keeps a conversation's process through a turn Claude starts itself", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "hi", 1);
+  const [process] = claudes();
+  sessionState(process, "running");
+  vi.advanceTimersByTime(IDLE_MS * 2 - 1000);
+  sessionState(process, "idle");
+  vi.advanceTimersByTime(IDLE_MS - 1);
+  expect(process?.killed).toBe(false);
+  vi.advanceTimersByTime(1);
+  expect(process?.killed).toBe(true);
+});
+
+it("applies new settings over background work once no reply is running", async () => {
+  const { pool, claudes, setModel } = sessions();
+  await pool.deliver("c/root", "start a build", 1);
+  const [process] = claudes();
+  backgroundTasks(process, {});
+  setModel("sonnet");
+  pool.reconfigure();
+  await flush();
+  expect(process?.killed).toBe(true);
+  await pool.deliver("c/root", "again", 2);
+  expect(claudes().at(-1)?.options.args).toEqual(
+    expect.arrayContaining(["--resume", "new-1", "--model", "sonnet"]),
+  );
 });
 
 it("starts over when a saved session no longer loads", async () => {
@@ -502,12 +599,23 @@ it("starts no spare for a conversation that starts after its agents are gone", a
   expect(live()).toEqual([]);
 });
 
-it("keeps saved sessions per agent in storage", () => {
-  const data = new Map<string, string>();
-  const storage = {
+/** Agent storage over `data`, which saves as it is set. */
+const mapStore = (data: Map<string, string>) =>
+  localStore({
+    get length() {
+      return data.size;
+    },
+    key: (index: number) => [...data.keys()][index] ?? null,
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
-  } as Storage;
+    removeItem: (key: string) => void data.delete(key),
+  } as Storage);
+/** Waits for the saves already started. */
+const settled = () => new Promise((resolve) => setTimeout(resolve));
+
+it("keeps saved sessions per agent in storage", () => {
+  const data = new Map<string, string>();
+  const storage = mapStore(data);
   const one = localSessions(storage, "one");
   const two = localSessions(storage, "two");
   one.set("c/root", { id: "s1", seen: 3, at: 1 });
@@ -517,8 +625,62 @@ it("keeps saved sessions per agent in storage", () => {
   one.delete("c/root");
   expect(one.get("c/root")).toBeUndefined();
   expect(two.get("c/root")?.id).toBe("s2");
-  data.set("buzz.claude-code.sessions.v1", "not json");
+  expect([...data.keys()].sort()).toEqual([
+    "buzz.claude-code.sessions.v1:one",
+    "buzz.claude-code.sessions.v1:two",
+  ]);
+  data.set("buzz.claude-code.sessions.v1:one", "not json");
   expect(one.get("c/root")).toBeUndefined();
+});
+
+it("reads an agent's sessions from the shared value until it saves its own", async () => {
+  const data = new Map<string, string>([
+    [
+      "buzz.claude-code.sessions.v1",
+      JSON.stringify({
+        one: { "c/root": { id: "s1", seen: 3, at: 1 } },
+        two: { "c/root": { id: "s2", seen: 4, at: 2 } },
+      }),
+    ],
+  ]);
+  const storage = mapStore(data);
+  const one = localSessions(storage, "one");
+  expect(one.get("c/root")?.id).toBe("s1");
+  one.delete("c/root");
+  expect(one.get("c/root")).toBeUndefined();
+  expect(localSessions(storage, "two").get("c/root")?.id).toBe("s2");
+  localSessions(storage, "two").set("c/other", { id: "s3", seen: 1, at: 3 });
+  await settled();
+  expect(data.has("buzz.claude-code.sessions.v1")).toBe(false);
+  expect(localSessions(storage, "two").get("c/root")?.id).toBe("s2");
+});
+
+it("keeps an agent in the shared sessions value until its own is saved", async () => {
+  const name = "buzz.claude-code.sessions.v1";
+  const shared = JSON.stringify({
+    one: { "c/root": { id: "s1", seen: 3, at: 1 } },
+  });
+  const disk = new Map([[name, shared]]);
+  const save = vi.fn(async (key: string, value: string | null) => {
+    if (key !== name) throw new Error("disk full");
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const storage = fileStore(new Map(disk), save);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  localSessions(storage, "one").set("c/other", { id: "s2", seen: 1, at: 2 });
+  await settled();
+  error.mockRestore();
+  expect(warn).toHaveBeenCalledWith(
+    "Claude sessions were not saved",
+    expect.objectContaining({ message: "disk full" }),
+  );
+  warn.mockRestore();
+  expect(disk.get(name)).toBe(shared);
+  // The next start still resumes the saved session.
+  const restarted = fileStore(new Map(disk), save);
+  expect(localSessions(restarted, "one").get("c/root")?.id).toBe("s1");
 });
 
 it("shares a temporary metadata lookup, releases its process, and refreshes after settings change", async () => {

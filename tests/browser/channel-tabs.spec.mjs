@@ -1,7 +1,13 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage, settlePanelMotion } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  settingsDialog,
+  settlePanelMotion,
+} from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -60,6 +66,38 @@ test("middle-click closes a content tab without selecting it", async ({
   await expect(workspace).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Channel actions", exact: true }),
+  ).toBeFocused();
+});
+
+test("Open in channel takes a content tab to its conversation with its composer focused", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const link = app.append(
+    "primary",
+    "alpha",
+    "[Open Beta](buzz://channel/beta)",
+  );
+  await main
+    .locator(`[data-message-id="${link.id}"]`)
+    .getByRole("link", { name: "Open Session: beta" })
+    .click();
+  await page
+    .locator("[data-panel-workspace]")
+    .getByRole("tab", { name: "Beta", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Open in channel", exact: true })
+    .click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(
+    page.evaluate(() => history.state.buzzNavigationV1.entry.target),
+  ).resolves.toMatchObject({ kind: "conversation", channelId: "beta" });
+  // The menu hands focus back before navigating, so the destination takes it.
+  await expect(
+    main.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();
 });
 
@@ -140,15 +178,26 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await account
     .getByRole("button", { name: "Close Companion fixture panel", exact: true })
     .click();
+  // Settings covers the retained channel: its tabs stay mounted behind the
+  // modal, inert, and are restored when Settings closes.
   await openPage(page, "Settings");
-  await openPage(page, "Messages");
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(workspace).toContainText("Beta draft");
+  expect(
+    await workspace.evaluate(
+      (el) => !!el.closest('[aria-hidden="true"], [inert]'),
+    ),
+  ).toBe(true);
+  await closeSettings(page);
   await expect(composer).toHaveText("Beta draft");
   await expect(
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await split.click();
   await openPage(page, "Settings");
-  await openPage(page, "Messages");
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(workspace).toHaveCount(1);
+  await closeSettings(page);
   await expect(workspace).toBeHidden();
   await expect(split).toHaveAttribute("aria-expanded", "false");
   await split.click();
@@ -168,24 +217,30 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
       ),
     )
     .toBe(true);
-  const row = beta
+  // Solo agents answer at top level, so a Solo row starts no thread.
+  const sent = beta
     .locator("[data-message-id]")
     .filter({ has: page.getByText("Beta draft", { exact: true }) });
-  await row.hover();
+  await hoverMessage(sent);
+  await expect(
+    sent.getByRole("button", { name: "Reply", exact: true }),
+  ).toHaveCount(0);
+  const row = main.locator(`[data-message-id="${link.id}"]`);
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const reply = workspace.getByRole("textbox", {
     name: "Reply to thread",
     exact: true,
   });
   await expect(reply).toBeFocused();
-  await reply.fill("Beta reply draft");
+  await reply.fill("Alpha reply draft");
   await page.locator('button[data-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
-    workspace.locator('[role="tab"][data-tab-value^="thread:beta:"]'),
+    workspace.locator('[role="tab"][data-tab-value^="thread:alpha:"]'),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(reply).toHaveText("Beta reply draft");
+  await expect(reply).toHaveText("Alpha reply draft");
   const alphaComposer = main.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -194,13 +249,13 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   // Restored side content must not take focus from the main conversation.
   await expect(alphaComposer).toBeFocused();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(reply).toBeFocused();
-  await expect(reply).toHaveText("Beta reply draft");
+  await expect(reply).toHaveText("Alpha reply draft");
   await workspace
     .locator(
-      '.buzz-tabs-item:has([data-tab-value^="thread:beta:"][aria-selected="true"]) > button:not([role="tab"])',
+      '.buzz-tabs-item:has([data-tab-value^="thread:alpha:"][aria-selected="true"]) > button:not([role="tab"])',
     )
     .click();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
@@ -218,6 +273,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
+  // Alpha's own thread took its details tab; reopen it for Diagnostics.
+  await openChannelDetails(page);
   app.omitChannel("beta");
   await workspace
     .getByRole("tab", { name: "Channel settings", exact: true })
@@ -416,7 +473,7 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await open(page, app);
   const main = page.getByRole("article", { name: "Conversation", exact: true });
   const row = main.locator("[data-message-id]").first();
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const workspace = page.locator("[data-panel-workspace]");
   const thread = workspace.locator(

@@ -36,6 +36,7 @@ export function useChannelPanels(
     canOpen(target: string): boolean;
     open(target: string): boolean;
   }>,
+  openMembers?: () => void,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -87,6 +88,12 @@ export function useChannelPanels(
       <div className={styles.channelLaunchers}>
         {available
           .filter((panel) => panel.channelLauncher)
+          // Keep the call control next to members, including after plugin re-enable.
+          .sort(
+            (a, b) =>
+              Number(b.key === "buzz.huddles/huddles") -
+              Number(a.key === "buzz.huddles/huddles"),
+          )
           .map((panel) => {
             const Launcher = panel.channelLauncher;
             if (!Launcher) return null;
@@ -100,6 +107,13 @@ export function useChannelPanels(
                   tabbed
                     ? !!tabs?.pressed(panel, context)
                     : selected?.panel === panel
+                }
+                openMembers={
+                  openMembers
+                    ? () => {
+                        if (bound(context, panel)) openMembers();
+                      }
+                    : undefined
                 }
                 available={() => bound(context, panel)}
                 // Presentation can ask during render, before the binding is live.
