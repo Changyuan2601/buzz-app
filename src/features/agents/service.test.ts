@@ -5446,6 +5446,37 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
+it("counts a hosted agent among the owner's agents once set up, not its agents on other devices", async () => {
+  const { service, plugin } = await setup({ listed: [record(sibling)] });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  const keys = () => service.local().agents.map((agent) => agent.pubkey);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow("provider down");
+  expect(keys()).toEqual([]);
+  const notified = vi.fn();
+  service.subscribe(notified);
+  await service.finish(hostedKey);
+  expect(notified).toHaveBeenCalled();
+  expect(service.local()).toEqual({
+    status: "ready",
+    agents: [
+      {
+        pubkey: hostedKey,
+        name: "Sky",
+        relayUrl: "wss://relay.example.test",
+        owner: viewer,
+      },
+    ],
+  });
+  expect(service.local()).toBe(service.local());
+});
+
 it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();

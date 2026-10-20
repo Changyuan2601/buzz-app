@@ -1386,17 +1386,26 @@ export class AgentsService extends Service implements Agents {
   private localCache:
     | {
         identities: readonly AgentIdentity[];
+        hosted: readonly Agent[];
         state: Pick<AgentsSnapshot, "status" | "error">;
         value: LocalAgentsSnapshot;
       }
     | undefined;
-  /** Every live agent, in any community, for names and mentions. `snapshot`
-   * holds only the selected community's, with their settings. */
+  /** Every live agent, in any community, for names and mentions, and the
+   * hosted ones set up in a connected one. `snapshot` holds only the selected
+   * community's, with their settings. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
+    const hosted = [...this.bound.keys()].flatMap((origin) =>
+      this.listedAgents(origin).filter(
+        (agent) => agent.place === "hosted" && !agent.unfinished,
+      ),
+    );
     const cached = this.localCache;
     if (
       cached?.identities === identities &&
+      cached.hosted.length === hosted.length &&
+      cached.hosted.every((agent, index) => agent === hosted[index]) &&
       cached.state.status === state.status &&
       cached.state.error === state.error
     )
@@ -1404,9 +1413,8 @@ export class AgentsService extends Service implements Agents {
     const value: LocalAgentsSnapshot = Object.freeze({
       status: state.status,
       agents: Object.freeze(
-        identities
-          .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner, picture }) =>
+        [...identities.filter((identity) => !identity.deleted), ...hosted].map(
+          ({ pubkey, name, relay, owner, picture }) =>
             Object.freeze({
               pubkey,
               name,
@@ -1414,11 +1422,11 @@ export class AgentsService extends Service implements Agents {
               owner,
               ...(picture ? { picture } : {}),
             }),
-          ),
+        ),
       ),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, value };
+    this.localCache = { identities, hosted, state, value };
     return value;
   };
 
