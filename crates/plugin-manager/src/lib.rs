@@ -298,6 +298,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/relay-notes/manifest.json"
+        ))
+        .expect("relay notes manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
