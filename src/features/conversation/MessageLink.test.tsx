@@ -409,7 +409,7 @@ it("a signed chosen rename repaints the session card without changing authored l
       </MessageLink>,
     );
     const anchor = screen.getByRole("link", {
-      name: `Open Session: ${id.slice(0, 8)}`,
+      name: `Open Chat: ${id.slice(0, 8)}`,
     });
     anchor.focus();
     const base = await owner.session.channelDetails.load(id);
@@ -421,7 +421,7 @@ it("a signed chosen rename repaints the session card without changing authored l
     );
     expect(
       await screen.findByRole("link", {
-        name: "Open Session: Accessible contrast",
+        name: "Open Chat: Accessible contrast",
       }),
     ).toBe(anchor);
     expect(anchor).toHaveFocus();
@@ -436,7 +436,7 @@ it("a signed chosen rename repaints the session card without changing authored l
   }
 });
 
-it.each(["Session · 12345678", "Session: PR 45 fixes"])(
+it.each(["Session · 12345678", "Session: PR 45 fixes", "Chat: PR 45 fixes"])(
   "renders sent session labels as cards without membership: %s",
   (label) => {
     render(
@@ -450,10 +450,12 @@ it.each(["Session · 12345678", "Session: PR 45 fixes"])(
       </MessageLink>,
     );
     const link = screen.getByRole("link", {
-      name: `Open Session: ${label.replace(/^Session(?::| ·)\s+/, "")}`,
+      name: `Open Chat: ${label.replace(/^(?:Session|Chat)(?::| ·)\s+/, "")}`,
     });
-    expect(link.querySelector("svg.tabler-icon-file-text")).toBeInTheDocument();
-    expect(link).toHaveTextContent("Session:");
+    expect(
+      link.querySelector("svg.tabler-icon-message-circle"),
+    ).toBeInTheDocument();
+    expect(link).toHaveTextContent("Chat:");
   },
 );
 
@@ -478,6 +480,6 @@ it("shows escaped chosen names faithfully when only the sent label is available"
     />,
   );
   expect(
-    screen.getByRole("link", { name: `Open Session: ${name}` }),
+    screen.getByRole("link", { name: `Open Chat: ${name}` }),
   ).toHaveTextContent(name);
 });

@@ -462,14 +462,14 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
   await user.click(input);
   await user.keyboard("Untagged{Enter}");
   expect(
-    await screen.findByText("Tag an agent to send", {
+    await screen.findByText("Tag a person or agent to send", {
       selector: "[role=alert]",
     }),
   ).toBeVisible();
   expect(f.send).not.toHaveBeenCalled();
 });
 
-it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
+it("requires a guest to address someone explicitly in a shared Solo chat", async () => {
   const f = fixture({ placed: false });
   f.mount();
   const input = await screen.findByRole("textbox", {
@@ -479,13 +479,12 @@ it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
-  // Untagged, it reaches the chat's agents like any Solo conversation.
-  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
-  expect(f.send.mock.calls[0]?.slice(0, 3)).toEqual([
-    id,
-    "Hello team",
-    [agent],
-  ]);
+  expect(
+    await screen.findByText("Tag a person or agent to send", {
+      selector: "[role=alert]",
+    }),
+  ).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
 });
 
 it.each([

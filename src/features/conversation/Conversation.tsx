@@ -273,7 +273,7 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
         ? { label: "Message your agents", activityClickOpensPanel: true }
         : {})}
       chatPresentation={shared.ownSoloConversation}
-      requireMention={shared.ownSoloConversation}
+      requireMention={shared.soloConversation}
       {...props}
     />
   );

@@ -4112,7 +4112,7 @@ it.each(
     [false, true].map((removeMention) => ({ root, removeMention })),
   ),
 )(
-  "resolves a sole Solo chat agent before send/reply: root=$root, removed=$removeMention",
+  "requires an explicit recipient even with one Solo agent:  root=$root, removed=$removeMention",
   async ({ root, removeMention }) => {
     const view = mount();
     const channel = {
@@ -4165,26 +4165,11 @@ it.each(
       ).not.toBeInTheDocument();
     }
     view.submit();
-    await waitFor(() =>
-      expect(
-        root ? view.messages.reply : view.messages.send,
-      ).toHaveBeenCalled(),
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Tag a person or agent to send",
     );
-    if (root)
-      expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
-        "channel",
-        root,
-        removeMention ? "@Honey Keep going " : "Keep going ",
-        [first.pubkey],
-        [],
-      );
-    else
-      expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
-        "channel",
-        removeMention ? "@Honey Keep going " : "Keep going ",
-        [first.pubkey],
-        [],
-      );
+    expect(view.messages.reply).not.toHaveBeenCalled();
+    expect(view.messages.send).not.toHaveBeenCalled();
     expect(session.channelWrites.addAgents).not.toHaveBeenCalled();
   },
 );
@@ -7313,7 +7298,7 @@ it("stages session cards above an ordinary caption editor, persists them, and se
   writeView("scope", "draft:channel", link);
   const h = mount();
   const region = screen.getByRole("region", { name: "Session attachments" });
-  expect(region).toHaveTextContent("Session:");
+  expect(region).toHaveTextContent("Chat:");
   expect(h.input()).toHaveValue("");
   expect(
     region.compareDocumentPosition(h.input()) &
@@ -7672,3 +7657,41 @@ it("withholds recording tools while a message edit cannot take attachments", asy
   );
   expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
 });
+
+it.each([true, false])(
+  "Solo human addressing is explicit for owner=%s and never enrolls outsiders",
+  async (owner) => {
+    const h = mount();
+    const human = { pubkey: "e".repeat(64), name: "Teammate" };
+    const channel = {
+      id: "channel",
+      name: "Work",
+      channelType: "solo" as const,
+      members: [first.pubkey, human.pubkey],
+    };
+    const list = { status: "ready" as const, channels: [channel] };
+    const refreshMembership = vi.fn(async () => channel);
+    const addAgents = vi.fn();
+    const session = {
+      ...h.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      channelWrites: { refreshMembership, addAgents },
+    } as unknown as RelaySession;
+    h.setLibrary([first]);
+    h.retarget({ session, soloConversation: true, ownSoloConversation: owner });
+    act(() => h.commands().insertMention(human));
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([human.pubkey]);
+    expect(addAgents).not.toHaveBeenCalled();
+    // Previously selected human loses membership before the fresh send check.
+    act(() => h.commands().insertMention(human));
+    channel.members = [first.pubkey];
+    h.submit();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "already in this chat",
+    );
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(addAgents).not.toHaveBeenCalled();
+  },
+);

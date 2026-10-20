@@ -13,7 +13,7 @@ import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { usePendingRequest } from "../../features/messages/use-pending-request";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
-import { SoloColumn, SoloTitle } from "../../features/solo/SoloPresentation";
+import { SoloColumn } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
@@ -121,7 +121,6 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
-        {soloConversation && <SoloTitle channel={channel} />}
         {tab.kind === "thread" ? (
           <ConversationThread
             active={active}

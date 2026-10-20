@@ -104,7 +104,10 @@ behavior on the label, so a rename touches copy only.
   nothing where the menu offers no Archive. Success returns to Solo. Archived chats
   are restored from search and Channel Settings, as before.
 - Solo chats use the ordinary composer with explicit
-  owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
+  recipient tags for both owners and guests. Saved chats accept existing human
+  members and agents; an untagged message never infers an agent recipient.
+  Only available agents can be enrolled through tagging—outside humans must
+  already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
   agent for this account/community. **Agents → right-click → Make default agent**
   changes that choice; its card shows **Default agent**. An unavailable choice
   falls back to the first managed agent, then the first selectable agent, only
@@ -114,8 +117,11 @@ behavior on the label, so a rename touches copy only.
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
   Removing or replacing a tag is respected for that draft. Both Send and Enter
-  require a tagged agent; existing signed-send recovery preserves its recipients.
-  A blocked Enter submission shows “Tag an agent to send” inline. The workspace control follows the editor tools on the same rail;
+  require a tagged person or agent in saved chats; new-chat drafts still require
+  an agent. Existing signed-send recovery preserves its recipients. Human-only
+  messages notify only the selected humans and do not carry human tags into the
+  next draft. A blocked Enter shows “Tag a person or agent to send” in saved chats
+  and “Tag an agent to send” in new drafts. The workspace control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
 - Claude Code can name a Solo chat from its own generated session title after its
   first successful turn. Only the first tagged agent on the owner’s original
@@ -250,14 +256,15 @@ is checked without republishing or implicitly saving newer Canvas drafts.
 Synthetic signed create/rename/readback coverage is not live cross-version-client
 acceptance.
 
-Generated sharing messages use `[Session: <chosen name or short ID>](buzz://channel/<id>)`.
+Generated sharing messages use `[Chat: <chosen name or short ID>](buzz://channel/<id>)`.
 Only names carrying `buzz.session.named` replace the ID. Existing signed messages
 and recovery receipts keep their original bytes, including legacy `Session ·` labels;
 retry matching uses the original chat destination rather than regenerating the
 current name. Authorized viewers can see the current chosen name in the card.
 
 Links to Solo chats render as document cards outside the message bubble, before
-any caption, with the fixed `Session:` label; the card text still says Session, not Chat.
+any caption, with the fixed `Chat:` label, a chat bubble and a trailing chevron when readable.
+Unavailable cards retain a lock. Legacy Session-labelled cards remain supported.
 In the composer, references are staged
 above the caption editor with a remove control and saved in the same draft. Sending
 serializes the references before the caption as ordinary Markdown links. Selected

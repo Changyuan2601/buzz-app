@@ -35,7 +35,6 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
-import { soloRecipients } from "../solo/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -277,7 +276,9 @@ export function MessageComposer(props: MessageComposerProps) {
 function PersonalComposer(props: MessageComposerProps) {
   const choices = useAgentChoices(props.session, true, true);
   return (
-    <DraftMentionRoster.Provider value={choices.selectable}>
+    <DraftMentionRoster.Provider
+      value={props.submission ? choices.selectable : undefined}
+    >
       <Composer {...props} />
       {choices.error && (
         <p role="alert">
@@ -1152,23 +1153,17 @@ function Composer({
       }
     }
   });
+  const needsRecipient = requireMention || solo;
+  const recipientHint = submission
+    ? "Tag an agent to send"
+    : "Tag a person or agent to send";
   const untagged =
-    requireMention && !editing.target && !value.recipients.length;
+    needsRecipient && !editing.target && !value.recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = ownSoloConversation
-      ? [...explicit]
-      : [
-          ...soloRecipients(
-            channel,
-            session.profiles.snapshot(),
-            session.agentChoices.snapshot(),
-            session.viewer,
-            explicit,
-          ),
-        ];
+    const recipients = [...explicit];
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
       // Classification no longer depends on inventory; refresh before admission.
@@ -1176,7 +1171,6 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
       if (
-        ownSoloConversation &&
         missing.some(
           (key) =>
             !session.agentChoices
@@ -1185,7 +1179,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Solo chats.",
+          "Tag a person already in this chat or one of your available agents.",
         );
       await session.channelWrites.addAgents(
         channelId,
@@ -1240,8 +1234,8 @@ function Composer({
       !outbox
     )
       return;
-    if (requireMention && !valueRef.current.recipients.length) {
-      setError("Tag an agent to send");
+    if (needsRecipient && !valueRef.current.recipients.length) {
+      setError(recipientHint);
       return;
     }
     // A new conversation is named from its message, so files alone cannot start it.
@@ -1277,6 +1271,7 @@ function Composer({
         );
       if (
         ownSoloConversation &&
+        submission &&
         captured.recipients.some(
           (person) =>
             !session.agentChoices
@@ -1986,7 +1981,7 @@ function Composer({
                 editing.target
                   ? "Save changes"
                   : untagged
-                    ? "Tag an agent to send"
+                    ? recipientHint
                     : "Send message"
               }
               focusableWhenDisabled={untagged || undefined}

@@ -25,7 +25,8 @@ export function canonicalSessionCard(value: unknown): string | undefined {
   const text = (node: typeof scan.tree): string =>
     node.value ?? node.children?.map(text).join("") ?? "";
   const label = text(link);
-  if (!/^Session(?::| ·)\s+/.test(label) || /[\r\n]/.test(label)) return;
+  if (!/^(?:Session|Chat)(?::| ·)\s+/.test(label) || /[\r\n]/.test(label))
+    return;
   const escaped = label.replace(/[\\`[\]*_~<>&|]/g, "\\$&");
   return `[${escaped}](buzz://channel/${encodeURIComponent(target.channelId)})`;
 }
@@ -70,7 +71,7 @@ export function separateSessionCards(
     if (
       channel
         ? channel.channelType !== "solo"
-        : !/^Session(?::| ·)\s+/.test(label ?? "")
+        : !/^(?:Session|Chat)(?::| ·)\s+/.test(label ?? "")
     )
       return false;
     cards.push({ content: row.content.slice(start, end), start });

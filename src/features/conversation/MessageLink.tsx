@@ -22,7 +22,8 @@ import {
   BrowserIcon,
   ChatCircleIcon,
   CopyIcon,
-  FileTextIcon,
+  CaretRightIcon,
+  MessageReplyIcon,
   LockIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -123,7 +124,9 @@ export function MessageLink({
     () => "",
   );
   // Authored Session labels survive access loss; they are presentation only.
-  const sentSessionName = label?.match(/^Session(?::| ·)\s+(.+)$/s)?.[1];
+  const sentSessionName = label?.match(
+    /^(?:Session|Chat)(?::| ·)\s+(.+)$/s,
+  )?.[1];
   const sessionChip = !!(
     destination &&
     !destination.messageId &&
@@ -134,7 +137,7 @@ export function MessageLink({
   );
   const chipName =
     sessionName || sentSessionName || destination?.channelId.slice(0, 8);
-  const sessionLabel = sessionChip ? `Session: ${chipName}` : undefined;
+  const sessionLabel = sessionChip ? `Chat: ${chipName}` : undefined;
   // DMs and sessions keep their existing presentation.
   const named =
     reference.state === "found" &&
@@ -239,19 +242,19 @@ export function MessageLink({
       sessionChip && destination ? (
         <span className={styles.soloChip}>
           <span className={styles.soloIcon}>
-            <FileTextIcon size={16} aria-hidden="true" />
+            <ChatCircleIcon size={16} aria-hidden="true" />
           </span>
-          <span className={styles.soloPrefix}>Session:</span>
+          <span className={styles.soloPrefix}>Chat:</span>
           <span className={styles.soloName}>{chipName}</span>
-          {(withheld ||
-            channelPrivate ||
-            (reference.state === "found" && reference.private)) && (
+          {withheld ? (
             <LockIcon
               className={styles.soloLock}
               size={12}
               aria-hidden="true"
             />
-          )}
+          ) : reference.state === "found" ? (
+            <CaretRightIcon size={16} aria-hidden="true" />
+          ) : null}
         </span>
       ) : Content ? (
         <Content url={url} />
@@ -272,7 +275,7 @@ export function MessageLink({
         }
         aria-description={
           sessionChip && withheld
-            ? "Session unavailable. You don’t have access, or it no longer exists."
+            ? "Chat unavailable. You don’t have access, or it no longer exists."
             : undefined
         }
         data-link-label={label ?? ""}
@@ -280,7 +283,7 @@ export function MessageLink({
         title={
           sessionLabel
             ? withheld
-              ? `${sessionLabel}. Session unavailable. You don’t have access, or it no longer exists.`
+              ? `${sessionLabel}. Chat unavailable. You don’t have access, or it no longer exists.`
               : sessionLabel
             : withheld
               ? "Private channel. You aren’t a member, or it no longer exists."
@@ -389,7 +392,7 @@ export function MessageLink({
               }}
             >
               <MenuIcon>
-                <ChatCircleIcon size={16} />
+                <MessageReplyIcon size={16} />
               </MenuIcon>
               Open link
             </MenuItem>

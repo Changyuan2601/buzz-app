@@ -39,7 +39,7 @@ export function canShareConversation(
 export const soloChatLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
-  `[Session: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
+  `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
 
 /** A saved share keeps its original label even when the chat is renamed. */
 function matchesSoloChatLink(content: string, id: string) {
@@ -47,7 +47,7 @@ function matchesSoloChatLink(content: string, id: string) {
   return (
     parts.length === 1 &&
     parts[0]?.url === soloChatLink(id) &&
-    /^Session(?:: | · )/.test(parts[0]?.label ?? "")
+    /^(?:Session|Chat)(?:: | · )/.test(parts[0]?.label ?? "")
   );
 }
 

@@ -1752,3 +1752,14 @@ and horizontal padding and 21px icons. Their 12px radius follows the modal radiu
 the 12px gutter, and their hover surfaces align with the input.
 
 Inline search settings use the search variant of PreferenceRow with a gear icon and the same title/subtitle hierarchy as destination rows. Results height transitions for 180ms, disabled with reduced motion. The clear control reserves space to keep input dimensions stable.
+
+### Conversation identity icons
+
+Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
+Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
+Reply actions. Keep private Team channels' lock icon; privacy alone does not
+replace a Solo chat's identity icon. Accessible chat cards end with a right
+chevron. Unavailable chat cards retain a lock and unavailable accessible text;
+unknown access does not earn a chevron. Display chat cards as **Chat:**, while
+accepting legacy **Session:** and **Session ·** authored links without rewriting
+historical messages or their receipts.
