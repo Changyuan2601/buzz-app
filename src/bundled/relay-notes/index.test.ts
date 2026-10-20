@@ -17,7 +17,7 @@ import {
 } from "../../buzz-mcp/session-tools";
 import { apply, inject, NOTE_TOOLS } from ".";
 
-it("adds usable agent tools only for the lifetime of the Relay Notes plugin", async () => {
+it("adds usable agent tools only for the lifetime of the Shared Notes plugin", async () => {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,

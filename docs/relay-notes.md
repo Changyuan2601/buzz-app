@@ -1,7 +1,7 @@
-# Relay notes for agents
+# Shared notes for agents
 
-The optional bundled **Relay Notes** plugin exposes NIP-23 Markdown notes (kind 30023) through the
-same native-held agent identity as messages. Notes are relay content, not
+The optional bundled **Shared Notes** plugin exposes NIP-23 Markdown notes (kind 30023) through the
+same native-held agent identity as messages. Notes are shared relay content, not
 private encrypted memory or channel canvases. Relay policy controls access;
 do not put credentials or private workflow material in a shared note.
 
@@ -49,7 +49,7 @@ A publication error can also have an uncertain outcome; inspect the coordinate
 before retrying. Confirmation describes the observed head, not a lock against
 later edits.
 
-Enable **Relay Notes** in Settings → Plugins → Manage plugins. It registers
+Enable **Shared Notes** in Settings → Plugins → Manage plugins. It registers
 `notes` and `note` with `ctx.agents.addTool`, so Claude, Codex and Goose receive
 them while the plugin is active. Disabling it removes the contributions. The
 existing plugin-tool fingerprint refreshes sessions when their tools change;
