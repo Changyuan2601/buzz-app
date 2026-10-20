@@ -121,6 +121,8 @@ pub(crate) async fn json<T: DeserializeOwned>(
                             Some("binding_mismatch") => "binding-mismatch",
                             Some("authorization_denied") => "authorization-denied",
                             Some("invalid_proof") => "invalid-proof",
+                            // Only the token route's 401: the grant itself is gone.
+                            Some("invalid_grant") if status.as_u16() == 401 => "grant-refused",
                             _ if session_denied => "reauthentication-required",
                             _ => "adapter-refused",
                         };
