@@ -46,7 +46,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
-    assert.equal(services.pages.snapshot().length, 6);
+    assert.equal(services.pages.snapshot().length, 7);
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
@@ -70,15 +70,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       );
       assert.equal(
         plugin.enabledByDefault,
-        !["buzz.bestie", "buzz.todos", "buzz.usage"].includes(
-          plugin.manifest.id,
-        ),
+        !["buzz.todos", "buzz.usage"].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }
+    // Bestie is on by default, so a fresh install opens with its page.
     assert.equal(
       services.pages.snapshot().some((p) => p.pluginId === "buzz.bestie"),
-      false,
+      true,
     );
     assert.equal(
       services.panels.snapshot().some((p) => p.pluginId === "buzz.bestie"),

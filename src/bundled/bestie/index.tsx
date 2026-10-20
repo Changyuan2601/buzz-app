@@ -20,6 +20,8 @@ import type {} from "../builderlab/service";
 import { ChannelPreview } from "../inbox/ChannelPreview";
 import { ConversationChannel } from "../../features/conversation/Conversation";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import { bestieInstructions } from "./prompt";
 import { createRemoteBestie, type RemoteBestie } from "./setup";
 
 export const inject = [
@@ -159,7 +161,8 @@ function Setup({
     bestie.snapshot,
   );
   const { record, connection } = state;
-  const [home, setHome] = useState<{ id: string; name: string }>();
+  const [home, setHome] =
+    useState<Pick<ChannelSummary, "id" | "name" | "channelType">>();
   const [homeError, setHomeError] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
@@ -170,7 +173,7 @@ function Setup({
   const complete =
     !!record?.complete &&
     !!record.agent &&
-    ["ready", "idle", "error"].includes(state.status);
+    ["ready", "idle", "error", "busy"].includes(state.status);
   // Show the conversation here only after its roster is still just you and Bestie.
   const checkHome = useCallback(async () => {
     const controller = lifetime.current;
@@ -211,7 +214,15 @@ function Setup({
           "Bestie's channel must be private and contain only you and Bestie. Review its members before continuing.",
         );
       setHomeError("");
-      setHome({ id: record.channelId, name: "Bestie" });
+      setHome(
+        connection.session.channels
+          .list()
+          .channels.find((row) => row.id === record.channelId) ?? {
+          id: record.channelId,
+          name: "Bestie",
+          channelType: "stream",
+        },
+      );
     } catch (error) {
       if (!active()) return;
       setHome(undefined);
@@ -233,10 +244,28 @@ function Setup({
             className="m-0 text-body-sm text-muted"
             role={state.status === "error" ? "alert" : "status"}
           >
-            {state.status === "error"
+            {state.status === "error" || state.status === "busy"
               ? state.message
-              : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
+              : state.instructionsChanged
+                ? "Bestie's instructions have changed since setup."
+                : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
           </p>
+          {(state.instructionsChanged || state.status === "busy") && (
+            <Button
+              size="sm"
+              variant="outline"
+              loading={state.status === "busy"}
+              onClick={() => void bestie.setup()}
+            >
+              Update Bestie's instructions
+            </Button>
+          )}
+          <details className="w-full text-body-sm text-muted">
+            <summary className="cursor-pointer">Bestie's instructions</summary>
+            <pre className="m-0 mt-2 max-h-64 overflow-auto whitespace-pre-wrap">
+              {bestieInstructions(record.owner, record.channelId)}
+            </pre>
+          </details>
         </div>
         <ConversationChannel
           session={connection.session}

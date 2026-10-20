@@ -2,7 +2,8 @@ import type { Agent, Agents } from "../../features/agents/service";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
-import { bestieInstructions, PROMPT_VERSION } from "./prompt";
+import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
+import { bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
 export const BUILDERLAB_TYPE = "block.builderlab/builderlab";
@@ -29,6 +30,8 @@ type State = Readonly<{
   canCreateNew?: boolean;
   record?: Record | undefined;
   connection?: RelaySnapshot;
+  /** A set-up Bestie whose instructions differ from prompt.ts. */
+  instructionsChanged?: boolean;
 }>;
 type SetupOptions = Readonly<{ createNew?: boolean }>;
 /** Setup won't make a Bestie on its own here, but the owner may ask for one. */
@@ -62,6 +65,14 @@ function read(key: string, owner: string): Record | undefined {
       "Saved Bestie setup is invalid. Review it before retrying.",
     );
   return record;
+}
+
+/** Whether a set-up Bestie's instructions differ from the current prompt. */
+function changed(record: Record) {
+  return (
+    record.promptVersion !==
+    promptVersion(bestieInstructions(record.owner, record.channelId))
+  );
 }
 
 /** Builderlab's gates surface as HTTP statuses on its client errors. */
@@ -135,6 +146,7 @@ export function createRemoteBestie(
           : "Set up Bestie in this community.",
         record,
         connection: current.connection,
+        instructionsChanged: !!record?.complete && changed(record),
       });
     } catch (error) {
       publish({ status: "error", message: explain(error) });
@@ -289,20 +301,21 @@ export function createRemoteBestie(
     }
     const pubkey = record.agent;
 
-    if (!record.promptVersion) {
+    const instructions = bestieInstructions(owner, record.channelId);
+    if (instructions.length > MAX_INSTRUCTIONS_LENGTH)
+      throw new Error(
+        `Bestie's instructions are ${instructions.length} characters; Builderlab allows ${MAX_INSTRUCTIONS_LENGTH}. Shorten prompt.ts and retry.`,
+      );
+    if (record.promptVersion !== promptVersion(instructions)) {
       progress("Updating Bestie's instructions…");
       const row = remote.find((item) => item.pubkey === pubkey);
       if (!row)
         throw new Error(
           "Sign in to the Builderlab account that created Bestie, then retry setup.",
         );
-      await builderlab.agents.updateInstructions(
-        row,
-        bestieInstructions(owner, record.channelId),
-        signal,
-      );
+      await builderlab.agents.updateInstructions(row, instructions, signal);
       check();
-      record.promptVersion = PROMPT_VERSION;
+      record.promptVersion = promptVersion(instructions);
       save();
     }
 
@@ -426,7 +439,7 @@ export function createRemoteBestie(
     if (!record.welcomeId) {
       record.welcomeId = session.messages.send(
         record.channelId,
-        "🤖 @Bestie Introduce yourself and help me get started with Buzz.",
+        "🤖 Sent by Bestie setup: @Bestie, introduce yourself and help me get started with Buzz.",
         [pubkey],
         [],
         { key: `bestie-welcome:${record.channelId}`, value: pubkey },

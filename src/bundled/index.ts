@@ -149,7 +149,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...usageManifest, apiVersion: 1 },
