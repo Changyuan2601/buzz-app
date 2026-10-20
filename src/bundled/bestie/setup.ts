@@ -312,7 +312,7 @@ export function createRemoteBestie(
     await outbox.ready();
     check();
     const verifyHome = async () => {
-      const home = await session.workSessions.refreshMembership(
+      const home = await session.channelWrites.refreshMembership(
         record.channelId,
       );
       check();
@@ -363,9 +363,9 @@ export function createRemoteBestie(
       record[failed] = undefined;
       save();
       try {
-        await session.workSessions.delivered(id, active);
+        await session.channelWrites.delivered(id, active);
       } catch (error) {
-        record[failed] = session.workSessions.failed(id) || undefined;
+        record[failed] = session.channelWrites.failed(id) || undefined;
         save();
         throw error;
       }
@@ -391,14 +391,14 @@ export function createRemoteBestie(
               ([name, value]) => name === "h" && value === record.channelId,
             ),
         )?.event.id;
-      record.channelOperation ??= session.workSessions.createChannel(
+      record.channelOperation ??= session.channelWrites.createChannel(
         record.channelId,
         NAME,
         "private",
       );
       save();
       await delivered("channelOperation", "channelFailed");
-      await session.workSessions.refresh(
+      await session.channelWrites.refresh(
         record.channelId,
         { member: owner },
         false,

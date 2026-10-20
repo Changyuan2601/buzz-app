@@ -149,7 +149,9 @@ it("says why Builderlab refused to set up Bestie", async () => {
   await h.bestie.setup();
   expect(h.bestie.snapshot()).toMatchObject({
     status: "error",
-    message: expect.stringContaining("Link your Buzz identity"),
+    message: expect.stringContaining(
+      "Agent setup was not confirmed (ATTEST_AGENT_STATUS_NO_OWNER_IDENTITY_BOUND)",
+    ),
   });
   expect(h.agents.find(h.agent)?.unfinished).toBe(true);
 });

@@ -10,6 +10,7 @@ import { HostService } from "../../features/host/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { ConversationService } from "../../features/conversation/service";
 import { PagesService } from "../../features/pages/service";
+import { PanelsService } from "../../features/panels/service";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { OutgoingEvent } from "../../features/relay/outbox";
 import { relayPartition } from "../../features/relay/partition";
@@ -95,7 +96,14 @@ export async function bestieFixture(invoke: Mock) {
       let result: unknown;
       if (path === "exchange") result = { session_credential: "token" };
       else if (path === "me")
-        result = { subject: "owner", email: "owner@example.com" };
+        result = {
+          subject: "owner",
+          email: "owner@example.com",
+          capabilities: { can_use_remote_agents: true },
+        };
+      // The owner's key is already linked, so setup skips binding it.
+      else if (path === "current")
+        result = { identity: { pubkey_hex: identity.pubkey } };
       else if (path === "list-agents") result = { status: 1, agents: rows };
       else if (path === "register-agent") {
         // Beekeeper replays a registration by its idempotency key.
@@ -248,6 +256,7 @@ export async function bestieFixture(invoke: Mock) {
   new HostService(root);
   new SettingsCardsService(root);
   new ConversationService(root);
+  new PanelsService(root);
   const pages = new PagesService(root);
   const open = vi.fn(async () => ({ status: "opened" }));
   const navigation = { open } as unknown as Navigation;
@@ -262,12 +271,15 @@ export async function bestieFixture(invoke: Mock) {
       portable: vi.fn(),
       port: vi.fn(),
       rename: vi.fn(),
+      setType: vi.fn(),
       setPicture: vi.fn(),
       remove: vi.fn(),
+      beginDelete: vi.fn(),
       forget: vi.fn(),
       publish: vi.fn(),
       publishProfile: vi.fn(),
       query: vi.fn(),
+      searchProfiles: vi.fn(),
       upload: vi.fn(),
       media: vi.fn(),
       remember: vi.fn(),

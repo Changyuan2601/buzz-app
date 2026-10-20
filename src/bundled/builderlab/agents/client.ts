@@ -39,30 +39,6 @@ function resultStatus(value: unknown) {
       : "";
 }
 
-/** beekeeper_messages.proto `AttestAgentStatus`, as number or enum name suffix. */
-const ATTEST_FAILURES: readonly (readonly [
-  readonly (string | number)[],
-  string,
-])[] = [
-  [[2, "DISABLED"], "This Builderlab account can't run remote agents yet."],
-  [
-    [3, "FOUND"],
-    "Builderlab no longer has this agent. Delete it in Agents, then create it again.",
-  ],
-  [
-    [4, "UNATTESTED"],
-    "Builderlab has already set up or revoked this agent. Review it in Agents.",
-  ],
-  [
-    [10, "BOUND"],
-    "Link your Buzz identity to this Builderlab account, then finish setup in Agents.",
-  ],
-  [
-    [11, "AUTHORIZATION"],
-    "This Builderlab account is linked to a different Buzz identity. Sign in to Buzz with that identity, or to the Builderlab account linked to this one, then finish setup in Agents.",
-  ],
-];
-
 function agentStatus(value: unknown): RemoteAgent["status"] {
   const status = String(value ?? "")
     .split("_")
@@ -132,8 +108,7 @@ export function createAgentClient(
     let response: HostResponse;
     try {
       response = await host.request({
-        // Beekeeper action names are relative; account routes are absolute.
-        url: `${oauthTarget()}${path.startsWith("/") ? path : `/v3/beekeeper/${path}`}`,
+        url: `${oauthTarget()}/v3/beekeeper/${path}`,
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -307,37 +282,14 @@ export function createAgentClient(
       },
       signal,
     );
-    const status = resultStatus(result.status);
-    if ([1, "ACTIVE"].includes(status)) return;
-    const message =
-      ATTEST_FAILURES.find(([codes]) => codes.includes(status))?.[1] ??
-      `Agent setup was not confirmed (${
-        typeof result.status === "string" || typeof result.status === "number"
-          ? result.status
-          : "no status"
-      }). Retry setup in Agents.`;
-    throw new Error(
-      [10, "BOUND", 11, "AUTHORIZATION"].includes(status)
-        ? `${message}${await linkedIdentity(signal)}`
-        : message,
-    );
-  }
-  /** Names the Buzz identity this account is linked to, for a binding refusal. */
-  async function linkedIdentity(signal: AbortSignal): Promise<string> {
-    try {
-      const { identity } = await request(
-        "/v1/buzz/nostr-identities/current",
-        {},
-        signal,
+    if (![1, "ACTIVE"].includes(resultStatus(result.status)))
+      throw new Error(
+        `Agent setup was not confirmed (${
+          typeof result.status === "string" || typeof result.status === "number"
+            ? result.status
+            : "no status"
+        }). Retry setup in Agents.`,
       );
-      const npub = (identity as { npub?: unknown } | undefined)?.npub;
-      return typeof npub === "string" &&
-        /^npub1[02-9ac-hj-np-z]{58}$/.test(npub)
-        ? ` This account is linked to ${npub}.`
-        : " This account isn't linked to any Buzz identity.";
-    } catch {
-      return "";
-    }
   }
   return {
     link,
