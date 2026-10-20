@@ -4,6 +4,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Navigation } from "../../features/navigation/controller";
 import { BestiePage } from "./index";
 import { bestieFixture, cleanups, HOME } from "./testing";
@@ -45,7 +47,13 @@ afterEach(async () => {
 
 it("keeps Bestie's page with a route to plugin settings while Builderlab is off", async () => {
   const open = vi.fn(async () => ({ status: "opened" }));
-  render(<BestiePage navigation={{ open } as unknown as Navigation} />);
+  render(
+    <BestiePage
+      navigation={{ open } as unknown as Navigation}
+      extensions={{} as ConversationExtensions}
+      host={{} as ConversationHostServices}
+    />,
+  );
   expect(screen.getByRole("status")).toHaveTextContent(
     "Turn on the Builderlab plugin",
   );

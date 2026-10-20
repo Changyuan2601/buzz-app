@@ -18,6 +18,8 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type {} from "../builderlab/service";
 import { ChannelPreview } from "../inbox/ChannelPreview";
+import { ConversationChannel } from "../../features/conversation/Conversation";
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import { createRemoteBestie, type RemoteBestie } from "./setup";
 
 export const inject = [
@@ -26,6 +28,7 @@ export const inject = [
   "navigation",
   "agents",
   "conversation",
+  "panels",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let bestie: RemoteBestie | undefined;
@@ -71,6 +74,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           bestie={current}
           navigation={ctx.navigation}
           extensions={ctx.conversation}
+          host={ctx}
         />
       );
     },
@@ -81,10 +85,12 @@ export function BestiePage({
   bestie,
   navigation,
   extensions,
+  host,
 }: {
   bestie?: RemoteBestie | undefined;
   navigation: Navigation;
-  extensions?: ConversationExtensions | undefined;
+  extensions: ConversationExtensions;
+  host: ConversationHostServices;
 }) {
   return (
     <div className="h-full min-h-0">
@@ -99,7 +105,7 @@ export function BestiePage({
             }
           />
           {bestie ? (
-            <Setup bestie={bestie} extensions={extensions} />
+            <Setup bestie={bestie} extensions={extensions} host={host} />
           ) : (
             <Intro>
               <p className="m-0 text-body-sm text-muted" role="status">
@@ -141,9 +147,11 @@ function Intro({ children }: { children: ReactNode }) {
 function Setup({
   bestie,
   extensions,
+  host,
 }: {
   bestie: RemoteBestie;
-  extensions?: ConversationExtensions | undefined;
+  extensions: ConversationExtensions;
+  host: ConversationHostServices;
 }) {
   const state = useSyncExternalStore(
     bestie.subscribe,
@@ -151,7 +159,7 @@ function Setup({
     bestie.snapshot,
   );
   const { record, connection } = state;
-  const [home, setHome] = useState<string>();
+  const [home, setHome] = useState<{ id: string; name: string }>();
   const [homeError, setHomeError] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
@@ -185,7 +193,7 @@ function Setup({
         controller.signal,
       );
       if (!active()) return;
-      const channel = await connection.session.workSessions.refreshMembership(
+      const channel = await connection.session.channelWrites.refreshMembership(
         record.channelId,
       );
       if (!active()) return;
@@ -203,7 +211,7 @@ function Setup({
           "Bestie's channel must be private and contain only you and Bestie. Review its members before continuing.",
         );
       setHomeError("");
-      setHome(record.channelId);
+      setHome({ id: record.channelId, name: "Bestie" });
     } catch (error) {
       if (!active()) return;
       setHome(undefined);
@@ -217,7 +225,7 @@ function Setup({
   useEffect(() => {
     if (complete) void checkHome();
   }, [checkHome, complete]);
-  if (complete && connection && home === record.channelId)
+  if (complete && connection && home?.id === record.channelId)
     return (
       <>
         <div className="flex flex-wrap items-center gap-3 px-6 py-3">
@@ -230,13 +238,16 @@ function Setup({
               : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
           </p>
         </div>
-        <ChannelPreview
+        <ConversationChannel
           session={connection.session}
-          channelId={home}
-          channelName="Bestie"
+          scope={connection.session.scope}
           extensions={extensions}
-          label="Bestie conversation"
-        />
+          host={host}
+          channel={home}
+          active
+        >
+          <ChannelPreview channelName="Bestie" label="Bestie conversation" />
+        </ConversationChannel>
       </>
     );
   return (
