@@ -106,7 +106,7 @@ function hostDeclarations(manifest: PluginManifest) {
           {process.bundled && <p className="mb-0 mt-2">Bundled with Buzz.</p>}
           {process.data && (
             <p className="mb-0 mt-2">
-              A program the plugin puts in its own data folder.
+              A program the plugin downloads into its own data folder.
             </p>
           )}
           <p className="mb-0 mt-2">

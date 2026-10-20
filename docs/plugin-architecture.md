@@ -749,9 +749,11 @@ never searches PATH; the Goose plugin runs `goose-acp` this way. A process
 declared with `"data": true` runs a program the plugin downloaded into its own
 data folder, `<local data>/Buzz/plugins/<plugin id>` (shared by every Buzz build
 on the computer), and never searches PATH. Its `program` is a `/`-separated path
-in that folder, such as `current/claude.exe`, with no `.` or `..`; until the file
-exists, starting it fails with "… is not installed". Every process a plugin starts
-finds the folder in `BUZZ_PLUGIN_DATA`.
+in that folder naming the exact file, extension included, such as
+`current/claude.exe`, with no `.` or `..`, and it cannot also be `bundled`. Until
+the file exists, starting it fails with "… is not installed". Every process a
+plugin starts finds the folder in `BUZZ_PLUGIN_DATA`, which the caller's `env`
+cannot replace.
 
 `agent` names an agent whose type the calling plugin registered. The
 process then runs as that agent, as harness agents do: native puts its key in

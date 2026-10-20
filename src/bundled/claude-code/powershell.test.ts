@@ -51,3 +51,28 @@ it("starts setup steps in PowerShell and Buzz's copy as its data program", async
   await windows("read", { args: ["./x"] });
   expect(spawn).toHaveBeenLastCalledWith("read", { args: ["./x"] });
 });
+
+it("looks once more for Buzz's copy while `use` swaps the link", async () => {
+  vi.useFakeTimers();
+  try {
+    const spawn = vi
+      .fn<Spawn>()
+      .mockRejectedValueOnce(new Error("current/claude.exe is not installed"))
+      .mockResolvedValueOnce({} as never);
+    const started = withPowerShell(spawn)("claude", { args: ["--version"] });
+    await vi.runAllTimersAsync();
+    await expect(started).resolves.toEqual({});
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenLastCalledWith("claude-exe", {
+      args: ["--version"],
+    });
+    // Anything else fails at once.
+    spawn.mockRejectedValueOnce(new Error("Access is denied"));
+    await expect(withPowerShell(spawn)("claude")).rejects.toThrow(
+      "Access is denied",
+    );
+    expect(spawn).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});

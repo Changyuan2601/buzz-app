@@ -296,8 +296,13 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         return Err("Invalid process arguments".into());
     }
     let path = effective_path();
-    let data = plugin_data_dir(&plugin)?;
-    let program = program_path(&declared, || app.path().resource_dir().ok(), &data, &path)?;
+    let data = plugin_data_dir(&plugin);
+    let program = program_path(
+        &declared,
+        || app.path().resource_dir().ok(),
+        data.as_deref(),
+        &path,
+    )?;
     let mut command = Command::new(program);
     command
         .args(&declared.args)
@@ -314,7 +319,6 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         }
     }
     command.env("PATH", &path);
-    command.env("BUZZ_PLUGIN_DATA", &data);
     for (name, value) in env.unwrap_or_default() {
         if name.is_empty() || name.contains(['=', '\0']) {
             return Err("Invalid environment variable".into());
@@ -323,6 +327,10 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             Some(value) => command.env(name, value),
             None => command.env_remove(name),
         };
+    }
+    // The host's, whatever the caller passed: data programs start from there.
+    if let Some(data) = &data {
+        command.env("BUZZ_PLUGIN_DATA", data);
     }
     if let Some(cwd) = cwd {
         let directory = expand_home(&cwd)?;
@@ -415,31 +423,34 @@ fn take_text(pending: &mut Vec<u8>) -> String {
 
 /// The plugin's own data folder, which every Buzz build on this computer
 /// shares, as a download there is shared. Its processes find it in
-/// `BUZZ_PLUGIN_DATA`; nothing creates it but them.
-fn plugin_data_dir(plugin: &str) -> Result<PathBuf, String> {
-    dirs::data_local_dir()
-        .map(|local| local.join("Buzz").join("plugins").join(plugin))
-        .ok_or_else(|| "No local data directory".into())
+/// `BUZZ_PLUGIN_DATA`; nothing creates it but them. None without a local data
+/// directory, when only data programs fail to start.
+fn plugin_data_dir(plugin: &str) -> Option<PathBuf> {
+    dirs::data_local_dir().map(|local| local.join("Buzz").join("plugins").join(plugin))
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.
 /// Where a declared program runs from. A bundled one is in the app's `bin`
 /// resources, which `tauri dev` also copies beside the debug executable, and is
-/// never looked up on `path`. A data one is in the plugin's data folder, and
-/// is not installed until the plugin puts it there. Windows adds `.exe` to a
-/// path itself.
+/// never looked up on `path`; Windows adds `.exe` to its name itself. A data one
+/// is the exact file, extension included, in the plugin's data folder, and is
+/// not installed until the plugin puts it there.
 fn program_path(
     declared: &HostProcess,
     resources: impl FnOnce() -> Option<PathBuf>,
-    data: &std::path::Path,
+    data: Option<&std::path::Path>,
     path: &OsStr,
 ) -> Result<PathBuf, String> {
     if declared.data {
+        let data = data.ok_or("No local data directory")?;
         let program = declared
             .program
             .split('/')
             .fold(data.to_path_buf(), |path, segment| path.join(segment));
-        if !program.is_file() {
+        // Only a missing file is not installed; other errors are the start's.
+        if std::fs::metadata(&program)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
             return Err(format!("{} is not installed", declared.program));
         }
         return Ok(program);

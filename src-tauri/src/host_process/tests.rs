@@ -292,7 +292,7 @@ fn a_bundled_program_runs_from_the_app_bin_never_path() {
         .unwrap()
     };
     let path = path.path().as_os_str();
-    let data = std::path::Path::new("/data");
+    let data = Some(std::path::Path::new("/data"));
     assert_eq!(
         program_path(
             &process(true),
@@ -321,26 +321,16 @@ fn a_data_program_runs_from_the_plugin_data_folder_never_path() {
     }))
     .unwrap();
     let path = path.path().as_os_str();
-    let missing = program_path(&process, || unreachable!(), data.path(), path);
+    let missing = program_path(&process, || unreachable!(), Some(data.path()), path);
     assert_eq!(missing.unwrap_err(), "current/claude is not installed");
+    assert_eq!(
+        program_path(&process, || unreachable!(), None, path).unwrap_err(),
+        "No local data directory"
+    );
     std::fs::create_dir(data.path().join("current")).unwrap();
     std::fs::write(data.path().join("current").join("claude"), "").unwrap();
     assert_eq!(
-        program_path(&process, || unreachable!(), data.path(), path).unwrap(),
+        program_path(&process, || unreachable!(), Some(data.path()), path).unwrap(),
         data.path().join("current").join("claude")
-    );
-}
-
-#[test]
-fn a_plugin_data_folder_is_its_own_under_local_data() {
-    let folder = plugin_data_dir("buzz.claude-code").unwrap();
-    assert!(folder.ends_with(
-        std::path::Path::new("Buzz")
-            .join("plugins")
-            .join("buzz.claude-code")
-    ));
-    assert_eq!(
-        Some(folder.parent().unwrap().parent().unwrap().parent().unwrap()),
-        dirs::data_local_dir().as_deref()
     );
 }

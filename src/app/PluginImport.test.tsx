@@ -300,7 +300,9 @@ it("shows exact declared access and changes before an enabled update", async () 
   );
   await waitFor(() =>
     expect(
-      screen.getByText("A program the plugin puts in its own data folder."),
+      screen.getByText(
+        "A program the plugin downloads into its own data folder.",
+      ),
     ).toBeVisible(),
   );
   expect(

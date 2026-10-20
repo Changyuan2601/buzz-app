@@ -21,7 +21,8 @@ export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and file uploads and history
   // still run `base64`, `grep` and `pwd`, which stock Windows lacks; no
-  // unusable type elsewhere. Windows setup already runs claude.ps1.
+  // unusable type elsewhere. Once those move to the host, Windows setup is
+  // ready to run claude.ps1 below.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;

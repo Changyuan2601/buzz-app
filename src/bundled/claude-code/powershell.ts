@@ -33,6 +33,8 @@ export function encodeCommand(script: string, args: readonly string[]) {
   return encoded;
 }
 
+/** How long a start that found no `current` waits before looking again. */
+const RETRY_MS = 250;
 /** The claude.ps1 step behind each process the plugin starts by name. */
 const STEPS: Readonly<Record<string, string>> = {
   install: "install",
@@ -53,10 +55,17 @@ export const withPowerShell =
         ...options,
         args: [encodeCommand(script, [step, ...(options?.args ?? [])])],
       });
+    // A release named to test it is whichever `next` names now; the test
+    // checks the version it reports.
+    if (id === "claude" && options?.env?.BUZZ_CLAUDE_VERSION)
+      return spawn("claude-next", options);
     if (id === "claude")
-      return spawn(
-        options?.env?.BUZZ_CLAUDE_VERSION ? "claude-next" : "claude-exe",
-        options,
-      );
+      return spawn("claude-exe", options).catch(async (error: unknown) => {
+        // `use` moves `current` aside a moment before the new link takes its
+        // place; a start then finds nothing, so it looks once more.
+        if (!/ is not installed$/.test(String(error))) throw error;
+        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+        return spawn("claude-exe", options);
+      });
     return spawn(id, options);
   };

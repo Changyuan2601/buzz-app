@@ -106,7 +106,8 @@ fn valid_data_program(program: &str, args: &[String]) -> bool {
     program.len() <= 200
         && program
             .split('/')
-            .all(|segment| segment != "." && segment != ".." && valid_program(segment, args))
+            .all(|segment| segment != "." && segment != ".." && valid_program(segment, &[]))
+        && valid_program("data", args)
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
