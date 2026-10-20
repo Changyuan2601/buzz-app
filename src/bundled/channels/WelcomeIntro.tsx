@@ -54,10 +54,6 @@ export function WelcomeIntro({ children }: { children?: ReactNode }) {
 
 /** No draft, recipient, upload or publication capability exists until setup is confirmed. */
 export function WelcomeComposer({ phase }: { phase: "connect" | "customize" }) {
-  const prompt =
-    phase === "connect"
-      ? "Connect your AI provider to start chatting"
-      : "Pick a name and select Submit to start chatting";
   return (
     <div className={styles.lockedComposer}>
       <Composer
@@ -65,8 +61,11 @@ export function WelcomeComposer({ phase }: { phase: "connect" | "customize" }) {
         onValueChange={() => {}}
         disabled
         label="Message your agent"
-        placeholder={phase === "connect" ? prompt : "Message your agent"}
-        status={phase === "customize" ? prompt : undefined}
+        placeholder={
+          phase === "connect"
+            ? "Connect your AI provider to start chatting"
+            : "Message your agent"
+        }
       />
     </div>
   );
