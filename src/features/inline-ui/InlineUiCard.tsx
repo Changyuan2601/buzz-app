@@ -1,6 +1,5 @@
 import { useContext, useState } from "react";
 import { randomAgentAvatar } from "../agents/avatar-packs";
-import { ArrowsShuffleIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -100,6 +99,8 @@ function ChoiceForm({
             </div>
             <div className={styles.shuffle}>
               <Button
+                variant="outline"
+                size="sm"
                 disabled={busy}
                 onClick={() => {
                   let next = randomAgentAvatar();
@@ -107,7 +108,6 @@ function ChoiceForm({
                   setAvatar(next);
                 }}
               >
-                <ArrowsShuffleIcon size={16} />
                 Shuffle
               </Button>
             </div>
