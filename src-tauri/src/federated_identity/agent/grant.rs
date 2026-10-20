@@ -17,6 +17,8 @@ pub(crate) struct Grant {
     pub(crate) agent: String,
     /// The enrolling BB account's session email.
     pub(crate) account: String,
+    /// The `nip_fi_issuer` that granted it, which its assertions must carry.
+    pub(crate) issuer: String,
     pub(crate) token: String,
 }
 impl Drop for Grant {
@@ -25,12 +27,19 @@ impl Drop for Grant {
     }
 }
 impl Grant {
-    pub(crate) fn new(owner: String, agent: String, account: String, token: String) -> Self {
+    pub(crate) fn new(
+        owner: String,
+        agent: String,
+        account: String,
+        issuer: String,
+        token: String,
+    ) -> Self {
         Self {
             version: 1,
             owner,
             agent,
             account,
+            issuer,
             token,
         }
     }
@@ -124,7 +133,13 @@ pub(crate) mod tests {
     }
 
     fn enrolled(store: &MemoryGrants, account: &str) {
-        let grant = Grant::new("owner".into(), "agent".into(), account.into(), "g".into());
+        let grant = Grant::new(
+            "owner".into(),
+            "agent".into(),
+            account.into(),
+            "issuer".into(),
+            "g".into(),
+        );
         store.write("key", &grant).unwrap();
     }
 
