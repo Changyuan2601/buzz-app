@@ -32,6 +32,28 @@
   justify-content: flex-end;
   gap: var(--space-3);
 }
+/* Each shuffled avatar spins in like a flipped coin. */
+.avatar[data-spin] {
+  animation: avatar-spin 480ms var(--easing-enter) both;
+}
+@keyframes avatar-spin {
+  from {
+    transform: perspective(24rem) rotateY(-360deg) scale(0.85);
+  }
+  to {
+    transform: perspective(24rem) rotateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar[data-spin] {
+    animation: avatar-fade var(--duration-settle) var(--easing-settle) both;
+  }
+  @keyframes avatar-fade {
+    from {
+      opacity: 0;
+    }
+  }
+}
 .shuffle {
   justify-self: start;
 }

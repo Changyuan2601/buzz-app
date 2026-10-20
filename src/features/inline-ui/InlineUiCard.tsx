@@ -60,6 +60,7 @@ function ChoiceForm({
 }) {
   const profile = ui.pattern === "profile";
   const [avatar, setAvatar] = useState(randomAgentAvatar);
+  const [shuffled, setShuffled] = useState(false);
   const [choice, setChoice] = useState<string | null>(null);
   const [own, setOwn] = useState("");
   const [busy, setBusy] = useState(false);
@@ -89,7 +90,11 @@ function ChoiceForm({
       >
         {profile && (
           <div className={styles.avatarRow}>
-            <div className={styles.avatar}>
+            <div
+              key={avatar.id}
+              className={styles.avatar}
+              data-spin={shuffled || undefined}
+            >
               <Avatar
                 size="fill"
                 src={avatar.preview}
@@ -106,6 +111,7 @@ function ChoiceForm({
                   let next = randomAgentAvatar();
                   while (next.id === avatar.id) next = randomAgentAvatar();
                   setAvatar(next);
+                  setShuffled(true);
                 }}
               >
                 Shuffle
