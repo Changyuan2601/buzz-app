@@ -23,6 +23,8 @@ export type Settled = Readonly<{
   error?: string;
   /** The JSON-RPC code of the harness's error answer behind `error`. */
   code?: number;
+  /** Buzz's own advice for a failure it raised (`HintedError`). */
+  hint?: string;
   /** What the harness wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
   /** The message gave up before any turn took it in. */

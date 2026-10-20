@@ -5,7 +5,7 @@
 // a Buzz key. What a harness adds to plain ACP comes from its `AcpHooks`.
 import type { HostMcpServer, HostProcess } from "../../host/service";
 import { AcpSession } from "./session";
-import { allow, errorMessage } from "./steps";
+import { allow, errorMessage, HintedError } from "./steps";
 import type {
   AcpHooks,
   Choice,
@@ -126,7 +126,7 @@ export class AcpProcess {
       },
     }).catch((error: unknown) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
-        ? new Error(hooks.missing)
+        ? new HintedError(hooks.missing, hooks.missing)
         : error;
     });
     // A cancel while the host starts it rejects at once; the harness that
@@ -180,7 +180,7 @@ export class AcpProcess {
       await acp.stop(STOP_TIMEOUT_MS);
       // A program `env` cannot find or run exits before it answers.
       if (hooks.diagnoseStartup && MISSING_CODES.has(acp.code ?? 0))
-        throw new Error(hooks.missing);
+        throw new HintedError(hooks.missing, hooks.missing);
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);

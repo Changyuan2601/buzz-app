@@ -47,8 +47,8 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { standalonePrompt } from "../goose/runtime";
-import { type Config, config, UNCONFIRMED } from "./config";
-import { HarnessProcess, missing } from "./harness";
+import { type Config, config } from "./config";
+import { HarnessProcess } from "./harness";
 import { preset } from "./presets";
 
 const NAMES_TIMEOUT_MS = 2_000;
@@ -310,7 +310,10 @@ export class AcpRuntime {
             channel,
             event,
             topLevel,
-            this.hint(entry.config, result.error, result.code, first),
+            result.hint ??
+              (first && result.code === AUTH_REQUIRED
+                ? preset(entry.config.preset)?.login
+                : undefined),
           );
       })
       .catch((error) => console.warn("ACP agent turn failed", error))
@@ -318,7 +321,8 @@ export class AcpRuntime {
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
-   * session that joins no conversation. */
+   * session that joins no conversation. Its failure goes only to the app log,
+   * whole (`wake` in `agent-harness/wakes.ts`). */
   async runOnce({
     delivery,
     key,
@@ -349,30 +353,14 @@ export class AcpRuntime {
     return note ? `${text}\n\n${note}` : text;
   }
 
-  /** What the owner can do about a failed turn, in words of our own: none
-   * of the harness's text. Signing in is asked on a new session's first
-   * turn. */
-  private hint(
-    settings: Config,
-    error: string,
-    code: number | undefined,
-    first: boolean,
-  ) {
-    // Ours, so posting it carries nothing the harness wrote.
-    const ours = [UNCONFIRMED, missing(settings.preset, settings.command)].find(
-      (text) => error.endsWith(text),
-    );
-    if (ours) return ours;
-    if (first && code === AUTH_REQUIRED) return preset(settings.preset)?.login;
-  }
-
   /** Says in the thread that a turn failed, so nobody waits on it. */
   private report(
     agent: AgentHandle,
     channel: string,
     event: EventData,
     topLevel: boolean,
-    /** What to do about it. */
+    /** What to do about it, in words of our own: none of the harness's.
+     * Signing in is asked on a new session's first turn. */
     hint?: string,
   ) {
     return this.post(

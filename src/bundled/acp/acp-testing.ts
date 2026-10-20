@@ -85,25 +85,11 @@ export function fakeHarness(
     };
   };
   const spawn = async (
-    id: string,
+    _id: string,
     process: HostProcessOptions = {},
   ): Promise<HostProcess> => {
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => (exit = resolve));
-    if (id === "workspace") {
-      queueMicrotask(() => {
-        process.onStdout?.(
-          `${(process.cwd ?? "").replace(/^~/, "/home/test")}\n`,
-        );
-        exit(0);
-      });
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited,
-      };
-    }
     let alive = true;
     const end = (code: number | null) => {
       if (!alive) return;
