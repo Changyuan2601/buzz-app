@@ -140,3 +140,47 @@ it.each([
     }
   },
 );
+it("keeps the public fallback's close code, so repeated 1008s stop", async () => {
+  vi.useFakeTimers();
+  const browsers: { onclose: ((event: CloseEvent) => void) | null }[] = [];
+  vi.stubGlobal(
+    "WebSocket",
+    class {
+      onopen = null;
+      onmessage = null;
+      onerror = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      constructor() {
+        browsers.push(this);
+      }
+      close() {}
+    },
+  );
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "relay_socket_connect"
+      ? Promise.resolve("public")
+      : Promise.resolve(),
+  );
+  const h = connect();
+  const deny = () =>
+    browsers
+      .at(-1)
+      ?.onclose?.(new CloseEvent("close", { code: 1008, reason: "denied" }));
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    deny();
+    expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+      status: "retrying",
+      error: "Live connection closed (1008: denied)",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(browsers).toHaveLength(2);
+    deny();
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("error");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(browsers).toHaveLength(2);
+  } finally {
+    h.owner.dispose();
+    vi.unstubAllGlobals();
+  }
+});

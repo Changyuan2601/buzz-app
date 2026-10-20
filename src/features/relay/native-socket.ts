@@ -53,7 +53,7 @@ export class NativeSocket implements LiveSocket {
         ws.onerror = (event) => {
           if (!this.closed) this.onerror?.(event);
         };
-        ws.onclose = () => this.finish();
+        ws.onclose = (event) => this.finish(event?.code, event?.reason);
       } else {
         this.readyState = 1;
         this.onopen?.(new Event("open"));
