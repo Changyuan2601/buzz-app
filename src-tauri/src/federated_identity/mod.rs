@@ -97,6 +97,7 @@ struct State {
 struct Inner {
     config: Option<Config>,
     fingerprint: String,
+    #[allow(dead_code)] // Consumed by the agent token client.
     account: String,
     store: Arc<dyn Store>,
     state: Mutex<State>,
@@ -205,6 +206,7 @@ impl FederatedIdentity {
         }
         Ok(state.cancellation.clone())
     }
+    #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn account_changes(&self) -> watch::Receiver<Option<SessionChange>> {
         self.0.account_changes.subscribe()
     }
@@ -221,6 +223,7 @@ impl FederatedIdentity {
         self.signal(change);
     }
     /// Lend the current session token to `use_session` without letting it escape.
+    #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn with_session<T>(
         &self,
         use_session: impl FnOnce(&Zeroizing<String>, &str, &Config) -> T,
@@ -237,6 +240,7 @@ impl FederatedIdentity {
         Some(use_session(&token, &revision, config))
     }
     /// Secure-store account for an agent grant in this profile and deployment.
+    #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn agent_grant_key(&self, owner: &str, agent: &str) -> String {
         store::agent_grant_key(&self.0.account, owner, agent)
     }

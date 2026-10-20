@@ -9,6 +9,7 @@ import {
 import { SettingsCardsService } from "../features/settings/service";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
+import { FederatedIdentityService } from "../features/federated-identity/service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
@@ -44,6 +45,7 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  const federatedIdentity = new FederatedIdentityService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
@@ -137,6 +139,7 @@ export function createServices() {
     pages,
     panels,
     plugins,
+    federatedIdentity,
     relay,
     communities,
     invites,

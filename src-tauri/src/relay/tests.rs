@@ -203,6 +203,7 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
     let body = r#"[{"kinds":[0],"limit":5}]"#;
     let result = send(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         "POST",
         Some(body.into()),
@@ -254,6 +255,7 @@ async fn memory_response_limit_rejects_before_generic_transport_budget() {
     let (url, task) = fixture_server(response);
     let result = send(
         &IdentityHost::fixture(),
+        None,
         url,
         "POST",
         Some("[]".into()),
@@ -289,6 +291,7 @@ fn managed_agent_deletion_is_owner_only_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -369,6 +372,7 @@ async fn catalog_signing_admits_maximum_escaped_content_through_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -479,6 +483,7 @@ fn isolated_agent_ipc_probe() {
     use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .manage(Uploads::default())
         .manage(Spools::new(Ok(
             std::env::temp_dir().join(format!("buzz-spool-ipc-{}", uuid::Uuid::new_v4()))
@@ -648,19 +653,14 @@ fn isolated_agent_ipc_probe() {
     verify(&event);
 
     let repository = format!("https://relay.test/git/{}/plugins", "a".repeat(64));
-    let token = invoke(
-        "relay_git_authorization",
-        serde_json::json!({"community": "https://relay.test", "repository": repository}),
-    )
-    .unwrap();
-    let auth: serde_json::Value =
-        serde_json::from_slice(&STANDARD.decode(token.as_str().unwrap()).unwrap()).unwrap();
-    verify(&auth);
-    assert_eq!(auth["pubkey"], public);
-    assert_eq!(auth["kind"], 27235);
+    // This unresolved fixture relay cannot admit repository authorization.
     assert_eq!(
-        auth["tags"],
-        serde_json::json!([["u", repository], ["method", "GET"]])
+        invoke(
+            "relay_git_authorization",
+            serde_json::json!({"community":"https://relay.test", "repository":repository})
+        )
+        .unwrap_err(),
+        serde_json::json!("Federated community discovery failed")
     );
     assert!(invoke(
         "relay_git_authorization",
@@ -803,6 +803,7 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -938,6 +939,7 @@ async fn workflow_get_is_authenticated_without_payload_and_never_redirects() {
     url.set_query(Some("limit=20"));
     let response = send(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         "GET",
         None,
@@ -1048,6 +1050,7 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1107,6 +1110,7 @@ fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1164,6 +1168,7 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -2048,6 +2053,7 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
     let response = fetch_media(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         Some("bytes=0-3".into()),
     )
@@ -2140,14 +2146,15 @@ async fn tiny_media_reads_share_one_signed_block_fetch() {
     let host = IdentityHost::fixture();
     // AVFoundation's opening reads, two of them racing from separate players.
     let (header, atom) = tokio::join!(
-        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX),
-        media_blocks::read(&host, &url, 32, 39, WHOLE_VIDEO_MAX),
+        media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX),
+        media_blocks::read(&host, None, &url, 32, 39, WHOLE_VIDEO_MAX),
     );
     let (header, atom) = (header.unwrap(), atom.unwrap());
     assert_eq!(header.body(), &blob[0..8]);
     assert_eq!(atom.body(), &blob[32..40]);
     let tail = media_blocks::read(
         &host,
+        None,
         &url,
         2990,
         2990 + 4 * 1024 * 1024 - 1,
@@ -2177,7 +2184,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         .join(&format!("/media/{}.mp4", "d".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let across = media_blocks::read(&host, &url, block - 4, block + 3, WHOLE_VIDEO_MAX)
+    let across = media_blocks::read(&host, None, &url, block - 4, block + 3, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(across.body(), &blob[block as usize - 4..block as usize + 4]);
@@ -2186,7 +2193,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         format!("bytes {}-{}/{}", block - 4, block + 3, block + 100)
     );
     assert_eq!(
-        media_blocks::read(&host, &url, block + 100, block + 200, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, block + 100, block + 200, WHOLE_VIDEO_MAX)
             .await
             .unwrap_err(),
         416
@@ -2209,12 +2216,12 @@ async fn failed_media_blocks_are_fetched_again() {
         .unwrap();
     let host = IdentityHost::fixture();
     assert_eq!(
-        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
             .await
             .unwrap_err(),
         503
     );
-    let retried = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let retried = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(retried.body(), &blob[..8]);
@@ -2275,7 +2282,7 @@ async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
             .unwrap();
         let host = IdentityHost::fixture();
         for _ in 0..2 {
-            let response = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+            let response = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap();
             assert_eq!(response.status(), 200);
@@ -2368,8 +2375,8 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
     let limit = WHOLE_VIDEO_MAX;
     // Two players open the video at once; they share one spool.
     let (header, tail) = tokio::join!(
-        media_blocks::read(&host, &url, 0, 7, limit),
-        media_blocks::read(&host, &url, length - 8, length + 100, limit),
+        media_blocks::read(&host, None, &url, 0, 7, limit),
+        media_blocks::read(&host, None, &url, length - 8, length + 100, limit),
     );
     let (header, tail) = (header.unwrap(), tail.unwrap());
     assert_eq!(header.status(), 206);
@@ -2387,7 +2394,7 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
         format!("bytes {}-{}/{length}", length - 8, length - 1)
     );
     // A seek across blocks reads the same file.
-    let seek = media_blocks::read(&host, &url, 2 * block - 4, 2 * block + 3, limit)
+    let seek = media_blocks::read(&host, None, &url, 2 * block - 4, 2 * block + 3, limit)
         .await
         .unwrap();
     assert_eq!(
@@ -2395,7 +2402,7 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
         &blob[2 * block as usize - 4..2 * block as usize + 4]
     );
     assert_eq!(
-        media_blocks::read(&host, &url, length, length + 8, limit)
+        media_blocks::read(&host, None, &url, length, length + 8, limit)
             .await
             .unwrap_err(),
         416
@@ -2422,7 +2429,7 @@ async fn whole_videos_follow_the_configured_limit_boundary() {
         let url = base
             .join(&format!("/media/{}.mp4", name.repeat(64)))
             .unwrap();
-        let read = media_blocks::read(&host, &url, length - 4, length - 1, limit).await;
+        let read = media_blocks::read(&host, None, &url, length - 4, length - 1, limit).await;
         match expected {
             Ok(()) => {
                 let read = read.unwrap();
@@ -2436,7 +2443,7 @@ async fn whole_videos_follow_the_configured_limit_boundary() {
                 assert_eq!(read.unwrap_err(), status, "{name}");
                 // A rejected video is fetched again, never answered from a spool.
                 assert_eq!(
-                    media_blocks::read(&host, &url, 0, 7, limit)
+                    media_blocks::read(&host, None, &url, 0, 7, limit)
                         .await
                         .unwrap_err(),
                     status
@@ -2460,7 +2467,7 @@ async fn truncated_whole_videos_fail_and_are_fetched_again() {
     let host = IdentityHost::fixture();
     for _ in 0..2 {
         assert_eq!(
-            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX)
+            media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap_err(),
             502
@@ -2482,7 +2489,7 @@ async fn abandoned_whole_video_downloads_stop_and_delete_their_file() {
         .join(&format!("/media/{}.mp4", "8".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let first = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(first.body(), &blob[..8]);
@@ -2536,7 +2543,7 @@ async fn a_third_live_video_evicts_the_oldest_download_and_its_file() {
             .unwrap();
         let host = host.clone();
         tokio::spawn(async move {
-            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await
+            media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await
         })
     };
     let first = load("a");
@@ -2610,9 +2617,9 @@ async fn concurrent_opens_of_one_new_video_evict_only_one_player() {
     let host = std::sync::Arc::new(IdentityHost::fixture());
     let load = |url: &Url, start: u64, end: u64| {
         let (host, url) = (host.clone(), url.clone());
-        tokio::spawn(
-            async move { media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await },
-        )
+        tokio::spawn(async move {
+            media_blocks::read(&host, None, &url, start, end, WHOLE_VIDEO_MAX).await
+        })
     };
     let first = load(&urls[0], length - 4, length - 1);
     spool_files_reach(1).await;
@@ -2677,7 +2684,9 @@ async fn a_closed_player_waiting_for_an_unknown_length_stops_the_download() {
     let host = std::sync::Arc::new(IdentityHost::fixture());
     let read = {
         let (host, url) = (host.clone(), url.clone());
-        tokio::spawn(async move { media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX).await })
+        tokio::spawn(
+            async move { media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX).await },
+        )
     };
     spool_files_reach(1).await;
     // The player's connection closes, dropping the read it waits on.
@@ -2698,12 +2707,12 @@ async fn a_closed_player_waiting_on_a_seek_stops_the_download() {
         .join(&format!("/media/{}.mp4", "a".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let first = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(first.body(), &blob[..8]);
     // A seek near the end waits for bytes; then the player closes.
-    let seek = media_blocks::read(&host, &url, length - 8, length - 1, WHOLE_VIDEO_MAX);
+    let seek = media_blocks::read(&host, None, &url, length - 8, length - 1, WHOLE_VIDEO_MAX);
     assert!(tokio::time::timeout(Duration::from_millis(500), seek)
         .await
         .is_err());
@@ -2722,7 +2731,7 @@ async fn a_waiting_read_keeps_a_slow_download_alive() {
         .join(&format!("/media/{}.mp4", "b".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let read = media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await;
+    let read = media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await;
     assert_eq!(read.unwrap().body(), &blob[length as usize - 4..]);
     assert_eq!(hangups.load(std::sync::atomic::Ordering::SeqCst), 0);
     spool_files_deleted().await;
@@ -2774,13 +2783,13 @@ async fn invalid_partial_media_blocks_are_rejected_and_retried() {
     let host = IdentityHost::fixture();
     for status in expected.iter() {
         assert_eq!(
-            media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+            media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap_err(),
             *status
         );
     }
-    let read = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let read = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(read.status(), 206);
@@ -2788,7 +2797,7 @@ async fn invalid_partial_media_blocks_are_rejected_and_retried() {
     assert_eq!(read.headers()["content-range"], "bytes 0-7/3000");
     // Rejections were never cached; the valid block now is.
     assert_eq!(
-        media_blocks::read(&host, &url, 2992, 2999, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, 2992, 2999, WHOLE_VIDEO_MAX)
             .await
             .unwrap()
             .body(),
@@ -2807,7 +2816,7 @@ async fn media_proxy_passes_relay_denials_through_without_a_body() {
     );
     let url = base.join(&format!("/media/{}", "b".repeat(64))).unwrap();
     assert_eq!(
-        fetch_media(&IdentityHost::fixture(), url, None)
+        fetch_media(&IdentityHost::fixture(), None, url, None)
             .await
             .unwrap_err(),
         401
@@ -2827,7 +2836,7 @@ async fn upload(
     let path = directory.path().join("source");
     std::fs::write(&path, bytes).unwrap();
     let hash = upload_spool::hash_file(&path)?;
-    upload_file(host, url, kind, path, hash, progress).await
+    upload_file(host, None, url, kind, path, hash, progress).await
 }
 
 #[tokio::test]
@@ -3193,6 +3202,7 @@ fn member_commands_sign_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -3244,9 +3254,25 @@ fn member_commands_sign_through_production_ipc() {
     }
 }
 
-#[test]
-fn git_authorization_covers_only_this_communitys_repositories() {
+#[tokio::test]
+async fn git_authorization_covers_only_this_communitys_repositories() {
     let owner = "a".repeat(64);
+    let host = IdentityHost::fixture();
+    let repository = format!("https://relay.test/git/{owner}/plugins");
+    let token = git_authorization(
+        &host,
+        &git_repository("https://relay.test", &repository).unwrap(),
+    )
+    .await
+    .unwrap();
+    let auth: serde_json::Value = serde_json::from_slice(&STANDARD.decode(token).unwrap()).unwrap();
+    verify(&auth);
+    assert_eq!(auth["pubkey"], host.viewer().await.unwrap());
+    assert_eq!(auth["kind"], 27235);
+    assert_eq!(
+        auth["tags"],
+        serde_json::json!([["u", repository], ["method", "GET"]])
+    );
     for repository in [
         format!("https://relay.test/git/{owner}/plugins"),
         format!("https://relay.test/git/{owner}/plugins.git"),
@@ -3306,10 +3332,10 @@ async fn spool_processing_cleans_after_upstream_and_conversion_failures() {
         drop(listener);
         let result = process_spool(
             &IdentityHost::fixture(),
+            None,
             url,
             spool,
-            None,
-            preparation,
+            (None, preparation),
             None,
             &mut cancel,
         )
@@ -3336,10 +3362,10 @@ async fn cancelled_spool_processing_never_starts_upstream_and_cleans() {
     uploads.cancel("cancel");
     assert!(process_spool(
         &IdentityHost::fixture(),
+        None,
         Url::parse("https://relay.test/upload").unwrap(),
         spool,
-        None,
-        None,
+        (None, None),
         None,
         &mut cancel
     )
@@ -3422,10 +3448,10 @@ async fn converted_spool_streams_signed_output_then_removes_both_files() {
     });
     let response = process_spool(
         &IdentityHost::fixture(),
+        None,
         url,
         spool,
-        None,
-        Some("video:avi"),
+        (None, Some("video:avi")),
         None,
         &mut cancel,
     )
@@ -3473,7 +3499,7 @@ async fn running_upstream_cancellation_closes_request_and_cleans_spool() {
         socket.read(&mut block).unwrap()
     });
     let host = IdentityHost::fixture();
-    let work = process_spool(&host, url, spool, None, None, None, &mut cancel);
+    let work = process_spool(&host, None, url, spool, (None, None), None, &mut cancel);
     tokio::pin!(work);
     tokio::select! {
         _ = ready => uploads.cancel("running"),
@@ -3602,7 +3628,7 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
         ));
         let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
         let response =
-            fetch_media_bounded(&IdentityHost::fixture(), url.clone(), None, limit).await;
+            fetch_media_bounded(&IdentityHost::fixture(), None, url.clone(), None, limit).await;
         assert_eq!(
             response.as_ref().map(|_| ()).map_err(|status| *status),
             expected

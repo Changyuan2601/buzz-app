@@ -23,6 +23,7 @@ const scopeOf = (request: WireRequest) =>
   filtersOf(request).flatMap((f) => f["#h"] ?? []);
 class Socket {
   readyState = 1;
+  onopen?: () => void;
   onmessage?: (event: { data: string }) => Promise<void>;
   onclose?: () => void;
   onerror?: () => void;
@@ -49,6 +50,20 @@ class Socket {
   }
 }
 afterEach(() => vi.useRealTimers());
+it("keeps the browser authentication deadline measured from construction", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await vi.advanceTimersByTimeAsync(9000);
+    h.first.onopen?.();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("retrying");
+  } finally {
+    h.owner.dispose();
+  }
+});
 function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
   const key = keypair(),
     sockets: Socket[] = [];

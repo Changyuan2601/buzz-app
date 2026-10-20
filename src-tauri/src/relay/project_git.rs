@@ -3,6 +3,7 @@
 //! an isolated bare repository that is removed after every outcome. No checkout, hooks,
 //! submodules, user Git configuration, arbitrary URL or write RPC.
 use super::{hex_key, origin, upload_id, RelayResponse, Result, Uploads};
+use crate::federated_identity::{assertion::Authorization, FederatedIdentity};
 use crate::identity::{EventTemplate, IdentityHost};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
@@ -99,6 +100,7 @@ fn failure(status: u16) -> RelayResponse {
 #[tauri::command]
 pub(crate) async fn relay_project_git(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     id: String,
     read: GitRead,
@@ -117,9 +119,34 @@ pub(crate) async fn relay_project_git(
     else {
         return Ok(failure(CANCELLED));
     };
-    let response = serve(&url, &read, cancelled, sign(host.inner(), &url)).await;
+    let operation = async {
+        let assertion = super::evidence(
+            host.inner(),
+            Some(fi.inner()),
+            &url::Url::parse(&url).map_err(|_| "Invalid repository")?,
+        )
+        .await?;
+        let lease = assertion
+            .as_ref()
+            .map(|authorization| (fi.inner().clone(), authorization.clone()));
+        let proof = async {
+            let mut header = sign(host.inner(), &url).await?;
+            super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
+            if let Some(header_value) = assertion
+                .as_ref()
+                .and_then(|authorization| authorization.header())
+            {
+                header.push_str(&format!("\n{}: {}", super::HEADER, header_value));
+            }
+            Ok(header)
+        };
+        let response = serve(&url, &read, cancelled, proof, lease).await;
+        super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
+        response
+    }
+    .await;
     cancels().finish(id);
-    response
+    operation
 }
 
 #[tauri::command]
@@ -158,8 +185,17 @@ async fn serve(
     read: &GitRead,
     mut cancelled: oneshot::Receiver<()>,
     auth: impl Future<Output = Result<String>>,
+    lease: Option<(FederatedIdentity, Authorization)>,
 ) -> Result<RelayResponse> {
-    let deadline = Instant::now() + DEADLINE;
+    let deadline = Instant::now()
+        + lease.as_ref().map_or(DEADLINE, |(_, authorization)| {
+            DEADLINE.min(authorization.remaining())
+        });
+    let retirement = lease
+        .as_ref()
+        .map(|(fi, authorization)| fi.authorization_cancellation(authorization))
+        .transpose()?
+        .unwrap_or_default();
     let (cancel, stop) = watch::channel(false);
     let work = async {
         let _slot = tokio::select! {
@@ -171,7 +207,11 @@ async fn serve(
             .prefix("buzz-project-read-")
             .tempdir()
             .map_err(|_| "Repository read failed")?;
-        let git = Git::new(directory.path(), &header, deadline, stop);
+        let mut git = Git::new(directory.path(), &header, url, deadline, stop);
+        git.admission = lease.map(|(fi, authorization)| {
+            Box::new(move || fi.authorization_current(&authorization))
+                as Box<dyn Fn() -> bool + Send + Sync>
+        });
         let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
@@ -182,6 +222,10 @@ async fn serve(
     tokio::pin!(work);
     tokio::select! {
         response = &mut work => response,
+        _ = retirement.cancelled() => {
+            let _ = cancel.send(true);
+            work.await
+        }
         _ = &mut cancelled => {
             let _ = cancel.send(true);
             work.await
@@ -235,6 +279,7 @@ struct Git {
     deadline: Instant,
     stop: watch::Receiver<bool>,
     store_bytes: u64,
+    admission: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 
 /// Only the Git read has this macOS availability rule. The Apple shim is an
@@ -278,15 +323,20 @@ fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
 }
 
 impl Git {
-    fn new(directory: &Path, header: &str, deadline: Instant, stop: watch::Receiver<bool>) -> Self {
+    fn new(
+        directory: &Path,
+        header: &str,
+        repository: &str,
+        deadline: Instant,
+        stop: watch::Receiver<bool>,
+    ) -> Self {
         // `ls-remote` runs before `init`. A ceiling at the read directory's
         // parent prevents discovery of a repository there or above it.
         let ceiling = directory
             .parent()
             .expect("temporary read directory has a parent");
         let path = crate::host_command::effective_path();
-        let settings = [
-            ("http.extraHeader", header),
+        let mut settings: Vec<(String, String)> = vec![
             ("http.followRedirects", "false"),
             ("credential.helper", ""),
             ("core.hooksPath", "/dev/null"),
@@ -295,7 +345,13 @@ impl Git {
             ("protocol.https.allow", "always"),
             ("fetch.fsckObjects", "true"),
             ("transfer.fsckObjects", "true"),
-        ];
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect();
+        for header in header.lines() {
+            settings.push((format!("http.{repository}.extraHeader"), header.into()));
+        }
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
             .filter(|(name, _)| !name.to_string_lossy().starts_with("GIT_"))
             .filter(|(name, _)| !name.eq_ignore_ascii_case("PATH"))
@@ -310,8 +366,8 @@ impl Git {
             ("GIT_CONFIG_COUNT".into(), settings.len().to_string().into()),
         ]);
         for (index, (name, value)) in settings.iter().enumerate() {
-            env.push((format!("GIT_CONFIG_KEY_{index}").into(), (*name).into()));
-            env.push((format!("GIT_CONFIG_VALUE_{index}").into(), (*value).into()));
+            env.push((format!("GIT_CONFIG_KEY_{index}").into(), name.into()));
+            env.push((format!("GIT_CONFIG_VALUE_{index}").into(), value.into()));
         }
         Self {
             program: git_program(&path),
@@ -320,12 +376,19 @@ impl Git {
             deadline,
             stop,
             store_bytes: STORE_BYTES,
+            admission: None,
         }
     }
 
     /// Stdout and stored objects are bounded. On failure, timeout or cancellation the whole
     /// process tree (remote helpers, index-pack) is killed and Git is reaped before returning.
     async fn run(&self, args: &[&str]) -> Read<Vec<u8>> {
+        if self.retired() {
+            return Err(CANCELLED);
+        }
+        if Instant::now() >= self.deadline {
+            return Err(503);
+        }
         let mut command = Command::new(self.program.as_ref().ok_or(503u16)?);
         command
             .args(args)
@@ -338,6 +401,12 @@ impl Git {
             .kill_on_drop(true);
         #[cfg(unix)]
         command.as_std_mut().process_group(0);
+        if self.retired() {
+            return Err(CANCELLED);
+        }
+        if Instant::now() >= self.deadline {
+            return Err(503);
+        }
         #[cfg(windows)]
         let job = crate::host_command::windows_job::WindowsJob::new().ok_or(502u16)?;
         #[cfg(windows)]
@@ -385,9 +454,15 @@ impl Git {
         outcome
     }
 
+    fn retired(&self) -> bool {
+        *self.stop.borrow() || self.admission.as_ref().is_some_and(|current| !current())
+    }
     async fn over_budget(&self) -> u16 {
         loop {
             tokio::time::sleep(Duration::from_millis(100)).await;
+            if self.retired() {
+                return CANCELLED;
+            }
             if stored(&self.directory) > self.store_bytes {
                 return 502;
             }

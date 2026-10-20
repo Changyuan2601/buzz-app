@@ -175,6 +175,7 @@ impl Store for SecureStore {
 
 /// Secure-store account for one agent's grant, beside (never inside) the
 /// owner's session record: same profile and deployment scoping, its own key.
+#[allow(dead_code)] // Consumed by the agent token client.
 pub(crate) fn agent_grant_key(account: &str, owner: &str, agent: &str) -> String {
     use sha2::{Digest, Sha256};
     format!(

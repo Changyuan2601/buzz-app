@@ -34,6 +34,7 @@ fn production_git(directory: &Path) -> Git {
     Git::new(
         directory,
         "Authorization: Nostr test",
+        "https://example.test/repo.git",
         Instant::now() + DEADLINE,
         STOP.get_or_init(|| watch::channel(false).0).subscribe(),
     )
@@ -400,15 +401,46 @@ fn closes(mut stream: std::net::TcpStream) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn retired_admission_kills_a_running_helper_and_refuses_the_next_git_command() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let (url, accepted) = silent_remote();
+    let directory = tempfile::tempdir().unwrap();
+    let mut git = production_git(directory.path());
+    let current = Arc::new(AtomicBool::new(true));
+    let captured = current.clone();
+    git.admission = Some(Box::new(move || captured.load(Ordering::SeqCst)));
+    let worker = tokio::spawn(async move {
+        let result = git.run(&["ls-remote", "--symref", "--", &url]).await;
+        (git, result)
+    });
+    let stream = accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+    current.store(false, Ordering::SeqCst);
+    let (mut git, result) = worker.await.unwrap();
+    assert_eq!(result.err(), Some(CANCELLED));
+    assert!(
+        closes(stream),
+        "retired admission left a credential-bearing helper running"
+    );
+    git.program = None;
+    assert_eq!(git.run(&["fetch", "HEAD"]).await.err(), Some(CANCELLED));
+}
+#[tokio::test(flavor = "multi_thread")]
 async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
     let (url, accepted) = silent_remote();
     let start = |url: String| {
         let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
         let (cancel, cancelled) = oneshot::channel();
         let task = tokio::spawn(async move {
-            serve(&url, &base, cancelled, async {
-                Ok("Authorization: Nostr test".into())
-            })
+            serve(
+                &url,
+                &base,
+                cancelled,
+                async { Ok("Authorization: Nostr test".into()) },
+                None,
+            )
             .await
         });
         (cancel, task)

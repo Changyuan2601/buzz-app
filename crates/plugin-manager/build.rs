@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 #[path = "../build_env.rs"]
 mod build_env;
 
+#[path = "../../src-tauri/src/federated_identity/config.rs"]
+#[allow(dead_code)]
+mod federated_identity_config;
+
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 
 fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'static str> {
@@ -41,8 +45,26 @@ fn main() {
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("Native build inputs must be UTF-8"),
     };
+    const FI: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
+    println!("cargo:rerun-if-env-changed={FI}");
+    let fi = std::env::var(FI)
+        .ok()
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            federated_identity_config::Config::parse(&raw)
+                .expect("Invalid FI deployment descriptor")
+        });
+    println!(
+        "cargo:rustc-env={FI}={}",
+        fi.as_ref()
+            .map(|config| serde_json::to_string(config).expect("public FI descriptor"))
+            .unwrap_or_default()
+    );
     let origin =
         builderlab_origin(&local, process).expect("Invalid Builderlab build configuration");
+    if fi.is_some() && !origin.is_empty() {
+        panic!("BUZZ_BUILDERLAB_URL must be removed when FI is configured");
+    }
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
 }
 

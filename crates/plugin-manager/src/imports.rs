@@ -526,6 +526,8 @@ struct Git {
     deadline: Instant,
     /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
     authorization: Option<(String, String)>,
+    federated_header: Option<String>,
+    retired: Option<Box<dyn Fn() -> bool + Send>>,
 }
 impl Git {
     fn new() -> Result<Self> {
@@ -533,6 +535,8 @@ impl Git {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
             authorization: None,
+            federated_header: None,
+            retired: None,
         })
     }
     fn command(&self) -> Command {
@@ -570,21 +574,25 @@ impl Git {
         if let Some((url, token)) = &self.authorization {
             // Environment, not argv: other processes cannot read the token from `ps`.
             // No redirects, so the header never follows the request to another URL.
-            for (index, (key, value)) in [
+            let mut settings = vec![
                 (
                     format!("http.{url}.extraHeader"),
                     format!("Authorization: Nostr {token}"),
                 ),
                 ("http.followRedirects".into(), "false".into()),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            ];
+            if let Some(header) = &self.federated_header {
+                settings.push((
+                    format!("http.{url}.extraHeader"),
+                    format!("Nostr-Federated-Identity: {header}"),
+                ));
+            }
+            command.env("GIT_CONFIG_COUNT", settings.len().to_string());
+            for (index, (key, value)) in settings.into_iter().enumerate() {
                 command
                     .env(format!("GIT_CONFIG_KEY_{index}"), key)
                     .env(format!("GIT_CONFIG_VALUE_{index}"), value);
             }
-            command.env("GIT_CONFIG_COUNT", "2");
         }
         command
     }
@@ -594,6 +602,12 @@ impl Git {
         self.run_command(command, limit)
     }
     fn run_command(&self, mut command: Command, limit: u64) -> Result<Vec<u8>> {
+        if self.retired.as_ref().is_some_and(|retired| retired()) {
+            return Err("Repository authorization retired".into());
+        }
+        if Instant::now() >= self.deadline {
+            return Err("Repository import exceeded 60 seconds".into());
+        }
         let output = tempfile::tempfile().map_err(err)?;
         let errors = tempfile::tempfile().map_err(err)?;
         command
@@ -605,10 +619,19 @@ impl Git {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        if self.retired.as_ref().is_some_and(|retired| retired()) {
+            return Err("Repository authorization retired".into());
+        }
+        if Instant::now() >= self.deadline {
+            return Err("Repository import exceeded 60 seconds".into());
+        }
         let mut child = command
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
         let result = (|| loop {
+            if self.retired.as_ref().is_some_and(|retired| retired()) {
+                return Err("Repository authorization retired".into());
+            }
             if Instant::now() >= self.deadline {
                 return Err("Repository import exceeded 60 seconds".into());
             }
@@ -622,6 +645,9 @@ impl Git {
             }
             if let Some(status) = child.try_wait().map_err(err)? {
                 if !status.success() {
+                    if self.federated_header.is_some() {
+                        return Err("Git could not read the protected repository".into());
+                    }
                     let text = read_output(errors, 4096)?;
                     return Err(format!(
                         "Git could not read this repository: {}",
@@ -807,6 +833,16 @@ pub fn prepare_git(
     reference: &str,
     authorization: Option<&str>,
 ) -> Result<PreparedImport> {
+    prepare_git_authorized(repository, reference, authorization, None, None)
+}
+/// Native FI remains native: headers are scoped to this repository through environment config.
+pub fn prepare_git_authorized(
+    repository: &str,
+    reference: &str,
+    authorization: Option<&str>,
+    federated_header: Option<&str>,
+    retired: Option<Box<dyn Fn() -> bool + Send>>,
+) -> Result<PreparedImport> {
     let url = repository_url(repository)?;
     let reference = reference.trim();
     if !reference.is_empty()
@@ -830,6 +866,17 @@ pub fn prepare_git(
         }
         git.authorization = Some((url.clone(), token.into()));
     }
+    if let Some(header) = federated_header {
+        if authorization.is_none()
+            || header.len() > 8192
+            || !header.starts_with("Bearer ")
+            || header.chars().any(|c| c.is_control())
+        {
+            return Err("Invalid federated repository authorization".into());
+        }
+        git.federated_header = Some(header.into());
+    }
+    git.retired = retired;
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -843,7 +890,11 @@ pub fn prepare_git(
     }
     args.extend(["--", &url, "repository"]);
     git.run(&args, LIMIT)?;
-    git.read_plugins(url)
+    let prepared = git.read_plugins(url)?;
+    if git.retired.as_ref().is_some_and(|retired| retired()) {
+        return Err("Repository authorization retired".into());
+    }
+    Ok(prepared)
 }
 fn read_output(mut file: File, limit: u64) -> Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
@@ -1693,6 +1744,7 @@ mod tests {
         let mut git = Git::new().unwrap();
         let repository = format!("{base}/git/{}/plugin", "a".repeat(64));
         git.authorization = Some((repository.clone(), "dG9rZW4=".into()));
+        git.federated_header = Some("Bearer fixture-assertion".into());
         for url in [
             repository,
             format!("{base}/git/{}/plugin-other", "a".repeat(64)),
@@ -1703,7 +1755,7 @@ mod tests {
                     LIMIT,
                 )
                 .unwrap_err();
-            assert!(error.contains("error: 302"), "{error}");
+            assert_eq!(error, "Git could not read the protected repository");
         }
         let seen = requests.join().unwrap();
         let authorization = |head: &Vec<String>| {
@@ -1712,6 +1764,13 @@ mod tests {
         };
         assert!(seen[0][0].contains("/plugin/info/refs"), "{:?}", seen[0]);
         assert!(authorization(&seen[0]));
+        assert_eq!(
+            seen[0]
+                .iter()
+                .filter(|line| *line == "Nostr-Federated-Identity: Bearer fixture-assertion")
+                .count(),
+            1
+        );
         // A sibling whose name shares the prefix is a different repository.
         assert!(
             seen[1][0].contains("/plugin-other/info/refs"),
@@ -1719,6 +1778,9 @@ mod tests {
             seen[1]
         );
         assert!(!authorization(&seen[1]));
+        assert!(!seen[1]
+            .iter()
+            .any(|line| line.starts_with("Nostr-Federated-Identity:")));
     }
     #[test]
     fn rejects_malformed_authorization_before_running_git() {

@@ -1,4 +1,5 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import { nativeSocket } from "./native-socket";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -343,6 +344,7 @@ export async function connectNativeTransport(
     nativeRelaySigner(origin),
     origin,
     author,
+    nativeSocket,
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
