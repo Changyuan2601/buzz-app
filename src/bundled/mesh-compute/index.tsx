@@ -1,5 +1,5 @@
 import { ownerReads } from "../../features/agents/reads";
-import { InlineAgent } from "./inlineAgent";
+import { MeshGoose } from "./meshGoose";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -166,7 +166,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   // Agents "Shared Compute" type: inference through shared compute only.
   const spawn = ctx.host?.spawn?.bind(ctx.host);
-  if (isTauri() && spawn && ctx.agents) {
+  const serve = ctx.host?.serveMcp?.bind(ctx.host);
+  if (isTauri() && spawn && serve && ctx.agents) {
     const agents = ctx.agents;
     const memoryReads = new MemoryReads();
     const readMemory = async (agent: string, signal: AbortSignal) => {
@@ -180,8 +181,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         throw new Error("Community changed during memory read");
       return listing;
     };
-    const inline = new InlineAgent({
+    const inline = new MeshGoose({
       spawn,
+      serve,
       current: (lease) =>
         invoke<boolean>("mesh_compute_inference_current", { lease }),
       memories: readMemory,

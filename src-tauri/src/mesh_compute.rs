@@ -13,7 +13,6 @@ mod discovery;
 #[cfg(feature = "mesh")]
 mod inference;
 #[cfg(feature = "mesh")]
-pub(crate) mod inline;
 #[cfg(feature = "mesh")]
 mod lease;
 #[cfg(feature = "mesh")]
@@ -29,8 +28,6 @@ type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);
 
 #[derive(Default)]
 pub struct MeshHost {
-    #[cfg(feature = "mesh")]
-    runs: inline::Runs,
     #[cfg(feature = "mesh")]
     preparing: std::sync::Arc<inference::Fence>,
     #[cfg(feature = "mesh")]
@@ -58,12 +55,7 @@ impl MeshHost {
             prefs.initialize(path);
         }
     }
-    pub(crate) fn cancel_agent_turns(&self) {
-        #[cfg(feature = "mesh")]
-        self.runs.cancel_all();
-    }
     pub fn shutdown(&self) {
-        self.cancel_agent_turns();
         #[cfg(feature = "mesh")]
         if let Ok(mut task) = self.coordinator.lock() {
             if let Some(task) = task.take() {

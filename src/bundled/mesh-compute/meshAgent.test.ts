@@ -8,8 +8,8 @@ import {
   type MeshAgentDeps,
   MeshAgentRuntime,
   meshAgentConfig,
+  type InlineTurn,
 } from "./meshAgent";
-import type { InlineTurn } from "./inlineAgent";
 
 const OWNER = "a".repeat(64);
 const AGENT = "b".repeat(64);

@@ -562,7 +562,7 @@ for (const [file, content] of [
 
 for (const path of [
   "crates/probe/src/lib.rs",
-  "src/bundled/mesh-compute/native/src/lib.rs",
+  "src/bundled/mesh-compute/compute/src/lib.rs",
 ]) {
   test(`${path}-only push runs Clippy and blocks the push on a lint failure`, (t) => {
     const f = pushFixture(t, {

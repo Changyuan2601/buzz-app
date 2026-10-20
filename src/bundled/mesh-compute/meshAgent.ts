@@ -1,8 +1,9 @@
-// Mesh delivery policy and per-conversation ordering. Agent mode delegates to
-// the required inline Rust/GDK adapter; Chat uses one leased completion.
-// No helper process, ACP session, MCP bridge or alternate inference provider.
-// Final prose is posted independently of optional Buzz tool sends.
+// Mesh delivery policy and per-conversation ordering. Agent mode runs the
+// bundled goose-acp on the leased Mesh route (`meshGoose.ts`); Chat uses one
+// leased completion. No alternate inference provider. Final prose is posted
+// unless a Buzz tool already answered in the conversation.
 import type { Delivery } from "../../features/agents/service";
+import type { Context } from "../../buzz-mcp/client";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -70,9 +71,18 @@ export type ChatMessage = Readonly<{
   role: "system" | "user" | "assistant";
   content: string;
 }>;
+export type InlineTurn = {
+  delivery: Delivery<MeshAgentConfig>;
+  inference: PreparedInference;
+  cwd: string;
+  context: Context;
+  sessionKey: string;
+  system: string;
+  prompt: string;
+};
 export type MeshAgentDeps = Readonly<{
   inline: {
-    run(input: import("./inlineAgent").InlineTurn): Promise<{ text: string }>;
+    run(input: InlineTurn): Promise<{ text: string; answered?: boolean }>;
     dispose(): void;
   };
   spawn(id: string, options?: HostProcessOptions): Promise<HostProcess>;
@@ -115,7 +125,7 @@ export function turnText(
   ].join("\n");
 }
 
-/** The inline runtime needs an absolute working directory; `~/…` is resolved by the
+/** goose needs an absolute working directory; `~/…` is resolved by the
  * host (it expands `cwd`) and read back with `pwd`. */
 export async function resolveWorkspace(
   deps: Pick<MeshAgentDeps, "spawn">,
@@ -144,7 +154,7 @@ export function instructions(
 ): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
   if (config.mode !== "agent") return prompt;
-  return `Your final prose response is automatically delivered to the person in the current conversation. Return the answer itself, not a report that you replied. You do not need to use Buzz send to answer. Buzz send remains available for optional updates or messages elsewhere; it does not finish your turn. When sending in the current conversation, omit channel and reply to use the host's destination.
+  return `Your final prose response is automatically delivered to the person in the current conversation. Return the answer itself, not a report that you replied. You do not need to use Buzz send to answer. If you do use Buzz send in the current conversation, that message is your answer and your final prose is not posted. When sending in the current conversation, omit channel and reply to use the host's destination.
 
 ${coreMemorySection(memory)}
 
@@ -276,7 +286,7 @@ export class MeshAgentRuntime {
     return next;
   }
 
-  /** Cancels inline work and prevents queued deliveries from starting. */
+  /** Cancels agent work and prevents queued deliveries from starting. */
   dispose() {
     this.disposed = true;
     this.deps.inline.dispose();
@@ -359,6 +369,8 @@ export class MeshAgentRuntime {
           system: instructions(config, memory),
           prompt: turnText(event, earlier),
         });
+        // A Buzz tool already answered where people see it.
+        if (result.answered) return;
         reply = result.text;
       }
       if (
