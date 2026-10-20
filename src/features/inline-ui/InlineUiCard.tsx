@@ -89,13 +89,28 @@ function ChoiceForm({
         }}
       >
         {profile && (
-          <div className={styles.avatar}>
-            <Avatar
-              size="fill"
-              src={avatar.preview}
-              alt={avatar.label}
-              fallback={avatar.label}
-            />
+          <div className={styles.avatarRow}>
+            <div className={styles.avatar}>
+              <Avatar
+                size="fill"
+                src={avatar.preview}
+                alt={avatar.label}
+                fallback={avatar.label}
+              />
+            </div>
+            <div className={styles.shuffle}>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  let next = randomAgentAvatar();
+                  while (next.id === avatar.id) next = randomAgentAvatar();
+                  setAvatar(next);
+                }}
+              >
+                <ArrowsShuffleIcon size={16} />
+                Shuffle
+              </Button>
+            </div>
           </div>
         )}
         <div className={styles.choices}>
@@ -131,20 +146,7 @@ function ChoiceForm({
             {error}
           </p>
         )}
-        <div className={styles.actions} data-split={profile || undefined}>
-          {profile && (
-            <Button
-              disabled={busy}
-              onClick={() => {
-                let next = randomAgentAvatar();
-                while (next.id === avatar.id) next = randomAgentAvatar();
-                setAvatar(next);
-              }}
-            >
-              <ArrowsShuffleIcon size={16} />
-              Shuffle
-            </Button>
-          )}
+        <div className={styles.actions}>
           <Button
             type="submit"
             variant="prominent"
