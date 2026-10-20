@@ -192,8 +192,13 @@ function loggedIn() {
   const relay = generateSecretKey();
   const sign = (kind: number, tags: string[][], content = "", at = 100) =>
     finalizeEvent({ kind, created_at: at, tags, content }, relay);
-  const roster = (channel: string, members: string[]) =>
-    sign(39002, [["d", channel], ...members.map((member) => ["p", member])]);
+  const roster = (channel: string, members: string[], at = 100) =>
+    sign(
+      39002,
+      [["d", channel], ...members.map((member) => ["p", member])],
+      "",
+      at,
+    );
   return { feed, socket, pubkey, statuses, heard, sign, roster };
 }
 
@@ -395,9 +400,70 @@ it("goes on hearing its other channels when the relay refuses a batch it can no 
   expect(heard).toEqual(["still here:false"]);
   // Added back: its batch is asked for again, and the feed waits for it.
   const before = asked(socket).length;
-  socket.receive(["EVENT", "rosters", roster(`c${CHANNEL_BATCH}`, [pubkey])]);
+  socket.receive([
+    "EVENT",
+    "rosters",
+    roster(`c${CHANNEL_BATCH}`, [pubkey], 200),
+  ]);
   expect(asked(socket).slice(before)).toEqual(["channels:1", "metadata:1"]);
   socket.receive(["CLOSED", latest(socket, "channels:1"), "error: busy"]);
   expect(statuses.at(-1)).toBe(false);
+  feed.stop();
+});
+
+it("hears a channel the agent joins after the relay refused its batch", () => {
+  const { feed, socket, pubkey, statuses, heard, sign, roster } = loggedIn();
+  for (let index = 0; index <= CHANNEL_BATCH; index++)
+    socket.receive(["EVENT", "rosters", roster(`c${index}`, [pubkey])]);
+  socket.receive(["EOSE", latest(socket, "metadata:1")]);
+  // Removed from the last batch's only channel: the relay refuses it.
+  for (const key of ["channels:1", "metadata:1"])
+    socket.receive([
+      "CLOSED",
+      latest(socket, key),
+      "restricted: channel access revoked",
+    ]);
+  // A new channel joins that batch: it is asked for, and the feed waits.
+  const before = asked(socket).length;
+  socket.receive(["EVENT", "rosters", roster("new", [pubkey], 200)]);
+  expect(asked(socket).slice(before)).toEqual(["channels:1", "metadata:1"]);
+  const filter = socket.reqs().at(-2)?.[2] as Record<string, string[]>;
+  expect(filter["#h"]).toEqual([`c${CHANNEL_BATCH}`, "new"]);
+  socket.receive(["EOSE", latest(socket, "metadata:1")]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:1"),
+    sign(9, [["h", "new"]], "hello", 210),
+  ]);
+  expect(heard).toEqual(["hello:false"]);
+  expect(statuses.at(-1)).toBe(true);
+  feed.stop();
+});
+
+it("asks again for an open batch when the agent is back in one of its channels", () => {
+  const { feed, socket, pubkey, heard, sign, roster } = loggedIn();
+  socket.receive(["EVENT", "rosters", roster("a", [pubkey])]);
+  socket.receive(["EVENT", "rosters", roster("b", [pubkey])]);
+  socket.receive(["EOSE", latest(socket, "metadata:0")]);
+  // Removed from "a": the relay drops it from the batch and closes nothing,
+  // and sends no roster that leaves the agent out. Heard again, a roster
+  // already known asks for nothing.
+  const before = asked(socket).length;
+  socket.receive(["EVENT", "rosters", roster("a", [pubkey])]);
+  expect(asked(socket).slice(before)).toEqual([]);
+  // Back in "a": its batch is asked for again, as it is now.
+  const old = latest(socket, "channels:0");
+  socket.receive(["EVENT", "rosters", roster("a", [pubkey], 300)]);
+  expect(asked(socket).slice(before)).toEqual(["channels:0", "metadata:0"]);
+  expect(socket.sent).toContainEqual(["CLOSE", old]);
+  const filter = socket.reqs().at(-2)?.[2] as Record<string, string[]>;
+  expect(filter["#h"]).toEqual(["a", "b"]);
+  socket.receive(["EOSE", latest(socket, "metadata:0")]);
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:0"),
+    sign(9, [["h", "a"]], "welcome back", 310),
+  ]);
+  expect(heard).toEqual(["welcome back:false"]);
   feed.stop();
 });

@@ -44,10 +44,10 @@ export class AgentFeed {
   readonly channels = new Set<string>();
   /** The same channels in the order they were found, which batches them. */
   private readonly order: string[] = [];
-  /** Each channel's members, from its newest roster. */
+  /** Each channel's members, from its newest roster (`id`). */
   private readonly rosters = new Map<
     string,
-    { at: number; members: readonly string[] }
+    { at: number; id: string; members: readonly string[] }
   >();
   /** Each channel's type (the first `t` tag of its newest metadata). */
   private readonly types = new Map<string, { at: number; type?: string }>();
@@ -219,6 +219,16 @@ export class AgentFeed {
           )
           .every(isOpen),
       );
+    /** Asks again for the batch that hears `channel`, though the relay
+     * refused it or holds it open. */
+    const reopen = (channel: string) => {
+      const index = Math.floor(this.order.indexOf(channel) / CHANNEL_BATCH);
+      for (const key of [`channels:${index}`, `metadata:${index}`]) {
+        denied.delete(key);
+        ask(key);
+      }
+      status();
+    };
     /** Opens each subscription that is not open, refused or waiting to be
      * asked again: all at first, and after a login the ones the relay closed
      * until the agent logged in. */
@@ -342,9 +352,13 @@ export class AgentFeed {
       if (from === "rosters") {
         const id = event.tags.find((tag) => tag[0] === "d")?.[1];
         if (!id) return;
-        if (event.created_at >= (this.rosters.get(id)?.at ?? 0))
+        const previous = this.rosters.get(id);
+        const changed =
+          event.created_at >= (previous?.at ?? 0) && event.id !== previous?.id;
+        if (changed)
           this.rosters.set(id, {
             at: event.created_at,
+            id: event.id,
             members: [
               ...new Set(
                 event.tags.flatMap((tag) =>
@@ -353,34 +367,21 @@ export class AgentFeed {
               ),
             ],
           });
-        if (this.channels.has(id)) {
-          // Back in a channel of a batch the relay refused: ask for it again.
-          const index = Math.floor(this.order.indexOf(id) / CHANNEL_BATCH);
-          const key = `channels:${index}`;
-          if (
-            subscribed &&
-            denied.has(key) &&
-            this.rosters.get(id)?.members.includes(this.options.pubkey)
-          ) {
-            for (const each of [key, `metadata:${index}`]) {
-              denied.delete(each);
-              ask(each);
-            }
-            status();
-          }
-        } else {
+        if (!this.channels.has(id)) {
           this.channels.add(id);
           this.order.push(id);
           this.loading.set(id, []);
-          if (subscribed) {
-            // Only its batch is asked for again.
-            const index = Math.floor((this.order.length - 1) / CHANNEL_BATCH);
-            for (const key of [`channels:${index}`, `metadata:${index}`])
-              if (!denied.has(key)) ask(key);
-            if (denied.has(`metadata:${index}`)) this.settle(id);
-            status();
-          }
-        }
+        } else if (
+          !changed ||
+          !this.rosters.get(id)?.members.includes(this.options.pubkey)
+        )
+          return;
+        // A new channel, or a new roster of one the agent is in, which may
+        // be its way back in: this subscription hears no roster that leaves
+        // the agent out, and the relay drops a channel the agent left from
+        // its batch's subscription without closing it, unless it was the
+        // batch's last. So its batch is asked for again, as it is now.
+        if (subscribed) reopen(id);
         return;
       }
       this.since = Math.max(this.since, event.created_at);
