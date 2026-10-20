@@ -56,6 +56,7 @@ existing plugin-tool fingerprint refreshes sessions when their tools change;
 Codex starts a new binding, so its prior session context is not retained. The
 standalone MCP server does not load app plugins.
 
-Native signing explicitly allows 30023 and retains the saved owner attestation;
-no key or CLI credentials are exposed to the tools. The plugin uses the existing
+Native signing allows 30023 for app agents and retains the saved owner attestation;
+the plugin toggle controls these tool contributions, not the native signing policy.
+No key or CLI credentials are exposed to the tools. The plugin uses the existing
 Settings catalog and has no custom UI.
