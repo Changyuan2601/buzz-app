@@ -1,4 +1,4 @@
-import { selectSettingsSection } from "./navigation.mjs";
+import { selectSettingsSection, settingsSections } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 // Browser boundary: the default-on Mesh plugin and re-enabling it must expose its consumer view in Settings → Compute.
@@ -15,27 +15,26 @@ test("Mesh compute is enabled by default and can be disabled and re-enabled", as
   await button("Disable Shared compute").click();
   await expect(button("Enable Shared compute")).toBeVisible();
   await expect(
-    page
-      .getByRole("complementary", { name: "Settings sidebar", exact: true })
-      .getByRole("button", { name: "Shared compute", exact: true }),
+    settingsSections(page).getByRole("button", {
+      name: "Shared compute",
+      exact: true,
+    }),
   ).toHaveCount(0);
   await button("Enable Shared compute").click();
   await expect(button("Disable Shared compute")).toBeVisible();
   // Contributed cards own their region label rather than the built-in section wrapper.
-  await page
-    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+  await settingsSections(page)
     .getByRole("button", { name: "Shared compute", exact: true })
     .click();
-  const compute = page
-    .getByRole("complementary", { name: "Settings sidebar", exact: true })
-    .getByRole("button", { name: "Shared compute", exact: true });
+  const compute = settingsSections(page).getByRole("button", {
+    name: "Shared compute",
+    exact: true,
+  });
   await expect(compute.locator("xpath=ancestor::section[1]")).toContainText(
-    "Primary",
+    "Community",
   );
   await expect(
-    page
-      .getByRole("complementary", { name: "Settings sidebar", exact: true })
-      .getByText("Shared compute", { exact: true }),
+    settingsSections(page).getByText("Shared compute", { exact: true }),
   ).toHaveCount(1);
   await expect(
     page.getByRole("heading", { name: "Shared compute", exact: true }),

@@ -213,7 +213,6 @@ it("uses a contributed icon and preserves the chat fallback", () => {
           subscribe: () => () => {},
         } as unknown as SettingsCards
       }
-      onBack={() => {}}
       onSection={() => {}}
     />,
   );
@@ -233,5 +232,5 @@ it("uses a contributed icon and preserves the chat fallback", () => {
   ).toBe(reference.getByTestId("chat-reference").innerHTML);
   expect(
     screen.getByRole("button", { name: "Compute" }).closest("section"),
-  ).toHaveTextContent("Primary");
+  ).toHaveTextContent("Community");
 });

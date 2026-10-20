@@ -15,6 +15,15 @@ const commands = new Set(
 );
 const { permissions } = JSON.parse(read("src-tauri/capabilities/default.json"));
 
+// Commands deliberately granted only to a narrower window capability.
+const widget = JSON.parse(read("src-tauri/capabilities/compute-widget.json"));
+const huddle = JSON.parse(read("src-tauri/capabilities/huddle.json"));
+const windowScoped = new Map([
+  ["mesh_compute_widget_status", widget],
+  ["huddle_window_watch", huddle],
+  ["huddle_window_action", huddle],
+]);
+
 function* sources(directory) {
   for (const entry of readdirSync(new URL(directory, root), {
     withFileTypes: true,
@@ -40,9 +49,10 @@ test("literal frontend IPC commands are declared and allowed by the main capabil
         commands.has(command),
         `${path}: ${command} missing from AppManifest`,
       );
+      const allowedBy = windowScoped.get(command)?.permissions ?? permissions;
       assert.ok(
-        permissions.includes(`allow-${command.replaceAll("_", "-")}`),
-        `${path}: ${command} missing from main capability`,
+        allowedBy.includes(`allow-${command.replaceAll("_", "-")}`),
+        `${path}: ${command} missing from its capability`,
       );
     }
   }
@@ -58,10 +68,6 @@ test("literal frontend IPC commands are declared and allowed by the main capabil
     assert.ok(found.has(command), `scanner must find ${command}`);
   }
 });
-
-// Commands deliberately granted only to a narrower window capability.
-const widget = JSON.parse(read("src-tauri/capabilities/compute-widget.json"));
-const windowScoped = new Map([["mesh_compute_widget_status", widget]]);
 
 test("every declared app command has a main-window permission, including host stop", () => {
   for (const command of commands) {

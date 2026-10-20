@@ -141,6 +141,9 @@ apply({
     spawn: () => {
       throw new Error("No runtime in UI fixture");
     },
+    serveMcp: () => {
+      throw new Error("No MCP server in UI fixture");
+    },
   },
   agents: {
     register: (type: object) =>

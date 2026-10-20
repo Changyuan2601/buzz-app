@@ -194,9 +194,6 @@ fn main() {
             "mesh_compute_prepare_inference",
             "mesh_compute_inference_current",
             "mesh_compute_chat",
-            "mesh_compute_agent_run",
-            "mesh_compute_agent_cancel",
-            "mesh_compute_agent_result",
         ])),
     )
     .expect("Could not build Tauri resources")
