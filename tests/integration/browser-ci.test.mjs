@@ -29,12 +29,29 @@ const job = (name) => {
   return body;
 };
 const browser = job("browser");
-const matrixValues = (key) => {
-  const values = browser.match(
-    new RegExp(`^ {8}${key}: \\[([^\\]]+)\\]$`, "m"),
-  )?.[1];
-  assert.ok(values, `literal ${key} matrix must exist`);
-  return values.split(",").map((value) => value.trim());
+// Expand the browser matrix the way Actions does: engine × shard, minus
+// exclusions, with each engine's include supplying its shard denominator.
+const browserJobs = () => {
+  const {
+    engine,
+    shard,
+    exclude = [],
+    include = [],
+  } = parse(workflow).jobs.browser.strategy.matrix;
+  return engine.flatMap((name) => {
+    const { shards } = include.find((entry) => entry.engine === name) ?? {};
+    assert.ok(Number.isInteger(shards), `${name} must declare its shard total`);
+    const selected = shard.filter(
+      (n) =>
+        !exclude.some((entry) => entry.engine === name && entry.shard === n),
+    );
+    assert.deepEqual(
+      selected,
+      Array.from({ length: shards }, (_, i) => i + 1),
+      `${name} must run shards 1..${shards}`,
+    );
+    return selected.map((n) => ({ engine: name, shard: n, shards }));
+  });
 };
 
 test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
@@ -72,20 +89,19 @@ test("Linux shards and macOS recording discover every functional test/project ex
   ]);
   assert.ok(expected.length > 0);
   const actual = [];
-  for (const engine of matrixValues("engine")) {
-    for (const shard of matrixValues("shard")) {
-      // Exercise the actual workflow command, including its shard denominator.
-      const expanded = command
-        .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
-        .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard);
-      const selected = discover(
-        expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
-      );
-      assert.ok(selected.length > 0, `${engine}/${shard} must select tests`);
-      assert.ok(selected.every((id) => id.startsWith(`${engine}:`)));
-      actual.push(...selected);
-      t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
-    }
+  for (const { engine, shard, shards } of browserJobs()) {
+    // Exercise the actual workflow command, including its shard denominator.
+    const expanded = command
+      .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
+      .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard)
+      .replaceAll(/\$\{\{ matrix\.shards \}\}/g, shards);
+    const selected = discover(
+      expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
+    );
+    assert.ok(selected.length > 0, `${engine}/${shard} must select tests`);
+    assert.ok(selected.every((id) => id.startsWith(`${engine}:`)));
+    actual.push(...selected);
+    t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
   }
   const recording = parse(workflow).jobs.media_recorder.steps.find(
     (step) => step.name === "Recording journeys",
