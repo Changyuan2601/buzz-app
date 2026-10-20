@@ -33,6 +33,7 @@ export function agentSections({
   memories,
   settingsSection,
   settingsContent,
+  showRuntimeSettings,
 }: {
   agents: Agents;
   agent: Agent;
@@ -42,6 +43,7 @@ export function agentSections({
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
+  showRuntimeSettings?: () => void;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
 }): readonly AgentSection[] {
@@ -61,6 +63,9 @@ export function agentSections({
         agent={agent}
         {...(role === "settings" && settingsSection ? { settingsSection } : {})}
         {...(role === "settings" && settingsContent ? { settingsContent } : {})}
+        {...(role === "settings" && showRuntimeSettings
+          ? { showRuntimeSettings }
+          : {})}
         {...(conversation && { conversation })}
         save={(config) =>
           settingsHost?.pendingSave

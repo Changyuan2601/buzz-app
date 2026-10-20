@@ -289,6 +289,7 @@ export function createTabs({
     keyDraft,
     rows = false,
     revision = 0,
+    showRuntimeSettings,
   }: Readonly<{
     deviceDefaults?: boolean;
     hideModel?: boolean;
@@ -301,6 +302,7 @@ export function createTabs({
     disabled?: boolean;
     rows?: boolean;
     revision?: number;
+    showRuntimeSettings?: () => void;
   }>) {
     const [listing, reload] = useRead(
       () => setup.providers(),
@@ -357,7 +359,23 @@ export function createTabs({
                 ? { description: "Loading goose's providers…" }
                 : rows && provider && !provider.configured
                   ? {
-                      description: `Set up ${provider.name} on the Settings tab.`,
+                      description: (
+                        <>
+                          Set up {provider.name} on the{" "}
+                          {showRuntimeSettings ? (
+                            <Button
+                              variant="link"
+                              size="inline"
+                              onClick={showRuntimeSettings}
+                            >
+                              Settings tab
+                            </Button>
+                          ) : (
+                            "Settings tab"
+                          )}
+                          .
+                        </>
+                      ),
                     }
                   : {})}
             groups={[
@@ -1145,6 +1163,7 @@ export function createTabs({
     settingsHost,
     settingsSection,
     settingsContent,
+    showRuntimeSettings,
   }: AgentViewProps<Config>) {
     const form = useId();
     const [providerRevision, setProviderRevision] = useState(0);
@@ -1200,6 +1219,7 @@ export function createTabs({
                 rows
                 value={draft}
                 onChange={(choice) => setDraft({ ...draft, ...choice })}
+                {...(showRuntimeSettings ? { showRuntimeSettings } : {})}
               />
               <ThinkingField
                 revision={providerRevision}

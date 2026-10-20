@@ -378,6 +378,20 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
   // Save shows only once there is something to save.
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 
+  const showRuntimeSettings = vi.fn();
+  rerender(
+    <SettingsTab
+      agent={agent}
+      save={save}
+      settingsSection="identity"
+      showRuntimeSettings={showRuntimeSettings}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Settings tab" }));
+  expect(showRuntimeSettings).toHaveBeenCalledOnce();
+
   rerender(<SettingsTab agent={agent} save={save} settingsSection="runtime" />);
   expect(await screen.findByLabelText("API key")).toBeVisible();
   expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();

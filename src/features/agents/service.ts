@@ -199,6 +199,8 @@ export type AgentViewProps<Config = unknown> = {
   settingsSection?: "identity" | "runtime";
   /** Host management rows, shown before provider diagnostics. */
   settingsContent?: ReactNode;
+  /** In the identity half of a split view, shows the runtime half. */
+  showRuntimeSettings?: () => void;
 };
 /** What a type's part of the New agent dialog receives: the new agent's
  * starting config, from `defaults`, to fill in. The app owns its key, name and

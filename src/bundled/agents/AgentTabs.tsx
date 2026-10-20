@@ -50,6 +50,11 @@ export function AgentTabs(props: {
   );
   const [visited, setVisited] = useState(() => new Set([tab]));
   const panelPrefix = useId();
+  const panelId = (value: string) => `${panelPrefix}-${value}`;
+  const select = (value: string) => {
+    setVisited((previous) => new Set([...previous, tab, value]));
+    setTab(value);
+  };
   const selected =
     sections.find((section) => section.value === tab) ?? sections[0];
   const settingsSelected =
@@ -62,21 +67,28 @@ export function AgentTabs(props: {
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
         settingsContent: props.settingsContent,
+        ...(selected?.value === "agent:management"
+          ? {}
+          : {
+              showRuntimeSettings: () => {
+                // The link unmounts with the identity half; focus its tab.
+                document
+                  .getElementById(`${panelId("agent:management")}-tab`)
+                  ?.focus();
+                select("agent:management");
+              },
+            }),
       }).find((section) => section.value === "agent:settings")
     : undefined;
   const settingsValue =
     selected?.value === "agent:management"
       ? "agent:management"
       : "agent:settings";
-  const panelId = (value: string) => `${panelPrefix}-${value}`;
   return (
     <>
       <Tabs
         value={selected?.value ?? ""}
-        onValueChange={(value) => {
-          setVisited((previous) => new Set([...previous, tab, value]));
-          setTab(value);
-        }}
+        onValueChange={select}
         items={sections.map(({ value, label }) => ({
           value,
           label,

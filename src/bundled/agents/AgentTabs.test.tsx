@@ -4,7 +4,12 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentMemories } from "../../features/agents/memory";
-import type { Agent, Agents } from "../../features/agents/service";
+import type {
+  Agent,
+  Agents,
+  AgentViewProps,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentTabs } from "./AgentTabs";
 
@@ -71,3 +76,62 @@ it.each(["here", "hosted"] as const)(
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();
   },
 );
+
+it("lets a split type's Identity half open the Settings tab", async () => {
+  const user = userEvent.setup();
+  const agent: Agent = {
+    pubkey: "a".repeat(64),
+    name: "Ada",
+    place: "hosted",
+    type: "test",
+    owner: "c".repeat(64),
+    relay: "wss://example.com",
+    config: {},
+    attention: {},
+    skipped: {},
+    timers: {},
+    attentionEnabled: true,
+  };
+  render(
+    <AgentTabs
+      agents={{ save: vi.fn() } as unknown as Agents}
+      agent={agent}
+      type={
+        {
+          tabs: [
+            {
+              id: "settings",
+              title: "Settings",
+              role: "settings",
+              splitSettings: true,
+              component: ({
+                settingsSection,
+                showRuntimeSettings,
+              }: AgentViewProps) =>
+                settingsSection === "identity" ? (
+                  <button type="button" onClick={showRuntimeSettings}>
+                    Set up the provider
+                  </button>
+                ) : (
+                  <p>Provider key</p>
+                ),
+            },
+          ],
+        } as unknown as RegisteredAgentType
+      }
+      channels={[]}
+      memories={undefined}
+      settingsHost={{}}
+      settingsContent={<p>Agent settings</p>}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await user.click(screen.getByRole("button", { name: "Set up the provider" }));
+  const settings = screen.getByRole("tab", { name: "Settings" });
+  expect(settings).toHaveAttribute("aria-selected", "true");
+  expect(settings).toHaveFocus();
+  expect(screen.getByText("Provider key")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Set up the provider" }),
+  ).toBeNull();
+});
