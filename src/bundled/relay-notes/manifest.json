@@ -1,0 +1,7 @@
+{
+  "id": "buzz.relay-notes",
+  "name": "Relay Notes",
+  "apiVersion": 1,
+  "description": "Let agents find, read and save reusable Markdown notes on your community relay.",
+  "discovery": { "category": "agent-tools" }
+}

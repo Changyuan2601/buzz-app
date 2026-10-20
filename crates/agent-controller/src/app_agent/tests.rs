@@ -330,7 +330,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100, 41010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -353,6 +353,29 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
             ]
         );
     }
+    // NIP-23 is authored by this agent, with its address and title intact;
+    // it is not implicitly scoped to the conversation's channel.
+    let note = agent
+        .sign(
+            &key,
+            30023,
+            "# Recipe".into(),
+            vec![
+                vec!["d".into(), "icon-recipe".into()],
+                vec!["title".into(), "Frosted icons".into()],
+            ],
+        )
+        .unwrap();
+    assert_eq!(note["pubkey"], agent.pubkey);
+    let note_tags: Vec<Vec<String>> = serde_json::from_value(note["tags"].clone()).unwrap();
+    assert_eq!(
+        note_tags,
+        vec![
+            vec!["d".to_owned(), "icon-recipe".to_owned()],
+            vec!["title".to_owned(), "Frosted icons".to_owned()],
+            saved.clone(),
+        ]
+    );
     // A plugin cannot pick its own `ms`, and events outside a channel get none.
     let forged = vec![
         vec!["h".to_owned(), "channel".to_owned()],
