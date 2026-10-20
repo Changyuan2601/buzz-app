@@ -10,6 +10,7 @@ import { flush } from "../goose/goose-testing";
 import { fakeHarness } from "./acp-testing";
 import { approve, type Config, DEFAULT_CONFIG } from "./config";
 import { missing } from "./harness";
+import manifest from "./manifest.json";
 import { AcpRuntime } from "./runtime";
 
 const appClient = vi.hoisted(() => vi.fn());
@@ -26,6 +27,28 @@ const alice = "a".repeat(64);
 const mallory = "b".repeat(64);
 const channel = "chan-1";
 const INSTRUCTIONS = "Always answer in haiku.";
+
+/** A host that grants only what the manifest declares, as the native host
+ * does, so the runtime can't rely on an undeclared grant. */
+function declared(fake: ReturnType<typeof fakeHarness>): Host {
+  const { processes, files } = manifest.host as {
+    processes: { id: string }[];
+    files?: boolean;
+  };
+  const refuse = async () => {
+    throw new Error("Files are not declared");
+  };
+  return {
+    spawn: (id: string, ...rest: unknown[]) => {
+      if (!processes.some((process) => process.id === id))
+        throw new Error(`Process ${id} is not declared`);
+      return (fake.spawn as (...args: unknown[]) => unknown)(id, ...rest);
+    },
+    serveMcp: fake.serve,
+    resolveDirectory: files ? async (path: string) => path : refuse,
+    readFile: files ? async () => new Uint8Array() : refuse,
+  } as unknown as Host;
+}
 
 const FAILED = "⚠️ I couldn't finish that. Details are in my activity.";
 
@@ -72,11 +95,7 @@ function setup(
   } = {},
 ) {
   const fake = fakeHarness(options);
-  const host = {
-    spawn: fake.spawn,
-    serveMcp: fake.serve,
-    resolveDirectory: async (path: string) => path,
-  } as unknown as Host;
+  const host = declared(fake);
   const session = {
     read: vi.fn(read),
     channels: {
@@ -345,6 +364,20 @@ describe("AcpRuntime", () => {
     expect(published[0]?.content).toBe(
       `${FAILED} ${missing(config.preset, config.command)}`,
     );
+  });
+
+  it("gives no hint for a harness error that imitates ours", async () => {
+    const config = await confirmed();
+    const { deliver, sync, published } = setup({
+      promptError: {
+        code: -32603,
+        message: `Oops. ${missing(config.preset, config.command)}`,
+      },
+    });
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toBe(FAILED);
   });
 
   it("says only that it failed when the harness refuses Buzz tools", async () => {

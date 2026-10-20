@@ -3,7 +3,10 @@
 // prompt or a prepend, queued messages instead of steering, and
 // `session/close` only when advertised.
 import { AcpProcess } from "../../features/agent-harness/acp/process";
-import { errorMessage } from "../../features/agent-harness/acp/steps";
+import {
+  errorMessage,
+  HintedError,
+} from "../../features/agent-harness/acp/steps";
 import type {
   AcpHooks,
   ServeMcp,
@@ -47,7 +50,8 @@ export async function start(
 ) {
   const snapshot = config(stored);
   const found = await launch(snapshot);
-  if ("error" in found) throw new Error(found.error);
+  // Each of `launch`'s errors is ours, and says what to fix.
+  if ("error" in found) throw new HintedError(found.error, found.error);
   const { command, args, env, workspace } = found.launch;
   return AcpProcess.start(spawn, hooks(snapshot.preset, found.launch), {
     cwd: workspace,

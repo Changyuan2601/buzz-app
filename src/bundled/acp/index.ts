@@ -15,8 +15,8 @@ const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start a harness, and file uploads run `base64`,
-  // which stock Windows lacks; no unusable type elsewhere.
+  // Only the desktop app can start a harness, and its launch runs POSIX
+  // `env`, which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const spawn = host.spawn?.bind(host);
