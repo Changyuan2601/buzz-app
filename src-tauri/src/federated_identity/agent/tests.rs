@@ -85,7 +85,12 @@ pub(super) fn fixture(base: String) -> Fixture {
     let identity = at_adapter(Arc::new(Memory::default()), base);
     let mut session = record();
     Arc::get_mut(&mut session).unwrap().record.email = Some("a@example.com".into());
-    identity.state().session = Some(session);
+    {
+        // Signed in through account tracking, so a later account is a change.
+        let mut state = identity.state();
+        state.session = Some(session);
+        state.account = Some(Some("a@example.com".into()));
+    }
     let grants = Arc::new(MemoryGrants::default());
     let key = Secret::generate().unwrap();
     let agent = AppAgent {
