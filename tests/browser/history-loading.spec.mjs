@@ -262,6 +262,30 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  test("a live message before the page's rows measure keeps the reader", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const before = await anchor(page);
+    const height = await history(page).evaluate((e) => e.scrollHeight);
+    // Virtua applies the moved rows' sizes in a frame: let a live message
+    // render before they land.
+    await holdFrames(page);
+    try {
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      app.append("primary", "alpha", undefined, true, false);
+      await expect(latest(page)).toHaveText("1 new message");
+    } finally {
+      await page.evaluate(() => window.releaseFrames());
+    }
+    await settle(page);
+    await expectAnchor(page, before);
+  });
+
   // Hold every animation frame: input can arrive before any deferred work.
   async function holdFrames(page) {
     await page.evaluate(() => {

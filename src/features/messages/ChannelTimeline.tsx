@@ -562,7 +562,10 @@ function Timeline({
   // that height before paint, so input that follows starts from the reader's
   // row. Rows that moved keep another row's size until they measure; hold the
   // reader's latest row through those measurements, until reader input that
-  // follows them ends.
+  // follows them ends. Those sizes can land after later renders, such as a
+  // live message, so only a render that moves the reader again replaces it.
+  const readerHold = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => () => readerHold.current?.(), []);
   useLayoutEffect(() => {
     const element = scroller.current;
     const list = element?.querySelector("ol");
@@ -575,11 +578,14 @@ function Timeline({
       !element ||
       !list ||
       !handle.current
-    )
+    ) {
+      readerHold.current?.();
       return;
+    }
     const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
     if (!moved || !id) return;
+    readerHold.current?.();
     correctScrollTop(element, moved);
     const top = () =>
       element
@@ -587,7 +593,10 @@ function Timeline({
         ?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
     let y = savedPosition.current?.anchor?.y ?? 0;
+    // A reveal, restore or follow that takes over positioning retires the hold.
+    const owned = () => settled.current && !follow.current;
     const read = () => {
+      if (!owned()) return release();
       const row = top();
       if (row !== undefined) y = row - element.getBoundingClientRect().top;
     };
@@ -605,16 +614,18 @@ function Timeline({
       });
     });
     const hold = new MutationObserver(() => {
+      if (!owned()) return release();
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
-      if (row !== undefined && settled.current && !follow.current)
+      if (row !== undefined)
         correctScrollTop(
           element,
           row - element.getBoundingClientRect().top - y,
         );
     });
     const release = () => {
+      if (readerHold.current === release) readerHold.current = undefined;
       cancelAnimationFrame(frame);
       hold.disconnect();
       element.removeEventListener("scroll", read);
@@ -636,7 +647,7 @@ function Timeline({
     // A drag can end outside the scroller.
     element.ownerDocument.addEventListener("pointerup", done);
     element.ownerDocument.addEventListener("pointercancel", done);
-    return release;
+    readerHold.current = release;
   }, [rows, prepend]);
   useLayoutEffect(() => {
     const element = scroller.current;
