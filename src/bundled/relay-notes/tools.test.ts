@@ -61,6 +61,8 @@ it("registers note tools in the plugin", () => {
   ).toHaveLength(2);
 });
 it("creates, discovers and reads a recipe by its returned naddr", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(200_000);
   const f = fixture();
   const saved = JSON.parse(await f.call("note", save));
   expect(saved).toMatchObject({
@@ -73,6 +75,7 @@ it("creates, discovers and reads a recipe by its returned naddr", async () => {
     tags: [
       ["d", "recipe"],
       ["title", "Recipe"],
+      ["published_at", "200"],
     ],
   });
   const listed = JSON.parse(await f.call("notes", {}));
@@ -84,6 +87,42 @@ it("creates, discovers and reads a recipe by its returned naddr", async () => {
     JSON.parse(await f.call("note", { note: `nostr:${saved.naddr}` })),
   ).toMatchObject({ text: save.text, event_id: saved.event_id });
 });
+it.each(["Frosted Icons", "Recipe", "2026:plan", "a".repeat(81)])(
+  "rejects non-CLI slugs for plain references and coordinate saves: %s",
+  async (identifier) => {
+    const f = fixture();
+    await expect(f.call("note", { note: identifier })).rejects.toThrow("slug");
+    for (const note of [
+      `30023:${own}:${identifier}`,
+      naddrEncode({ kind: 30023, pubkey: own, identifier }),
+    ]) {
+      await expect(f.call("note", { ...save, note })).rejects.toThrow("slug");
+    }
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.query).not.toHaveBeenCalled();
+  },
+);
+it.each(["frosted-icons_2.5", "a".repeat(80)])(
+  "accepts CLI-compatible slugs: %s",
+  async (note) => {
+    const f = fixture();
+    expect(JSON.parse(await f.call("note", { ...save, note })).coordinate).toBe(
+      `30023:${own}:${note}`,
+    );
+  },
+);
+it.each(["Frosted Icons", "2026:plan", "X".repeat(201), ""])(
+  "reads other clients' identifiers through coordinates and naddr: %s",
+  async (identifier) => {
+    const f = fixture([{ ...old, tags: [["d", identifier]] }]);
+    for (const note of [
+      `30023:${own}:${identifier}`,
+      naddrEncode({ kind: 30023, pubkey: own, identifier }),
+    ]) {
+      expect(JSON.parse(await f.call("note", { note })).event_id).toBe(old.id);
+    }
+  },
+);
 it("reads another author's exact coordinate without following naddr relay hints", async () => {
   const f = fixture([{ ...old, pubkey: other }]);
   const naddr = naddrEncode({

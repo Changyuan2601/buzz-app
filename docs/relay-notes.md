@@ -12,11 +12,13 @@ do not put credentials or private workflow material in a shared note.
 - `note {"note":"30023:AUTHOR:IDENTIFIER"}` reads the selected revision and
   returns Markdown, metadata and its event ID. `naddr` (with optional `nostr:`)
   also works. Relay hints in naddr do not redirect reads outside this community.
-  A plain identifier means a note authored by the current agent.
+  A plain identifier means a note authored by the current agent. Plain identifiers
+  and all saves use the `buzz notes` slug grammar: 1–80 characters from `[a-z0-9._-]`.
+  Coordinate/naddr reads accept identifiers written by other clients.
 - `note` with `action: "save"`, `title`, and exactly one of `text` or local
   `path` publishes a note under this agent's identity. Content is at most 64 KiB.
   Use `expected_event: "absent"` to create, or the event ID returned by read to
-  update. Updates preserve other note metadata, such as topics and the initial
+  update. Creates set `published_at`. Updates preserve other note metadata, such as topics and the initial
   publication timestamp. They never modify another author's coordinate.
 
 Example tool arguments for saving an icon recipe:

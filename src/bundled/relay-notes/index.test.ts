@@ -92,6 +92,7 @@ it("publishes and reads a signed recipe through plugin session dispatch", async 
       tags: [
         ["d", "icons"],
         ["title", "Frosted icons"],
+        ["published_at", expect.stringMatching(/^\d+$/)],
       ],
     });
     const loaded = JSON.parse(

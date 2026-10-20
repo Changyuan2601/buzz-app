@@ -12,18 +12,12 @@ const string = (value: unknown, name: string) => {
     throw new Error(`${name} must be a nonempty string.`);
   return value;
 };
-function identifier(value: unknown) {
-  const id = string(value, "identifier");
-  if (
-    id.length > 200 ||
-    [...id].some(
-      (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
-    )
-  )
+function slug(value: string) {
+  if (!/^[a-z0-9._-]{1,80}$/.test(value))
     throw new Error(
-      "identifier must be at most 200 characters without control characters.",
+      "Use a slug of 1–80 lowercase letters, digits, dots, underscores or hyphens.",
     );
-  return id;
+  return value;
 }
 function author(value: unknown) {
   const input = string(value, "author");
@@ -41,18 +35,16 @@ function target(value: unknown, own: string) {
       throw new Error("Use a NIP-23 (30023) naddr.");
     return {
       pubkey: parsed.data.pubkey,
-      identifier: identifier(parsed.data.identifier),
+      identifier: parsed.data.identifier,
     };
   }
-  const coordinate = /^30023:([0-9a-fA-F]{64}):(.+)$/.exec(input);
+  const coordinate = /^30023:([0-9a-fA-F]{64}):(.*)$/s.exec(input);
   if (coordinate)
     return {
       pubkey: (coordinate[1] ?? "").toLowerCase(),
-      identifier: identifier(coordinate[2]),
+      identifier: coordinate[2] ?? "",
     };
-  if (/^\d+:/.test(input))
-    throw new Error("Use a 30023:author:identifier coordinate.");
-  return { pubkey: own, identifier: identifier(input) };
+  return { pubkey: own, identifier: slug(input) };
 }
 function reference(event: BuzzEvent) {
   const id = tag(event, "d") ?? "";
@@ -154,6 +146,7 @@ export async function note(client: BuzzClient, args: Args) {
   }
   if (place.pubkey !== client.pubkey)
     throw new Error("You can save only your own notes.");
+  slug(place.identifier);
   const title = string(args.title, "title");
   if (title.length > 300)
     throw new Error("title must be at most 300 characters.");
@@ -179,14 +172,14 @@ export async function note(client: BuzzClient, args: Args) {
     );
   // The native signer chooses seconds. Publishing at the head's second can lose
   // NIP-01's ID tie-break, so refuse rather than silently discard an edit.
-  if (current && current.created_at >= Math.floor(Date.now() / 1000))
+  const now = Math.floor(Date.now() / 1000);
+  if (current && current.created_at >= now)
     throw new Error(
       "Note timestamp has not passed; retry after its updated_at second.",
     );
-  const tags =
-    current?.tags.filter(
-      (entry) => !["d", "title", "auth", "ms"].includes(entry[0] ?? ""),
-    ) ?? [];
+  const tags = current?.tags.filter(
+    (entry) => !["d", "title", "auth", "ms"].includes(entry[0] ?? ""),
+  ) ?? [["published_at", String(now)]];
   const saved = await client.publish({
     kind: KIND,
     content: body,
