@@ -29,7 +29,7 @@ export type AuthenticatedRequest = Readonly<{
   body?: string;
 }>;
 export interface FederatedIdentity {
-  /** API forwarding awaits the agreed NIP-FA same-origin extension. */
+  /** Granted routes are forwarded natively with the session as a Bearer token. */
   readonly apiAvailable: boolean;
   snapshot(): SessionSnapshot;
   subscribe(listener: () => void): () => void;
@@ -48,7 +48,7 @@ export class FederatedIdentityService
   extends Service
   implements FederatedIdentity
 {
-  readonly apiAvailable = false;
+  readonly apiAvailable = nativeIdentityEnabled();
   private readonly shared = {
     snapshot: Object.freeze({
       status: nativeIdentityEnabled() ? "restoring" : "unavailable",

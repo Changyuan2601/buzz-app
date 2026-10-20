@@ -28,7 +28,7 @@ fn default_method() -> String {
     "GET".into()
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct HostResponse {
     status: u16,
     headers: BTreeMap<String, String>,
@@ -126,7 +126,7 @@ fn validate_request(
     Ok((url, method, headers))
 }
 
-async fn send_request(
+pub(crate) async fn send_request(
     url: reqwest::Url,
     method: reqwest::Method,
     headers: HeaderMap,

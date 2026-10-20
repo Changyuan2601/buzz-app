@@ -786,9 +786,12 @@ use a native session.
 
 The `federatedIdentity` SDK shares public session status and scopes requests to
 the caller's enabled current artifact and a native live registration. Unload,
-replacement, page reload and shutdown retire registrations. API forwarding
-currently refuses explicitly pending the NIP-FA same-origin extension and agreed
-API contract; the session credential never enters the renderer. Builderlab and
+replacement, page reload and shutdown retire registrations. Granted operations
+are forwarded natively to the identity origin with `Authorization: Bearer` set
+to the adapter session; caller credentials, cookies and `X-BB-*` headers are
+refused, and the session credential never enters the renderer. A refusal from an
+API route, including 401, fails only that call: only the adapter's session and
+assertion endpoints end a session. Builderlab and
 native Hosted Communities consume this shared sign-in state. Generic `host.request`
 retains its separate unauthenticated-to-FI behavior below.
 

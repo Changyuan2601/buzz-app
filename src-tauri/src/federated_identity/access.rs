@@ -1,4 +1,5 @@
-//! Distinct plugin authority grants. No forwarding until the protocol extension exists.
+//! Distinct plugin authority grants. Granted calls go to the adapter origin
+//! with the native session as a Bearer token; the renderer never sees it.
 use super::FederatedIdentity;
 use crate::{with_manager, PluginManager};
 use serde::Deserialize;
@@ -112,7 +113,7 @@ pub(crate) async fn federated_identity_request(
     revision: String,
     registration: String,
     request: Request,
-) -> Result<serde_json::Value, String> {
+) -> Result<crate::host_request::HostResponse, String> {
     let live = || {
         registrations
             .0
@@ -140,22 +141,43 @@ pub(crate) async fn federated_identity_request(
     if grant.authority != config.id {
         return Err("Plugin authority mismatch".into());
     }
-    validate(config, &grant, &request)?;
+    let destination = validate(config, &grant, &request)?;
     if !live() {
         return Err("Plugin registration retired".into());
     }
-    // NIP-FA currently restricts the token to adapter endpoints. Never probe
-    // backend acceptance or substitute a legacy session header here.
-    Err(
-        "Authenticated API forwarding awaits the NIP-FA same-origin extension and API contract"
-            .into(),
-    )
+    let token = host
+        .with_session(|token, _, _| token.clone())
+        .ok_or("Sign in to your community first")?;
+    // A refusal here (including 401) belongs to this call only. Only the
+    // adapter's session and assertion routes decide that the session ended.
+    forward(destination, &token, request).await
+}
+async fn forward(
+    destination: url::Url,
+    token: &str,
+    request: Request,
+) -> Result<crate::host_request::HostResponse, String> {
+    let method =
+        reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|_| "Invalid API method")?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (name, value) in &request.headers {
+        headers.insert(
+            reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| "Invalid API header")?,
+            reqwest::header::HeaderValue::from_str(value).map_err(|_| "Invalid API header")?,
+        );
+    }
+    let mut bearer = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|_| "Invalid session")?;
+    bearer.set_sensitive(true);
+    headers.insert(reqwest::header::AUTHORIZATION, bearer);
+    crate::host_request::send_request(destination, method, headers, request.body).await
 }
 fn validate(
     config: &super::config::Config,
     grant: &buzzodz_plugins::FederatedIdentityGrant,
     request: &Request,
-) -> Result<(), String> {
+) -> Result<url::Url, String> {
     let path = &request.path;
     if path.len() > 2048
         || !super::config::canonical_path(path)
@@ -222,7 +244,7 @@ fn validate(
         }
         reqwest::header::HeaderValue::from_str(value).map_err(|_| "Invalid API header")?;
     }
-    Ok(())
+    Ok(destination)
 }
 
 #[cfg(test)]
@@ -285,11 +307,12 @@ mod tests {
                 },
             )
         };
-        // Reaching this refusal proves all admission guards passed without forwarding a credential.
+        // Reaching this refusal proves all admission guards passed; with no
+        // session nothing is sent.
         assert!(request("/api/list", BTreeMap::new())
             .await
             .unwrap_err()
-            .contains("API contract"));
+            .contains("Sign in"));
         assert!(request("/api/other", BTreeMap::new())
             .await
             .unwrap_err()
@@ -316,5 +339,39 @@ mod tests {
         register(revision.clone(), token.clone()).await.unwrap();
         manager.change("disable", "example.fi").unwrap();
         assert!(request("/api/list", BTreeMap::new()).await.is_err());
+    }
+    #[tokio::test]
+    async fn forwarding_adds_only_the_native_bearer_and_returns_refusals() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 4096];
+            let count = socket.read(&mut buffer).unwrap();
+            let text = String::from_utf8_lossy(&buffer[..count]).to_lowercase();
+            socket
+                .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 2\r\n\r\n{}")
+                .unwrap();
+            text
+        });
+        let response = forward(
+            url::Url::parse(&format!("http://{address}/api/v1/buzz/communities/list")).unwrap(),
+            "fixture-session-token",
+            Request {
+                path: "/api/v1/buzz/communities/list".into(),
+                method: "POST".into(),
+                headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+                body: Some("{}".into()),
+            },
+        )
+        .await
+        .unwrap();
+        // A 401 comes back as this call's response, not as a session change.
+        assert_eq!(serde_json::to_value(&response).unwrap()["status"], 401);
+        let sent = server.join().unwrap();
+        assert!(sent.starts_with("post /api/v1/buzz/communities/list "));
+        assert!(sent.contains("authorization: bearer fixture-session-token"));
+        assert!(!sent.contains("cookie") && !sent.contains("x-bb-"));
     }
 }
