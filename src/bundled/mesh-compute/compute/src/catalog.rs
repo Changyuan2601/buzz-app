@@ -7,6 +7,9 @@ use std::collections::HashSet;
 const CURATED_SMALL: &str = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const CURATED_MEDIUM: &str = "unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
 const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M";
+const GEMMA_TINY: &str = "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M";
+const GEMMA_DENSE: &str = "unsloth/gemma-4-31B-it-GGUF:Q4_K_M";
+const GEMMA_MOE: &str = "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M";
 const LEGACY_LARGE_XL: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL";
 
 /// Rated-capacity boundary for the balanced Qwen3.5 9B tier.
@@ -21,7 +24,7 @@ pub fn canonical_curated_model_id(model: &str) -> &str {
         "Gemma-4-E4B-it-Q4_K_M" => CURATED_SMALL,
         "Qwen3.5-9B-Vision-Q4_K_M" => CURATED_MEDIUM,
         "Qwen3.8-27B-Q4_K_M" => "unsloth/Qwen3.8-27B-GGUF:Q4_K_M",
-        "gemma-4-26B-A4B-it-UD-Q4_K_M" => "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M",
+        "gemma-4-26B-A4B-it-UD-Q4_K_M" => GEMMA_MOE,
         other => other,
     }
 }
@@ -76,6 +79,15 @@ fn hosting_survey() -> hardware::HardwareSurvey {
     survey
 }
 
+/// Models Auto may host: Gemma 4, which has native tool calls (Gemma 3's
+/// template has no tool role, so agent turns fail after their first tool
+/// call). The dense 31B is slow for agent loops, so it is only for machines
+/// with a 64 GB budget (256 GB); below that the 26B-A4B MoE is the top rung.
+fn auto_hosts(model: &str, max_vram_gb: u64) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("unsloth/gemma-4-") && (!model.contains("31b") || max_vram_gb >= 64)
+}
+
 /// Whether a catalog size label is a positive, finite GB/MB byte size.
 fn byte_size(label: &str) -> bool {
     let upper = label.trim().to_ascii_uppercase();
@@ -110,7 +122,7 @@ fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
                 && size.is_finite()
                 && size > 0.0
                 && size <= max_vram_gb as f64 * 0.75
-                && entry.model.to_ascii_lowercase().contains("gemma"))
+                && auto_hosts(&entry.model, max_vram_gb))
             .then_some((entry, size))
         })
         .collect();
@@ -242,6 +254,12 @@ fn auto_choice(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> AutoChoi
             model,
             max_vram_gb: Some(hosting.max_vram_gb),
         },
+        // 16 GB fits no rung inside the budget (E2B is 3.11 GB of 3); it
+        // still hosts the smallest Gemma 4 rather than a larger fallback.
+        None if hosting.max_vram_gb >= 4 => AutoChoice {
+            model: GEMMA_TINY.to_owned(),
+            max_vram_gb: Some(hosting.max_vram_gb),
+        },
         None => AutoChoice {
             model: recommendation_for_memory(survey.vram_bytes).to_owned(),
             max_vram_gb: None,
@@ -311,10 +329,12 @@ fn build(
         }
     }
     // Exact Q4 artifacts verified against their Hugging Face file listings.
-    // Keep first-run 16/32 GB choices available when layer metadata omits them.
+    // Keep the Gemma 4 rungs available when layer metadata omits their sizes.
     for (reference, name, size) in [
-        ("unsloth/gemma-3-4b-it-GGUF:Q4_K_M", "Gemma 3 4B", "2.49GB"),
+        (GEMMA_TINY, "Gemma 4 E2B", "3.11GB"),
         (CURATED_SMALL, "Gemma 4 E4B", "4.98GB"),
+        (GEMMA_MOE, "Gemma 4 26B-A4B", "16.95GB"),
+        (GEMMA_DENSE, "Gemma 4 31B", "18.32GB"),
     ] {
         if let Some(entry) = entries.iter_mut().find(|entry| entry.model == reference) {
             // Catalog metadata may describe layers ("42 layers") instead of bytes.
@@ -373,17 +393,17 @@ mod tests {
             None,
             0,
             vec![
-                model("fixture/gemma-small", "Small", "2GB"),
-                model("fixture/gemma-medium", "Medium", "5GB"),
-                model("fixture/gemma-large", "Large", "8GB"),
-                model("fixture/gemma-largest", "Largest", "11GB"),
-                model("fixture/gemma-unknown", "Unknown", "unknown"),
+                model("unsloth/gemma-4-small", "Small", "2GB"),
+                model("unsloth/gemma-4-medium", "Medium", "5GB"),
+                model("unsloth/gemma-4-large", "Large", "8GB"),
+                model("unsloth/gemma-4-largest", "Largest", "11GB"),
+                model("unsloth/gemma-4-unknown", "Unknown", "unknown"),
             ],
             |_| false,
         );
-        catalog
-            .entries
-            .retain(|entry| entry.model.starts_with("fixture/"));
+        catalog.entries.retain(|entry| {
+            entry.model.starts_with("unsloth/gemma-4-") && !entry.model.contains("GGUF")
+        });
         for (memory, budget, expected) in [
             (8, 2, None),
             (16, 4, Some("Small")),
@@ -433,12 +453,32 @@ mod tests {
             vram_bytes: gb * 1024 * 1024 * 1024 * 3 / 4,
             ..Default::default()
         };
-        // Seeded Gemma sizes alone choose the model, with the quarter budget as the cap.
+        // Seeded Gemma 4 sizes alone choose the model, with the quarter budget as the cap.
+        for (gb, model, budget) in [
+            (16, GEMMA_TINY, 4),
+            (24, GEMMA_TINY, 6),
+            (256, GEMMA_DENSE, 64),
+        ] {
+            assert_eq!(
+                auto_choice(&unified(gb), &catalog.entries),
+                AutoChoice {
+                    model: model.into(),
+                    max_vram_gb: Some(budget),
+                }
+            );
+        }
         assert_eq!(
-            auto_choice(&unified(16), &catalog.entries),
+            auto_choice(&unified(64), &catalog.entries),
             AutoChoice {
-                model: "unsloth/gemma-3-4b-it-GGUF:Q4_K_M".into(),
-                max_vram_gb: Some(4),
+                model: CURATED_SMALL.into(),
+                max_vram_gb: Some(16),
+            }
+        );
+        assert_eq!(
+            auto_choice(&unified(128), &catalog.entries),
+            AutoChoice {
+                model: GEMMA_MOE.into(),
+                max_vram_gb: Some(32),
             }
         );
         assert_eq!(
@@ -570,7 +610,8 @@ mod tests {
             let catalog = build(None, bytes, models.clone(), |m| m == CURATED_SMALL);
             assert_eq!(catalog.recommended.as_deref(), Some(recommended));
             assert_eq!(catalog.entries[0].model, recommended);
-            assert_eq!(catalog.entries.len(), 4);
+            // The three-rung ladder plus the seeded E2B, 26B-A4B and 31B.
+            assert_eq!(catalog.entries.len(), 6);
             assert!(
                 catalog
                     .entries
