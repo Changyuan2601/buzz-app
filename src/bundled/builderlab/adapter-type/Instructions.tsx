@@ -12,7 +12,7 @@ import {
   type AgentClient,
   type RemoteAgent,
 } from "../agents/client";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 
 const message = (reason: unknown) =>
   reason instanceof Error
@@ -20,7 +20,10 @@ const message = (reason: unknown) =>
     : "Could not update Builderlab instructions.";
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
-export function createSettingsTab(client: AgentClient, session: OAuthSession) {
+export function createSettingsTab(
+  client: AgentClient,
+  session: BuilderlabSession,
+) {
   function Editor({ pubkey, retry }: { pubkey: string; retry(): void }) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;

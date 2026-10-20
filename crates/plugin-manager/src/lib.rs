@@ -360,6 +360,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                     "v3/beekeeper/attest-agent",
                     "v3/beekeeper/list-agents",
                     "v3/beekeeper/cancel-agent-turn",
+                    // Attestation requires this device's key to be bound first.
+                    "v1/buzz/nostr-identities/current",
+                    "v1/buzz/nostr-identities/challenge",
+                    "v1/buzz/nostr-identities/verify",
                 ],
                 "block.hosted-communities" => &[
                     "v1/buzz/nostr-identities/current",

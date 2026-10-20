@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Host, HostResponse } from "../../../features/host/service";
+import type { HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import type { RelayData } from "../../../features/relay/service";
-import { createOAuthSession } from "../oauth/session";
+import { signedInBuilderlab } from "../test-helpers";
 import { builderlabType } from "./index";
 
 const pubkey = "ab".repeat(32);
@@ -17,7 +17,6 @@ const response = (value: unknown): HostResponse => ({
   body: JSON.stringify(value),
 });
 beforeEach(() => {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -30,15 +29,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function fixture(subject = "account-a") {
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
-  }));
-  await session.signIn();
-  const request = vi.fn<Host["request"]>();
-  const host: Host = { runCommand: vi.fn(), request };
-  const client = createAgentClient(host, session);
+async function fixture(
+  subject = "account-a",
+  origin = "https://builderlab.example",
+) {
+  // Saved agents are scoped by the account email.
+  const { session, request } = await signedInBuilderlab(subject, true, origin);
+  const client = createAgentClient(session);
   const type = builderlabType(client, session, relay);
   if (!type.remote) throw new Error("Missing hosted adapter");
   return {
@@ -101,10 +98,9 @@ it.each(["account", "server"])(
     first.request.mockResolvedValueOnce(response(registration));
     await first.remote.provision(provision);
     first.session.dispose();
-    if (changed === "server")
-      vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://other.example");
     const other = await fixture(
       changed === "account" ? "account-b" : "account-a",
+      changed === "server" ? "https://other.example" : undefined,
     );
     await expect(
       other.remote.activate({ ...provision, pubkey, auth: proof }),
@@ -182,7 +178,7 @@ it("stops a turn with the agent ID saved when it was provisioned", async () => {
   expect(h.request).toHaveBeenCalledTimes(2);
   expect(h.request).toHaveBeenLastCalledWith(
     expect.objectContaining({
-      url: expect.stringContaining("/cancel-agent-turn"),
+      path: expect.stringContaining("/cancel-agent-turn"),
       body: JSON.stringify({
         agent_id: "provider-id",
         community: "agent.example",
@@ -217,23 +213,16 @@ it("does not stop a turn for an agent outside the signed-in account", async () =
 });
 
 it("rejects a stop at once when signed out, without signing in or reaching Builderlab", async () => {
-  const acquire = vi.fn(async () => ({
-    value: "credential",
-    account: {
-      subject: "account-a",
-      email: "a@example.com",
-      canUseRemoteAgents: true,
-    },
-  }));
-  const session = createOAuthSession(acquire);
-  const request = vi.fn<Host["request"]>();
-  const client = createAgentClient({ runCommand: vi.fn(), request }, session);
+  const { session, request, service } = await signedInBuilderlab();
+  await session.signOut();
+  vi.mocked(service.signIn).mockClear();
+  const client = createAgentClient(session);
   const remote = builderlabType(client, session, relay).remote;
   if (!remote?.interrupt) throw new Error("Missing hosted adapter");
   await expect(remote.interrupt(interruption)).rejects.toThrow(
     "Sign in to Builderlab first.",
   );
-  expect(acquire).not.toHaveBeenCalled();
+  expect(service.signIn).not.toHaveBeenCalled();
   expect(session.snapshot().status).toBe("signed-out");
   expect(request).not.toHaveBeenCalled();
 });

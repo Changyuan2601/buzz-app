@@ -188,6 +188,16 @@ impl FederatedIdentity {
     fn publish(&self, state: &State) {
         self.0.changes.send_replace(state.snapshot.clone());
     }
+    /// A build without NIP-FI configuration.
+    #[cfg(test)]
+    pub(crate) fn unconfigured() -> Self {
+        let store = Arc::new(tests::Memory::default());
+        Self::with_store(None, String::new(), String::new(), store)
+    }
+    /// The validated NIP-FI identity origin, when this build configures one.
+    pub(crate) fn identity_origin(&self) -> Option<&str> {
+        self.0.config.as_ref().map(|c| c.identity_origin.as_str())
+    }
     pub(crate) fn snapshot(&self) -> Snapshot {
         self.state().snapshot.clone()
     }

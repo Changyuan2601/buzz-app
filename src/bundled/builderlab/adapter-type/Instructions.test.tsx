@@ -7,9 +7,10 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
-import type { Host, HostResponse } from "../../../features/host/service";
+import type { HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
-import { createOAuthSession } from "../oauth/session";
+import { federatedFixture } from "../../../features/federated-identity/testing";
+import { createBuilderlabSession } from "../session";
 import { deferred } from "../test-helpers";
 import { builderlabType } from "./index";
 
@@ -59,13 +60,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 function fixture() {
-  let subject = "account-a";
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
-  }));
-  const request = vi.fn<Host["request"]>().mockResolvedValue(response());
-  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
+  const federated = federatedFixture("user", "account-a");
+  const session = createBuilderlabSession(federated.session);
+  const request = federated.request.mockResolvedValue(response());
+  const client = createAgentClient(session);
   const type = {
     ...builderlabType(client, session, {
       snapshot: () => ({ status: "disconnected", generation: 0 }),
@@ -82,8 +80,15 @@ function fixture() {
     type,
     request,
     changeAccount: () => {
-      subject = "account-b";
-      session.signOut();
+      void session.signOut();
+      vi.mocked(federated.service.signIn).mockImplementation(async () => {
+        federated.publish({
+          status: "signed-in",
+          revision: "user:b",
+          email: "account-b",
+        });
+        return federated.service.snapshot();
+      });
     },
   };
 }

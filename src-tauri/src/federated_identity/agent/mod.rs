@@ -57,9 +57,10 @@ impl AgentTokens {
     /// Tokens for a build without an organization: agents send no evidence.
     #[cfg(test)]
     pub(crate) fn unconfigured() -> Self {
-        let store = Arc::new(super::tests::Memory::default());
-        let identity = FederatedIdentity::with_store(None, String::new(), String::new(), store);
-        Self::with_store(identity, Arc::new(grant::tests::MemoryGrants::default()))
+        Self::with_store(
+            FederatedIdentity::unconfigured(),
+            Arc::new(grant::tests::MemoryGrants::default()),
+        )
     }
     fn with_store(identity: FederatedIdentity, store: Arc<dyn GrantStore>) -> Self {
         Self(Arc::new(Inner {
