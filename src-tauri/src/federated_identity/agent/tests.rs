@@ -161,3 +161,130 @@ async fn enrollment_needs_a_session_and_refuses_another_owner() {
         Some(SIGN_IN)
     );
 }
+
+pub(super) fn jwt(agent: &AppAgent, claims: serde_json::Value) -> String {
+    let now = now().unwrap() as u64;
+    let mut base = serde_json::json!({
+        "iss": "https://issuer.example",
+        "aud": "https://relay.example",
+        "nostr_pubkey": agent.pubkey,
+        "nostr_owner_pubkey": agent.owner,
+        "iat": now,
+        "exp": now + 300,
+    });
+    for (name, value) in claims.as_object().unwrap() {
+        base[name] = value.clone();
+    }
+    format!(
+        "{}.{}.sig",
+        URL_SAFE_NO_PAD.encode(br#"{"typ":"nip-fi-agent+jwt","alg":"ES256"}"#),
+        URL_SAFE_NO_PAD.encode(base.to_string())
+    )
+}
+pub(super) fn issued(agent: &AppAgent, claims: serde_json::Value) -> serde_json::Value {
+    let token = jwt(agent, claims);
+    let exp = serde_json::from_slice::<serde_json::Value>(
+        &URL_SAFE_NO_PAD
+            .decode(token.split('.').nth(1).unwrap())
+            .unwrap(),
+    )
+    .unwrap()["exp"]
+        .clone();
+    serde_json::json!({ "assertion": token, "nostr_pubkey": agent.pubkey, "expires_at": exp })
+}
+
+#[tokio::test]
+async fn an_agent_assertion_is_minted_with_the_grant_validated_and_reused() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let reply = issued(&probe, serde_json::json!({}));
+    let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, reply)]).await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+
+    let first = f.tokens.evidence(&f.agent, &f.key).await.unwrap().unwrap();
+    assert!(first.starts_with("Bearer ") && first.contains('.'));
+    let again = f.tokens.evidence(&f.agent, &f.key).await.unwrap().unwrap();
+    assert_eq!(*first, *again);
+
+    let seen = served.await.unwrap();
+    assert_eq!(seen.len(), 2, "the cached assertion is reused");
+    let mint = &seen[1];
+    assert_eq!(
+        mint.target,
+        "POST /mount/v1/nip-fi/agent-assertion HTTP/1.1"
+    );
+    let header = |name: &str| {
+        mint.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(header("authorization"), Some("Bearer grant-1"));
+    assert!(header("nostr-authorization").unwrap().starts_with("Nostr "));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mint.body).unwrap(),
+        serde_json::json!({ "nostr_pubkey": f.agent.pubkey, "relay_url": "wss://relay.example" })
+    );
+}
+
+#[test]
+fn agent_assertions_must_name_this_agent_owner_issuer_and_community() {
+    let f = fixture("http://unused".into());
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    let now = now().unwrap() as u64;
+    let check = |claims: serde_json::Value| {
+        let token = jwt(&f.agent, claims);
+        validate(
+            &token,
+            &f.agent,
+            &grant,
+            "wss://relay.example",
+            now + 300,
+            now,
+        )
+    };
+    assert!(check(serde_json::json!({})).is_ok());
+    for wrong in [
+        serde_json::json!({ "nostr_pubkey": "c".repeat(64) }),
+        serde_json::json!({ "nostr_owner_pubkey": "c".repeat(64) }),
+        serde_json::json!({ "iss": "https://other.example" }),
+        serde_json::json!({ "aud": "https://other.example" }),
+        serde_json::json!({ "exp": now + 299 }),
+        serde_json::json!({ "iat": now + 60 }),
+    ] {
+        assert!(check(wrong).is_err());
+    }
+    let human = format!(
+        "{}.{}.sig",
+        URL_SAFE_NO_PAD.encode(br#"{"typ":"nip-fi+jwt"}"#),
+        jwt(&f.agent, serde_json::json!({}))
+            .split('.')
+            .nth(1)
+            .unwrap()
+    );
+    assert!(validate(
+        &human,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn a_community_outside_the_organization_gets_no_assertion() {
+    let mut f = fixture("http://unused".into());
+    f.agent.relay = "wss://elsewhere.example".into();
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_none());
+}
