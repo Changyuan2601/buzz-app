@@ -82,7 +82,8 @@ so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
 explicit empty value. When unset or empty, login is unconfigured and no network
 origin is granted. Local builds have no deployment default. The desktop release
-workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
+workflow supplies the production URL by default, and an empty value when FI is
+configured; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.
