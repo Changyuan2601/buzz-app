@@ -587,7 +587,10 @@ function Timeline({
         ?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
     let y = savedPosition.current?.anchor?.y ?? 0;
+    // The scroll position that y was read or corrected at.
+    let at = element.scrollTop;
     const read = () => {
+      at = element.scrollTop;
       const row = top();
       if (row !== undefined) y = row - element.getBoundingClientRect().top;
     };
@@ -604,23 +607,27 @@ function Timeline({
         if (ended) frame = requestAnimationFrame(release);
       });
     });
-    // A scroll's event can arrive after the frame that applies row sizes, and
-    // the hold would then return the row to where it was before that scroll.
-    // Also read the row in each frame before the sizes land: this callback is
-    // requested a frame ahead, so it runs before Virtua's size callback.
+    // A held pointer's scroll event can arrive after the frame that applies
+    // row sizes, and the hold would then return the row to where it was before
+    // that scroll. When a held pointer has scrolled, also read the row in each
+    // frame before the sizes land: this callback is requested a frame ahead,
+    // so it runs before Virtua's size callback. Without a scroll, rows that
+    // have not measured yet can be out of place; keep the reader's y then.
     let sample = requestAnimationFrame(function each() {
-      read();
+      if (pointerHeld.current && element.scrollTop !== at) read();
       sample = requestAnimationFrame(each);
     });
     const hold = new MutationObserver(() => {
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
-      if (row !== undefined && settled.current && !follow.current)
+      if (row !== undefined && settled.current && !follow.current) {
         correctScrollTop(
           element,
           row - element.getBoundingClientRect().top - y,
         );
+        at = element.scrollTop;
+      }
     });
     const release = () => {
       cancelAnimationFrame(frame);
