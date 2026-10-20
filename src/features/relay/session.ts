@@ -135,6 +135,7 @@ type PendingChannelCreation = Readonly<{
   operation: string;
   input: ChannelCreationInput;
 }>;
+const LEGACY_SESSION_DESCRIPTION = "Buzz session (buzz.sessions/v1)";
 const channelId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -196,6 +197,10 @@ function parseChannelCreation(
   // Solo chats start only through channel writes.
   if (labels.includes(SOLO_LABEL)) return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
+  // Chats started before Solo were sessions marked by this description header.
+  // Saved ones are not dialog creations; older builds refused it elsewhere.
+  // Temporary: remove once no device still saves a pre-Solo chat creation.
+  if (description?.split("\n")[0] === LEGACY_SESSION_DESCRIPTION) return;
   const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
   const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
   if (

@@ -77,6 +77,54 @@ it("keeps verified Solo chat roster reads available for sends without member-add
   }
 });
 
+it("does not restore a saved pre-Solo chat creation as an unfinished channel", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  // Chats started before Solo carried this description header instead.
+  const legacySession = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", "33333333-3333-4333-8333-333333333333"],
+      ["name", "Overview of IFC"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", "Buzz session (buzz.sessions/v1)\npersonal"],
+    ],
+  });
+  const records: readonly OutgoingEvent[] = [
+    { event: legacySession, signed: legacySession, delivery: "unknown" },
+  ];
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async () => [],
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async () => {},
+      },
+    },
+    {
+      outboxStorage: { load: () => structuredClone(records), save: () => {} },
+    },
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(
+        owner.session.outbox
+          ?.snapshot()
+          .some((item) => item.event.id === legacySession.id),
+      ).toBe(true),
+    );
+    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([
   [false, "Release notes"],
   [true, "Release notes"],
