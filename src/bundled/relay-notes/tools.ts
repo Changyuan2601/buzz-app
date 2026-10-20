@@ -140,7 +140,7 @@ export async function note(client: BuzzClient, args: Args) {
     throw new Error(`Unexpected argument for note ${action}.`);
   const place = target(args.note, client.pubkey);
   if (action === "read") {
-    const current = await head(client, place);
+    const current = await head(client, place, place.pubkey === client.pubkey);
     if (!current) throw new Error("Note not found or not accessible.");
     return JSON.stringify({ ...reference(current), text: current.content });
   }

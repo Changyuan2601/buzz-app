@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { naddrEncode, npubEncode } from "nostr-tools/nip19";
-import type { BuzzClient, BuzzEvent, Template } from "../../buzz-mcp/client";
+import type {
+  BuzzClient,
+  BuzzEvent,
+  Filter,
+  Template,
+} from "../../buzz-mcp/client";
 import { NOTE_TOOLS } from ".";
 
 const own = "a".repeat(64);
@@ -23,7 +28,7 @@ const old: BuzzEvent = {
 function fixture(events: BuzzEvent[] = []) {
   let stored = [...events];
   let index = 2;
-  const query = vi.fn(async () => stored);
+  const query = vi.fn(async (_filters: Filter[]) => stored);
   const publish = vi.fn(async (template: Template) => {
     const saved = {
       ...template,
@@ -174,6 +179,28 @@ it("updates a read revision from a file, retaining note metadata", async () => {
       ["published_at", "90"],
     ],
   });
+});
+it("reads the writer's own revision before editing when the replica lags", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(200_000);
+  const f = fixture([old]);
+  const writerQuery = f.query.getMockImplementation();
+  if (!writerQuery) throw new Error("Missing writer query");
+  f.query.mockImplementation(async (filters) =>
+    filters[0]?.consistency === "strong" ? writerQuery(filters) : [old],
+  );
+  const saved = JSON.parse(
+    await f.call("note", { ...save, expected_event: old.id }),
+  );
+  expect(saved.status).toBe("confirmed");
+  const loaded = JSON.parse(await f.call("note", { note: saved.naddr }));
+  expect(loaded.event_id).toBe(saved.event_id);
+  vi.setSystemTime(201_000);
+  expect(
+    JSON.parse(
+      await f.call("note", { ...save, expected_event: loaded.event_id }),
+    ).status,
+  ).toBe("confirmed");
 });
 it.each(["absent", "9".repeat(64)])(
   "refuses stale expected_event %s without publishing",
