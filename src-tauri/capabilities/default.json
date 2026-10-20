@@ -44,7 +44,6 @@
     "allow-relay-socket-start",
     "allow-relay-socket-send",
     "allow-relay-socket-close",
-    "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",
     "allow-identity-sign-builderlab-binding",

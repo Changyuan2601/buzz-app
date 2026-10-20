@@ -88,7 +88,6 @@ fn main() {
             "relay_socket_start",
             "relay_socket_send",
             "relay_socket_close",
-            "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",
             "relay_sign_read_state",
