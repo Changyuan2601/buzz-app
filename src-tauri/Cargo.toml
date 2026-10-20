@@ -22,7 +22,7 @@ tauri-build = { version = "2.7.2", features = [] }
 buzz-mesh-agent = { path = "../src/bundled/mesh-compute/native", optional = true }
 async-trait = { version = "0.1", optional = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
-buzz-mesh-compute = { path = "../crates/mesh-compute", optional = true }
+buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute", optional = true }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }

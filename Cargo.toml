@@ -1,4 +1,4 @@
 [workspace]
-members = ["src/bundled/mesh-compute/native", "crates/pairing", "crates/plugin-manager", "crates/agent-controller", "crates/credential-store", "crates/mesh-compute", "crates/ifc-core", "crates/buzz-ifc", "crates/nsec-backup", "src-tauri"]
+members = ["src/bundled/mesh-compute/native", "crates/pairing", "crates/plugin-manager", "crates/agent-controller", "crates/credential-store", "src/bundled/mesh-compute/compute", "crates/ifc-core", "crates/buzz-ifc", "crates/nsec-backup", "src-tauri"]
 default-members = ["crates/plugin-manager"]
 resolver = "2"

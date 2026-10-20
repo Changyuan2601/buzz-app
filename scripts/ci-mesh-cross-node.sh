@@ -13,6 +13,6 @@ if [[ ! -f "$archive" ]]; then
 fi
 echo "19fe012ae952e50a536f21c8c9f7864281656c8c20bc53902832850d6203106d  $archive" | sha256sum --check
 tar -xzf "$archive" -C "$cache"
-python3 crates/mesh-compute/tests/cross_node/run.py \
+python3 src/bundled/mesh-compute/compute/tests/cross_node/run.py \
   --runtime-bundle "$cache/meshllm-native-runtime-linux-x86_64-cpu" \
   --cache "$cache" --output "$output"

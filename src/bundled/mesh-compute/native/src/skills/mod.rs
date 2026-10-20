@@ -256,14 +256,14 @@ fn scan_skills_from_dir(
 
 fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
     content: &str,
-) -> Result<Option<(T, String)>, serde_yaml::Error> {
+) -> Result<Option<(T, String)>, serde_norway::Error> {
     let parts: Vec<&str> = content.split("---").collect();
     if parts.len() < 3 {
         return Ok(None);
     }
 
     let yaml_content = parts[1].trim();
-    let metadata: T = serde_yaml::from_str(yaml_content)?;
+    let metadata: T = serde_norway::from_str(yaml_content)?;
 
     let body = parts[2..].join("---").trim().to_string();
     Ok(Some((metadata, body)))

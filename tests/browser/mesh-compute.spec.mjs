@@ -10,21 +10,17 @@ test("Mesh compute is enabled by default and can be disabled and re-enabled", as
   const button = (name) => page.getByRole("button", { name, exact: true });
   await button("Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
-  const enabled = page.getByRole("switch", {
-    name: "Enable Shared compute",
-    exact: true,
-  });
-  await expect(enabled).toBeChecked();
-  await enabled.click();
-  await expect(enabled).not.toBeChecked();
+  await selectSettingsSection(page, "Manage plugins");
+  // Main's plugin manager exposes Enable/Disable action buttons rather than switches.
+  await button("Disable Shared compute").click();
+  await expect(button("Enable Shared compute")).toBeVisible();
   await expect(
     page
       .getByRole("complementary", { name: "Settings sidebar", exact: true })
       .getByRole("button", { name: "Shared compute", exact: true }),
   ).toHaveCount(0);
-  await enabled.click();
-  await expect(enabled).toBeChecked();
+  await button("Enable Shared compute").click();
+  await expect(button("Disable Shared compute")).toBeVisible();
   // Contributed cards own their region label rather than the built-in section wrapper.
   await page
     .getByRole("complementary", { name: "Settings sidebar", exact: true })

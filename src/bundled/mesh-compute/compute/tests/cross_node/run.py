@@ -104,7 +104,7 @@ def main():
     parser.add_argument("--readiness-timeout", type=int, default=240)
     args = parser.parse_args()
     if args.binary is None:
-        repo = Path(__file__).resolve().parents[4]
+        repo = Path(__file__).resolve().parents[5]
         started = time.monotonic()
         build = subprocess.run([
             str(repo / "bin/cargo"), "test", "--locked", "-p", "buzz-mesh-compute",

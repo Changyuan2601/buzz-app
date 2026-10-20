@@ -18,7 +18,7 @@ run cleanup. Evidence goes to `test-results/mesh-cross-node`.
 For macOS or an already provisioned runtime:
 
 ```sh
-python3 crates/mesh-compute/tests/cross_node/run.py \
+python3 src/bundled/mesh-compute/compute/tests/cross_node/run.py \
   --runtime-bundle /path/to/native-runtime --cache /path/to/model-cache \
   --output /path/to/evidence
 ```
