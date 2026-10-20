@@ -92,7 +92,7 @@ it("creates, discovers and reads a recipe by its returned naddr", async () => {
     JSON.parse(await f.call("note", { note: `nostr:${saved.naddr}` })),
   ).toMatchObject({ text: save.text, event_id: saved.event_id });
 });
-it.each(["Frosted Icons", "Recipe", "2026:plan", "a".repeat(81)])(
+it.each(["Frosted Icons", "Recipe", "2026:plan", "recipe\n", "a".repeat(81)])(
   "rejects non-CLI slugs for plain references and coordinate saves: %s",
   async (identifier) => {
     const f = fixture();

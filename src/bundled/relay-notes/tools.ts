@@ -13,7 +13,7 @@ const string = (value: unknown, name: string) => {
   return value;
 };
 function slug(value: string) {
-  if (!/^[a-z0-9._-]{1,80}$/.test(value))
+  if (!value.length || value.length > 80 || /[^a-z0-9._-]/.test(value))
     throw new Error(
       "Use a slug of 1–80 lowercase letters, digits, dots, underscores or hyphens.",
     );
