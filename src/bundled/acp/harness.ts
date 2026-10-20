@@ -18,16 +18,20 @@ const CHECK_STOP_MS = 5_000;
 export const READY =
   "Ready to start. Sign-in problems show up on the first turn.";
 
+/** The error for a launch whose program can't be found, with its install
+ * hint. */
+export const missing = (presetId: string, command: string) =>
+  `${command} wasn't found or couldn't run. ${
+    preset(presetId)?.install ?? "Check it's installed and on your PATH."
+  }`;
+
 /** The client's hooks for one launch: errors name the preset, and a missing
  * program shows its install hint. */
 export function hooks(presetId: string, { command }: Launch): AcpHooks {
-  const chosen = preset(presetId);
   return {
-    label: chosen?.title ?? command,
+    label: preset(presetId)?.title ?? command,
     program: "harness",
-    missing: `${command} wasn't found or couldn't run. ${
-      chosen?.install ?? "Check it's installed and on your PATH."
-    }`,
+    missing: missing(presetId, command),
     env: {},
     diagnoseStartup: true,
   };

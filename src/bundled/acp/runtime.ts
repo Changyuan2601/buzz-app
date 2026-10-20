@@ -46,9 +46,9 @@ import {
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
-import { sessionTitle, standalonePrompt } from "../goose/runtime";
-import { type Config, config } from "./config";
-import { HarnessProcess } from "./harness";
+import { standalonePrompt } from "../goose/runtime";
+import { type Config, config, UNCONFIRMED } from "./config";
+import { HarnessProcess, missing } from "./harness";
 import { preset } from "./presets";
 
 const NAMES_TIMEOUT_MS = 2_000;
@@ -60,6 +60,9 @@ const HARNESS_CHOICE = Object.freeze({ provider: "", model: "" });
 const LABEL = "ACP agent";
 /** ACP's error code for a harness that needs its user to sign in. */
 const AUTH_REQUIRED = -32000;
+/** What a failed turn says in the channel. The harness's own error can carry
+ * anything, secrets included, so it stays in the turn's local activity. */
+const FAILED = "⚠️ I couldn't finish that. Details are in my activity.";
 
 /** The settings a running harness was started with; a change restarts it. */
 const launchOf = ({ command, args, env, workspace, approval }: Config) =>
@@ -103,6 +106,16 @@ export class AcpRuntime {
     const spawn = this.host.spawn?.bind(this.host);
     if (!spawn) throw new Error("ACP agents run only in the desktop app");
     return spawn;
+  }
+  private resolveDirectory(path: string): Promise<string> {
+    if (!this.host.resolveDirectory)
+      throw new Error("ACP agents run only in the desktop app");
+    return this.host.resolveDirectory(path);
+  }
+  private readFile(path: string, cwd: string): Promise<Uint8Array> {
+    if (!this.host.readFile)
+      throw new Error("ACP agents run only in the desktop app");
+    return this.host.readFile(path, { cwd });
   }
   private get serve(): ServeMcp {
     const serve = this.host.serveMcp?.bind(this.host);
@@ -191,6 +204,7 @@ export class AcpRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -241,21 +255,15 @@ export class AcpRuntime {
         topLevel,
         fresh,
       );
-      const { channel: where } = turn;
       return {
         key: turn.key,
-        place: where.name
-          ? `#${where.name}`
-          : where.dm
-            ? "DM"
-            : where.id.slice(0, 8),
         text: this.review(
           entry,
           turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
         ),
       };
     };
-    const { key, text, place } = await prompt(false);
+    const { key, text } = await prompt(false);
     // A launch change while the conversation loaded retired this entry, and
     // its sessions would only say it stopped. The message isn't moved to the
     // new launch, which the owner may not have confirmed it for.
@@ -265,9 +273,8 @@ export class AcpRuntime {
         agent,
         channel,
         event,
-        "this agent's settings changed while it was reading the conversation",
         topLevel,
-        "Send your message again.",
+        "This agent's settings changed while it was reading the conversation. Send your message again.",
       );
     entry.contexts.set(
       key,
@@ -282,7 +289,6 @@ export class AcpRuntime {
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
-      title: sessionTitle(entry.name, place, key.split("/")[1]),
       signal,
       activityScope: topLevel
         ? channel
@@ -291,25 +297,21 @@ export class AcpRuntime {
       ...(acknowledged ? { acknowledged } : {}),
       ...(superseded ? { superseded } : {}),
     });
+    // The whole error reaches the turn's local activity through `done`.
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     void done
       .then((result) => {
-        // Of the messages one turn answered, only one has its error or text.
-        if (result.error !== undefined) {
-          const login =
-            first && result.code === AUTH_REQUIRED
-              ? preset(entry.config.preset)?.login
-              : undefined;
+        // Of the messages one turn answered, only one has its error.
+        if (result.error !== undefined)
           return this.report(
             agent,
             channel,
             event,
-            result.error,
             topLevel,
-            login,
+            this.hint(entry.config, result.error, result.code, first),
           );
-        }
       })
       .catch((error) => console.warn("ACP agent turn failed", error))
       .finally(() => this.notify());
@@ -335,7 +337,7 @@ export class AcpRuntime {
           ? undefined
           : standalonePrompt(agent.pubkey, text);
       },
-      { signal, title: sessionTitle(entry.name, key) },
+      { signal },
     );
     this.notify();
     return done.finally(() => this.notify());
@@ -347,24 +349,37 @@ export class AcpRuntime {
     return note ? `${text}\n\n${note}` : text;
   }
 
+  /** What the owner can do about a failed turn, in words of our own: none
+   * of the harness's text. Signing in is asked on a new session's first
+   * turn. */
+  private hint(
+    settings: Config,
+    error: string,
+    code: number | undefined,
+    first: boolean,
+  ) {
+    // Ours, so posting it carries nothing the harness wrote.
+    const ours = [UNCONFIRMED, missing(settings.preset, settings.command)].find(
+      (text) => error.endsWith(text),
+    );
+    if (ours) return ours;
+    if (first && code === AUTH_REQUIRED) return preset(settings.preset)?.login;
+  }
+
   /** Says in the thread that a turn failed, so nobody waits on it. */
   private report(
     agent: AgentHandle,
     channel: string,
     event: EventData,
-    error: string,
     topLevel: boolean,
-    /** What to do about it, kept whole after the shortened error. */
+    /** What to do about it. */
     hint?: string,
   ) {
-    const said = error.slice(0, 500);
     return this.post(
       agent,
       channel,
       event,
-      `⚠️ I couldn't finish that: ${said}${
-        hint ? `${said.endsWith(".") ? "" : "."} ${hint}` : ""
-      }`,
+      hint ? `${FAILED} ${hint}` : FAILED,
       topLevel,
       [["p", agent.owner]],
     );
@@ -422,7 +437,13 @@ export class AcpRuntime {
     const reading = topLevel
       ? readProject(
           session && owner
-            ? () => ownerCanvas(session.canvas, owner, channelId)
+            ? () =>
+                ownerCanvas(
+                  session.canvas,
+                  owner,
+                  channelId,
+                  session.channelWrites.startingCanvas(channelId),
+                )
             : undefined,
         )
       : Promise.resolve(undefined);
@@ -516,8 +537,7 @@ export class AcpRuntime {
             this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
-          spawn: this.spawn,
-          cwd: entry.config.workspace,
+          read: (path) => this.readFile(path, entry.config.workspace),
           memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
@@ -530,7 +550,7 @@ export class AcpRuntime {
     };
     entry.sessions = new AgentSessions({
       label: LABEL,
-      spawn: (id, options) => this.spawn(id, options),
+      resolveDirectory: (path) => this.resolveDirectory(path),
       tools,
       process: entry.harness,
       onChange: () => this.notify(),

@@ -87,7 +87,9 @@ export type AcpHooks = Readonly<{
   /** Whether the harness names an untitled session itself, read once per
    * process. Without it, a session opened to be named keeps its title. */
   names?(process: AcpProcess): Promise<boolean>;
-  /** `session/new`'s `_meta`. */
+  /** `session/new`'s `_meta`. A session's `title` reaches the harness only
+   * here: ACP has no standard field for it, so only a harness that sets this
+   * hook (Goose) is given one. */
   newSessionMeta?(
     buzz: McpServer | undefined,
     open: Readonly<{ title?: string; provider: string }>,

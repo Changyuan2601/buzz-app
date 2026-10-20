@@ -9,6 +9,7 @@ import { REQUEST_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import { flush } from "../goose/goose-testing";
 import { fakeHarness } from "./acp-testing";
 import { approve, type Config, DEFAULT_CONFIG } from "./config";
+import { missing } from "./harness";
 import { AcpRuntime } from "./runtime";
 
 const appClient = vi.hoisted(() => vi.fn());
@@ -25,6 +26,8 @@ const alice = "a".repeat(64);
 const mallory = "b".repeat(64);
 const channel = "chan-1";
 const INSTRUCTIONS = "Always answer in haiku.";
+
+const FAILED = "⚠️ I couldn't finish that. Details are in my activity.";
 
 const message = (id: string, content: string, pubkey = alice): RelayEvent =>
   ({
@@ -69,7 +72,11 @@ function setup(
   } = {},
 ) {
   const fake = fakeHarness(options);
-  const host = { spawn: fake.spawn, serveMcp: fake.serve } as unknown as Host;
+  const host = {
+    spawn: fake.spawn,
+    serveMcp: fake.serve,
+    resolveDirectory: async (path: string) => path,
+  } as unknown as Host;
   const session = {
     read: vi.fn(read),
     channels: {
@@ -87,6 +94,7 @@ function setup(
     relayAuthor: "relay-author",
     audienceAuthorityCommunity: "audience-community",
     workflowAuthority: "workflow-authority",
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: canvas !== undefined,
       read: vi.fn(async () =>
@@ -131,6 +139,7 @@ function setup(
     event: RelayEvent,
     config: Config,
     signal = new AbortController().signal,
+    extra: Partial<Delivery> = {},
   ) => {
     const ignored = vi.fn();
     const run = runtime.run({
@@ -141,6 +150,7 @@ function setup(
       signal,
       workingUntil,
       ignored,
+      ...extra,
     } as unknown as Delivery);
     return { run, ignored };
   };
@@ -326,7 +336,18 @@ describe("AcpRuntime", () => {
     expect(fake.harnesses).toEqual([]);
   });
 
-  it("says in the thread when the harness refuses Buzz tools", async () => {
+  it("gives a missing program's install hint, and nothing it wrote", async () => {
+    const config = await confirmed();
+    const { deliver, sync, published } = setup({ exitCode: 127 });
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(published[0]?.content).toBe(
+      `${FAILED} ${missing(config.preset, config.command)}`,
+    );
+  });
+
+  it("says only that it failed when the harness refuses Buzz tools", async () => {
     const config = await confirmed();
     const { deliver, sync, published } = setup({
       capabilities: { mcpCapabilities: { http: false } },
@@ -334,9 +355,7 @@ describe("AcpRuntime", () => {
     sync(config);
     await deliver(message("1", "@Opal hello"), config).run;
     await vi.waitFor(() => expect(published).toHaveLength(1));
-    expect(published[0]?.content).toContain(
-      "This OpenCode cannot reach Buzz tools (no HTTP MCP support)",
-    );
+    expect(published[0]?.content).toBe(FAILED);
   });
 
   it("leads a new session with the core memory the host keeps", async () => {
@@ -500,31 +519,47 @@ describe("AcpRuntime", () => {
       await deliver(message("1", "@Opal hello"), config).run;
       await vi.waitFor(() => expect(published).toHaveLength(1));
       const [report] = published;
-      expect(report?.content).toContain("No luck");
-      if (code === -32000)
-        expect(report?.content).toContain("Run `opencode auth login`.");
-      else expect(report?.content).not.toContain("opencode auth login");
+      expect(report?.content).toBe(
+        code === -32000 ? `${FAILED} Run \`opencode auth login\`.` : FAILED,
+      );
     }
   });
 
-  it("keeps a long error's sign-in hint whole, after one period", async () => {
+  it("keeps a failed turn's error in its activity, out of the channel", async () => {
+    const error = "Request failed: https://p.test/v1?key=SENTINEL";
+    for (const code of [-32000, -32603]) {
+      const config = await confirmed();
+      const { runtime, deliver, sync, published, workingUntil } = setup({
+        promptError: { code, message: error },
+      });
+      sync(config);
+      await deliver(message("1", "@Opal hello"), config).run;
+      await reported(runtime, workingUntil);
+      // The host records what `done` settles with in the turn's activity.
+      expect(await workingUntil.mock.calls[0]?.[0]).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("SENTINEL"),
+      });
+      expect(published).toHaveLength(1);
+      expect(published[0]?.content).not.toContain("SENTINEL");
+    }
+  });
+
+  it("hands the host a stopper that cancels the mention's running turn", async () => {
     const config = await confirmed();
-    const { deliver, sync, published } = setup({
-      promptError: { code: -32000, message: `${"x".repeat(600)}.` },
-    });
+    const { fake, deliver, sync } = setup({ hold: true });
     sync(config);
-    await deliver(message("1", "@Opal hello"), config).run;
-    await vi.waitFor(() => expect(published).toHaveLength(1));
-    expect(published[0]?.content).toMatch(/x\. Run `opencode auth login`\.$/);
-    const config2 = await confirmed();
-    const short = setup({
-      promptError: { code: -32000, message: "Authentication required." },
-    });
-    short.sync(config2);
-    await short.deliver(message("1", "@Opal hello"), config2).run;
-    await vi.waitFor(() => expect(short.published).toHaveLength(1));
-    expect(short.published[0]?.content).toContain(
-      "Authentication required. Run `opencode auth login`.",
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await deliver(message("1", "@Opal hi"), config, undefined, {
+      interruptible,
+    }).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    expect(interruptible).toHaveBeenCalledTimes(1);
+    const harness = fake.harnesses[0];
+    expect(harness?.sent("session/cancel")).toEqual([]);
+    await interruptible.mock.calls[0]?.[0]();
+    await vi.waitFor(() =>
+      expect(harness?.sent("session/cancel")).toHaveLength(1),
     );
   });
 
@@ -545,9 +580,7 @@ describe("AcpRuntime", () => {
     await vi.waitFor(() => expect(harness?.turns).toHaveLength(2));
     harness?.turns[1]?.finish("refusal");
     await vi.waitFor(() => expect(published).toHaveLength(1));
-    expect(published[0]?.content).toBe(
-      "⚠️ I couldn't finish that: OpenCode refused the request",
-    );
+    expect(published[0]?.content).toBe(FAILED);
   });
 
   it("gives no sign-in hint to a refusal after a sign-in error while the session opened", async () => {
@@ -570,9 +603,7 @@ describe("AcpRuntime", () => {
     await vi.waitFor(() => expect(harness?.turns).toHaveLength(2));
     harness?.turns[1]?.finish("refusal");
     await vi.waitFor(() => expect(published).toHaveLength(1));
-    expect(published[0]?.content).toBe(
-      "⚠️ I couldn't finish that: OpenCode refused the request",
-    );
+    expect(published[0]?.content).toBe(FAILED);
   });
 
   it("gives no sign-in hint for a later turn that needs a login", async () => {
@@ -594,7 +625,6 @@ describe("AcpRuntime", () => {
     await deliver(reply, config).run;
     await vi.waitFor(() => expect(published).toHaveLength(1));
     expect(fake.harnesses).toHaveLength(1);
-    expect(published[0]?.content).toContain("Authentication required");
-    expect(published[0]?.content).not.toContain("opencode auth login");
+    expect(published[0]?.content).toBe(FAILED);
   });
 });
