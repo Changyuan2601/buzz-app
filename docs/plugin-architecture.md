@@ -127,7 +127,11 @@ app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the
 agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
-scope ends, so safe mode removes installed plugins' tools.
+scope ends, so safe mode removes installed plugins' tools. The bundled Shared
+Notes plugin uses this lifecycle for `notes_get`, `notes_set` and `notes_rm`;
+these are not unconditional Buzz tools. Disabling removes their listing and
+rejects stale session calls. This is tool availability, not a sandbox for
+trusted plugins or a revocation of native signing.
 
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,

@@ -33,18 +33,29 @@ it("adds usable agent tools only for the lifetime of the Shared Notes plugin", a
   try {
     const before = addedKey(service.tools());
     expect(
-      sessionTools(service.tools()).some((tool) => tool.name === "note"),
+      sessionTools(service.tools()).some((tool) => tool.name === "notes_get"),
     ).toBe(false);
     scope = ctx
       .extend({ pluginOwner: { id: "buzz.relay-notes", revision: "bundled" } })
       .plugin({ inject, apply });
     await scope;
-    expect(service.tools().map((tool) => tool.name)).toEqual(["notes", "note"]);
+    expect(service.tools().map((tool) => tool.name)).toEqual([
+      "notes_get",
+      "notes_set",
+      "notes_rm",
+    ]);
     expect(addedKey(service.tools())).not.toBe(before);
     expect(
-      sessionTools(service.tools()).some((tool) => tool.name === "note"),
+      sessionTools(service.tools()).some((tool) => tool.name === "notes_get"),
     ).toBe(true);
     await scope.dispose();
+    for (const tool of NOTE_TOOLS) {
+      expect(
+        sessionTools(service.tools()).some(
+          (listed) => listed.name === tool.name,
+        ),
+      ).toBe(false);
+    }
     expect(service.tools()).toEqual([]);
     expect(addedKey(service.tools())).toBe(before);
   } finally {
@@ -70,51 +81,35 @@ it("publishes and reads a signed recipe through plugin session dispatch", async 
       key: bytesToHex(agent.secret),
       root: "/",
     });
-    const saved = JSON.parse(
-      (await callSessionTool(
+    await callSessionTool(
+      client,
+      {},
+      "notes_set",
+      {
+        name: "icon-recipe",
+        title: "Icon recipe",
+        text: "Draw an icon.",
+      },
+      NOTE_TOOLS,
+    );
+    expect(stored[0]).toMatchObject({ pubkey: agent.pubkey, kind: 30023 });
+    expect(
+      await callSessionTool(
         client,
         {},
-        "note",
+        "notes_get",
         {
-          action: "save",
-          note: "icons",
-          title: "Frosted icons",
-          expected_event: "absent",
-          text: 'Make an individual "{{icon_description}}" icon.\n\nStyle summary.',
+          name: "icon-recipe",
+          author: "me",
         },
         NOTE_TOOLS,
-      )) as string,
-    );
-    expect(saved.status).toBe("confirmed");
-    expect(stored[0]).toMatchObject({
-      pubkey: agent.pubkey,
-      kind: 30023,
-      tags: [
-        ["d", "icons"],
-        ["title", "Frosted icons"],
-        ["published_at", expect.stringMatching(/^\d+$/)],
-      ],
-    });
-    const loaded = JSON.parse(
-      (await callSessionTool(
-        client,
-        {},
-        "note",
-        { note: saved.naddr },
-        NOTE_TOOLS,
-      )) as string,
-    );
-    expect(loaded).toMatchObject({
-      event_id: saved.event_id,
-      text: 'Make an individual "{{icon_description}}" icon.\n\nStyle summary.',
-    });
-    stored[0] = { ...stored[0], content: "tampered" };
-    await expect(
-      callSessionTool(client, {}, "note", { note: saved.naddr }, NOTE_TOOLS),
-    ).rejects.toThrow(/invalidly signed/);
-    await expect(
-      callSessionTool(client, {}, "note", { note: saved.naddr }, []),
-    ).rejects.toThrow(/No tool/);
+      ),
+    ).toContain("Draw an icon.");
+    for (const tool of NOTE_TOOLS) {
+      await expect(
+        callSessionTool(client, {}, tool.name, {}, []),
+      ).rejects.toThrow(/No tool/);
+    }
   } finally {
     vi.unstubAllGlobals();
   }

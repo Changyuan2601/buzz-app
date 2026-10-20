@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
-import { callTool, TOOLS } from "./tools";
+import { callNoteTool, callTool, TOOLS } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -1694,7 +1694,7 @@ it("reads a shared note by name, from whichever author has it", async () => {
     note(alice, "pr-recipe", 150),
   ]);
   await expect(
-    callTool(client, {}, "notes_get", { name: "pr-recipe" }),
+    callNoteTool(client, {}, "notes_get", { name: "pr-recipe" }),
   ).resolves.toBe(
     [
       `30023:${alice}:pr-recipe by Alice Smith, 1970-01-01T00:03Z`,
@@ -1706,10 +1706,10 @@ it("reads a shared note by name, from whichever author has it", async () => {
     ].join("\n"),
   );
   await expect(
-    callTool(client, {}, "notes_get", { name: "missing" }),
+    callNoteTool(client, {}, "notes_get", { name: "missing" }),
   ).resolves.toBe("No note missing.");
   await expect(
-    callTool(client, {}, "notes_get", { name: "Bad Name" }),
+    callNoteTool(client, {}, "notes_get", { name: "Bad Name" }),
   ).rejects.toThrow("Bad note name Bad Name");
 });
 
@@ -1721,39 +1721,39 @@ it("asks which author's note when several share a name", async () => {
     note(bob, "recipe", 300),
   ]);
   await expect(
-    callTool(client, {}, "notes_get", { name: "recipe" }),
+    callNoteTool(client, {}, "notes_get", { name: "recipe" }),
   ).rejects.toThrow(
     `2 authors have a note recipe; give author or latest.\n${bob} Bob`,
   );
   await expect(
-    callTool(client, {}, "notes_get", { name: "recipe", latest: true }),
+    callNoteTool(client, {}, "notes_get", { name: "recipe", latest: true }),
   ).resolves.toMatch(/\nrecipe by b$/);
   // An author by display name, pubkey or npub.
   await expect(
-    callTool(client, {}, "notes_get", {
+    callNoteTool(client, {}, "notes_get", {
       name: "recipe",
       author: "alice smith",
     }),
   ).resolves.toMatch(/\nrecipe by a$/);
   await expect(
-    callTool(client, {}, "notes_get", { name: "recipe", author: bob }),
+    callNoteTool(client, {}, "notes_get", { name: "recipe", author: bob }),
   ).resolves.toMatch(/\nrecipe by b$/);
   await expect(
-    callTool(client, {}, "notes_get", {
+    callNoteTool(client, {}, "notes_get", {
       name: "recipe",
       author: npubEncode(bob),
     }),
   ).resolves.toMatch(/\nrecipe by b$/);
   await expect(
-    callTool(client, {}, "notes_get", { name: "recipe", author: "Carol" }),
+    callNoteTool(client, {}, "notes_get", { name: "recipe", author: "Carol" }),
   ).rejects.toThrow("No one is named Carol.");
   await expect(
-    callTool(client, {}, "notes_get", { name: "recipe", author: "Bob" }),
+    callNoteTool(client, {}, "notes_get", { name: "recipe", author: "Bob" }),
   ).rejects.toThrow(
     /^2 people are named Bob; give their npub\.\nnpub1\w+\nnpub1\w+$/,
   );
   await expect(
-    callTool(client, {}, "notes_get", {
+    callNoteTool(client, {}, "notes_get", {
       name: "recipe",
       author: bob,
       latest: true,
@@ -1768,11 +1768,11 @@ it("lists your notes by default, or everyone's, newest first", async () => {
     note(me, "older", 100),
     note(alice, "hers", 300, [["t", "ops"]]),
   ]);
-  await expect(callTool(client, {}, "notes_get", {})).resolves.toBe(
+  await expect(callNoteTool(client, {}, "notes_get", {})).resolves.toBe(
     `mine ${me}  1970-01-01T00:03Z mine title\nolder ${me}  1970-01-01T00:01Z older title`,
   );
   await expect(
-    callTool(client, {}, "notes_get", { author: "all", tag: "ops" }),
+    callNoteTool(client, {}, "notes_get", { author: "all", tag: "ops" }),
   ).resolves.toBe(
     `hers ${alice} Alice Smith 1970-01-01T00:05Z hers title\nmine ${me}  1970-01-01T00:03Z mine title`,
   );
@@ -1780,23 +1780,25 @@ it("lists your notes by default, or everyone's, newest first", async () => {
     { kinds: [30023], "#t": ["ops"], limit: 50 },
   ]);
   const { client: empty } = fake(community);
-  await expect(callTool(empty, {}, "notes_get", {})).resolves.toBe("No notes.");
+  await expect(callNoteTool(empty, {}, "notes_get", {})).resolves.toBe(
+    "No notes.",
+  );
 });
 
 it("publishes a note in the CLI's shape, keeping what an update leaves out", async () => {
   const { client, published } = fake(community, { keep: true });
   await expect(
-    callTool(client, {}, "notes_set", { name: "plan", text: "draft" }),
+    callNoteTool(client, {}, "notes_set", { name: "plan", text: "draft" }),
   ).rejects.toThrow("title is required for a new note.");
   await expect(
-    callTool(client, {}, "notes_set", {
+    callNoteTool(client, {}, "notes_set", {
       name: "plan",
       title: "Plan",
       text: " ",
     }),
   ).rejects.toThrow("A note needs text.");
   await expect(
-    callTool(client, {}, "notes_set", {
+    callNoteTool(client, {}, "notes_set", {
       name: "plan",
       title: "Plan",
       summary: "the plan",
@@ -1830,9 +1832,9 @@ it("publishes a note in the CLI's shape, keeping what an update leaves out", asy
     keep: true,
   });
   try {
-    await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
+    await callNoteTool(again, {}, "notes_set", { name: "plan", text: "v2" });
     // The next version waits for the second after v2.
-    const v3 = callTool(again, {}, "notes_set", {
+    const v3 = callNoteTool(again, {}, "notes_set", {
       name: "plan",
       text: "v3",
       title: "New",
@@ -1888,11 +1890,11 @@ it("reports a conflict when another write of the same second wins", async () => 
     });
     // Both read version 100 and wait for second 101. The relay keeps the
     // lower id of the two and accepts the other as a duplicate.
-    const first = callTool(client, {}, "notes_set", {
+    const first = callNoteTool(client, {}, "notes_set", {
       name: "plan",
       text: "mine",
     });
-    const second = callTool(client, {}, "notes_set", {
+    const second = callNoteTool(client, {}, "notes_set", {
       name: "plan",
       text: "theirs",
     }).catch((error: unknown) => error);
@@ -1924,7 +1926,7 @@ it("checks a note write against the writer, not a lagging replica", async () => 
       : [stale],
   );
   await expect(
-    callTool(client, {}, "notes_set", { name: "plan", text: "v2" }),
+    callNoteTool(client, {}, "notes_set", { name: "plan", text: "v2" }),
   ).resolves.toBe(`saved 30023:${me}:plan`);
   expect(client.query).toHaveBeenCalledTimes(2);
 });
@@ -1932,7 +1934,7 @@ it("checks a note write against the writer, not a lagging replica", async () => 
 it("reports a conflict when the note is gone after a write", async () => {
   const { client } = fake(community);
   await expect(
-    callTool(client, {}, "notes_set", {
+    callNoteTool(client, {}, "notes_set", {
       name: "plan",
       title: "Plan",
       text: "v1",
@@ -1949,12 +1951,12 @@ it("dates a note deletion after the note it deletes", async () => {
     // Another writer of this key, with its clock ahead, saved second 102.
     const { client, published } = fake([...community, note(me, "plan", 102)]);
     let done = false;
-    const deleting = callTool(client, {}, "notes_rm", { name: "plan" }).then(
-      (result) => {
-        done = true;
-        return result;
-      },
-    );
+    const deleting = callNoteTool(client, {}, "notes_rm", {
+      name: "plan",
+    }).then((result) => {
+      done = true;
+      return result;
+    });
     await vi.advanceTimersByTimeAsync(2000);
     expect(done).toBe(false);
     expect(published).toEqual([]);
@@ -1976,7 +1978,7 @@ it("dates a note deletion after the note it deletes", async () => {
       note(me, "plan", 200),
     ]);
     await expect(
-      callTool(ahead, {}, "notes_rm", { name: "plan" }),
+      callNoteTool(ahead, {}, "notes_rm", { name: "plan" }),
     ).rejects.toThrow("The note was just changed; try again.");
     expect(none).toEqual([]);
   } finally {
@@ -1991,10 +1993,10 @@ it("deletes only your own note, by its address", async () => {
     note(alice, "hers", 100),
   ]);
   await expect(
-    callTool(client, {}, "notes_rm", { name: "hers" }),
+    callNoteTool(client, {}, "notes_rm", { name: "hers" }),
   ).rejects.toThrow("You have no note hers.");
   await expect(
-    callTool(client, {}, "notes_rm", { name: "plan" }),
+    callNoteTool(client, {}, "notes_rm", { name: "plan" }),
   ).resolves.toBe(`deleted 30023:${me}:plan`);
   expect(published).toEqual([
     { kind: 5, content: "", tags: [["a", `30023:${me}:plan`]] },
