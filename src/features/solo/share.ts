@@ -1,3 +1,4 @@
+import { threadReference } from "../relay/thread-reference";
 import {
   sameLabels,
   type ChannelDetailsDraft,
@@ -52,7 +53,7 @@ function matchesSoloChatLink(content: string, id: string) {
 
 /** Outbox can finish a delivered link even after its in-process share was reset. */
 export function isSoloChatLinkReceipt(item: OutgoingEvent) {
-  const match = /^solo-share-link:([^:]+):([^:]+)$/.exec(
+  const match = /^solo-share-link:([^:]+):([^:]+)(?::([0-9a-f]{64}))?$/.exec(
     item.recovery?.key ?? "",
   );
   return !!(
@@ -61,7 +62,10 @@ export function isSoloChatLinkReceipt(item: OutgoingEvent) {
     item.recovery?.value === "1" &&
     item.event.kind === 9 &&
     matchesSoloChatLink(item.event.content, match[1]) &&
-    item.event.tags.some(([name, value]) => name === "h" && value === match[2])
+    item.event.tags.some(
+      ([name, value]) => name === "h" && value === match[2],
+    ) &&
+    threadReference(item.event)?.rootId === match[3]
   );
 }
 
@@ -150,7 +154,10 @@ export async function publishSoloChatLink(
   previousId: string | undefined,
   signal: AbortSignal,
   onQueued: (id: string) => void,
+  threadRootId?: string,
 ) {
+  if (threadRootId !== undefined && !/^[0-9a-f]{64}$/.test(threadRootId))
+    throw new Error("A valid destination thread is required.");
   const source = await session.channelWrites.refreshMembership(sourceId);
   const destination =
     await session.channelWrites.refreshMembership(destinationId);
@@ -200,6 +207,7 @@ export async function publishSoloChatLink(
           event.id === previousId &&
           event.kind === 9 &&
           event.pubkey === session.viewer &&
+          threadReference(event)?.rootId === threadRootId &&
           matchesSoloChatLink(event.content, sourceId) &&
           event.tags.some(
             ([name, value]) => name === "h" && value === destinationId,
@@ -215,6 +223,7 @@ export async function publishSoloChatLink(
     existing &&
     (existing.event.kind !== 9 ||
       existing.event.pubkey !== session.viewer ||
+      threadReference(existing.event)?.rootId !== threadRootId ||
       !matchesSoloChatLink(existing.event.content, sourceId) ||
       !existing.event.tags.some(
         ([name, value]) => name === "h" && value === destinationId,
@@ -228,7 +237,7 @@ export async function publishSoloChatLink(
     return existing.event.id;
   }
   const recovery = {
-    key: `solo-share-link:${sourceId}:${destinationId}`,
+    key: `solo-share-link:${sourceId}:${destinationId}${threadRootId ? `:${threadRootId}` : ""}`,
     value: "1",
   };
   // A submitted operation saved before this caller owned recovery can still be
@@ -238,18 +247,32 @@ export async function publishSoloChatLink(
   // Keep this one link operation visible when a relay echo precedes its HTTP
   // receipt. Ordinary messages leave Outbox.snapshot() on echo; this caller
   // needs terminal evidence before releasing its submitted share attempt.
+  const content = soloChatLinkMessage(sourceId, soloChatLinkName(source));
   const id =
     existing?.event.id ??
-    session.messages.send(
-      destinationId,
-      soloChatLinkMessage(sourceId, soloChatLinkName(source)),
-      [],
-      [],
-      recovery,
-      [],
-      {},
-      [sourceId],
-    );
+    (threadRootId
+      ? session.messages.reply(
+          destinationId,
+          threadRootId,
+          content,
+          [],
+          [],
+          threadRootId,
+          [],
+          {},
+          [sourceId],
+          recovery,
+        )
+      : session.messages.send(
+          destinationId,
+          content,
+          [],
+          [],
+          recovery,
+          [],
+          {},
+          [sourceId],
+        ));
   onQueued(id);
   if (existing?.delivery === "failed" || existing?.delivery === "unknown")
     outbox.retry(id);

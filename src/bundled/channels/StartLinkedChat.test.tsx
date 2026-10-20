@@ -27,71 +27,92 @@ const viewer = "a".repeat(64),
   root = "b".repeat(64),
   reply = "c".repeat(64);
 const scope = `https://relay.test:${viewer}`;
-it("opens an isolated Solo draft with the exact source link", async () => {
-  const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
-  const session = {
-    ...owner.session,
-    viewer,
-    scope,
-    channels: {
-      ...owner.session.channels,
-      list: () => ({
-        status: "ready" as const,
-        channels: [
-          {
-            id: "design",
-            name: "Design",
-            channelType: "stream" as const,
-            members: [viewer],
-          },
-        ],
+it.each([false, true])(
+  "opens an isolated Solo draft with exact source and share choice (share=%s)",
+  async (share) => {
+    const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+    const session = {
+      ...owner.session,
+      viewer,
+      scope,
+      channels: {
+        ...owner.session.channels,
+        list: () => ({
+          status: "ready" as const,
+          channels: [
+            {
+              id: "design",
+              name: "Design",
+              channelType: "stream" as const,
+              members: [viewer],
+            },
+          ],
+        }),
+      },
+      channelWrites: { ...owner.session.channelWrites, available: true },
+    };
+    const view = render(
+      <MenuRoot>
+        <MenuTrigger>Message actions</MenuTrigger>
+        <MenuPopup>
+          <StartLinkedChat
+            session={session}
+            navigation={{ ...({} as Navigation), open }}
+            channelId="design"
+            message={{
+              id: reply,
+              channelId: "design",
+              threadRootId: root,
+              delivery: "seen",
+              authorId: viewer,
+              content: "Please look at this",
+              createdAt: 1,
+              mentions: [],
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            }}
+          />
+        </MenuPopup>
+      </MenuRoot>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Message actions" }));
+    const submenu = await screen.findByRole("menuitem", {
+      name: "Start Solo chat",
+    });
+    submenu.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(submenu).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen
+        .getAllByRole("menuitem")
+        .filter((item) => item !== submenu)
+        .map((item) => item.textContent),
+    ).toEqual(["Start privately", "Start and share here"]);
+    await user.click(
+      screen.getByRole("menuitem", {
+        name: share ? "Start and share here" : "Start privately",
       }),
-    },
-    channelWrites: { ...owner.session.channelWrites, available: true },
-  };
-  const view = render(
-    <MenuRoot>
-      <MenuTrigger>Message actions</MenuTrigger>
-      <MenuPopup>
-        <StartLinkedChat
-          session={session}
-          navigation={{ ...({} as Navigation), open }}
-          channelId="design"
-          message={{
-            id: reply,
-            channelId: "design",
-            threadRootId: root,
-            delivery: "seen",
-            authorId: viewer,
-            content: "Please look at this",
-            createdAt: 1,
-            mentions: [],
-            participants: [],
-            attachments: [],
-            reactions: [],
-            replyCount: 0,
-          }}
-        />
-      </MenuPopup>
-    </MenuRoot>,
-  );
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Message actions" }));
-  const item = await screen.findByRole("menuitem", { name: "Start Solo chat" });
-  expect(item).not.toHaveAttribute("aria-haspopup");
-  await user.click(item);
-  expect(open).toHaveBeenCalledOnce();
-  const destination = open.mock.calls[0]?.[0];
-  const parsed =
-    destination?.kind === "page"
-      ? soloDraft(destination.route?.params)
-      : undefined;
-  const id = parsed?.linked;
-  expect(id).toBeTruthy();
-  expect(parsed).toEqual({ linked: id });
-  expect(readLinkedChat(scope, linkedDraftKey(id ?? ""))).toEqual({
-    channelId: "design",
-    link: `buzz://message?channel=design&id=${reply}&thread=${root}`,
-  });
-  view.unmount();
-});
+    );
+    expect(open).toHaveBeenCalledOnce();
+    const destination = open.mock.calls[0]?.[0];
+    const parsed =
+      destination?.kind === "page"
+        ? soloDraft(destination.route?.params)
+        : undefined;
+    const id = parsed?.linked;
+    expect(id).toBeTruthy();
+    expect(parsed).toEqual({ linked: id });
+    expect(readLinkedChat(scope, linkedDraftKey(id ?? ""))).toEqual({
+      channelId: "design",
+      link: `buzz://message?channel=design&id=${reply}&thread=${root}`,
+      threadRootId: root,
+      share,
+    });
+    expect(owner.session.outbox?.snapshot() ?? []).toEqual([]);
+    view.unmount();
+  },
+);

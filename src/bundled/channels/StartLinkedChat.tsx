@@ -9,7 +9,13 @@ import {
   type LinkedChat,
 } from "../../features/solo/linked-chat";
 import { writeView } from "../../shared/view-state";
-import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import {
+  MenuItem,
+  MenuIcon,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+} from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 
@@ -29,7 +35,7 @@ export function canStartLinkedChat(session: RelaySession, channelId: string) {
   );
 }
 
-/** Existing menu tree owns anchoring/dismissal. Nothing is published until first send. */
+/** Existing menu tree owns anchoring/dismissal. Neither choice publishes anything yet. */
 export function StartLinkedChat({
   session,
   navigation,
@@ -43,7 +49,7 @@ export function StartLinkedChat({
 }) {
   const [busy, setBusy] = useState(false);
   const notify = useToastNotification();
-  async function start() {
+  async function start(share: boolean) {
     if (busy || !canStartLinkedChat(session, channelId)) return;
     setBusy(true);
     try {
@@ -52,7 +58,14 @@ export function StartLinkedChat({
         : `buzz://channel/${encodeURIComponent(channelId)}`;
       if (!link || (message && message.channelId !== channelId))
         throw new Error("This source is unavailable. Reopen it and try again.");
-      const source: LinkedChat = { channelId, link };
+      const source: LinkedChat = {
+        channelId,
+        link,
+        share,
+        ...(message
+          ? { threadRootId: message.threadRootId ?? message.id }
+          : {}),
+      };
       const id = crypto.randomUUID();
       if (!writeView(session.scope, linkedDraftKey(id), source))
         throw new Error(
@@ -69,14 +82,23 @@ export function StartLinkedChat({
     }
   }
   return (
-    <MenuItem
-      disabled={busy || !canStartLinkedChat(session, channelId)}
-      onClick={() => void start()}
-    >
-      <MenuIcon>
-        <ChatCircleIcon size={16} aria-hidden="true" />
-      </MenuIcon>
-      Start Solo chat
-    </MenuItem>
+    <MenuSubmenu>
+      <MenuSubmenuTrigger
+        disabled={busy || !canStartLinkedChat(session, channelId)}
+      >
+        <MenuIcon>
+          <ChatCircleIcon size={16} aria-hidden="true" />
+        </MenuIcon>
+        Start Solo chat
+      </MenuSubmenuTrigger>
+      <MenuSubmenuPopup size="compact" aria-label="Start Solo chat">
+        <MenuItem disabled={busy} onClick={() => void start(false)}>
+          Start privately
+        </MenuItem>
+        <MenuItem disabled={busy} onClick={() => void start(true)}>
+          Start and share here
+        </MenuItem>
+      </MenuSubmenuPopup>
+    </MenuSubmenu>
   );
 }

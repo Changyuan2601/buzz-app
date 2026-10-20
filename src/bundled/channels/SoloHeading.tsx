@@ -1,3 +1,5 @@
+import { readShareBack, shareBackKey } from "../../features/solo/linked-chat";
+import { writeView } from "../../shared/view-state";
 import {
   useRef,
   useState,
@@ -53,6 +55,9 @@ export function SoloHeading({
   onConvert(trigger: HTMLElement | null): void;
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
+  const [shareBack, setShareBack] = useState(() =>
+    readShareBack(scope, channel.id),
+  );
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
@@ -146,6 +151,65 @@ export function SoloHeading({
           channel={channel}
           signal={signal}
           onConvert={onConvert}
+          initialDestination={shareBack?.channelId}
+          destinationThread={shareBack?.threadRootId}
+          initialOpen={!!shareBack}
+          autoShare={!!shareBack && !shareBack.attempted}
+          initialMessageId={shareBack?.messageId}
+          onAttempt={async () => {
+            if (!shareBack) return;
+            if (
+              !writeView(scope, shareBackKey(channel.id), {
+                ...shareBack,
+                attempted: true,
+              })
+            )
+              throw new Error(
+                "The share choice couldn’t be saved. Retry sharing.",
+              );
+            // Never share an empty/unsent chat, nor retry a failed first send implicitly.
+            try {
+              await session.channelWrites.delivered(
+                shareBack.firstMessageId,
+                undefined,
+                false,
+                false,
+              );
+            } catch {
+              // Failed automatic handoff must not gate every future manual Share.
+              writeView(scope, shareBackKey(channel.id), null);
+              setShareBack(undefined);
+              throw new Error(
+                "The first message wasn’t confirmed. Check Outbox before explicitly sharing this chat.",
+              );
+            }
+          }}
+          onLinkQueued={(messageId) => {
+            if (
+              shareBack &&
+              !writeView(scope, shareBackKey(channel.id), {
+                ...shareBack,
+                attempted: true,
+                messageId,
+              })
+            )
+              throw new Error(
+                "The link receipt couldn’t be saved. Check Outbox before retrying.",
+              );
+          }}
+          onStartOver={() => {
+            writeView(scope, shareBackKey(channel.id), null);
+            setShareBack(undefined);
+          }}
+          onShared={() => {
+            writeView(scope, shareBackKey(channel.id), null);
+            setShareBack(undefined);
+          }}
+          onClose={() => {
+            if (readShareBack(scope, channel.id)?.attempted) return;
+            writeView(scope, shareBackKey(channel.id), null);
+            setShareBack(undefined);
+          }}
         />
         <IconButton
           ref={settingsTrigger}
