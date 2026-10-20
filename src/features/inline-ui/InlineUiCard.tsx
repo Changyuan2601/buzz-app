@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import { randomAgentAvatar } from "../agents/avatar-packs";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -60,7 +60,13 @@ function ChoiceForm({
 }) {
   const profile = ui.pattern === "profile";
   const [avatar, setAvatar] = useState(randomAgentAvatar);
-  const [shuffled, setShuffled] = useState(false);
+  // Shuffle turns the avatar edge-on, swaps in the preloaded next one out
+  // of sight, and turns it back, so no frame shows a missing image.
+  const [turn, setTurn] = useState<"out" | "in">();
+  const next = useRef<{
+    avatar: ReturnType<typeof randomAgentAvatar>;
+    ready: Promise<unknown>;
+  }>(undefined);
   const [choice, setChoice] = useState<string | null>(null);
   const [own, setOwn] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,9 +97,16 @@ function ChoiceForm({
         {profile && (
           <div className={styles.avatarRow}>
             <div
-              key={avatar.id}
               className={styles.avatar}
-              data-spin={shuffled || undefined}
+              data-turn={turn}
+              onAnimationEnd={() => {
+                if (turn === "in") return setTurn(undefined);
+                const pending = next.current;
+                void pending?.ready.then(() => {
+                  setAvatar(pending.avatar);
+                  setTurn("in");
+                });
+              }}
             >
               <Avatar
                 size="fill"
@@ -106,12 +119,18 @@ function ChoiceForm({
               <Button
                 variant="prominent"
                 size="sm"
-                disabled={busy}
+                disabled={busy || !!turn}
                 onClick={() => {
-                  let next = randomAgentAvatar();
-                  while (next.id === avatar.id) next = randomAgentAvatar();
-                  setAvatar(next);
-                  setShuffled(true);
+                  let pick = randomAgentAvatar();
+                  while (pick.id === avatar.id) pick = randomAgentAvatar();
+                  const image = new Image();
+                  image.src = pick.preview ?? "";
+                  next.current = {
+                    avatar: pick,
+                    ready:
+                      image.decode?.().catch(() => {}) ?? Promise.resolve(),
+                  };
+                  setTurn("out");
                 }}
               >
                 Shuffle

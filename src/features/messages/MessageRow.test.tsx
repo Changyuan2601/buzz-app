@@ -3126,8 +3126,27 @@ it("offers an agent's profile names only where the host can save them", async ()
         .querySelector("img")
         ?.getAttribute("src");
     const first = avatar();
-    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
-    expect(avatar()).not.toBe(first);
+    const shuffle = screen.getByRole("button", { name: "Shuffle" });
+    fireEvent.click(shuffle);
+    // The avatar swaps only once it has turned edge-on, then turns back.
+    expect(avatar()).toBe(first);
+    expect(shuffle).toBeDisabled();
+    // jsdom has no AnimationEvent, so React listens for the prefixed name.
+    const turned = () =>
+      fireEvent(
+        turning() as Element,
+        new Event("webkitAnimationEnd", { bubbles: true }),
+      );
+    const turning = () =>
+      screen
+        .getByRole("form", { name: "Name and avatar" })
+        .querySelector("[data-turn]");
+    turned();
+    await waitFor(() => expect(avatar()).not.toBe(first));
+    expect(turning()).toHaveAttribute("data-turn", "in");
+    turned();
+    expect(turning()).toBeNull();
+    expect(shuffle).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: "Juniper" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() =>
