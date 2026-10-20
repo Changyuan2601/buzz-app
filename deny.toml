@@ -10,6 +10,7 @@ ignore = [
     # instant 0.1.13 — unmaintained, not vulnerable. nostr 0.44 → instant (via
     # buzz-foundation and buzz-pairing). Remove when nostr 0.44 is gone.
     { id = "RUSTSEC-2024-0384", reason = "instant via nostr 0.44; unmaintained, not vulnerable" },
+    { id = "RUSTSEC-2024-0436", reason = "paste via iroh 1.3.0 → netwatch/netdev/netlink-packet-core (mesh-llm-sdk); archived proc-macro, unmaintained, not vulnerable" },
     # zip 4.6.1 < 9: extraction keeps setuid/setgid bits (0367), creates symlinks
     # that escape the destination (0368) and applies permissions through symlinks
     # (0369). Only path: buzz-foundation → tauri-plugin-updater 2.13.3 → zip.

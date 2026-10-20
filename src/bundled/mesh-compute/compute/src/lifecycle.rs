@@ -81,16 +81,20 @@ struct Slot {
 /// The Mesh node runs on its own process-wide runtime, so the app keeps its
 /// default runtime. SDK model/download futures need 8 MiB worker stacks.
 fn mesh_runtime() -> std::io::Result<tokio::runtime::Handle> {
-    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-    if let Some(runtime) = RUNTIME.get() {
-        return Ok(runtime.handle().clone());
-    }
-    let built = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("mesh")
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
-    Ok(RUNTIME.get_or_init(|| built).handle().clone())
+    static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("mesh")
+                .thread_stack_size(8 * 1024 * 1024)
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map(|runtime| runtime.handle().clone())
+        .map_err(|error| std::io::Error::other(error.clone()))
 }
 
 /// The app owns this across plugin/page lifetimes. Dropping it requests shutdown.

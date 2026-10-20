@@ -108,7 +108,7 @@ def main():
         started = time.monotonic()
         build = subprocess.run([
             str(repo / "bin/cargo"), "test", "--locked", "-p", "buzz-mesh-compute",
-            "--features", "mesh", "--test", "cross_node_worker", "--no-run",
+            "--test", "cross_node_worker", "--no-run",
             "--message-format=json",
         ], cwd=repo, stdout=subprocess.PIPE, text=True, check=True)
         artifacts = [json.loads(line) for line in build.stdout.splitlines()]

@@ -20,12 +20,11 @@ impl Lease {
             .ok_or_else(|| "Enable Shared compute in the agent’s community first".into())
     }
 
-    /// Test helper shared with the desktop host tests.
-    #[doc(hidden)]
+    #[cfg(test)]
     pub fn select(&self, community: String) -> Result<String, String> {
         self.select_with(community, || {})
     }
-    #[doc(hidden)]
+    #[cfg(test)]
     pub fn select_with(&self, community: String, changed: impl FnOnce()) -> Result<String, String> {
         self.try_select_with(community, false, || {
             changed();
