@@ -147,7 +147,7 @@ it("hands over a Solo chat's Canvas only from its owner's side, and says when th
   f.query.mockResolvedValueOnce([canvas(f.owner)]);
   expect(await read()).toBe(`# By ${f.owner.pubkey.slice(0, 4)}`);
   expect(f.query).toHaveBeenLastCalledWith([
-    { kinds: [40100], "#h": ["chat"], limit: 1 },
+    { kinds: [40100], "#h": ["chat"], limit: 1, consistency: "strong" },
   ]);
   // The owner's attested agent writes for the owner.
   f.query.mockResolvedValueOnce([canvas(f.sibling, [f.attestation])]);

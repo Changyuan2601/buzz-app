@@ -170,7 +170,10 @@ export function agentReads(
     },
     // A Solo chat's Canvas, read fresh for each turn as the app does, and
     // handed over only when the owner or an agent they attest wrote it. A
-    // failed read rejects, so the turn keeps the Canvas it knew.
+    // failed read rejects, so the turn keeps the Canvas it knew. The read is
+    // strong, as the app's Canvas reads are: the relay answers it from its
+    // writer, never from a replica that may not have the newest edit or clear
+    // yet.
     canvas: (id: string, owner: string) =>
       ownerCanvas(
         {
@@ -178,7 +181,12 @@ export function agentReads(
           read: async (channel) =>
             eventsDto([
               ...(await client.query([
-                { kinds: [40100], "#h": [channel], limit: 1 },
+                {
+                  kinds: [40100],
+                  "#h": [channel],
+                  limit: 1,
+                  consistency: "strong",
+                },
               ])),
             ])
               .filter(
