@@ -24,13 +24,23 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   await dialog.getByRole("combobox", { name: "Search Buzz" }).fill("honey");
   const choice = dialog
     .getByRole("group", { name: "Agents" })
-    .getByRole("option", { name: /Owned Honey/ });
+    .getByRole("option", { name: /Owned Honey/ })
+    .or(
+      dialog
+        .getByRole("rowgroup", { name: "Agents" })
+        .getByRole("row", { name: /Owned Honey/ }),
+    );
   await expect(choice).toContainText("New chat");
   // The earlier chat is still found by its name.
   await expect(
     dialog
       .getByRole("group", { name: "Channels" })
-      .getByRole("option", { name: /Earlier with Honey/ }),
+      .getByRole("option", { name: /Earlier with Honey/ })
+      .or(
+        dialog
+          .getByRole("rowgroup", { name: "Channels" })
+          .getByRole("row", { name: /Earlier with Honey/ }),
+      ),
   ).toContainText("Chat");
   await page.screenshot({ path: testInfo.outputPath("search.png") });
   await choice.click();
