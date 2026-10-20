@@ -43,6 +43,8 @@ it.each([
   "Native sockets are busy",
   "Native socket timed out",
   "Native socket upgrade refused",
+  "relay-unauthorized",
+  "relay-unavailable",
 ])(
   "re-enters live reconnect after transient native admission: %s",
   async (error) => {
@@ -110,6 +112,7 @@ it.each([
   "binding-mismatch",
   "authorization-denied",
   "invalid-proof",
+  "relay-forbidden",
 ])(
   "keeps native credential refusal explicit without reconnect: %s",
   async (error) => {

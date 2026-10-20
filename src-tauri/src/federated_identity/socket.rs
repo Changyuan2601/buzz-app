@@ -37,8 +37,14 @@ impl Sockets {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum SocketEvent {
-    Text { data: String },
-    Closed,
+    Text {
+        data: String,
+    },
+    /// The relay's close code and reason, when it sent a close frame.
+    Closed {
+        code: Option<u16>,
+        reason: Option<String>,
+    },
 }
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -108,10 +114,21 @@ pub(crate) async fn relay_socket_connect(
             _ = cancel.cancelled() => return Err("Federated session changed".into()),
             result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async_with_config(request, Some(config), false)) => match result.map_err(|_| "Native socket timed out")? {
                 Ok(connection) => connection,
-                Err(error) => {
-                    if matches!(error, tokio_tungstenite::tungstenite::Error::Http(ref response) if response.status() == 401) { fi.reject_assertion(&assertion).await; }
-                    return Err("Native socket upgrade refused".into());
+                Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                    // NIP-FI's fixed refusal classes: 401 wants fresh evidence,
+                    // 403 is a decision to stop, 503 is a temporary outage.
+                    return Err(match response.status().as_u16() {
+                        401 => {
+                            fi.reject_assertion(&assertion).await;
+                            "relay-unauthorized"
+                        }
+                        403 => "relay-forbidden",
+                        503 => "relay-unavailable",
+                        _ => "Native socket upgrade refused",
+                    }
+                    .into());
                 }
+                Err(_) => return Err("Native socket upgrade refused".into()),
             },
         };
         fi.admit_assertion(identity.inner(), &assertion).await?;
@@ -136,6 +153,7 @@ pub(crate) async fn relay_socket_connect(
         let expires = assertion.remaining();
         let expiry = tokio::time::sleep(expires);
         tokio::pin!(expiry);
+        let mut closing: Option<(u16, String)> = None;
         let ready = tokio::select! {
             result = tokio::time::timeout(Duration::from_secs(10), started) => result.is_ok_and(|value| value.is_ok()),
             _ = cancel.cancelled() => false,
@@ -161,6 +179,10 @@ pub(crate) async fn relay_socket_connect(
                                 Some(Ok(Message::Text(data))) if on_event.send(SocketEvent::Text {data:data.to_string()}).is_ok() => {},
                                 Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() { break; } },
                                 Some(Ok(Message::Pong(_))) => {},
+                                Some(Ok(Message::Close(frame))) => {
+                                    closing = frame.map(|frame| (u16::from(frame.code), frame.reason.to_string()));
+                                    break;
+                                }
                                 _ => break,
                             }
                         }
@@ -180,7 +202,11 @@ pub(crate) async fn relay_socket_connect(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
-        let _ = on_event.send(SocketEvent::Closed);
+        let (code, reason) = match closing {
+            Some((code, reason)) => (Some(code), Some(reason)),
+            None => (None, None),
+        };
+        let _ = on_event.send(SocketEvent::Closed { code, reason });
     });
     Ok(SocketMode::Native)
 }

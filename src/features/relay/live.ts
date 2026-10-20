@@ -890,7 +890,15 @@ export function subscribeRelayTraffic(
         );
       else reconnect("Live connection interrupted");
     };
-    ws.onclose = () => reconnect("Live connection closed");
+    // Keep the relay's close detail. A 1008 also ends a normally expired
+    // assertion, so it reconnects with fresh evidence; a confirmed refusal
+    // then stops at the upgrade (403) instead of looping.
+    ws.onclose = (event) =>
+      reconnect(
+        event?.code
+          ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
+          : "Live connection closed",
+      );
   }
   connect();
   return {

@@ -20,12 +20,13 @@ export class NativeSocket implements LiveSocket {
   private async connect() {
     try {
       const onEvent = new Channel<
-        { type: "text"; data: string } | { type: "closed" }
+        | { type: "text"; data: string }
+        | { type: "closed"; code: number | null; reason: string | null }
       >((event) => {
         if (this.closed) return;
         if (event.type === "text")
           this.onmessage?.(new MessageEvent("message", { data: event.data }));
-        else this.finish();
+        else this.finish(event.code ?? undefined, event.reason ?? undefined);
       });
       const mode = await invoke<"public" | "native">("relay_socket_connect", {
         id: this.id,
@@ -79,6 +80,8 @@ export class NativeSocket implements LiveSocket {
           "invalid-expiry",
           "invalid-viewer",
           "adapter-refused",
+          // The relay's 403: a decision, not an outage. 401/503 reconnect.
+          "relay-forbidden",
           "response-too-large",
           "Invalid federated community discovery",
           "Incomplete federated community discovery",
@@ -98,10 +101,15 @@ export class NativeSocket implements LiveSocket {
         this.finish(),
       );
   }
-  private finish() {
+  private finish(code?: number, reason?: string) {
     if (this.closed) return;
     this.close();
-    this.onclose?.(new CloseEvent("close"));
+    this.onclose?.(
+      new CloseEvent("close", {
+        ...(code === undefined ? {} : { code }),
+        ...(reason === undefined ? {} : { reason }),
+      }),
+    );
   }
   close() {
     if (this.closed) return;
