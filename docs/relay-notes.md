@@ -26,9 +26,9 @@ Example tool arguments for saving an icon recipe:
 ```json
 {
   "action": "save",
-  "note": "frosted-y2k-icons",
-  "title": "GPT Image 2.5 — frosted Y2K icon recipe",
-  "path": "OUTBOX/FROSTED_Y2K_ICON_RECIPE.md",
+  "note": "icon-recipe",
+  "title": "Icon recipe",
+  "path": "OUTBOX/ICON_RECIPE.md",
   "expected_event": "absent"
 }
 ```
