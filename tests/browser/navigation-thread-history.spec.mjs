@@ -86,7 +86,7 @@ test("Back restores each thread visit before the previous channel", async ({
     `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
   const feedback = await selectedTab.evaluateHandle((tab) => {
-    const state = { cue: null };
+    const state = { cue: null, paint: null };
     tab.addEventListener(
       "animationstart",
       (event) => {
@@ -96,6 +96,12 @@ test("Back restores each thread visit before the previous channel", async ({
           animation.pause();
           animation.currentTime = 0;
         }
+        // Sample now: a re-render can detach the cue before a later evaluate.
+        state.paint = {
+          tint: getComputedStyle(state.cue).backgroundColor,
+          resting: getComputedStyle(state.cue.parentElement).backgroundColor,
+          opacity: Number(getComputedStyle(state.cue).opacity),
+        };
       },
       { once: true },
     );
@@ -106,11 +112,7 @@ test("Back restores each thread visit before the previous channel", async ({
     await expect
       .poll(() => feedback.evaluate((state) => !!state.cue))
       .toBe(true);
-    const paint = await feedback.evaluate(({ cue }) => ({
-      tint: getComputedStyle(cue).backgroundColor,
-      resting: getComputedStyle(cue.parentElement).backgroundColor,
-      opacity: Number(getComputedStyle(cue).opacity),
-    }));
+    const paint = await feedback.evaluate(({ paint }) => paint);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {
