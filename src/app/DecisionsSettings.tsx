@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { DecisionsService } from "../features/decisions/service";
+import { statusOf, type DecisionsService } from "../features/decisions/service";
+import { OwnedContribution } from "../plugins/OwnedContribution";
 import { Field } from "../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
@@ -37,7 +38,7 @@ export function DecisionsSettings({
   // Re-read on every change: a provider's status is its own.
   const pendingReady = useSyncExternalStore(
     decisions.subscribe,
-    () => pending?.status() === "ready",
+    () => pending !== undefined && statusOf(pending) === "ready",
     () => false,
   );
   useEffect(() => {
@@ -48,7 +49,6 @@ export function DecisionsSettings({
   const selected = pending && pending.key !== backend ? pending : undefined;
   const shown =
     selected ?? providers.find((provider) => provider.key === backend);
-  const Settings = shown?.Settings;
   return (
     <section aria-labelledby="decisions-settings-title">
       <Header
@@ -83,7 +83,7 @@ export function DecisionsSettings({
                       (provider) => provider.key === value,
                     );
                     if (!next) return;
-                    if (next.status() === "ready" || next.key === backend) {
+                    if (statusOf(next) === "ready" || next.key === backend) {
                       setPicked(undefined);
                       decisions.setBackend(next.key);
                     } else setPicked(next.key);
@@ -105,7 +105,29 @@ export function DecisionsSettings({
           {shown && (
             <div className="flex w-full max-w-md flex-col items-start gap-3">
               <InlineHeader title={shown.label} />
-              {Settings && <Settings active={active} />}
+              {shown.Settings && (
+                // A provider's settings are plugin code: if they fail, only
+                // this part does, and Settings > Plugins can turn it off.
+                <OwnedContribution
+                  entry={shown}
+                  registry={{ snapshot: decisions.providers }}
+                  fallback={
+                    <p role="alert" className="text-body-sm text-secondary">
+                      {shown.label} settings are unavailable. You can turn its
+                      plugin off in Settings &gt; Plugins.
+                    </p>
+                  }
+                >
+                  {(entry, owned) => {
+                    const Settings = entry.Settings;
+                    return (
+                      Settings && (
+                        <Settings active={() => active() && owned()} />
+                      )
+                    );
+                  }}
+                </OwnedContribution>
+              )}
             </div>
           )}
         </div>

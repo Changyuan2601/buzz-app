@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type {
   DecisionProviderStatus,
   RegisteredProvider,
@@ -14,7 +14,12 @@ afterEach(cleanup);
 /** The decisions service as Settings uses it, choosing as the service does:
  * the saved choice, else the first ready provider, else the first. */
 function fake(
-  entries: { key: string; status: DecisionProviderStatus }[],
+  entries: ({
+    key: string;
+    status: DecisionProviderStatus;
+    /** Replaces the status read, for a provider whose status throws. */
+    readStatus?: RegisteredProvider["status"];
+  } & Partial<Pick<RegisteredProvider, "Settings">>)[],
   chosen?: string,
 ) {
   const listeners = new Set<() => void>();
@@ -22,7 +27,7 @@ function fake(
     for (const listener of [...listeners]) listener();
   };
   const statuses = new Map(entries.map((entry) => [entry.key, entry.status]));
-  const providers: RegisteredProvider[] = entries.map(({ key }) => ({
+  const providers: RegisteredProvider[] = entries.map(({ key, ...entry }) => ({
     key,
     id: key,
     pluginId: key,
@@ -33,6 +38,8 @@ function fake(
     subscribe: () => () => {},
     decide: async () => ({ outcome: "failed", reason: "unavailable" }),
     Settings: () => <p>Settings for {key}</p>,
+    ...(entry.Settings ? { Settings: entry.Settings } : {}),
+    ...(entry.readStatus ? { status: entry.readStatus } : {}),
   }));
   const backend = () =>
     providers.find((provider) => provider.key === chosen)?.key ??
@@ -139,4 +146,64 @@ it("changes nothing while hidden", async () => {
   render(<DecisionsSettings decisions={decisions} active={() => false} />);
   await user.click(screen.getByRole("radio", { name: /Provider b/ }));
   expect(decisions.chosen()).toBeUndefined();
+});
+
+it("keeps a provider's failing settings inside its own part, even while hidden", async () => {
+  const user = userEvent.setup();
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  const decisions = fake([
+    {
+      key: "a",
+      status: "ready",
+      Settings: () => {
+        throw new Error("broken plugin");
+      },
+    },
+    { key: "b", status: "ready" },
+  ]);
+  let selected = "plugins";
+  // Settings mounts the Decisions section while another one is shown.
+  const page = () => (
+    <>
+      <button type="button">Turn plugin off</button>
+      <div hidden={selected !== "decisions"}>
+        <DecisionsSettings
+          decisions={decisions}
+          active={() => selected === "decisions"}
+        />
+      </div>
+    </>
+  );
+  const { rerender } = render(page());
+  expect(screen.getByRole("button", { name: "Turn plugin off" })).toBeVisible();
+  selected = "decisions";
+  rerender(page());
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Provider a settings are unavailable. You can turn its plugin off in Settings > Plugins.",
+  );
+  // The rest of the section still works.
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByText("Settings for b")).toBeInTheDocument();
+  consoleError.mockRestore();
+});
+
+it("treats a provider whose status throws as not ready", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: "a", status: "ready" },
+    {
+      key: "b",
+      status: "ready",
+      readStatus: () => {
+        throw new Error("broken status");
+      },
+    },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // Shown, as one picked before it is ready, but not chosen.
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  expect(decisions.chosen()).toBeUndefined();
+  expect(decisions.backend()).toBe("a");
 });

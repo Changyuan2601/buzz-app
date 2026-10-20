@@ -264,6 +264,29 @@ it("checks answers against the questions", async () => {
   }
 });
 
+it("keeps every question name as the answer's own key, even __proto__", async () => {
+  // Parsed, so "__proto__" is an own question name, as a plugin can send.
+  const questions = JSON.parse(
+    '{"__proto__":{"type":"yes_no","instructions":"Odd."},"urgent":{"type":"yes_no","instructions":"Urgent."}}',
+  ) as DecisionRequest["questions"];
+  const answers = JSON.parse(
+    '{"__proto__":{"type":"yes_no","probability":0.3},"urgent":{"type":"yes_no","probability":0.8}}',
+  );
+  const { service, plugin } = setup();
+  await plugin("a", {
+    decide: async () => ({ outcome: "answered", model: "m", answers }) as never,
+  });
+  const result = await service.decide({ ...request, questions });
+  if (result.outcome !== "answered") throw new Error(result.reason);
+  expect(Object.keys(result.answers)).toEqual(["__proto__", "urgent"]);
+  expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype);
+  // An unasked name does not resolve to the __proto__ answer's fields.
+  expect((result.answers as Record<string, unknown>).probability).toBe(
+    undefined,
+  );
+  expect(JSON.parse(JSON.stringify(result.answers))).toEqual(answers);
+});
+
 it("turns provider failures, throws and wrong replies into failures", async () => {
   let decide: DecisionProvider["decide"] = async () => {
     throw new Error("down");

@@ -176,7 +176,11 @@ const orderOf = (provider: DecisionProvider) =>
   Number.isFinite(provider.order) ? (provider.order as number) : 0;
 const byOrder = (a: RegisteredProvider, b: RegisteredProvider) =>
   orderOf(a) - orderOf(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
-const statusOf = (provider: DecisionProvider): DecisionProviderStatus => {
+/** A provider's status; one that throws is unconfirmed. Host code reads
+ * provider status only through this. */
+export const statusOf = (
+  provider: DecisionProvider,
+): DecisionProviderStatus => {
   try {
     return provider.status();
   } catch {
@@ -405,16 +409,21 @@ export function checkAnswers(
   answers: unknown,
 ): Readonly<Record<string, DecisionAnswer>> | undefined {
   if (!record(answers)) return undefined;
-  const checked: Record<string, DecisionAnswer> = {};
+  // Collected as entries: assigning `checked["__proto__"]` on a plain object
+  // would set its prototype instead of keeping the answer.
+  const checked: [string, DecisionAnswer][] = [];
   for (const [name, question] of Object.entries(questions)) {
     const answer = Object.hasOwn(answers, name) ? answers[name] : undefined;
     if (!record(answer) || answer.type !== question.type) return undefined;
     if (question.type === "yes_no") {
       if (!unit(answer.probability)) return undefined;
-      checked[name] = Object.freeze({
-        type: "yes_no",
-        probability: answer.probability,
-      });
+      checked.push([
+        name,
+        Object.freeze({
+          type: "yes_no",
+          probability: answer.probability,
+        }),
+      ]);
     } else if (question.type === "choice") {
       const known = (key: string) => Object.hasOwn(question.options, key);
       const p = probabilities(answer.probabilities, known);
@@ -425,12 +434,15 @@ export function checkAnswers(
         !p
       )
         return undefined;
-      checked[name] = Object.freeze({
-        type: "choice",
-        choice: answer.choice,
-        confidence: answer.confidence,
-        probabilities: p,
-      });
+      checked.push([
+        name,
+        Object.freeze({
+          type: "choice",
+          choice: answer.choice,
+          confidence: answer.confidence,
+          probabilities: p,
+        }),
+      ]);
     } else {
       const top = question.levels.length - 1;
       const known = (key: string) =>
@@ -443,13 +455,18 @@ export function checkAnswers(
         !p
       )
         return undefined;
-      checked[name] = Object.freeze({
-        type: "score",
-        score: answer.score,
-        confidence: answer.confidence,
-        probabilities: p,
-      });
+      checked.push([
+        name,
+        Object.freeze({
+          type: "score",
+          score: answer.score,
+          confidence: answer.confidence,
+          probabilities: p,
+        }),
+      ]);
     }
   }
-  return Object.freeze(checked);
+  return Object.freeze(
+    Object.fromEntries(checked) as Record<string, DecisionAnswer>,
+  );
 }
