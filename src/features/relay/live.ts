@@ -898,6 +898,8 @@ export function subscribeRelayTraffic(
     // assertion, so the first reconnects with fresh evidence. The relay denies
     // after the upgrade and NIP-42, so a second 1008 before admission stops.
     ws.onclose = (event) => {
+      // A replaced socket's late close must not spend the current budget.
+      if (!valid()) return;
       const reason = event?.code
         ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
         : "Live connection closed";

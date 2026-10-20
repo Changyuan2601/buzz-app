@@ -2512,3 +2512,30 @@ describe("policy close (1008) recovery", () => {
     expect(h.sockets).toHaveLength(1);
   });
 });
+it("a replaced socket's late 1008 leaves the current connection's budget", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const policyClose = (socket: Socket) =>
+    (
+      socket.onclose as unknown as (event: {
+        code: number;
+        reason: string;
+      }) => void
+    )?.({ code: 1008, reason: "expired" });
+  try {
+    // The first socket never authenticates and is replaced after its deadline.
+    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(1000);
+    const current = h.sockets[1];
+    assert.exists(current);
+    await current.auth();
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    policyClose(h.first);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    // Ordinary expiry on the admitted socket still gets its reconnect.
+    policyClose(current);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("retrying");
+  } finally {
+    h.owner.dispose();
+  }
+});
