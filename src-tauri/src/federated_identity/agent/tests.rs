@@ -12,12 +12,26 @@ pub(super) struct Seen {
 pub(super) async fn issuer(
     replies: Vec<(u16, serde_json::Value)>,
 ) -> (String, tokio::task::JoinHandle<Vec<Seen>>) {
+    issuer_gated(replies, usize::MAX, None).await
+}
+
+/// Like `issuer`, but signals `held` on reading request `at` and answers it
+/// only once `release` fires: a request held in flight, without sleeps.
+async fn issuer_gated(
+    replies: Vec<(u16, serde_json::Value)>,
+    at: usize,
+    gate: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+) -> (String, tokio::task::JoinHandle<Vec<Seen>>) {
+    let mut gate = gate;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/mount", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
         let mut seen = Vec::new();
-        for (status, reply) in replies {
+        for (index, (status, reply)) in replies.into_iter().enumerate() {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut head = Vec::new();
             while !head.ends_with(b"\r\n\r\n") {
@@ -43,6 +57,11 @@ pub(super) async fn issuer(
                 headers,
                 body,
             });
+            if index == at {
+                let (held, release) = gate.take().unwrap();
+                held.send(()).unwrap();
+                release.await.unwrap();
+            }
             let reply = reply.to_string();
             let response = format!(
                 "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
@@ -104,13 +123,13 @@ pub(super) fn enrolled(owner: &str) -> serde_json::Value {
 async fn enrollment_exchanges_the_owner_session_with_only_the_agent_proof() {
     let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64)))]).await;
     let f = fixture(base);
-    let grant = f.tokens.grant(&f.agent, &f.key).await.unwrap();
+    let grant = f.tokens.grant(&f.agent, &f.key, 0).await.unwrap();
     assert_eq!(
         (grant.token.as_str(), grant.account.as_str()),
         ("grant-1", "a@example.com")
     );
     // Stored, so a second use does not enroll again.
-    assert!(f.tokens.grant(&f.agent, &f.key).await.is_ok());
+    assert!(f.tokens.grant(&f.agent, &f.key, 0).await.is_ok());
 
     let seen = served.await.unwrap();
     assert_eq!(seen.len(), 1);
@@ -151,14 +170,14 @@ async fn enrollment_exchanges_the_owner_session_with_only_the_agent_proof() {
 async fn enrollment_needs_a_session_and_refuses_another_owner() {
     let (base, served) = issuer(vec![(200, enrolled(&"c".repeat(64)))]).await;
     let f = fixture(base);
-    assert!(f.tokens.grant(&f.agent, &f.key).await.is_err());
+    assert!(f.tokens.grant(&f.agent, &f.key, 0).await.is_err());
     assert!(f.grants.0.lock().unwrap().is_empty());
     served.await.unwrap();
 
     f.tokens.0.identity.state().session = None;
     assert_eq!(
         f.tokens
-            .grant(&f.agent, &f.key)
+            .grant(&f.agent, &f.key, 0)
             .await
             .err()
             .map(|e| e.message),
@@ -393,9 +412,285 @@ async fn an_unreachable_issuer_during_recovery_does_not_stop_the_agent() {
     assert_eq!(served.await.unwrap().len(), 7);
 }
 
+fn signed_in_again(f: &Fixture, email: &str) {
+    let identity = &f.tokens.0.identity;
+    let mut session = record();
+    Arc::get_mut(&mut session).unwrap().record.email = Some(email.into());
+    let mut state = identity.state();
+    state.session = Some(session);
+    identity.signed_in(&mut state, Some(email.into()));
+}
+/// Lists the fixture's agent, as the agent host does, without the watcher.
+fn listing(f: &Fixture) {
+    let listed = (f.agent.owner.clone(), f.agent.pubkey.clone());
+    let _ = f
+        .tokens
+        .0
+        .agents
+        .set(Arc::new(move || Ok(vec![listed.clone()])));
+}
+fn keyed(owner: &str) -> (Secret, AppAgent) {
+    let key = Secret::generate().unwrap();
+    let mut agent = fixture("http://unused".into()).agent;
+    agent.pubkey = key.pubkey().into();
+    agent.owner = owner.into();
+    (key, agent)
+}
+
 #[tokio::test]
-async fn sign_out_retires_grants_and_a_new_sign_in_lifts_a_stop() {
+async fn sign_out_then_sign_in_before_the_watcher_runs_retires_cached_and_stored_credentials() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let mint = || (200, issued(&probe, serde_json::json!({})));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        mint(),
+        (200, enrolled(&owner)),
+        mint(),
+    ])
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    listing(&f);
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+
+    // The watcher would only see `Refreshed`: the sign-out was overwritten.
+    f.tokens.0.identity.sign_out().await;
+    signed_in_again(&f, "a@example.com");
+    assert_eq!(
+        f.tokens.0.identity.account_changes().borrow().clone(),
+        Some(SessionChange::Refreshed)
+    );
+
+    // Neither the cached assertion nor the stored grant is reused.
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    let seen = served.await.unwrap();
+    assert!(seen[2].target.contains("agent-grant"), "enrolled anew");
+    assert_eq!(seen.len(), 4);
+}
+
+#[tokio::test]
+async fn a_new_account_retires_the_cached_assertion() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let mint = || (200, issued(&probe, serde_json::json!({})));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        mint(),
+        (200, enrolled(&owner)),
+        mint(),
+    ])
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    listing(&f);
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    signed_in_again(&f, "b@example.com");
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    assert_eq!(served.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn expiry_and_same_account_refresh_keep_the_grant_and_assertion() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        (200, issued(&probe, serde_json::json!({}))),
+    ])
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    listing(&f);
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    let identity = &f.tokens.0.identity;
+    identity.retire(
+        crate::federated_identity::Status::ReauthenticationRequired,
+        None,
+    );
+    identity.signal(SessionChange::Expired);
+    signed_in_again(&f, "a@example.com");
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    assert_eq!(served.await.unwrap().len(), 2);
+    assert_eq!(f.grants.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_mint_in_flight_across_sign_out_is_neither_returned_nor_cached() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let (held_tx, held) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = tokio::sync::oneshot::channel();
+    let (base, served) = issuer_gated(
+        vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ],
+        1,
+        Some((held_tx, release_rx)),
+    )
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    listing(&f);
+    let f = Arc::new(f);
+    let call = {
+        let f = f.clone();
+        tokio::spawn(async move { f.tokens.evidence(&f.agent, &f.key).await })
+    };
+    held.await.unwrap();
+    f.tokens.0.identity.sign_out().await;
+    release.send(()).unwrap();
+    assert_eq!(call.await.unwrap().err().as_deref(), Some(CHANGED));
+    assert!(f
+        .tokens
+        .slot(&f.agent.pubkey)
+        .lock()
+        .await
+        .assertion
+        .is_none());
+    served.await.unwrap();
+    // The next request is admitted only after the wipe.
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.is_err());
+    assert!(
+        f.grants.0.lock().unwrap().is_empty(),
+        "the old grant is wiped"
+    );
+}
+
+#[tokio::test]
+async fn an_enrollment_committing_after_sign_out_stores_nothing() {
     let f = fixture("http://unused".into());
+    listing(&f);
+    let retirements = f.tokens.admit().await.unwrap();
+    f.tokens.0.identity.sign_out().await;
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    assert_eq!(
+        f.tokens
+            .commit(&f.agent, grant, retirements)
+            .await
+            .err()
+            .as_deref(),
+        Some(CHANGED)
+    );
+    assert!(f.grants.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn deletion_refuses_requests_already_queued_for_the_agent() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let (held_tx, held) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = tokio::sync::oneshot::channel();
+    let (base, served) = issuer_gated(
+        vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ],
+        0,
+        Some((held_tx, release_rx)),
+    )
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    let f = Arc::new(f);
+    let spawn_evidence = || {
+        let f = f.clone();
+        tokio::spawn(async move { f.tokens.evidence(&f.agent, &f.key).await })
+    };
+    // One request enrolls; deletion and a stale request queue behind it.
+    let first = spawn_evidence();
+    held.await.unwrap();
+    let forget = {
+        let f = f.clone();
+        tokio::spawn(async move { f.tokens.forget(&f.agent.owner, &f.agent.pubkey).await })
+    };
+    tokio::task::yield_now().await;
+    let stale = spawn_evidence();
+    tokio::task::yield_now().await;
+    release.send(()).unwrap();
+    assert!(first.await.unwrap().is_ok());
+    forget.await.unwrap().unwrap();
+    assert_eq!(stale.await.unwrap().err().as_deref(), Some(DELETED));
+    assert_eq!(
+        served.await.unwrap().len(),
+        2,
+        "no enrollment after deletion"
+    );
+    assert!(f.grants.0.lock().unwrap().is_empty());
+    assert_eq!(
+        f.tokens.evidence(&f.agent, &f.key).await.err().as_deref(),
+        Some(DELETED)
+    );
+}
+
+#[tokio::test]
+async fn a_replacement_refused_after_a_transient_failure_stops_without_a_second_exchange() {
+    let owner = "b".repeat(64);
+    let unavailable = || (503, serde_json::json!({ "error": "issuance_unavailable" }));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        (200, enrolled(&owner)),
+        unavailable(),
+        unavailable(),
+        unavailable(),
+        refused_grant(),
+    ])
+    .await;
+    let f = fixture(base);
+    let failed = f.tokens.evidence(&f.agent, &f.key).await.unwrap_err();
+    assert_ne!(failed, STOPPED);
+    let at = f.tokens.grant_key(&f.agent);
+    assert!(f.grants.read(&at).unwrap().unwrap().replacement);
+    let (a, b) = tokio::join!(
+        f.tokens.evidence(&f.agent, &f.key),
+        f.tokens.evidence(&f.agent, &f.key)
+    );
+    assert_eq!(a.err().as_deref(), Some(STOPPED));
+    assert_eq!(b.err().as_deref(), Some(STOPPED));
+    assert_eq!(
+        served.await.unwrap().len(),
+        7,
+        "one exchange, no third grant"
+    );
+    assert!(f.grants.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_replacement_that_mints_after_a_transient_failure_becomes_ordinary() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let unavailable = || (503, serde_json::json!({ "error": "issuance_unavailable" }));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        (200, enrolled(&owner)),
+        unavailable(),
+        unavailable(),
+        unavailable(),
+        (200, issued(&probe, serde_json::json!({}))),
+    ])
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.is_err());
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    assert_eq!(served.await.unwrap().len(), 7, "no second exchange");
+    let at = f.tokens.grant_key(&f.agent);
+    assert!(!f.grants.read(&at).unwrap().unwrap().replacement);
+}
+
+#[tokio::test]
+async fn a_new_sign_in_lifts_a_stop_and_deletion_retires_the_grant() {
+    let f = fixture("http://unused".into());
+    listing(&f);
     let at = f.tokens.grant_key(&f.agent);
     let grant = Grant::new(
         f.agent.owner.clone(),
@@ -406,20 +701,16 @@ async fn sign_out_retires_grants_and_a_new_sign_in_lifts_a_stop() {
     );
     f.grants.write(&at, &grant).unwrap();
     f.tokens.slot(&f.agent.pubkey).lock().await.stopped = true;
-    let listed = (f.agent.owner.clone(), f.agent.pubkey.clone());
-    let agents = Arc::new(move || Ok(vec![listed.clone()]));
-
-    f.tokens.reset(false, agents.clone()).await.unwrap();
+    f.tokens
+        .follow(Some(SessionChange::Refreshed))
+        .await
+        .unwrap();
     assert!(!f.tokens.slot(&f.agent.pubkey).lock().await.stopped);
     assert!(
         f.grants.0.lock().unwrap().contains_key(&at),
         "refresh keeps grants"
     );
 
-    f.tokens.reset(true, agents).await.unwrap();
-    assert!(f.grants.0.lock().unwrap().is_empty());
-
-    f.grants.write(&at, &grant).unwrap();
     f.tokens
         .forget(&f.agent.owner, &f.agent.pubkey)
         .await

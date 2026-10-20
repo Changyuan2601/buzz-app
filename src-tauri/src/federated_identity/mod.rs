@@ -94,6 +94,10 @@ struct State {
     callback: Option<CallbackGuard>,
     /// Last account seen signed in this run; tells a refresh from a new account.
     account: Option<Option<String>>,
+    /// Bumped with every explicit sign-out, close or change of account, under
+    /// the same lock as the change itself: derived agent credentials minted
+    /// or stored under an older value are retired.
+    retirements: u64,
 }
 struct Inner {
     config: Option<Config>,
@@ -168,6 +172,7 @@ impl FederatedIdentity {
                 session: None,
                 restored: false,
                 closed: false,
+                retirements: 0,
                 cancellation: CancellationToken::new(),
                 callback: None,
                 account: None,
@@ -227,7 +232,10 @@ impl FederatedIdentity {
     /// Record a newly installed session's account and report refresh vs change.
     fn signed_in(&self, state: &mut State, email: Option<String>) {
         let change = match &state.account {
-            Some(previous) if *previous != email => SessionChange::AccountChanged,
+            Some(previous) if *previous != email => {
+                state.retirements += 1;
+                SessionChange::AccountChanged
+            }
             _ => SessionChange::Refreshed,
         };
         state.account = Some(email);
@@ -254,6 +262,10 @@ impl FederatedIdentity {
     #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn agent_grant_key(&self, owner: &str, agent: &str) -> String {
         store::agent_grant_key(&self.0.account, owner, agent)
+    }
+    /// How many times derived agent credentials have been retired this run.
+    pub(crate) fn retirements(&self) -> u64 {
+        self.state().retirements
     }
     pub(crate) fn current(&self, revision: &str) -> bool {
         let state = self.state();
@@ -305,6 +317,7 @@ impl FederatedIdentity {
         let mut state = self.state();
         self.retire_state(&mut state, Status::SignedOut, None);
         state.closed = true;
+        state.retirements += 1;
     }
     async fn storage<T: Send + 'static>(
         &self,
@@ -664,7 +677,11 @@ impl FederatedIdentity {
     }
     pub(crate) async fn sign_out(&self) -> Snapshot {
         let (session, revision) = self.retire(Status::SignedOut, None);
-        self.state().account = None;
+        {
+            let mut state = self.state();
+            state.account = None;
+            state.retirements += 1;
+        }
         self.signal(SessionChange::SignedOut);
         let _operation = self.0.operation.lock().await;
         let result = if let Some(session) = session {

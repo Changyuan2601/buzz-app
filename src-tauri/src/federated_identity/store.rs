@@ -184,6 +184,43 @@ pub(crate) fn agent_grant_key(account: &str, owner: &str, agent: &str) -> String
     )
 }
 
+/// Runs `write` for the agent grant at `key` under its account lock, after
+/// registering `key` in the index the boot erase owner walks, so a full Buzz
+/// sign-out removes the grant like any session record.
+pub(crate) fn register_grant<T>(
+    root: PathBuf,
+    key: &str,
+    write: impl FnOnce() -> Result<T, &'static str>,
+) -> Result<T, &'static str> {
+    let store = SecureStore {
+        account: key.to_owned(),
+        root,
+    };
+    let _transaction = store.lock()?;
+    fs::write(store.index(), b"1").map_err(|_| "storage-unavailable")?;
+    write()
+}
+
+/// Runs `delete` for the agent grant at `key` under its account lock, then
+/// drops its index entry. A failed deletion keeps the entry for the boot owner.
+pub(crate) fn unregister_grant(
+    root: PathBuf,
+    key: &str,
+    delete: impl FnOnce() -> Result<(), &'static str>,
+) -> Result<(), &'static str> {
+    let store = SecureStore {
+        account: key.to_owned(),
+        root,
+    };
+    let _transaction = store.lock()?;
+    delete()?;
+    match fs::remove_file(store.index()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("storage-unavailable"),
+    }
+}
+
 pub(crate) fn root() -> Result<PathBuf, &'static str> {
     dirs::data_dir()
         .map(|path| path.join(format!(".{SERVICE}")))
@@ -255,6 +292,30 @@ mod tests {
             Err("storage-unavailable".into())
         );
         assert!(index.exists());
+    }
+
+    #[test]
+    fn agent_grants_are_indexed_for_the_identity_wipe_before_they_are_written() {
+        let root = tempfile::tempdir().unwrap();
+        let key = agent_grant_key("profile", "owner", "agent");
+        let index = root.path().join(format!("{key}.record"));
+        // Registered before the secret write, which here fails: kept anyway.
+        let failed: Result<(), _> =
+            register_grant(root.path().into(), &key, || Err("storage-unavailable"));
+        assert!(failed.is_err());
+        assert!(index.exists());
+        // The boot owner walks it (and this build denies the OS delete).
+        assert_eq!(
+            remove_all(root.path().into()),
+            Err("storage-unavailable".into())
+        );
+        assert!(index.exists());
+        // A failed grant deletion keeps the index; a completed one drops it.
+        assert!(unregister_grant(root.path().into(), &key, || Err("storage-unavailable")).is_err());
+        assert!(index.exists());
+        unregister_grant(root.path().into(), &key, || Ok(())).unwrap();
+        assert!(!index.exists());
+        assert!(remove_all(root.path().into()).is_ok());
     }
 
     #[test]

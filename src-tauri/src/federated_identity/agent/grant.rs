@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::store::SERVICE;
+use super::super::store::{self, SERVICE};
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
 #[derive(Deserialize, Serialize)]
@@ -20,6 +20,10 @@ pub(crate) struct Grant {
     /// The `nip_fi_issuer` that granted it, which its assertions must carry.
     pub(crate) issuer: String,
     pub(crate) token: String,
+    /// Issued by the one re-enrollment after a refusal and not yet used to
+    /// mint: if it is refused too, the agent stops instead of enrolling again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) replacement: bool,
 }
 impl Drop for Grant {
     fn drop(&mut self) {
@@ -41,6 +45,7 @@ impl Grant {
             account,
             issuer,
             token,
+            replacement: false,
         }
     }
     /// Whether this grant may be used. Without a session (expired or not yet
@@ -80,21 +85,31 @@ impl GrantStore for SecureGrantStore {
     }
     fn write(&self, key: &str, grant: &Grant) -> Result<(), &'static str> {
         let next = Zeroizing::new(serde_json::to_vec(grant).map_err(|_| "Invalid agent grant")?);
-        let current = raw(key)?;
-        buzz_credential_store::compare_session(
-            SERVICE,
-            key,
-            current.as_deref().map(Vec::as_slice),
-            Some(&next),
-        )
-        .map_err(|_| "Secure storage is unavailable")
+        store::register_grant(storage_root()?, key, || {
+            let current = raw(key)?;
+            buzz_credential_store::compare_session(
+                SERVICE,
+                key,
+                current.as_deref().map(Vec::as_slice),
+                Some(&next),
+            )
+            .map_err(|_| "Secure storage is unavailable")
+        })
     }
     fn delete(&self, key: &str) -> Result<(), &'static str> {
-        match buzz_credential_store::delete_session(SERVICE, key) {
-            Ok(()) | Err(buzz_credential_store::Error::Absent) => Ok(()),
-            Err(_) => Err("Secure storage is unavailable"),
-        }
+        store::unregister_grant(
+            storage_root()?,
+            key,
+            || match buzz_credential_store::delete_session(SERVICE, key) {
+                Ok(()) | Err(buzz_credential_store::Error::Absent) => Ok(()),
+                Err(_) => Err("Secure storage is unavailable"),
+            },
+        )
     }
+}
+
+fn storage_root() -> Result<std::path::PathBuf, &'static str> {
+    store::root().map_err(|_| "Secure storage is unavailable")
 }
 
 fn raw(key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {

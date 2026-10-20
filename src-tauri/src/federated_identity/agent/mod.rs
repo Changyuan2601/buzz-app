@@ -27,6 +27,10 @@ const SIGN_IN: &str = "Sign in to your organization to enroll this agent";
 const STOPPED: &str =
     "Your organization no longer accepts this agent; sign in again to re-enroll it";
 const CHANGED: &str = "Your organization sign-in changed; try again";
+const DELETED: &str = "This agent was deleted";
+
+/// Lists every agent's owner and pubkey, for retiring all grants at once.
+type Agents = dyn Fn() -> Result<Vec<(String, String)>, String> + Send + Sync;
 
 #[derive(Clone)]
 pub(crate) struct AgentTokens(Arc<Inner>);
@@ -35,16 +39,26 @@ struct Inner {
     store: Arc<dyn GrantStore>,
     /// One turn per agent, so concurrent requests share one enrollment.
     slots: Mutex<HashMap<String, Arc<AsyncMutex<Slot>>>>,
+    /// The owner's retirements whose grant wipe has completed. Held across the
+    /// wipe and every grant write, so no write of an older account lands after.
+    retired: Arc<Mutex<u64>>,
+    /// Serializes wipes, so concurrent callers share one.
+    wiping: AsyncMutex<()>,
+    agents: std::sync::OnceLock<Arc<Agents>>,
 }
 #[derive(Default)]
 struct Slot {
     assertion: Option<Cached>,
+    /// The agent was deleted; requests already queued for it are refused.
+    deleted: bool,
     /// Its grant was refused and the one re-enrollment failed: it stays
     /// stopped, without retrying, until the owner signs in again.
     stopped: bool,
 }
 /// One minted assertion, reused until shortly before it expires.
 struct Cached {
+    /// The owner's retirements when it was minted; any later one retires it.
+    retirements: u64,
     relay: String,
     header: Zeroizing<String>,
     refresh_at: u64,
@@ -67,16 +81,13 @@ impl AgentTokens {
             identity,
             store,
             slots: Mutex::default(),
+            retired: Arc::default(),
+            wiping: AsyncMutex::default(),
+            agents: std::sync::OnceLock::new(),
         }))
     }
     fn slot(&self, agent: &str) -> Arc<AsyncMutex<Slot>> {
-        self.0
-            .slots
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(agent.into())
-            .or_default()
-            .clone()
+        lock(&self.0.slots).entry(agent.into()).or_default().clone()
     }
     async fn storage<T: Send + 'static>(
         &self,
@@ -118,9 +129,14 @@ impl AgentTokens {
         let relay = canonical_relay(&agent.relay)?;
         let slot = self.slot(&agent.pubkey);
         let mut slot = slot.lock().await;
+        if slot.deleted {
+            return Err(DELETED.into());
+        }
+        let retirements = self.admit().await?;
         let now = now()? as u64;
         if let Some(cached) = &slot.assertion {
-            if cached.relay == relay && cached.refresh_at > now {
+            if cached.retirements == retirements && cached.relay == relay && cached.refresh_at > now
+            {
                 return Ok(Some(cached.header.clone()));
             }
         }
@@ -129,21 +145,29 @@ impl AgentTokens {
         }
         slot.assertion = None;
         let grant = self
-            .grant(agent, key)
+            .grant(agent, key, retirements)
             .await
             .map_err(|error| error.message)?;
         let cached = match self.mint(agent, key, &grant, relay.clone()).await {
+            Err(failure) if failure.code == "grant-refused" && grant.replacement => {
+                // The one re-enrollment's grant is refused as well.
+                slot.stopped = true;
+                self.retire(agent).await?;
+                return Err(STOPPED.into());
+            }
             Err(failure) if failure.code == "grant-refused" => {
                 // Retire the refused grant for good, then enroll once more.
-                // Only another refusal stops the agent; any other failure is
-                // reported as it is, and the next request enrolls lazily.
+                // The replacement is stored marked as such until it mints, so
+                // its refusal stops the agent even after a transient failure
+                // or a restart in between. Any other failure is reported as
+                // it is, and the next request enrolls lazily.
                 drop(grant);
                 if let Err(error) = self.retire(agent).await {
                     // Kept, the refused grant would be recovered on every call.
                     slot.stopped = true;
                     return Err(error);
                 }
-                let grant = match self.grant(agent, key).await {
+                let grant = match self.enrolled(agent, key, retirements, true).await {
                     Ok(grant) => grant,
                     Err(error) if error.refused => {
                         slot.stopped = true;
@@ -152,7 +176,10 @@ impl AgentTokens {
                     Err(error) => return Err(error.message),
                 };
                 match self.mint(agent, key, &grant, relay).await {
-                    Ok(cached) => cached,
+                    Ok(cached) => {
+                        self.settle(agent, grant, retirements).await?;
+                        cached
+                    }
                     Err(failure) if failure.code == "grant-refused" => {
                         slot.stopped = true;
                         self.retire(agent).await?;
@@ -161,11 +188,62 @@ impl AgentTokens {
                     Err(failure) => return Err(refused(failure.code)),
                 }
             }
+            Ok(cached) if grant.replacement => {
+                self.settle(agent, grant, retirements).await?;
+                cached
+            }
             minted => minted.map_err(|failure| refused(failure.code))?,
         };
+        if self.0.identity.retirements() != retirements {
+            return Err(CHANGED.into());
+        }
         let header = cached.header.clone();
-        slot.assertion = Some(cached);
+        slot.assertion = Some(Cached {
+            retirements,
+            ..cached
+        });
         Ok(Some(header))
+    }
+
+    /// The owner's current retirement count, once every grant from before it
+    /// is wiped. An explicit sign-out or account change bumps the count
+    /// synchronously, so no request is admitted on retired credentials even
+    /// before the watcher runs.
+    async fn admit(&self) -> Result<u64, String> {
+        loop {
+            let current = self.0.identity.retirements();
+            if *lock(&self.0.retired) == current {
+                return Ok(current);
+            }
+            self.wipe(current).await?;
+        }
+    }
+    /// Deletes every agent's grant, then records `upto`
+    /// as wiped. A failed wipe records nothing, so the next request retries.
+    async fn wipe(&self, upto: u64) -> Result<(), String> {
+        let _wiping = self.0.wiping.lock().await;
+        if *lock(&self.0.retired) >= upto {
+            return Ok(());
+        }
+        // Cached assertions carry the count they were minted under, so they
+        // are already unusable; only the stored grants need deleting.
+        let agents = self.0.agents.get().cloned();
+        let keys = tauri::async_runtime::spawn_blocking(move || {
+            agents.map_or(Ok(Vec::new()), |agents| agents())
+        })
+        .await
+        .map_err(|_| "Agents are unavailable")??
+        .into_iter()
+        .map(|(owner, agent)| self.0.identity.agent_grant_key(&owner, &agent))
+        .collect::<Vec<_>>();
+        let retired = self.0.retired.clone();
+        self.storage(move |store| {
+            let mut retired = lock(&retired);
+            keys.iter().try_for_each(|at| store.delete(at))?;
+            *retired = upto;
+            Ok(())
+        })
+        .await
     }
 
     /// Trades the grant for a short-lived agent assertion for `relay`.
@@ -216,76 +294,54 @@ impl AgentTokens {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
             // One with 30s or less to live is used once, never reused.
             refresh_at: issued.expires_at.saturating_sub(30),
+            retirements: 0,
             relay,
         })
     }
 
-    /// Retires a deleted agent's grant. It waits out any enrollment in flight,
-    /// so none installs a grant for the agent afterwards.
+    /// Retires a deleted agent's grant. It waits out any request in flight and
+    /// leaves the agent marked deleted, so requests already queued for it are
+    /// refused rather than enrolling it again.
     pub(crate) async fn forget(&self, owner: &str, agent: &str) -> Result<(), String> {
         let slot = self.slot(agent);
         let mut slot = slot.lock().await;
+        slot.deleted = true;
+        slot.assertion = None;
         let at = self.0.identity.agent_grant_key(owner, agent);
-        self.storage(move |store| store.delete(&at)).await?;
-        *slot = Slot::default();
-        Ok(())
+        self.storage(move |store| store.delete(&at)).await
     }
 
     /// Follows the owner's account: an explicit sign-out or another account
     /// retires every agent's grant (`agents` lists each owner and agent), and
     /// any new sign-in lets a stopped agent enroll again. Expiry keeps grants.
+    /// Requests check the retirement count themselves; this only wipes early.
     pub(crate) fn watch(
         &self,
         agents: impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static,
     ) {
+        let _ = self.0.agents.set(Arc::new(agents));
         let tokens = self.clone();
-        let agents = Arc::new(agents);
         let mut changes = self.0.identity.account_changes();
         tauri::async_runtime::spawn(async move {
             while changes.changed().await.is_ok() {
                 let change = changes.borrow_and_update().clone();
-                let wipe = match change {
-                    Some(SessionChange::SignedOut | SessionChange::AccountChanged) => true,
-                    Some(SessionChange::Refreshed) => false,
-                    Some(SessionChange::Expired) | None => continue,
-                };
-                if let Err(error) = tokens.reset(wipe, agents.clone()).await {
+                if let Err(error) = tokens.follow(change).await {
                     eprintln!("Agent grants were not retired: {error}");
                 }
             }
         });
     }
-    async fn reset(
-        &self,
-        wipe: bool,
-        agents: Arc<impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static>,
-    ) -> Result<(), String> {
-        let slots: Vec<_> = self
-            .0
-            .slots
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect();
-        for slot in slots {
-            let mut slot = slot.lock().await;
-            slot.stopped = false;
-            if wipe {
-                slot.assertion = None;
+    async fn follow(&self, change: Option<SessionChange>) -> Result<(), String> {
+        if matches!(
+            change,
+            Some(SessionChange::Refreshed | SessionChange::AccountChanged)
+        ) {
+            let slots: Vec<_> = lock(&self.0.slots).values().cloned().collect();
+            for slot in slots {
+                slot.lock().await.stopped = false;
             }
         }
-        if !wipe {
-            return Ok(());
-        }
-        let keys = tauri::async_runtime::spawn_blocking(move || agents())
-            .await
-            .map_err(|_| "Agents are unavailable")??
-            .into_iter()
-            .map(|(owner, agent)| self.0.identity.agent_grant_key(&owner, &agent))
-            .collect::<Vec<_>>();
-        self.storage(move |store| keys.iter().try_for_each(|at| store.delete(at)))
-            .await
+        self.admit().await.map(drop)
     }
 
     async fn retire(&self, agent: &AppAgent) -> Result<(), String> {
@@ -295,7 +351,12 @@ impl AgentTokens {
 
     /// The agent's grant, enrolling it on first use: new agents and ones made
     /// before enrollment existed alike.
-    async fn grant(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, Error> {
+    async fn grant(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        retirements: u64,
+    ) -> Result<Grant, Error> {
         let (at, account) = (self.grant_key(agent), self.account());
         if let Some(grant) = self
             .storage(move |store| grant::load(store, &at, account.as_deref()))
@@ -303,11 +364,52 @@ impl AgentTokens {
         {
             return Ok(grant);
         }
-        let grant = self.enroll(agent, key).await?;
-        let at = self.grant_key(agent);
-        Ok(self
-            .storage(move |store| store.write(&at, &grant).map(|()| grant))
-            .await?)
+        self.enrolled(agent, key, retirements, false).await
+    }
+    /// Enrolls the agent and stores its grant, unless the owner's credentials
+    /// were retired meanwhile.
+    async fn enrolled(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        retirements: u64,
+        replacement: bool,
+    ) -> Result<Grant, Error> {
+        let mut grant = self.enroll(agent, key).await?;
+        grant.replacement = replacement;
+        Ok(self.commit(agent, grant, retirements).await?)
+    }
+    /// The replacement grant minted: it is an ordinary grant from now on.
+    async fn settle(
+        &self,
+        agent: &AppAgent,
+        mut grant: Grant,
+        retirements: u64,
+    ) -> Result<(), String> {
+        grant.replacement = false;
+        self.commit(agent, grant, retirements).await.map(drop)
+    }
+    /// Stores `grant` under the wipe's lock, only if no retirement happened
+    /// since `retirements` was admitted.
+    async fn commit(
+        &self,
+        agent: &AppAgent,
+        grant: Grant,
+        retirements: u64,
+    ) -> Result<Grant, String> {
+        let (at, identity, retired) = (
+            self.grant_key(agent),
+            self.0.identity.clone(),
+            self.0.retired.clone(),
+        );
+        self.storage(move |store| {
+            let _retired = lock(&retired);
+            if identity.retirements() != retirements {
+                return Err(CHANGED);
+            }
+            store.write(&at, &grant).map(|()| grant)
+        })
+        .await
     }
 
     /// Exchanges the owner's BB session for a grant for this agent (RFC 8693),
@@ -392,6 +494,12 @@ impl AgentTokens {
             token.to_string(),
         ))
     }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// A NIP-98 `Nostr` header value for one signed HTTP auth event.
