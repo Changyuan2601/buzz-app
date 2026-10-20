@@ -28,6 +28,8 @@ import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 import { ownSolo } from "../../features/solo/labels";
 import type { ChannelList } from "../../features/relay/contracts";
+import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 
 const noSubscription = () => () => {};
 
@@ -37,9 +39,6 @@ const filters = [
   { value: "solo", label: "Solo", panelId: "sidebar-solo" },
   { value: "team", label: "Team", panelId: "sidebar-team" },
 ] as const;
-
-import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
-import type { FederatedIdentity } from "../../features/federated-identity/service";
 
 type Props = {
   federatedIdentity?: FederatedIdentity;
