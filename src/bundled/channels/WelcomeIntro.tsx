@@ -57,7 +57,7 @@ export function WelcomeComposer({ phase }: { phase: "connect" | "customize" }) {
   const prompt =
     phase === "connect"
       ? "Connect your AI provider to start chatting"
-      : "Choose a name and select Looks good to start chatting";
+      : "Pick a name and select Submit to start chatting";
   return (
     <div className={styles.lockedComposer}>
       <Composer

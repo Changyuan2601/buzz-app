@@ -233,6 +233,18 @@
     border-radius: inherit;
     background: transparent;
   }
+  /* A write-in answer sized and selected like the tiles above it. */
+  .buzz-input[data-appearance="tile"] {
+    min-height: var(--size-control-lg);
+    padding-inline: var(--space-4);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-control);
+    text-align: center;
+  }
+  .buzz-input[data-appearance="tile"][data-checked] {
+    border-color: var(--interaction-border);
+    background: var(--interaction-selected);
+  }
   html[data-keyboard-navigation]
     :is(
       .buzz-input,

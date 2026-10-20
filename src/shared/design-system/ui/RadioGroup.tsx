@@ -1,6 +1,7 @@
 import { Field as BaseField } from "@base-ui/react/field";
 import { RadioGroup as BaseRadioGroup } from "@base-ui/react/radio-group";
 import { Radio as BaseRadio } from "@base-ui/react/radio";
+import { Input, type InputProps } from "./Input";
 import { useId, type ComponentProps, type ReactNode } from "react";
 
 /** Compose inside Field so each Radio has its own labelled Field.Item. */
@@ -61,5 +62,21 @@ export function Radio({
         </span>
       </label>
     </BaseField.Item>
+  );
+}
+
+/** A tile you type into: a group's "write your own" answer, after its tiles.
+ * Not a radio; its owner marks it `selected` while its text is the answer,
+ * usually from focus, and clears the group's value. */
+export function RadioWriteIn({
+  selected,
+  ...props
+}: Omit<InputProps, "controlSize" | "appearance"> & { selected: boolean }) {
+  return (
+    <Input
+      {...props}
+      appearance="tile"
+      data-checked={selected ? "" : undefined}
+    />
   );
 }

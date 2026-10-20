@@ -37,6 +37,7 @@ import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
 import {
   Radio,
   RadioGroup,
+  RadioWriteIn,
 } from "../../../../src/shared/design-system/ui/RadioGroup";
 import { Checkbox } from "../../../../src/shared/design-system/ui/Checkbox";
 import avatarUrl from "../assets/avatar.png";
@@ -1760,6 +1761,7 @@ function RadioGroupSpecimen() {
   const [summary, setSummary] = useState(false);
   const [delivery, setDelivery] = useState("all");
   const [enabled, setEnabled] = useState(false);
+  const [tone, setTone] = useState<string | null>("Warm");
   return (
     <>
       <SpecimenGroup
@@ -1779,6 +1781,38 @@ function RadioGroupSpecimen() {
             <Radio value="none" label="Unavailable" variant="tile" disabled />
           </RadioGroup>
         </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Tiles with a write-in"
+        code={`<div className="grid gap-3">
+  <Field label="Tone" labelVisibility="hidden">
+    <RadioGroup<string | null> value={tone} onValueChange={setTone}>
+      <Radio value="Warm" label="Warm" variant="tile" />
+      <Radio value="Direct" label="Direct" variant="tile" />
+    </RadioGroup>
+  </Field>
+  <RadioWriteIn
+    aria-label="Write your own"
+    placeholder="Write your own"
+    selected={tone === null}
+    onFocus={() => setTone(null)}
+  />
+</div>`}
+      >
+        <div className="grid gap-3">
+          <Field label="Tone" labelVisibility="hidden">
+            <RadioGroup<string | null> value={tone} onValueChange={setTone}>
+              <Radio value="Warm" label="Warm" variant="tile" />
+              <Radio value="Direct" label="Direct" variant="tile" />
+            </RadioGroup>
+          </Field>
+          <RadioWriteIn
+            aria-label="Write your own"
+            placeholder="Write your own"
+            selected={tone === null}
+            onFocus={() => setTone(null)}
+          />
+        </div>
       </SpecimenGroup>
       <SpecimenGroup
         label="Native form reset"

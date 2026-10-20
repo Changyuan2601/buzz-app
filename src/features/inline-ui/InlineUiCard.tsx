@@ -4,9 +4,12 @@ import { ArrowsShuffleIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Input } from "../../shared/design-system/ui/Input";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import {
+  Radio,
+  RadioGroup,
+  RadioWriteIn,
+} from "../../shared/design-system/ui/RadioGroup";
+import styles from "./InlineUiCard.module.css";
 import { InlineUiHost } from "./host";
 import type { InlineUi } from "./patterns";
 
@@ -64,79 +67,94 @@ function ChoiceForm({
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
   return (
-    <form
-      className={className}
-      aria-label={profile ? "Name and avatar" : "Answer"}
-      onSubmit={async (event) => {
-        event.preventDefault();
-        if (busy || !answer) return;
-        setBusy(true);
-        setError("");
-        try {
-          await onSubmit(answer, avatar.url);
-        } catch (reason) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Couldn't send. Try again.",
-          );
-          setBusy(false);
-        }
-      }}
-    >
-      {profile && (
-        <div className="flex items-center gap-2">
-          <Avatar
-            size="large"
-            shape="squircle"
-            src={avatar.preview}
-            alt={avatar.label}
-            fallback={avatar.label}
-          />
-          <IconButton
-            aria-label="Shuffle avatar"
-            icon={<ArrowsShuffleIcon size={16} />}
-            disabled={busy}
-            onClick={() => {
-              let next = randomAgentAvatar();
-              while (next.id === avatar.id) next = randomAgentAvatar();
-              setAvatar(next);
-            }}
-          />
-        </div>
-      )}
-      <Field label={profile ? "Name" : "Answer"} labelVisibility="hidden">
-        <RadioGroup<string | null>
-          value={choice}
-          disabled={busy}
-          onValueChange={setChoice}
-        >
-          {ui.options.map((option) => (
-            <Radio key={option} value={option} label={option} />
-          ))}
-          <Radio value={OWN} label="Write your own" />
-        </RadioGroup>
-      </Field>
-      {choice === OWN && (
-        <Field label={profile ? "Your name for me" : "Your answer"}>
-          <Input
-            autoFocus
+    <div className={className}>
+      <form
+        className={styles.card}
+        aria-label={profile ? "Name and avatar" : "Answer"}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (busy || !answer) return;
+          setBusy(true);
+          setError("");
+          try {
+            await onSubmit(answer, avatar.url);
+          } catch (reason) {
+            setError(
+              reason instanceof Error
+                ? reason.message
+                : "Couldn't send. Try again.",
+            );
+            setBusy(false);
+          }
+        }}
+      >
+        {profile && (
+          <div className={styles.avatar}>
+            <Avatar
+              size="fill"
+              src={avatar.preview}
+              alt={avatar.label}
+              fallback={avatar.label}
+            />
+          </div>
+        )}
+        <div className={styles.choices}>
+          <Field label={profile ? "Name" : "Answer"} labelVisibility="hidden">
+            <RadioGroup<string | null>
+              value={choice === OWN ? null : choice}
+              disabled={busy}
+              onValueChange={setChoice}
+            >
+              {ui.options.map((option) => (
+                <Radio
+                  key={option}
+                  value={option}
+                  label={option}
+                  variant="tile"
+                />
+              ))}
+            </RadioGroup>
+          </Field>
+          <RadioWriteIn
+            aria-label="Write your own"
+            placeholder="Write your own"
+            selected={choice === OWN}
             value={own}
             disabled={busy}
             maxLength={profile ? 64 : 500}
+            onFocus={() => setChoice(OWN)}
             onChange={(event) => setOwn(event.target.value)}
           />
-        </Field>
-      )}
-      <Button
-        type="submit"
-        variant="prominent"
-        loading={busy}
-        disabled={!answer}
-      >
-        Submit
-      </Button>
-      {error && <p role="alert">{error}</p>}
-    </form>
+        </div>
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+        <div className={styles.actions} data-split={profile || undefined}>
+          {profile && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                let next = randomAgentAvatar();
+                while (next.id === avatar.id) next = randomAgentAvatar();
+                setAvatar(next);
+              }}
+            >
+              <ArrowsShuffleIcon size={16} />
+              Shuffle
+            </Button>
+          )}
+          <Button
+            type="submit"
+            variant="prominent"
+            loading={busy}
+            disabled={!answer}
+          >
+            Submit
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }

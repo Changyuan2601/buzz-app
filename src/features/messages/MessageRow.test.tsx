@@ -3041,11 +3041,11 @@ it("offers an agent's choice only while it is the newest message, and sends the 
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getByRole("radio", { name: "Warm" }));
     expect(submit).toBeEnabled();
-    fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
+    const own = screen.getByRole("textbox", { name: "Write your own" });
+    fireEvent.focus(own);
+    expect(screen.getByRole("radio", { name: "Warm" })).not.toBeChecked();
     expect(submit).toBeDisabled();
-    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), {
-      target: { value: " Playful " },
-    });
+    fireEvent.change(own, { target: { value: " Playful " } });
     fireEvent.click(submit);
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith("channel", "Playful", [agent.pubkey]),
@@ -3126,7 +3126,7 @@ it("offers an agent's profile names only where the host can save them", async ()
         .querySelector("img")
         ?.getAttribute("src");
     const first = avatar();
-    fireEvent.click(screen.getByRole("button", { name: "Shuffle avatar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
     expect(avatar()).not.toBe(first);
     fireEvent.click(screen.getByRole("radio", { name: "Juniper" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));

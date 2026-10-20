@@ -114,8 +114,7 @@ function Welcome({
 }
 
 async function submitOwnName(name: string) {
-  await userEvent.click(screen.getByRole("radio", { name: "Write your own" }));
-  const field = screen.getByRole("textbox", { name: "Your name for me" });
+  const field = screen.getByRole("textbox", { name: "Write your own" });
   await userEvent.clear(field);
   await userEvent.type(field, name);
   await userEvent.click(screen.getByRole("button", { name: "Submit" }));

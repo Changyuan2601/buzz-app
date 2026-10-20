@@ -3,8 +3,9 @@ import type { ComponentProps } from "react";
 
 export type InputProps = Omit<ComponentProps<typeof BaseInput>, "className"> & {
   controlSize?: "sm" | "md";
-  /** `title` sets the value as a page title with no field around it. */
-  appearance?: "field" | "title" | "heading";
+  /** `title` sets the value as a page title with no field around it. `tile`
+   * matches RadioGroup tiles; compose it through RadioWriteIn. */
+  appearance?: "field" | "title" | "heading" | "tile";
 };
 export function Input({
   controlSize = "md",

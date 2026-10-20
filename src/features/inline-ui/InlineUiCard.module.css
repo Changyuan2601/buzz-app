@@ -1,0 +1,30 @@
+/* The frame and layout of an agent's pattern; its controls are design-system
+   components. */
+.card {
+  display: grid;
+  gap: var(--space-4);
+  width: min(100%, 24rem);
+  padding: var(--space-5);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.choices {
+  display: grid;
+  gap: var(--space-3);
+}
+.avatar {
+  justify-self: center;
+  width: 6rem;
+  height: 6rem;
+  border-radius: var(--radius-pill);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.actions[data-split] {
+  justify-content: space-between;
+}
