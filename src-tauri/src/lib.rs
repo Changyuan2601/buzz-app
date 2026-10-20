@@ -820,6 +820,11 @@ pub fn run() {
                     .map_err(Clone::clone),
                 // `just desktop` builds step aside for a packaged app.
                 !tauri::is_dev(),
+                federated_identity::agent::AgentTokens::new(
+                    app.state::<federated_identity::FederatedIdentity>()
+                        .inner()
+                        .clone(),
+                ),
             ));
             Ok(())
         });

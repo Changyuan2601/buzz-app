@@ -1,14 +1,12 @@
 //! Agent token client: each local agent's NIP-FI grant and the agent assertion
 //! JWTs it mints. The native app holds both; nothing crosses IPC.
-// Attached to the agent requests in app_agents.rs by a later commit.
-#![allow(dead_code)]
 
 pub(crate) mod grant;
 
 use super::{
     config::canonical_relay,
     protocol::{self, now, Failure},
-    FederatedIdentity,
+    FederatedIdentity, SessionChange,
 };
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -55,6 +53,13 @@ struct Cached {
 impl AgentTokens {
     pub(crate) fn new(identity: FederatedIdentity) -> Self {
         Self::with_store(identity, Arc::new(SecureGrantStore))
+    }
+    /// Tokens for a build without an organization: agents send no evidence.
+    #[cfg(test)]
+    pub(crate) fn unconfigured() -> Self {
+        let store = Arc::new(super::tests::Memory::default());
+        let identity = FederatedIdentity::with_store(None, String::new(), String::new(), store);
+        Self::with_store(identity, Arc::new(grant::tests::MemoryGrants::default()))
     }
     fn with_store(identity: FederatedIdentity, store: Arc<dyn GrantStore>) -> Self {
         Self(Arc::new(Inner {
@@ -122,25 +127,37 @@ impl AgentTokens {
             return Err(STOPPED.into());
         }
         slot.assertion = None;
-        let grant = self.grant(agent, key).await?;
+        let grant = self
+            .grant(agent, key)
+            .await
+            .map_err(|error| error.message)?;
         let cached = match self.mint(agent, key, &grant, relay.clone()).await {
             Err(failure) if failure.code == "grant-refused" => {
                 // Retire the refused grant for good, then enroll once more.
+                // Only another refusal stops the agent; any other failure is
+                // reported as it is, and the next request enrolls lazily.
                 drop(grant);
-                self.retire(agent).await?;
-                slot.stopped = true;
-                let grant = self.grant(agent, key).await.map_err(|_| STOPPED)?;
-                match self.mint(agent, key, &grant, relay).await {
-                    Ok(cached) => {
-                        slot.stopped = false;
-                        cached
-                    }
-                    Err(failure) => {
-                        if failure.code == "grant-refused" {
-                            self.retire(agent).await?;
-                        }
+                if let Err(error) = self.retire(agent).await {
+                    // Kept, the refused grant would be recovered on every call.
+                    slot.stopped = true;
+                    return Err(error);
+                }
+                let grant = match self.grant(agent, key).await {
+                    Ok(grant) => grant,
+                    Err(error) if error.refused => {
+                        slot.stopped = true;
                         return Err(STOPPED.into());
                     }
+                    Err(error) => return Err(error.message),
+                };
+                match self.mint(agent, key, &grant, relay).await {
+                    Ok(cached) => cached,
+                    Err(failure) if failure.code == "grant-refused" => {
+                        slot.stopped = true;
+                        self.retire(agent).await?;
+                        return Err(STOPPED.into());
+                    }
+                    Err(failure) => return Err(refused(failure.code)),
                 }
             }
             minted => minted.map_err(|failure| refused(failure.code))?,
@@ -202,6 +219,74 @@ impl AgentTokens {
         })
     }
 
+    /// Retires a deleted agent's grant. It waits out any enrollment in flight,
+    /// so none installs a grant for the agent afterwards.
+    pub(crate) async fn forget(&self, owner: &str, agent: &str) -> Result<(), String> {
+        let slot = self.slot(agent);
+        let mut slot = slot.lock().await;
+        let at = self.0.identity.agent_grant_key(owner, agent);
+        self.storage(move |store| store.delete(&at)).await?;
+        *slot = Slot::default();
+        Ok(())
+    }
+
+    /// Follows the owner's account: an explicit sign-out or another account
+    /// retires every agent's grant (`agents` lists each owner and agent), and
+    /// any new sign-in lets a stopped agent enroll again. Expiry keeps grants.
+    pub(crate) fn watch(
+        &self,
+        agents: impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static,
+    ) {
+        let tokens = self.clone();
+        let agents = Arc::new(agents);
+        let mut changes = self.0.identity.account_changes();
+        tauri::async_runtime::spawn(async move {
+            while changes.changed().await.is_ok() {
+                let change = changes.borrow_and_update().clone();
+                let wipe = match change {
+                    Some(SessionChange::SignedOut | SessionChange::AccountChanged) => true,
+                    Some(SessionChange::Refreshed) => false,
+                    Some(SessionChange::Expired) | None => continue,
+                };
+                if let Err(error) = tokens.reset(wipe, agents.clone()).await {
+                    eprintln!("Agent grants were not retired: {error}");
+                }
+            }
+        });
+    }
+    async fn reset(
+        &self,
+        wipe: bool,
+        agents: Arc<impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static>,
+    ) -> Result<(), String> {
+        let slots: Vec<_> = self
+            .0
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        for slot in slots {
+            let mut slot = slot.lock().await;
+            slot.stopped = false;
+            if wipe {
+                slot.assertion = None;
+            }
+        }
+        if !wipe {
+            return Ok(());
+        }
+        let keys = tauri::async_runtime::spawn_blocking(move || agents())
+            .await
+            .map_err(|_| "Agents are unavailable")??
+            .into_iter()
+            .map(|(owner, agent)| self.0.identity.agent_grant_key(&owner, &agent))
+            .collect::<Vec<_>>();
+        self.storage(move |store| keys.iter().try_for_each(|at| store.delete(at)))
+            .await
+    }
+
     async fn retire(&self, agent: &AppAgent) -> Result<(), String> {
         let at = self.grant_key(agent);
         self.storage(move |store| store.delete(&at)).await
@@ -209,7 +294,7 @@ impl AgentTokens {
 
     /// The agent's grant, enrolling it on first use: new agents and ones made
     /// before enrollment existed alike.
-    async fn grant(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, String> {
+    async fn grant(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, Error> {
         let (at, account) = (self.grant_key(agent), self.account());
         if let Some(grant) = self
             .storage(move |store| grant::load(store, &at, account.as_deref()))
@@ -219,14 +304,15 @@ impl AgentTokens {
         }
         let grant = self.enroll(agent, key).await?;
         let at = self.grant_key(agent);
-        self.storage(move |store| store.write(&at, &grant).map(|()| grant))
-            .await
+        Ok(self
+            .storage(move |store| store.write(&at, &grant).map(|()| grant))
+            .await?)
     }
 
     /// Exchanges the owner's BB session for a grant for this agent (RFC 8693),
     /// proven by the owner's NIP-OA tag and the agent's own signature. Only the
     /// session that started it may install the result.
-    async fn enroll(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, String> {
+    async fn enroll(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, Error> {
         let identity = &self.0.identity;
         let account = self.account().ok_or(SIGN_IN)?;
         let (form, revision, endpoint) = identity
@@ -281,7 +367,7 @@ impl AgentTokens {
         });
         let enrolled = tokio::select! {
             () = cancel.cancelled() => return Err(CHANGED.into()),
-            enrolled = request => enrolled.map_err(|failure| refused(failure.code))?,
+            enrolled = request => enrolled.map_err(Error::from)?,
         };
         let token = Zeroizing::new(enrolled.access_token);
         if !identity.current(&revision) {
@@ -347,6 +433,42 @@ fn validate(
         return Err(invalid());
     }
     Ok(())
+}
+
+/// A failed enrollment, and whether the organization refused it (rather than
+/// being unreachable, or the owner not being signed in).
+#[derive(Debug)]
+struct Error {
+    message: String,
+    refused: bool,
+}
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            refused: false,
+        }
+    }
+}
+impl From<&str> for Error {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+impl From<Failure> for Error {
+    fn from(failure: Failure) -> Self {
+        Self {
+            message: refused(failure.code),
+            refused: matches!(
+                failure.code,
+                "adapter-refused"
+                    | "authorization-denied"
+                    | "binding-mismatch"
+                    | "invalid-proof"
+                    | "grant-refused"
+            ),
+        }
+    }
 }
 
 /// What the agent's owner sees when the identity issuer turns it away.
