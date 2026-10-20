@@ -753,7 +753,7 @@ export function policyRelay({
         "observer must traverse the production owner-only route",
       ).toBeGreaterThan(0);
     },
-    publish(community, event) {
+    publish(community, event, { requireSubscriber = true } = {}) {
       let deliveries = 0;
       // Relay-authored group state names its channel with d, not h.
       const destinationTag =
@@ -778,10 +778,11 @@ export function policyRelay({
           deliveries++;
         }
       }
-      expect(
-        deliveries,
-        "event must traverse an explicit production channel REQ",
-      ).toBeGreaterThan(0);
+      if (requireSubscriber)
+        expect(
+          deliveries,
+          "event must traverse an explicit production channel REQ",
+        ).toBeGreaterThan(0);
     },
     failRoute(
       community,

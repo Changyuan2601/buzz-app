@@ -389,6 +389,25 @@ Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; middle-click or Delete on a tab and Escape in its content close
 that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+Selecting a conversation from Search focuses its writable composer after the
+search dialog closes. Message results retain their exact-message reveal behavior.
+Cmd+L on macOS or Ctrl+L on Windows/Linux focuses the writable
+composer in the focused pane. Outside a pane it uses the exposed main conversation.
+The composer shortcut yields to terminal input, preserving shell Ctrl+L.
+On macOS, Cmd+Shift+H focuses the main pane and Cmd+Shift+L the side pane.
+On Windows/Linux, F8 and Shift+F8 cycle between visible panes. Pane focus resumes
+the writable composer directly, falling back to the selected tab for tools without
+a composer. On that tab strip, arrow keys move between tabs and Enter selects one.
+Pane focus also works from the terminal, which captures Tab. When a destination is
+available, Buzz consumes F8/Shift+F8 before terminal input; rebind Focus next pane
+in Settings if a terminal application needs those keys.
+Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
+drafts and selection and yield to modals and editor-owned key handling.
+Settings → Shortcuts lists Focus message box and the platform's pane focus actions
+(Focus next pane on Windows/Linux). Each action supports a device-local override
+and reset. F6 retains notification focus.
+Browser builds may reserve Cmd/Ctrl+L for the address bar; choose another binding
+in Settings when using Buzz in a browser. Native key delivery is a separate host check.
 On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
 closable tab in the focused pane. If focus is in the permanent main conversation,
 it closes the selected tab in the visible side pane instead. A selected closable

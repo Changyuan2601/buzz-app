@@ -10,6 +10,7 @@ import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 
 import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts";
 import { validStatusTemplate } from "./user-status.mjs";
+import { validTypingTemplate } from "../src/features/relay/typing-protocol.ts";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
@@ -1061,9 +1062,15 @@ export function relayBrokerPlugin({
                 error: "Community discovery failed",
               });
             const info = await response.json();
-            // Saved-community icons are public NIP-11 metadata, not join admission.
+            // Saved-community presentation is public metadata, not join admission.
             if (route === "/api/relay/icon-info")
-              return json(res, 200, { icon: info?.icon });
+              return json(res, 200, {
+                name:
+                  typeof info?.name === "string" && info.name.length <= 100
+                    ? info.name
+                    : undefined,
+                icon: info?.icon,
+              });
             const gifSearchPath = relayKlipySearchPath(info);
             if (gifSearchPath)
               gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
@@ -2555,6 +2562,12 @@ export function relayBrokerPlugin({
               if (!validReport(filters))
                 return json(res, 400, {
                   error: "Report rejected",
+                  sent: false,
+                });
+            } else if (filters?.kind === 20002) {
+              if (!validTypingTemplate(filters))
+                return json(res, 400, {
+                  error: "Invalid typing indicator",
                   sent: false,
                 });
             } else if (

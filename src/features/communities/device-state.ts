@@ -5,6 +5,8 @@ import { relayPartition } from "../relay/partition";
 import { purgeRelayPartition } from "../relay/partition-purge";
 import { forgetThreadFollows } from "../relay/thread-follows";
 import { clearViewScope } from "../../shared/view-state";
+import { saveLocalCommunityName } from "./names";
+import { saveRepositoriesFolder } from "./repositories";
 
 /** One piece of a left community's device state that could not be cleared. */
 export type PurgeFailure = { store: string; error: unknown };
@@ -44,6 +46,12 @@ export async function purgeCommunityDeviceState(
   };
   // Agents' core memory is only ever held in memory, so this cannot fail.
   forgetCoreMemory(scope);
+  await attempt("community display name", () => {
+    saveLocalCommunityName(origin, viewer, "");
+  });
+  await attempt("repositories folder", () => {
+    saveRepositoriesFolder(origin, viewer, "");
+  });
   await attempt("view state", () => clearViewScope(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));

@@ -1,3 +1,5 @@
+import { ACCENTS, BRAND_GRADIENTS, PALETTE_FAMILIES } from "./brand";
+
 /**
  * Documentation metadata for the shared tokens: names, purposes, sources,
  * and adoption status. The viewer renders these entries; token guards check
@@ -125,6 +127,26 @@ export const PALETTE: PaletteHue[] = [
   })),
 }));
 
+// Existing Appearance ramps are palette owners in both modes.
+PALETTE.push(
+  ...PALETTE_FAMILIES.map((id) => ({
+    id,
+    usedBy: BRAND_GRADIENTS.some(
+      ({ start, end }) =>
+        start.startsWith(`${id}-`) || end.startsWith(`${id}-`),
+    )
+      ? ACCENTS.some((family) => family === id)
+        ? "Appearance and artwork"
+        : "artwork"
+      : "Appearance",
+    steps: STEP_JOBS.map((job, index) => ({
+      step: index + 1,
+      variable: `--${id}-${index + 1}`,
+      job,
+    })),
+  })),
+);
+
 export const BACKDROP_TREATMENTS: BackdropTreatment[] = [
   {
     id: "sky-field",
@@ -248,6 +270,35 @@ export const RAMPS: Ramp[] = [
 
 /** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
+  {
+    id: "plugin-artwork",
+    name: "Plugin artwork (proposed)",
+    description:
+      "Palette-backed category artwork used by the Settings plugin catalog.",
+    roles: BRAND_GRADIENTS.flatMap((gradient) =>
+      (["start", "end", "gradient"] as const).map(
+        (part): Role => ({
+          token: `art-plugin-${gradient.category}-${part}`,
+          variable: `--art-plugin-${gradient.category}-${part}`,
+          pointsAt:
+            part === "gradient"
+              ? `${gradient.start} → ${gradient.end}`
+              : part === "start"
+                ? `--${gradient.start}`
+                : `--${gradient.end}`,
+          use: `${gradient.name} decorative artwork ${part}.`,
+          status: "proposed",
+          owner: "Settings plugin catalog",
+          ...(part === "gradient"
+            ? {
+                exception:
+                  "Complete decorative composition of palette-backed endpoints.",
+              }
+            : {}),
+        }),
+      ),
+    ),
+  },
   {
     id: "semantic-surface",
     name: "Surface",

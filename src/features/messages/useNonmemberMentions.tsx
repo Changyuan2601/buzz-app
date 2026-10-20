@@ -76,6 +76,7 @@ export function useNonmemberMentions(
     },
     dialog: (
       <Dialog
+        size="compact"
         open={!!pending}
         onOpenChange={(open) => {
           if (!open) pending?.finish(null);

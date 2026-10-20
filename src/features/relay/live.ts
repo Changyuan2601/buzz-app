@@ -131,6 +131,8 @@ export type LiveSubscription = {
   /** Local broker handle; not a relay subscription ID. */
   identity?(): string | undefined;
   publish?(event: VerifiedEvent, signal: AbortSignal): Promise<string>;
+  /** Purpose-bound host path when generic socket publication is unavailable. */
+  publishTyping?(event: VerifiedEvent, signal: AbortSignal): Promise<string>;
   update(channels: readonly string[], joined?: readonly string[]): void;
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;

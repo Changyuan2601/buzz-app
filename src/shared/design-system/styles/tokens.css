@@ -54,6 +54,386 @@
    component — families name the jobs, roles name the meanings.
    ============================================================ */
 
+/* Existing Appearance values, extracted unchanged. Explicit mode owners allow
+   a light specimen inside a dark page (and the reverse) without inheriting
+   the wrong resolved ramp. Numeric steps, ink, pressed and link colors keep their authored values. */
+:root {
+  --magenta-1-light: #fffbfc;
+  --magenta-2-light: #fff7fa;
+  --magenta-3-light: #ffeef3;
+  --magenta-4-light: #fee2ec;
+  --magenta-5-light: #fed8e4;
+  --magenta-6-light: #f9cbdb;
+  --magenta-7-light: #f1bbce;
+  --magenta-8-light: #e7a4bd;
+  --magenta-9-light: #df1e85;
+  --magenta-10-light: #db2984;
+  --magenta-11-light: #6c3149;
+  --magenta-12-light: #42242f;
+  --magenta-contrast-light: #ffffff;
+  --magenta-ink-light: #ffffff;
+  --magenta-pressed-light: #d12c7f;
+  --magenta-link-light: #84034b;
+  --magenta-link-hover-light: #ffeef3;
+  --magenta-1-dark: #120e10;
+  --magenta-2-dark: #191415;
+  --magenta-3-dark: #2b1f23;
+  --magenta-4-dark: #38252c;
+  --magenta-5-dark: #452d36;
+  --magenta-6-dark: #553843;
+  --magenta-7-dark: #6b4754;
+  --magenta-8-dark: #865a6a;
+  --magenta-9-dark: #df1e85;
+  --magenta-10-dark: #db2984;
+  --magenta-11-dark: #f4bccf;
+  --magenta-12-dark: #feeaf1;
+  --magenta-contrast-dark: #ffffff;
+  --magenta-ink-dark: #ffffff;
+  --magenta-pressed-dark: #d12c7f;
+  --magenta-link-dark: #fdb6d0;
+  --magenta-link-hover-dark: #2b1f23;
+  --iris-1-light: #fbfcff;
+  --iris-2-light: #f8f9ff;
+  --iris-3-light: #f0f2ff;
+  --iris-4-light: #e6eafe;
+  --iris-5-light: #dde1fe;
+  --iris-6-light: #d2d7fd;
+  --iris-7-light: #c2c8f8;
+  --iris-8-light: #aeb6f0;
+  --iris-9-light: #5f55fa;
+  --iris-10-light: #5a4ef2;
+  --iris-11-light: #3d407a;
+  --iris-12-light: #282b48;
+  --iris-contrast-light: #ffffff;
+  --iris-ink-light: #ffffff;
+  --iris-pressed-light: #5648ea;
+  --iris-link-light: #3c04c3;
+  --iris-link-hover-light: #f0f2ff;
+  --iris-1-dark: #0f0f13;
+  --iris-2-dark: #14151a;
+  --iris-3-dark: #20212e;
+  --iris-4-dark: #272a3c;
+  --iris-5-dark: #31344a;
+  --iris-6-dark: #3c405b;
+  --iris-7-dark: #4c4f72;
+  --iris-8-dark: #60658f;
+  --iris-9-dark: #5f55fa;
+  --iris-10-dark: #5a4ef2;
+  --iris-11-dark: #c3cafb;
+  --iris-12-dark: #edf0fe;
+  --iris-contrast-dark: #ffffff;
+  --iris-ink-dark: #ffffff;
+  --iris-pressed-dark: #5648ea;
+  --iris-link-dark: #c2cafd;
+  --iris-link-hover-dark: #20212e;
+  --cobalt-1-light: #fafcff;
+  --cobalt-2-light: #f6faff;
+  --cobalt-3-light: #ecf4ff;
+  --cobalt-4-light: #dfecfe;
+  --cobalt-5-light: #d3e5fe;
+  --cobalt-6-light: #c3dcfc;
+  --cobalt-7-light: #b0cff8;
+  --cobalt-8-light: #97bdf0;
+  --cobalt-9-light: #1475e1;
+  --cobalt-10-light: #2176d9;
+  --cobalt-11-light: #264975;
+  --cobalt-12-light: #1e2f45;
+  --cobalt-contrast-light: #ffffff;
+  --cobalt-ink-light: #ffffff;
+  --cobalt-pressed-light: #2271cf;
+  --cobalt-link-light: #02468e;
+  --cobalt-link-hover-light: #ecf4ff;
+  --cobalt-1-dark: #0e1012;
+  --cobalt-2-dark: #131519;
+  --cobalt-3-dark: #1c232c;
+  --cobalt-4-dark: #212c3a;
+  --cobalt-5-dark: #293748;
+  --cobalt-6-dark: #334358;
+  --cobalt-7-dark: #40546f;
+  --cobalt-8-dark: #516b8c;
+  --cobalt-9-dark: #1475e1;
+  --cobalt-10-dark: #2176d9;
+  --cobalt-11-dark: #b1d1fa;
+  --cobalt-12-dark: #e8f2fe;
+  --cobalt-contrast-dark: #ffffff;
+  --cobalt-ink-dark: #ffffff;
+  --cobalt-pressed-dark: #2271cf;
+  --cobalt-link-dark: #afd1fe;
+  --cobalt-link-hover-dark: #1c232c;
+  --bee-1-light: #fdfcf8;
+  --bee-2-light: #fcf9f1;
+  --bee-3-light: #faf3df;
+  --bee-4-light: #f5eace;
+  --bee-5-light: #f1e3be;
+  --bee-6-light: #e8d9af;
+  --bee-7-light: #ddcb98;
+  --bee-8-light: #d0b979;
+  --bee-9-light: #f5c518;
+  --bee-10-light: #fdcd2a;
+  --bee-11-light: #584504;
+  --bee-12-light: #362d13;
+  --bee-contrast-light: #000000;
+  --bee-ink-light: #000000;
+  --bee-pressed-light: #ffd763;
+  --bee-link-light: #594501;
+  --bee-link-hover-light: #faf3df;
+  --bee-1-dark: #100f0c;
+  --bee-2-dark: #171511;
+  --bee-3-dark: #252118;
+  --bee-4-dark: #312b1c;
+  --bee-5-dark: #3d3521;
+  --bee-6-dark: #4a412a;
+  --bee-7-dark: #5c5234;
+  --bee-8-dark: #766842;
+  --bee-9-dark: #f5c518;
+  --bee-10-dark: #fdcd2a;
+  --bee-11-dark: #e0cd97;
+  --bee-12-dark: #f6f0df;
+  --bee-contrast-dark: #000000;
+  --bee-ink-dark: #000000;
+  --bee-pressed-dark: #ffd763;
+  --bee-link-dark: #f2c94e;
+  --bee-link-hover-dark: #252118;
+  --citrus-1-light: #fcfdf7;
+  --citrus-2-light: #f8fbef;
+  --citrus-3-light: #f1f6de;
+  --citrus-4-light: #e8f0cd;
+  --citrus-5-light: #e0e9bc;
+  --citrus-6-light: #d5e1aa;
+  --citrus-7-light: #c8d495;
+  --citrus-8-light: #b6c378;
+  --citrus-9-light: #beda36;
+  --citrus-10-light: #bdd836;
+  --citrus-11-light: #485311;
+  --citrus-12-light: #2b3110;
+  --citrus-contrast-light: #000000;
+  --citrus-ink-light: #000000;
+  --citrus-pressed-light: #bcd83a;
+  --citrus-link-light: #485400;
+  --citrus-link-hover-light: #f1f6de;
+  --citrus-1-dark: #0f100c;
+  --citrus-2-dark: #15170f;
+  --citrus-3-dark: #202413;
+  --citrus-4-dark: #292e16;
+  --citrus-5-dark: #333a18;
+  --citrus-6-dark: #3e471f;
+  --citrus-7-dark: #4f5827;
+  --citrus-8-dark: #637033;
+  --citrus-9-dark: #beda36;
+  --citrus-10-dark: #bdd836;
+  --citrus-11-dark: #cee28b;
+  --citrus-12-dark: #edf7d2;
+  --citrus-contrast-dark: #000000;
+  --citrus-ink-dark: #000000;
+  --citrus-pressed-dark: #bcd83a;
+  --citrus-link-dark: #cbe648;
+  --citrus-link-hover-dark: #202413;
+  --mono-1-light: #fcfcfc;
+  --mono-2-light: #f9f9f9;
+  --mono-3-light: #f3f3f3;
+  --mono-4-light: #ebebeb;
+  --mono-5-light: #e3e3e3;
+  --mono-6-light: #d9d9d9;
+  --mono-7-light: #cccccc;
+  --mono-8-light: #bababa;
+  --mono-9-light: #1a1a1a;
+  --mono-10-light: #141414;
+  --mono-11-light: #484848;
+  --mono-12-light: #2e2e2e;
+  --mono-contrast-light: #ffffff;
+  --mono-ink-light: #ffffff;
+  --mono-pressed-light: #0f0f0f;
+  --mono-link-light: #484848;
+  --mono-link-hover-light: #f3f3f3;
+  --mono-1-dark: #0f0f0f;
+  --mono-2-dark: #151515;
+  --mono-3-dark: #222222;
+  --mono-4-dark: #2b2b2b;
+  --mono-5-dark: #363636;
+  --mono-6-dark: #424242;
+  --mono-7-dark: #535353;
+  --mono-8-dark: #696969;
+  --mono-9-dark: #e6e6e6;
+  --mono-10-dark: #eeeeee;
+  --mono-11-dark: #cecece;
+  --mono-12-dark: #f0f0f0;
+  --mono-contrast-dark: #000000;
+  --mono-ink-dark: #000000;
+  --mono-pressed-dark: #f7f7f7;
+  --mono-link-dark: #cecece;
+  --mono-link-hover-dark: #222222;
+  --flame-1-light: #fefcfc;
+  --flame-2-light: #fff8f6;
+  --flame-3-light: #ffeeea;
+  --flame-4-light: #ffe4de;
+  --flame-5-light: #fedad0;
+  --flame-6-light: #ffccbf;
+  --flame-7-light: #feb9a7;
+  --flame-8-light: #fe9d85;
+  --flame-9-light: #d93a0c;
+  --flame-10-light: #c93202;
+  --flame-11-light: #a4351a;
+  --flame-12-light: #4f1b0f;
+  --flame-contrast-light: #ffffff;
+  --flame-ink-light: #ffffff;
+  --flame-pressed-light: #b92d01;
+  --flame-link-light: var(--flame-11-light);
+  --flame-link-hover-light: var(--flame-3-light);
+  --flame-1-dark: #140e0c;
+  --flame-2-dark: #1d1311;
+  --flame-3-dark: #301c16;
+  --flame-4-dark: #40221b;
+  --flame-5-dark: #502920;
+  --flame-6-dark: #633327;
+  --flame-7-dark: #7c3f30;
+  --flame-8-dark: #9f4e3a;
+  --flame-9-dark: #d93a0c;
+  --flame-10-dark: #c93202;
+  --flame-11-dark: #ffaf9a;
+  --flame-12-dark: #ffebe6;
+  --flame-contrast-dark: #ffffff;
+  --flame-ink-dark: #ffffff;
+  --flame-pressed-dark: #b92d01;
+  --flame-link-dark: var(--flame-11-dark);
+  --flame-link-hover-dark: var(--flame-3-dark);
+  --jade-1-light: #f9fefc;
+  --jade-2-light: #f2fcf8;
+  --jade-3-light: #e2f9f0;
+  --jade-4-light: #d3f4e7;
+  --jade-5-light: #c4eede;
+  --jade-6-light: #b4e6d3;
+  --jade-7-light: #9edbc5;
+  --jade-8-light: #81cdb2;
+  --jade-9-light: #0b8467;
+  --jade-10-light: #06795e;
+  --jade-11-light: #226a55;
+  --jade-12-light: #15352a;
+  --jade-contrast-light: #ffffff;
+  --jade-ink-light: #ffffff;
+  --jade-pressed-light: #026d54;
+  --jade-link-light: var(--jade-11-light);
+  --jade-link-hover-light: var(--jade-3-light);
+  --jade-1-dark: #0d100f;
+  --jade-2-dark: #121715;
+  --jade-3-dark: #192520;
+  --jade-4-dark: #1e3029;
+  --jade-5-dark: #243b33;
+  --jade-6-dark: #2d493f;
+  --jade-7-dark: #375b4f;
+  --jade-8-dark: #447464;
+  --jade-9-dark: #0b8467;
+  --jade-10-dark: #06795e;
+  --jade-11-dark: #90d1ba;
+  --jade-12-dark: #e2f6ee;
+  --jade-contrast-dark: #ffffff;
+  --jade-ink-dark: #ffffff;
+  --jade-pressed-dark: #026d54;
+  --jade-link-dark: var(--jade-11-dark);
+  --jade-link-hover-dark: var(--jade-3-dark);
+}
+
+.light,
+[data-color-mode="light"],
+:root {
+  /* Named palettes resolve the current scope mode. */
+  --bee-1: var(--bee-1-light);
+  --bee-2: var(--bee-2-light);
+  --bee-3: var(--bee-3-light);
+  --bee-4: var(--bee-4-light);
+  --bee-5: var(--bee-5-light);
+  --bee-6: var(--bee-6-light);
+  --bee-7: var(--bee-7-light);
+  --bee-8: var(--bee-8-light);
+  --bee-9: var(--bee-9-light);
+  --bee-10: var(--bee-10-light);
+  --bee-11: var(--bee-11-light);
+  --bee-12: var(--bee-12-light);
+  --magenta-1: var(--magenta-1-light);
+  --magenta-2: var(--magenta-2-light);
+  --magenta-3: var(--magenta-3-light);
+  --magenta-4: var(--magenta-4-light);
+  --magenta-5: var(--magenta-5-light);
+  --magenta-6: var(--magenta-6-light);
+  --magenta-7: var(--magenta-7-light);
+  --magenta-8: var(--magenta-8-light);
+  --magenta-9: var(--magenta-9-light);
+  --magenta-10: var(--magenta-10-light);
+  --magenta-11: var(--magenta-11-light);
+  --magenta-12: var(--magenta-12-light);
+  --iris-1: var(--iris-1-light);
+  --iris-2: var(--iris-2-light);
+  --iris-3: var(--iris-3-light);
+  --iris-4: var(--iris-4-light);
+  --iris-5: var(--iris-5-light);
+  --iris-6: var(--iris-6-light);
+  --iris-7: var(--iris-7-light);
+  --iris-8: var(--iris-8-light);
+  --iris-9: var(--iris-9-light);
+  --iris-10: var(--iris-10-light);
+  --iris-11: var(--iris-11-light);
+  --iris-12: var(--iris-12-light);
+  --cobalt-1: var(--cobalt-1-light);
+  --cobalt-2: var(--cobalt-2-light);
+  --cobalt-3: var(--cobalt-3-light);
+  --cobalt-4: var(--cobalt-4-light);
+  --cobalt-5: var(--cobalt-5-light);
+  --cobalt-6: var(--cobalt-6-light);
+  --cobalt-7: var(--cobalt-7-light);
+  --cobalt-8: var(--cobalt-8-light);
+  --cobalt-9: var(--cobalt-9-light);
+  --cobalt-10: var(--cobalt-10-light);
+  --cobalt-11: var(--cobalt-11-light);
+  --cobalt-12: var(--cobalt-12-light);
+  --citrus-1: var(--citrus-1-light);
+  --citrus-2: var(--citrus-2-light);
+  --citrus-3: var(--citrus-3-light);
+  --citrus-4: var(--citrus-4-light);
+  --citrus-5: var(--citrus-5-light);
+  --citrus-6: var(--citrus-6-light);
+  --citrus-7: var(--citrus-7-light);
+  --citrus-8: var(--citrus-8-light);
+  --citrus-9: var(--citrus-9-light);
+  --citrus-10: var(--citrus-10-light);
+  --citrus-11: var(--citrus-11-light);
+  --citrus-12: var(--citrus-12-light);
+  --mono-1: var(--mono-1-light);
+  --mono-2: var(--mono-2-light);
+  --mono-3: var(--mono-3-light);
+  --mono-4: var(--mono-4-light);
+  --mono-5: var(--mono-5-light);
+  --mono-6: var(--mono-6-light);
+  --mono-7: var(--mono-7-light);
+  --mono-8: var(--mono-8-light);
+  --mono-9: var(--mono-9-light);
+  --mono-10: var(--mono-10-light);
+  --mono-11: var(--mono-11-light);
+  --mono-12: var(--mono-12-light);
+  --flame-1: var(--flame-1-light);
+  --flame-2: var(--flame-2-light);
+  --flame-3: var(--flame-3-light);
+  --flame-4: var(--flame-4-light);
+  --flame-5: var(--flame-5-light);
+  --flame-6: var(--flame-6-light);
+  --flame-7: var(--flame-7-light);
+  --flame-8: var(--flame-8-light);
+  --flame-9: var(--flame-9-light);
+  --flame-10: var(--flame-10-light);
+  --flame-11: var(--flame-11-light);
+  --flame-12: var(--flame-12-light);
+  --jade-1: var(--jade-1-light);
+  --jade-2: var(--jade-2-light);
+  --jade-3: var(--jade-3-light);
+  --jade-4: var(--jade-4-light);
+  --jade-5: var(--jade-5-light);
+  --jade-6: var(--jade-6-light);
+  --jade-7: var(--jade-7-light);
+  --jade-8: var(--jade-8-light);
+  --jade-9: var(--jade-9-light);
+  --jade-10: var(--jade-10-light);
+  --jade-11: var(--jade-11-light);
+  --jade-12: var(--jade-12-light);
+}
+
 .light,
 :root {
   /* gray */
@@ -155,6 +535,108 @@
   --orange-10: #ef5f00;
   --orange-11: #cc4e00;
   --orange-12: #582d1d;
+}
+
+:root[data-color-mode="dark"],
+[data-color-mode="dark"],
+.dark {
+  /* Named palettes resolve the current scope mode. */
+  --bee-1: var(--bee-1-dark);
+  --bee-2: var(--bee-2-dark);
+  --bee-3: var(--bee-3-dark);
+  --bee-4: var(--bee-4-dark);
+  --bee-5: var(--bee-5-dark);
+  --bee-6: var(--bee-6-dark);
+  --bee-7: var(--bee-7-dark);
+  --bee-8: var(--bee-8-dark);
+  --bee-9: var(--bee-9-dark);
+  --bee-10: var(--bee-10-dark);
+  --bee-11: var(--bee-11-dark);
+  --bee-12: var(--bee-12-dark);
+  --magenta-1: var(--magenta-1-dark);
+  --magenta-2: var(--magenta-2-dark);
+  --magenta-3: var(--magenta-3-dark);
+  --magenta-4: var(--magenta-4-dark);
+  --magenta-5: var(--magenta-5-dark);
+  --magenta-6: var(--magenta-6-dark);
+  --magenta-7: var(--magenta-7-dark);
+  --magenta-8: var(--magenta-8-dark);
+  --magenta-9: var(--magenta-9-dark);
+  --magenta-10: var(--magenta-10-dark);
+  --magenta-11: var(--magenta-11-dark);
+  --magenta-12: var(--magenta-12-dark);
+  --iris-1: var(--iris-1-dark);
+  --iris-2: var(--iris-2-dark);
+  --iris-3: var(--iris-3-dark);
+  --iris-4: var(--iris-4-dark);
+  --iris-5: var(--iris-5-dark);
+  --iris-6: var(--iris-6-dark);
+  --iris-7: var(--iris-7-dark);
+  --iris-8: var(--iris-8-dark);
+  --iris-9: var(--iris-9-dark);
+  --iris-10: var(--iris-10-dark);
+  --iris-11: var(--iris-11-dark);
+  --iris-12: var(--iris-12-dark);
+  --cobalt-1: var(--cobalt-1-dark);
+  --cobalt-2: var(--cobalt-2-dark);
+  --cobalt-3: var(--cobalt-3-dark);
+  --cobalt-4: var(--cobalt-4-dark);
+  --cobalt-5: var(--cobalt-5-dark);
+  --cobalt-6: var(--cobalt-6-dark);
+  --cobalt-7: var(--cobalt-7-dark);
+  --cobalt-8: var(--cobalt-8-dark);
+  --cobalt-9: var(--cobalt-9-dark);
+  --cobalt-10: var(--cobalt-10-dark);
+  --cobalt-11: var(--cobalt-11-dark);
+  --cobalt-12: var(--cobalt-12-dark);
+  --citrus-1: var(--citrus-1-dark);
+  --citrus-2: var(--citrus-2-dark);
+  --citrus-3: var(--citrus-3-dark);
+  --citrus-4: var(--citrus-4-dark);
+  --citrus-5: var(--citrus-5-dark);
+  --citrus-6: var(--citrus-6-dark);
+  --citrus-7: var(--citrus-7-dark);
+  --citrus-8: var(--citrus-8-dark);
+  --citrus-9: var(--citrus-9-dark);
+  --citrus-10: var(--citrus-10-dark);
+  --citrus-11: var(--citrus-11-dark);
+  --citrus-12: var(--citrus-12-dark);
+  --mono-1: var(--mono-1-dark);
+  --mono-2: var(--mono-2-dark);
+  --mono-3: var(--mono-3-dark);
+  --mono-4: var(--mono-4-dark);
+  --mono-5: var(--mono-5-dark);
+  --mono-6: var(--mono-6-dark);
+  --mono-7: var(--mono-7-dark);
+  --mono-8: var(--mono-8-dark);
+  --mono-9: var(--mono-9-dark);
+  --mono-10: var(--mono-10-dark);
+  --mono-11: var(--mono-11-dark);
+  --mono-12: var(--mono-12-dark);
+  --flame-1: var(--flame-1-dark);
+  --flame-2: var(--flame-2-dark);
+  --flame-3: var(--flame-3-dark);
+  --flame-4: var(--flame-4-dark);
+  --flame-5: var(--flame-5-dark);
+  --flame-6: var(--flame-6-dark);
+  --flame-7: var(--flame-7-dark);
+  --flame-8: var(--flame-8-dark);
+  --flame-9: var(--flame-9-dark);
+  --flame-10: var(--flame-10-dark);
+  --flame-11: var(--flame-11-dark);
+  --flame-12: var(--flame-12-dark);
+  --jade-1: var(--jade-1-dark);
+  --jade-2: var(--jade-2-dark);
+  --jade-3: var(--jade-3-dark);
+  --jade-4: var(--jade-4-dark);
+  --jade-5: var(--jade-5-dark);
+  --jade-6: var(--jade-6-dark);
+  --jade-7: var(--jade-7-dark);
+  --jade-8: var(--jade-8-dark);
+  --jade-9: var(--jade-9-dark);
+  --jade-10: var(--jade-10-dark);
+  --jade-11: var(--jade-11-dark);
+  --jade-12: var(--jade-12-dark);
 }
 
 :root[data-color-mode="dark"],
@@ -497,6 +979,54 @@
     linear-gradient(155deg, #100914 0%, #21113c 52%, #081622 100%);
 
   --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
+}
+
+/* Plugin artwork aliases: existing palette steps own values in each theme.
+   Distinct solid-color family pairs preserve visible hue variation.
+   No fixed-luminance or 35-degree hue-sweep guarantee remains. */
+:root {
+  --art-plugin-communication-start: var(--cyan-9);
+  --art-plugin-communication-end: var(--jade-9);
+  --art-plugin-communication-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-communication-start),
+    var(--art-plugin-communication-end)
+  );
+  --art-plugin-agents-start: var(--blue-9);
+  --art-plugin-agents-end: var(--iris-9);
+  --art-plugin-agents-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agents-start),
+    var(--art-plugin-agents-end)
+  );
+  --art-plugin-agent-tools-start: var(--purple-9);
+  --art-plugin-agent-tools-end: var(--magenta-9);
+  --art-plugin-agent-tools-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agent-tools-start),
+    var(--art-plugin-agent-tools-end)
+  );
+  --art-plugin-developer-tools-and-integrations-start: var(--orange-9);
+  --art-plugin-developer-tools-and-integrations-end: var(--flame-9);
+  --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-developer-tools-and-integrations-start),
+    var(--art-plugin-developer-tools-and-integrations-end)
+  );
+  --art-plugin-people-and-communities-start: var(--red-9);
+  --art-plugin-people-and-communities-end: var(--magenta-9);
+  --art-plugin-people-and-communities-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-people-and-communities-start),
+    var(--art-plugin-people-and-communities-end)
+  );
+  --art-plugin-productivity-start: var(--amber-9);
+  --art-plugin-productivity-end: var(--green-9);
+  --art-plugin-productivity-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-productivity-start),
+    var(--art-plugin-productivity-end)
+  );
 }
 
 /* ============================================================
@@ -1038,226 +1568,226 @@
 
 :root[data-accent="magenta"],
 [data-accent="magenta"] {
-  --accent-1-light: #fffbfc;
-  --accent-2-light: #fff7fa;
-  --accent-3-light: #ffeef3;
-  --accent-4-light: #fee2ec;
-  --accent-5-light: #fed8e4;
-  --accent-6-light: #f9cbdb;
-  --accent-7-light: #f1bbce;
-  --accent-8-light: #e7a4bd;
-  --accent-9-light: #df1e85;
-  --accent-10-light: #db2984;
-  --accent-11-light: #6c3149;
-  --accent-12-light: #42242f;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #d12c7f;
-  --accent-link-light: #84034b;
-  --accent-link-hover-light: #ffeef3;
-  --accent-1-dark: #120e10;
-  --accent-2-dark: #191415;
-  --accent-3-dark: #2b1f23;
-  --accent-4-dark: #38252c;
-  --accent-5-dark: #452d36;
-  --accent-6-dark: #553843;
-  --accent-7-dark: #6b4754;
-  --accent-8-dark: #865a6a;
-  --accent-9-dark: #df1e85;
-  --accent-10-dark: #db2984;
-  --accent-11-dark: #f4bccf;
-  --accent-12-dark: #feeaf1;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #d12c7f;
-  --accent-link-dark: #fdb6d0;
-  --accent-link-hover-dark: #2b1f23;
+  --accent-1-light: var(--magenta-1-light);
+  --accent-2-light: var(--magenta-2-light);
+  --accent-3-light: var(--magenta-3-light);
+  --accent-4-light: var(--magenta-4-light);
+  --accent-5-light: var(--magenta-5-light);
+  --accent-6-light: var(--magenta-6-light);
+  --accent-7-light: var(--magenta-7-light);
+  --accent-8-light: var(--magenta-8-light);
+  --accent-9-light: var(--magenta-9-light);
+  --accent-10-light: var(--magenta-10-light);
+  --accent-11-light: var(--magenta-11-light);
+  --accent-12-light: var(--magenta-12-light);
+  --accent-contrast-light: var(--magenta-contrast-light);
+  --accent-ink-light: var(--magenta-ink-light);
+  --accent-pressed-light: var(--magenta-pressed-light);
+  --accent-link-light: var(--magenta-link-light);
+  --accent-link-hover-light: var(--magenta-link-hover-light);
+  --accent-1-dark: var(--magenta-1-dark);
+  --accent-2-dark: var(--magenta-2-dark);
+  --accent-3-dark: var(--magenta-3-dark);
+  --accent-4-dark: var(--magenta-4-dark);
+  --accent-5-dark: var(--magenta-5-dark);
+  --accent-6-dark: var(--magenta-6-dark);
+  --accent-7-dark: var(--magenta-7-dark);
+  --accent-8-dark: var(--magenta-8-dark);
+  --accent-9-dark: var(--magenta-9-dark);
+  --accent-10-dark: var(--magenta-10-dark);
+  --accent-11-dark: var(--magenta-11-dark);
+  --accent-12-dark: var(--magenta-12-dark);
+  --accent-contrast-dark: var(--magenta-contrast-dark);
+  --accent-ink-dark: var(--magenta-ink-dark);
+  --accent-pressed-dark: var(--magenta-pressed-dark);
+  --accent-link-dark: var(--magenta-link-dark);
+  --accent-link-hover-dark: var(--magenta-link-hover-dark);
 }
 :root[data-accent="iris"],
 [data-accent="iris"] {
-  --accent-1-light: #fbfcff;
-  --accent-2-light: #f8f9ff;
-  --accent-3-light: #f0f2ff;
-  --accent-4-light: #e6eafe;
-  --accent-5-light: #dde1fe;
-  --accent-6-light: #d2d7fd;
-  --accent-7-light: #c2c8f8;
-  --accent-8-light: #aeb6f0;
-  --accent-9-light: #5f55fa;
-  --accent-10-light: #5a4ef2;
-  --accent-11-light: #3d407a;
-  --accent-12-light: #282b48;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #5648ea;
-  --accent-link-light: #3c04c3;
-  --accent-link-hover-light: #f0f2ff;
-  --accent-1-dark: #0f0f13;
-  --accent-2-dark: #14151a;
-  --accent-3-dark: #20212e;
-  --accent-4-dark: #272a3c;
-  --accent-5-dark: #31344a;
-  --accent-6-dark: #3c405b;
-  --accent-7-dark: #4c4f72;
-  --accent-8-dark: #60658f;
-  --accent-9-dark: #5f55fa;
-  --accent-10-dark: #5a4ef2;
-  --accent-11-dark: #c3cafb;
-  --accent-12-dark: #edf0fe;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #5648ea;
-  --accent-link-dark: #c2cafd;
-  --accent-link-hover-dark: #20212e;
+  --accent-1-light: var(--iris-1-light);
+  --accent-2-light: var(--iris-2-light);
+  --accent-3-light: var(--iris-3-light);
+  --accent-4-light: var(--iris-4-light);
+  --accent-5-light: var(--iris-5-light);
+  --accent-6-light: var(--iris-6-light);
+  --accent-7-light: var(--iris-7-light);
+  --accent-8-light: var(--iris-8-light);
+  --accent-9-light: var(--iris-9-light);
+  --accent-10-light: var(--iris-10-light);
+  --accent-11-light: var(--iris-11-light);
+  --accent-12-light: var(--iris-12-light);
+  --accent-contrast-light: var(--iris-contrast-light);
+  --accent-ink-light: var(--iris-ink-light);
+  --accent-pressed-light: var(--iris-pressed-light);
+  --accent-link-light: var(--iris-link-light);
+  --accent-link-hover-light: var(--iris-link-hover-light);
+  --accent-1-dark: var(--iris-1-dark);
+  --accent-2-dark: var(--iris-2-dark);
+  --accent-3-dark: var(--iris-3-dark);
+  --accent-4-dark: var(--iris-4-dark);
+  --accent-5-dark: var(--iris-5-dark);
+  --accent-6-dark: var(--iris-6-dark);
+  --accent-7-dark: var(--iris-7-dark);
+  --accent-8-dark: var(--iris-8-dark);
+  --accent-9-dark: var(--iris-9-dark);
+  --accent-10-dark: var(--iris-10-dark);
+  --accent-11-dark: var(--iris-11-dark);
+  --accent-12-dark: var(--iris-12-dark);
+  --accent-contrast-dark: var(--iris-contrast-dark);
+  --accent-ink-dark: var(--iris-ink-dark);
+  --accent-pressed-dark: var(--iris-pressed-dark);
+  --accent-link-dark: var(--iris-link-dark);
+  --accent-link-hover-dark: var(--iris-link-hover-dark);
 }
 :root[data-accent="cobalt"],
 [data-accent="cobalt"] {
-  --accent-1-light: #fafcff;
-  --accent-2-light: #f6faff;
-  --accent-3-light: #ecf4ff;
-  --accent-4-light: #dfecfe;
-  --accent-5-light: #d3e5fe;
-  --accent-6-light: #c3dcfc;
-  --accent-7-light: #b0cff8;
-  --accent-8-light: #97bdf0;
-  --accent-9-light: #1475e1;
-  --accent-10-light: #2176d9;
-  --accent-11-light: #264975;
-  --accent-12-light: #1e2f45;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #2271cf;
-  --accent-link-light: #02468e;
-  --accent-link-hover-light: #ecf4ff;
-  --accent-1-dark: #0e1012;
-  --accent-2-dark: #131519;
-  --accent-3-dark: #1c232c;
-  --accent-4-dark: #212c3a;
-  --accent-5-dark: #293748;
-  --accent-6-dark: #334358;
-  --accent-7-dark: #40546f;
-  --accent-8-dark: #516b8c;
-  --accent-9-dark: #1475e1;
-  --accent-10-dark: #2176d9;
-  --accent-11-dark: #b1d1fa;
-  --accent-12-dark: #e8f2fe;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #2271cf;
-  --accent-link-dark: #afd1fe;
-  --accent-link-hover-dark: #1c232c;
+  --accent-1-light: var(--cobalt-1-light);
+  --accent-2-light: var(--cobalt-2-light);
+  --accent-3-light: var(--cobalt-3-light);
+  --accent-4-light: var(--cobalt-4-light);
+  --accent-5-light: var(--cobalt-5-light);
+  --accent-6-light: var(--cobalt-6-light);
+  --accent-7-light: var(--cobalt-7-light);
+  --accent-8-light: var(--cobalt-8-light);
+  --accent-9-light: var(--cobalt-9-light);
+  --accent-10-light: var(--cobalt-10-light);
+  --accent-11-light: var(--cobalt-11-light);
+  --accent-12-light: var(--cobalt-12-light);
+  --accent-contrast-light: var(--cobalt-contrast-light);
+  --accent-ink-light: var(--cobalt-ink-light);
+  --accent-pressed-light: var(--cobalt-pressed-light);
+  --accent-link-light: var(--cobalt-link-light);
+  --accent-link-hover-light: var(--cobalt-link-hover-light);
+  --accent-1-dark: var(--cobalt-1-dark);
+  --accent-2-dark: var(--cobalt-2-dark);
+  --accent-3-dark: var(--cobalt-3-dark);
+  --accent-4-dark: var(--cobalt-4-dark);
+  --accent-5-dark: var(--cobalt-5-dark);
+  --accent-6-dark: var(--cobalt-6-dark);
+  --accent-7-dark: var(--cobalt-7-dark);
+  --accent-8-dark: var(--cobalt-8-dark);
+  --accent-9-dark: var(--cobalt-9-dark);
+  --accent-10-dark: var(--cobalt-10-dark);
+  --accent-11-dark: var(--cobalt-11-dark);
+  --accent-12-dark: var(--cobalt-12-dark);
+  --accent-contrast-dark: var(--cobalt-contrast-dark);
+  --accent-ink-dark: var(--cobalt-ink-dark);
+  --accent-pressed-dark: var(--cobalt-pressed-dark);
+  --accent-link-dark: var(--cobalt-link-dark);
+  --accent-link-hover-dark: var(--cobalt-link-hover-dark);
 }
 :root[data-accent="bee"],
 [data-accent="bee"] {
-  --accent-1-light: #fdfcf8;
-  --accent-2-light: #fcf9f1;
-  --accent-3-light: #faf3df;
-  --accent-4-light: #f5eace;
-  --accent-5-light: #f1e3be;
-  --accent-6-light: #e8d9af;
-  --accent-7-light: #ddcb98;
-  --accent-8-light: #d0b979;
-  --accent-9-light: #f5c518;
-  --accent-10-light: #fdcd2a;
-  --accent-11-light: #584504;
-  --accent-12-light: #362d13;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #000000;
-  --accent-pressed-light: #ffd763;
-  --accent-link-light: #594501;
-  --accent-link-hover-light: #faf3df;
-  --accent-1-dark: #100f0c;
-  --accent-2-dark: #171511;
-  --accent-3-dark: #252118;
-  --accent-4-dark: #312b1c;
-  --accent-5-dark: #3d3521;
-  --accent-6-dark: #4a412a;
-  --accent-7-dark: #5c5234;
-  --accent-8-dark: #766842;
-  --accent-9-dark: #f5c518;
-  --accent-10-dark: #fdcd2a;
-  --accent-11-dark: #e0cd97;
-  --accent-12-dark: #f6f0df;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #ffd763;
-  --accent-link-dark: #f2c94e;
-  --accent-link-hover-dark: #252118;
+  --accent-1-light: var(--bee-1-light);
+  --accent-2-light: var(--bee-2-light);
+  --accent-3-light: var(--bee-3-light);
+  --accent-4-light: var(--bee-4-light);
+  --accent-5-light: var(--bee-5-light);
+  --accent-6-light: var(--bee-6-light);
+  --accent-7-light: var(--bee-7-light);
+  --accent-8-light: var(--bee-8-light);
+  --accent-9-light: var(--bee-9-light);
+  --accent-10-light: var(--bee-10-light);
+  --accent-11-light: var(--bee-11-light);
+  --accent-12-light: var(--bee-12-light);
+  --accent-contrast-light: var(--bee-contrast-light);
+  --accent-ink-light: var(--bee-ink-light);
+  --accent-pressed-light: var(--bee-pressed-light);
+  --accent-link-light: var(--bee-link-light);
+  --accent-link-hover-light: var(--bee-link-hover-light);
+  --accent-1-dark: var(--bee-1-dark);
+  --accent-2-dark: var(--bee-2-dark);
+  --accent-3-dark: var(--bee-3-dark);
+  --accent-4-dark: var(--bee-4-dark);
+  --accent-5-dark: var(--bee-5-dark);
+  --accent-6-dark: var(--bee-6-dark);
+  --accent-7-dark: var(--bee-7-dark);
+  --accent-8-dark: var(--bee-8-dark);
+  --accent-9-dark: var(--bee-9-dark);
+  --accent-10-dark: var(--bee-10-dark);
+  --accent-11-dark: var(--bee-11-dark);
+  --accent-12-dark: var(--bee-12-dark);
+  --accent-contrast-dark: var(--bee-contrast-dark);
+  --accent-ink-dark: var(--bee-ink-dark);
+  --accent-pressed-dark: var(--bee-pressed-dark);
+  --accent-link-dark: var(--bee-link-dark);
+  --accent-link-hover-dark: var(--bee-link-hover-dark);
 }
 :root[data-accent="citrus"],
 [data-accent="citrus"],
 :root {
-  --accent-1-light: #fcfdf7;
-  --accent-2-light: #f8fbef;
-  --accent-3-light: #f1f6de;
-  --accent-4-light: #e8f0cd;
-  --accent-5-light: #e0e9bc;
-  --accent-6-light: #d5e1aa;
-  --accent-7-light: #c8d495;
-  --accent-8-light: #b6c378;
-  --accent-9-light: #beda36;
-  --accent-10-light: #bdd836;
-  --accent-11-light: #485311;
-  --accent-12-light: #2b3110;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #000000;
-  --accent-pressed-light: #bcd83a;
-  --accent-link-light: #485400;
-  --accent-link-hover-light: #f1f6de;
-  --accent-1-dark: #0f100c;
-  --accent-2-dark: #15170f;
-  --accent-3-dark: #202413;
-  --accent-4-dark: #292e16;
-  --accent-5-dark: #333a18;
-  --accent-6-dark: #3e471f;
-  --accent-7-dark: #4f5827;
-  --accent-8-dark: #637033;
-  --accent-9-dark: #beda36;
-  --accent-10-dark: #bdd836;
-  --accent-11-dark: #cee28b;
-  --accent-12-dark: #edf7d2;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #bcd83a;
-  --accent-link-dark: #cbe648;
-  --accent-link-hover-dark: #202413;
+  --accent-1-light: var(--citrus-1-light);
+  --accent-2-light: var(--citrus-2-light);
+  --accent-3-light: var(--citrus-3-light);
+  --accent-4-light: var(--citrus-4-light);
+  --accent-5-light: var(--citrus-5-light);
+  --accent-6-light: var(--citrus-6-light);
+  --accent-7-light: var(--citrus-7-light);
+  --accent-8-light: var(--citrus-8-light);
+  --accent-9-light: var(--citrus-9-light);
+  --accent-10-light: var(--citrus-10-light);
+  --accent-11-light: var(--citrus-11-light);
+  --accent-12-light: var(--citrus-12-light);
+  --accent-contrast-light: var(--citrus-contrast-light);
+  --accent-ink-light: var(--citrus-ink-light);
+  --accent-pressed-light: var(--citrus-pressed-light);
+  --accent-link-light: var(--citrus-link-light);
+  --accent-link-hover-light: var(--citrus-link-hover-light);
+  --accent-1-dark: var(--citrus-1-dark);
+  --accent-2-dark: var(--citrus-2-dark);
+  --accent-3-dark: var(--citrus-3-dark);
+  --accent-4-dark: var(--citrus-4-dark);
+  --accent-5-dark: var(--citrus-5-dark);
+  --accent-6-dark: var(--citrus-6-dark);
+  --accent-7-dark: var(--citrus-7-dark);
+  --accent-8-dark: var(--citrus-8-dark);
+  --accent-9-dark: var(--citrus-9-dark);
+  --accent-10-dark: var(--citrus-10-dark);
+  --accent-11-dark: var(--citrus-11-dark);
+  --accent-12-dark: var(--citrus-12-dark);
+  --accent-contrast-dark: var(--citrus-contrast-dark);
+  --accent-ink-dark: var(--citrus-ink-dark);
+  --accent-pressed-dark: var(--citrus-pressed-dark);
+  --accent-link-dark: var(--citrus-link-dark);
+  --accent-link-hover-dark: var(--citrus-link-hover-dark);
 }
 :root[data-accent="mono"],
 [data-accent="mono"] {
-  --accent-1-light: #fcfcfc;
-  --accent-2-light: #f9f9f9;
-  --accent-3-light: #f3f3f3;
-  --accent-4-light: #ebebeb;
-  --accent-5-light: #e3e3e3;
-  --accent-6-light: #d9d9d9;
-  --accent-7-light: #cccccc;
-  --accent-8-light: #bababa;
-  --accent-9-light: #1a1a1a;
-  --accent-10-light: #141414;
-  --accent-11-light: #484848;
-  --accent-12-light: #2e2e2e;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #0f0f0f;
-  --accent-link-light: #484848;
-  --accent-link-hover-light: #f3f3f3;
-  --accent-1-dark: #0f0f0f;
-  --accent-2-dark: #151515;
-  --accent-3-dark: #222222;
-  --accent-4-dark: #2b2b2b;
-  --accent-5-dark: #363636;
-  --accent-6-dark: #424242;
-  --accent-7-dark: #535353;
-  --accent-8-dark: #696969;
-  --accent-9-dark: #e6e6e6;
-  --accent-10-dark: #eeeeee;
-  --accent-11-dark: #cecece;
-  --accent-12-dark: #f0f0f0;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #f7f7f7;
-  --accent-link-dark: #cecece;
-  --accent-link-hover-dark: #222222;
+  --accent-1-light: var(--mono-1-light);
+  --accent-2-light: var(--mono-2-light);
+  --accent-3-light: var(--mono-3-light);
+  --accent-4-light: var(--mono-4-light);
+  --accent-5-light: var(--mono-5-light);
+  --accent-6-light: var(--mono-6-light);
+  --accent-7-light: var(--mono-7-light);
+  --accent-8-light: var(--mono-8-light);
+  --accent-9-light: var(--mono-9-light);
+  --accent-10-light: var(--mono-10-light);
+  --accent-11-light: var(--mono-11-light);
+  --accent-12-light: var(--mono-12-light);
+  --accent-contrast-light: var(--mono-contrast-light);
+  --accent-ink-light: var(--mono-ink-light);
+  --accent-pressed-light: var(--mono-pressed-light);
+  --accent-link-light: var(--mono-link-light);
+  --accent-link-hover-light: var(--mono-link-hover-light);
+  --accent-1-dark: var(--mono-1-dark);
+  --accent-2-dark: var(--mono-2-dark);
+  --accent-3-dark: var(--mono-3-dark);
+  --accent-4-dark: var(--mono-4-dark);
+  --accent-5-dark: var(--mono-5-dark);
+  --accent-6-dark: var(--mono-6-dark);
+  --accent-7-dark: var(--mono-7-dark);
+  --accent-8-dark: var(--mono-8-dark);
+  --accent-9-dark: var(--mono-9-dark);
+  --accent-10-dark: var(--mono-10-dark);
+  --accent-11-dark: var(--mono-11-dark);
+  --accent-12-dark: var(--mono-12-dark);
+  --accent-contrast-dark: var(--mono-contrast-dark);
+  --accent-ink-dark: var(--mono-ink-dark);
+  --accent-pressed-dark: var(--mono-pressed-dark);
+  --accent-link-dark: var(--mono-link-dark);
+  --accent-link-hover-dark: var(--mono-link-hover-dark);
 }
 
 /* All three vibe levels keep app surfaces neutral. Hummin’ adds soft personal
@@ -1668,52 +2198,4 @@
   --spacing-section-gap: var(--space-section-gap);
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
-}
-
-/* Plugin category gradients preserve the original cross-color hue pairs.
-   Endpoint luminance targets 0.18; chroma is shared across each pair and capped
-   for sRGB along the entire OKLCH transition. Icon lighting changes final pixels. */
-:root {
-  --art-plugin-communication-start: oklch(55.67495% 0.1 220);
-  --art-plugin-communication-end: oklch(56.46810% 0.1 255);
-  --art-plugin-communication-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-communication-start),
-    var(--art-plugin-communication-end)
-  );
-  --art-plugin-agents-start: oklch(57.29854% 0.1 295);
-  --art-plugin-agents-end: oklch(56.58608% 0.1 260);
-  --art-plugin-agents-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-agents-start),
-    var(--art-plugin-agents-end)
-  );
-  --art-plugin-agent-tools-start: oklch(57.71968% 0.1 335);
-  --art-plugin-agent-tools-end: oklch(57.37636% 0.1 300);
-  --art-plugin-agent-tools-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-agent-tools-start),
-    var(--art-plugin-agent-tools-end)
-  );
-  --art-plugin-developer-tools-and-integrations-start: oklch(57.69208% 0.1 375);
-  --art-plugin-developer-tools-and-integrations-end: oklch(57.74021% 0.1 340);
-  --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-developer-tools-and-integrations-start),
-    var(--art-plugin-developer-tools-and-integrations-end)
-  );
-  --art-plugin-people-and-communities-start: oklch(57.65787% 0.1 380);
-  --art-plugin-people-and-communities-end: oklch(57.22866% 0.1 415);
-  --art-plugin-people-and-communities-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-people-and-communities-start),
-    var(--art-plugin-people-and-communities-end)
-  );
-  --art-plugin-productivity-start: oklch(57.14190% 0.1 420);
-  --art-plugin-productivity-end: oklch(56.41273% 0.1 455);
-  --art-plugin-productivity-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-productivity-start),
-    var(--art-plugin-productivity-end)
-  );
 }

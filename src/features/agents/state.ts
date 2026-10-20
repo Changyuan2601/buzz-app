@@ -11,6 +11,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { CONFIG_STORAGE_KEY } from "./agent-config";
 import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
+import { INTERRUPTED_PREFIX } from "./interrupted";
 import {
   localStore,
   type AgentStore,
@@ -32,6 +33,7 @@ export function isAgentKey(key: string) {
     key === ARCHIVE_UNCHECKED_KEY ||
     key === CATCH_UP_KEY ||
     key.startsWith(CATCH_UP_PREFIX) ||
+    key.startsWith(INTERRUPTED_PREFIX) ||
     key.startsWith(RECORD_PREFIX) ||
     // The sessions the bundled agent types save.
     key.startsWith("buzz.claude-code.sessions.") ||

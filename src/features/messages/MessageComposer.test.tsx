@@ -476,6 +476,24 @@ function mount(
   };
 }
 
+it("publishes typing for text edits but not caret-driven token expansion", () => {
+  const text = `[Honey](${profileTarget(first.pubkey)})`;
+  writeView("scope", "draft:channel", text);
+  const h = mount();
+  const send = vi.fn(async () => {});
+  h.retarget({
+    session: { ...h.session, typing: { ...h.session.typing, send } },
+  });
+  expect(h.input().querySelector("[data-source]")).not.toBeNull();
+  act(() => h.input().setSelectionRange(text.length, text.length));
+  fireEvent.keyDown(h.input(), { key: "ArrowLeft" });
+  expect(h.input().querySelector("[data-source]")).toBeNull();
+  expect(h.input()).toHaveValue(text);
+  expect(send).not.toHaveBeenCalled();
+  h.fill(`${text}x`);
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
 it("retires reply controls immediately and preserves the draft when replying again", () => {
   const h = mount({
     replyContext: <button type="button">Cancel reply to Honey</button>,

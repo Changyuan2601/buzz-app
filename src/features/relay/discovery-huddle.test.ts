@@ -29,7 +29,7 @@ function state() {
   state.accept(info());
   return state;
 }
-it("keeps mutable markers and legacy names ordinary until creator proof arrives", () => {
+it("keeps mutable markers and generic Huddle names ordinary until creator proof arrives", () => {
   const owner = state();
   expect(owner.get(room)?.huddle).toBeUndefined();
   expect(owner.channels().map((c) => c.id)).toContain(room);
@@ -47,6 +47,75 @@ it("keeps mutable markers and legacy names ordinary until creator proof arrives"
     parentChannelId: parent,
   });
 });
+it("classifies a legacy generated room across restart without granting parent or write authority", () => {
+  const owner = state();
+  owner.accept(
+    metadata(relay, room, `huddle-${room.slice(0, 8)}`, 30, [
+      ["private"],
+      ["t", "stream"],
+      ["ttl", "3600"],
+    ]),
+  );
+  expect(owner.get(room)?.huddle).toBe(true);
+  expect(owner.get(room)?.parentChannelId).toBeUndefined();
+  expect(owner.canAccess(room)).toBe(true);
+  const restored = new DiscoveryState(admin.pubkey, relay.pubkey);
+  for (const event of owner.savedEvents()) restored.accept(event, true);
+  expect(restored.get(room)).toMatchObject({ huddle: true, readOnly: true });
+  expect(restored.get(room)?.parentChannelId).toBeUndefined();
+  owner.accept(
+    metadata(relay, room, "Ordinary channel", 40, [
+      ["private"],
+      ["t", "stream"],
+      ["ttl", "3600"],
+    ]),
+  );
+  expect(owner.get(room)?.huddle).toBeUndefined();
+});
+const lookalikes = [
+  [
+    "wrong ID",
+    "huddle-deadbeef",
+    [["private"], ["t", "stream"], ["ttl", "3600"]],
+  ],
+  [
+    "public",
+    `huddle-${room.slice(0, 8)}`,
+    [["public"], ["t", "stream"], ["ttl", "3600"]],
+  ],
+  [
+    "ambiguous visibility",
+    `huddle-${room.slice(0, 8)}`,
+    [["private"], ["public"], ["t", "stream"], ["ttl", "3600"]],
+  ],
+  [
+    "forum",
+    `huddle-${room.slice(0, 8)}`,
+    [["private"], ["t", "forum"], ["ttl", "3600"]],
+  ],
+  ["ongoing", `huddle-${room.slice(0, 8)}`, [["private"], ["t", "stream"]]],
+  [
+    "invalid TTL",
+    `huddle-${room.slice(0, 8)}`,
+    [["private"], ["t", "stream"], ["ttl", "0"]],
+  ],
+] as const;
+it.each(lookalikes)(
+  "does not classify a %s lookalike as a legacy huddle",
+  (_, name, extra) => {
+    const owner = state();
+    owner.accept(
+      metadata(
+        relay,
+        room,
+        name,
+        30,
+        extra.map((tag) => [...tag]),
+      ),
+    );
+    expect(owner.get(room)?.huddle).toBeUndefined();
+  },
+);
 it("does not promote an ordinary creation when later metadata gains a Huddle marker", () => {
   const owner = state();
   expect(

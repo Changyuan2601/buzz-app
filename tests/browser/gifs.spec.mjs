@@ -91,9 +91,10 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   app,
 }, testInfo) => {
   const requests = [];
-  let signRequests = 0;
+  let messageSignRequests = 0;
   await page.route("**/api/relay/*/sign", (route) => {
-    signRequests += 1;
+    if (route.request().postDataJSON().kind === 20002) return route.fallback();
+    messageSignRequests += 1;
     return route.abort();
   });
   let releaseInfo = () => {};
@@ -259,7 +260,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     submits: 0,
   });
   await expect(draft).toHaveJSProperty("value", "unfinished draft");
-  expect(signRequests).toBe(0);
+  expect(messageSignRequests).toBe(0);
   await draft.evaluate((element) => {
     element.value = "";
     element.dispatchEvent(

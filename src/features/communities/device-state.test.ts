@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { recordReaction } from "../messages/quick-reactions";
 import { readView, writeView } from "../../shared/view-state";
 import { purgeCommunityDeviceState } from "./device-state";
+import { localCommunityNameKey } from "./names";
+import { repositoriesKey } from "./repositories";
 
 // The relay's stores record what they are asked to forget, in order.
 const relay = vi.hoisted(() => ({
@@ -48,6 +50,10 @@ afterEach(() => {
 
 it("forgets every store partitioned to the left community and viewer, and nothing else", async () => {
   const scope = `${origin}:${viewer}`;
+  localStorage.setItem(repositoriesKey(origin, viewer), "/code");
+  localStorage.setItem(repositoriesKey(origin, other), "/other-account");
+  localStorage.setItem(localCommunityNameKey(origin, viewer), "Local nickname");
+  localStorage.setItem(localCommunityNameKey(origin, other), "Other account");
   writeView(scope, "draft:general", "unsent");
   writeView(scope, "channel", "general");
   writeView(`${kept}:${viewer}`, "draft:general", "another community");
@@ -61,6 +67,16 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   localStorage.setItem(follows(scope), "[]");
   localStorage.setItem(follows(`${kept}:${viewer}`), "[]");
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([]);
+  expect(
+    localStorage.getItem(localCommunityNameKey(origin, viewer)),
+  ).toBeNull();
+  expect(localStorage.getItem(localCommunityNameKey(origin, other))).toBe(
+    "Other account",
+  );
+  expect(localStorage.getItem(repositoriesKey(origin, viewer))).toBeNull();
+  expect(localStorage.getItem(repositoriesKey(origin, other))).toBe(
+    "/other-account",
+  );
   expect(localStorage.getItem(follows(scope))).toBeNull();
   expect(localStorage.getItem(follows(`${kept}:${viewer}`))).toBe("[]");
   expect(readView(scope, "draft:general", "")).toBe("");

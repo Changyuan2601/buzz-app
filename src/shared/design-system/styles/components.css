@@ -67,6 +67,10 @@
     min-height: var(--space-6);
     padding: var(--space-1) var(--space-3);
   }
+  /* Activity-only message summaries share geometry in channels and threads. */
+  .buzz-button[data-size="xs"][data-activity-summary] {
+    padding-inline: var(--space-1h) var(--space-2);
+  }
   .buzz-button[data-size="xs"] .buzz-button-label > svg,
   .buzz-button[data-size="xs"] .buzz-button-spinner {
     width: var(--space-4);
@@ -94,6 +98,13 @@
   .buzz-button[data-size="inline"] .buzz-button-spinner {
     width: var(--space-3);
     height: var(--space-3);
+  }
+  /* Medium labelled actions with a leading icon use optical side insets. */
+  .buzz-button[data-size="md"]:not([data-icon-variant]):has(
+    > .buzz-button-label > svg:first-child
+  ) {
+    padding-inline-start: var(--space-3);
+    padding-inline-end: var(--space-4);
   }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
@@ -981,6 +992,12 @@
     gap: var(--space-2);
     padding-block: 0;
     padding-inline: var(--space-1);
+  }
+
+  /* The painted band includes the outer rim above and excludes the separator
+     below. Center its controls one hairline above the layout box's center. */
+  .panel-header > * {
+    translate: 0 -1px;
   }
 
   .panel-header::after {

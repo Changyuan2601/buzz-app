@@ -246,6 +246,7 @@ export function ChannelCanvasDialog({
         </div>
       </div>
       <Dialog
+        size="compact"
         open={open && confirmReload}
         onOpenChange={setConfirmReload}
         dismissOnOutsideClick

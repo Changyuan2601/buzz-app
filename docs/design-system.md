@@ -423,3 +423,33 @@ icons, subtitles, disabled states, and required-status text.
 
 Standard Button sizes use the 14px `text-label-sm` role while retaining their
 existing minimum heights. The extra-small capsule keeps its caption role.
+
+## Colorways and plugin gradients
+
+Plugin artwork uses existing palette colors, including the complete Appearance
+ramps: Bee, Magenta, Iris, Cobalt, Citrus and Mono. Flame and Jade remain
+independent artwork palettes. All twelve steps and
+existing ink, pressed and link mappings reference explicit palette owners.
+Values are extracted unchanged. Mode-specific owners (for example
+`--jade-3-light`) remain available independently of the page mode; the resolved
+`--jade-3` follows the nearest light/dark scope. This preserves mixed-mode
+specimens as well as product Appearance choices. Registry and Color viewer
+expose all twelve steps of every named family in Layer 0. No new colors are invented.
+Artwork aliases resolve at the page root; their current step-9 endpoints are
+identical in both themes. Nested opposite-mode artwork is not a supported preview.
+
+| Category | Top → bottom | Identity |
+| --- | --- | --- |
+| Communication | cyan 9 → jade 9 | Teal/green, separate from Agents. |
+| Agents | blue 9 → iris 9 | Lighter blue over existing violet. |
+| Agent tools | purple 9 → magenta 9 | Violet to rose. |
+| Developer tools & integrations | orange 9 → flame 9 | Warm ember. |
+| People & communities | red 9 → magenta 9 | Scarlet to rose. |
+| Productivity | amber 9 → green 9 | Approved yellow-to-green direction retained. |
+
+The proposed registry entries are owned by Settings plugin catalog; their
+complete gradients compose palette-backed endpoints. There is no artwork-literal
+exception. Existing UI palettes, Appearance preference IDs and semantic roles
+are unchanged. The mapping does not preserve the original fixed luminance,
+chroma, contrast or 35-degree hue sweep. Inspect real catalog captures in both
+themes; artwork and lighting also affect the resulting tiles.

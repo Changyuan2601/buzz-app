@@ -69,6 +69,7 @@ import {
   type Checkpoint,
   type Stream,
 } from "./catch-up";
+import type { Interrupted } from "./interrupted";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -279,7 +280,7 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read">;
+  readonly session: Pick<RelaySession, "read" | "readRemote">;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -322,6 +323,14 @@ export type RunnerHost = {
     read(): Readonly<Record<string, Checkpoint>>;
     /** Throws when storage refuses it. */
     write(checkpoints: Readonly<Record<string, Checkpoint>>): void;
+  };
+  /** Mention turns working when the page went away, as saved. */
+  interrupted: {
+    read(): Interrupted;
+    /** Saves the agent's turns. Throws when storage refuses it. */
+    write(pubkey: string, turns: Readonly<Record<string, string>>): void;
+    /** This copy began or stopped holding an agent with saved turns. */
+    changed(): void;
   };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
@@ -382,6 +391,7 @@ export type RunnerHost = {
         | "audienceAuthority"
         | "upload"
         | "media"
+        | "gitAuth"
         | "remember"
       >
     | undefined;
@@ -417,8 +427,44 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** Mention turns working now, which closing or reloading the app would
+   * stop, and those the app left working last time until they are given
+   * again or forgotten, as saved. */
+  private turns: Interrupted;
+  /** The turns the app left working last time, by agent, until the owner
+   * forgets them, or resumes them and each agent's are read again. */
+  private left: Interrupted;
+  /** The turns the app left working last time, as this page started: only
+   * Resume gives them again, never a replay or live delivery. */
+  private readonly stopped: Interrupted;
+  /** The agents whose `left` the owner chose to resume. */
+  private resuming = new Set<string>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
+    this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Agents with turns the app left working last time, until the owner
+   * resumes or forgets them. */
+  interrupted(): ReadonlySet<string> {
+    return new Set(
+      Object.keys(this.left).filter((pubkey) => !this.resuming.has(pubkey)),
+    );
+  }
+  /** Gives each of `pubkeys` again the turns it was left working on, once
+   * its community is connected. */
+  resumeInterrupted(pubkeys: readonly string[]) {
+    for (const pubkey of pubkeys) this.resuming.add(pubkey);
+    for (const runner of this.runners.values()) this.resumeTurns(runner);
+  }
+  /** Forgets the turns the app left `pubkeys` working on last time. */
+  dismissInterrupted(pubkeys: readonly string[]) {
+    for (const pubkey of pubkeys) {
+      const { [pubkey]: turns, ...rest } = this.left;
+      if (!turns || !this.runs(pubkey)) continue;
+      this.unmark(pubkey, Object.keys(turns));
+      this.left = rest;
+    }
   }
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
@@ -595,7 +641,7 @@ export class AgentRunners {
     this.passes.get(runner.pubkey)?.controller.abort();
     this.passes.delete(runner.pubkey);
     this.host.activity.clear(undefined, runner.pubkey);
-    runner.queues.mention.length = 0;
+    this.dropMentions(runner, true);
     this.dropWatchWork(runner);
     runner.held.clear();
     runner.backlog.length = 0;
@@ -846,6 +892,7 @@ export class AgentRunners {
       changed = true;
     };
     for (const runner of this.runners.values()) {
+      this.resumeTurns(runner);
       const agent = this.host.agent(runner.pubkey);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
@@ -900,6 +947,96 @@ export class AgentRunners {
       void this.readMissed(runner, next, reading, since);
     }
     if (changed) this.saveCheckpoints();
+  }
+  /** Once the owner chose to resume them, gives the agent again the mention
+   * turns the app left it working on, when its community is connected: each
+   * read again from the relay, as only its id was saved. Each stays saved
+   * until its new turn ends, so closing the app again first loses none; one
+   * the relay no longer has, or that was given meanwhile, is forgotten. A
+   * failed read leaves them for the next try. */
+  private resumeTurns(runner: Runner) {
+    const left = this.left[runner.pubkey];
+    const agent = this.host.ready(runner.pubkey);
+    const community = agent && this.host.community(agent);
+    if (
+      !this.resuming.has(runner.pubkey) ||
+      !left ||
+      !agent ||
+      !runner.type ||
+      community?.connection.since === undefined
+    )
+      return;
+    const { [runner.pubkey]: _, ...rest } = this.left;
+    this.left = rest;
+    const ids = Object.keys(left);
+    if (!runner.type.resumes) return this.unmark(runner.pubkey, ids);
+    // Not read(): it returns the owner's own mentions as unproven outbox copies.
+    void community.session
+      .readRemote([{ ids, limit: ids.length }], {
+        signal: community.controller.signal,
+        fresh: true,
+      })
+      .then(
+        (events) => {
+          // A turn's own run forgets it when it settles.
+          const kept = new Set<string>();
+          // Oldest first, as they were sent: a later correction stays last.
+          const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
+            (a, b) =>
+              a.created_at - b.created_at ||
+              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          );
+          for (const event of proven) {
+            const channel = left[event.id];
+            if (channel === undefined) continue;
+            if (!this.hasSeen(runner, event.id, channelOf(event)))
+              this.markSeen(runner, event.id, channelOf(event));
+            const queued = this.enqueue(runner, {
+              trigger: { type: "mention", event, resumed: true },
+              ...(channel ? { channelId: channel } : {}),
+            });
+            if (queued) kept.add(event.id);
+          }
+          this.unmark(
+            runner.pubkey,
+            ids.filter((id) => !kept.has(id)),
+          );
+        },
+        (error) => {
+          this.left = { ...this.left, [runner.pubkey]: left };
+          if (!community.controller.signal.aborted)
+            console.warn(
+              `Agent ${agent.name} could not resume its turns`,
+              error,
+            );
+        },
+      );
+  }
+  /** Saves the mention `id` as working, in `channel` or "" without one. */
+  private mark(pubkey: string, id: string, channel: string) {
+    this.saveTurns(pubkey, {
+      ...this.turns,
+      [pubkey]: { ...this.turns[pubkey], [id]: channel },
+    });
+  }
+  private unmark(pubkey: string, ids: readonly string[]) {
+    const { [pubkey]: turns = {}, ...rest } = this.turns;
+    const kept = Object.fromEntries(
+      Object.entries(turns).filter(([id]) => !ids.includes(id)),
+    );
+    this.saveTurns(
+      pubkey,
+      Object.keys(kept).length ? { ...rest, [pubkey]: kept } : rest,
+    );
+  }
+  /** Saves `pubkey`'s turns only: another program may run the others. */
+  private saveTurns(pubkey: string, turns: Interrupted) {
+    this.turns = turns;
+    try {
+      this.host.interrupted.write(pubkey, turns[pubkey] ?? {});
+    } catch (error) {
+      console.warn("Agent turns in progress were not saved", error);
+    }
   }
   /** Reads each stream's missed events through `upper`, a window at a time,
    * and delivers them oldest first, in batches, saving its checkpoint after
@@ -1447,6 +1584,7 @@ export class AgentRunners {
     agent: Agent,
     event: RelayEvent,
   ): Trigger[] | "held" {
+    if (this.stopped[runner.pubkey]?.[event.id] !== undefined) return [];
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
     // watch enough, two agents replying to each other would never stop. The
@@ -1624,6 +1762,7 @@ export class AgentRunners {
     };
   }
 
+  /** Queues `job`, or drops it when the lane is full; returns whether queued. */
   private enqueue(runner: Runner, job: Job) {
     const now = Date.now();
     const lane = laneOf(job.trigger);
@@ -1653,12 +1792,22 @@ export class AgentRunners {
       console.warn(
         `Agent ${this.host.agent(runner.pubkey)?.name} dropped an event`,
       );
-      return;
+      return false;
     }
     rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
     queue.push(job);
     void this.drain(runner);
+    return true;
+  }
+  /** Drops the queued mentions. `forget` forgets the resumed ones saved as
+   * working too; otherwise they stay saved for the copy that runs the agent. */
+  private dropMentions(runner: Runner, forget = false) {
+    const resumed = runner.queues.mention.flatMap(({ trigger }) =>
+      trigger.type === "mention" && trigger.resumed ? [trigger.event.id] : [],
+    );
+    runner.queues.mention.length = 0;
+    if (forget && resumed.length) this.unmark(runner.pubkey, resumed);
   }
 
   private showWork(runner: Runner, job: Job) {
@@ -1699,7 +1848,7 @@ export class AgentRunners {
       if (!agent || !type || !run) {
         if (agent) {
           this.host.activity.clear(undefined, runner.pubkey);
-          runner.queues.mention.length = 0;
+          this.dropMentions(runner);
           runner.queues.watch.length = 0;
         }
         await this.release(runner);
@@ -1714,7 +1863,7 @@ export class AgentRunners {
       if (!(await this.claim(runner))) {
         this.host.activity.clear(undefined, runner.pubkey);
         runner.activityClaimed = false;
-        runner.queues.mention.length = 0;
+        this.dropMentions(runner);
         runner.queues.watch.length = 0;
         break;
       }
@@ -1904,6 +2053,8 @@ export class AgentRunners {
       upload: async (data: string, mime: string) =>
         this.require().upload(agent.pubkey, data, mime),
       media: async (url: string) => this.require().media(agent.pubkey, url),
+      gitAuth: async (owner: string, repo: string) =>
+        this.require().gitAuth(agent.pubkey, owner, repo),
       remember: async (slug: string, body: string, after: number) => {
         const event = await this.require().remember(
           agent.pubkey,
@@ -1934,6 +2085,9 @@ export class AgentRunners {
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
+    // Saved while it works, so a reload that stops it gives it again.
+    const resumable = event && runner.type?.resumes ? event.id : undefined;
+    if (resumable) this.mark(runner.pubkey, resumable, channel ?? "");
     let typing: (() => void) | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
@@ -1962,6 +2116,7 @@ export class AgentRunners {
       lifetime.removeEventListener("abort", abort);
       runner.working--;
       typing?.();
+      if (resumable) this.unmark(runner.pubkey, [resumable]);
     };
     const abort = () => {
       work?.remove();
@@ -2006,6 +2161,7 @@ export class AgentRunners {
   }
 
   private async claim(runner: Runner) {
+    const held = this.runs(runner.pubkey);
     try {
       runner.mayHold = (await this.host.custody?.claim(runner.pubkey)) ?? false;
       runner.asked = true;
@@ -2019,7 +2175,15 @@ export class AgentRunners {
         error,
       );
       return true;
+    } finally {
+      this.heldChanged(runner, held);
     }
+  }
+  /** The notice lists an agent's saved turns only while this copy holds it,
+   * so a change in holding lists it again. */
+  private heldChanged(runner: Runner, held: boolean) {
+    if (this.left[runner.pubkey] && this.runs(runner.pubkey) !== held)
+      this.host.interrupted.changed();
   }
   /** Claims exclusively for a provider migration. Unlike turn execution,
    * uncertainty is unsafe here because changing native type is destructive. */
@@ -2029,7 +2193,9 @@ export class AgentRunners {
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;
+    const held = this.runs(runner.pubkey);
     runner.mayHold = false;
+    this.heldChanged(runner, held);
     await this.host.custody
       ?.release(runner.pubkey)
       .catch((error) =>

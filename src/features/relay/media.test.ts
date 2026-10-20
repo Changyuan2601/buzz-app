@@ -1,6 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
-import { createMediaPreparation, saveData } from "./media";
+import {
+  createMediaPreparation,
+  openingFrame,
+  openingFrameCapture,
+  rememberOpeningFrame,
+  saveData,
+} from "./media";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -91,4 +97,33 @@ it("avatar completion diagnostics never expose signed URL credentials", async ()
     logger.setReporters(reporters);
     setLogLevel(previous);
   }
+});
+
+it("bounds opening frames by encoded size and forgets them with session media", () => {
+  const frame = (bytes: number) => ({
+    poster: `data:image/jpeg;${"x".repeat(bytes)}`,
+    width: 640,
+    height: 360,
+  });
+  createMediaPreparation().dispose();
+  const capture = openingFrameCapture();
+  rememberOpeningFrame("oversized", frame(300 * 1024), capture);
+  expect(openingFrame("oversized")).toBeUndefined();
+  for (let i = 0; i < 20; i++)
+    rememberOpeningFrame(`frame-${i}`, frame(250 * 1024), capture);
+  expect(openingFrame("frame-0")).toBeUndefined();
+  expect(openingFrame("frame-3")).toBeUndefined();
+  expect(openingFrame("frame-4")).toBeDefined();
+  expect(openingFrame("frame-19")).toBeDefined();
+  expect(openingFrame("frame-4")).toBeDefined();
+  rememberOpeningFrame("frame-20", frame(250 * 1024), capture);
+  expect(openingFrame("frame-4")).toBeDefined();
+  expect(openingFrame("frame-5")).toBeUndefined();
+
+  createMediaPreparation().dispose();
+  expect(openingFrame("frame-19")).toBeUndefined();
+  rememberOpeningFrame("late", frame(10), capture);
+  expect(openingFrame("late")).toBeUndefined();
+  rememberOpeningFrame("current", frame(10), openingFrameCapture());
+  expect(openingFrame("current")).toBeDefined();
 });

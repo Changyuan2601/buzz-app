@@ -5,6 +5,7 @@ import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -24,7 +25,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
-const scope = "https://relay.test:owner";
+const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -47,6 +48,7 @@ function fixture(
   termination?: Promise<void>,
   plugin = false,
   configured: { model?: string; model_reasoning_effort?: string } = {},
+  repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -311,6 +313,7 @@ function fixture(
     store,
     config,
     () => added,
+    repositories,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -1000,6 +1003,18 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const f = fixture();
+  const fresh = f.delivery("@Codex fix the build");
+  await f.runtime.run({
+    ...fresh,
+    trigger: { ...fresh.trigger, resumed: true } as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toContain("fix the build");
+  expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -3572,4 +3587,24 @@ const canvasHead = (content: string, author = owner) => ({
   created_at: 1,
   tags: [],
   content,
+});
+
+it("updates Codex repository context from the agent’s captured community, including default restoration", async () => {
+  let folder = "/code/codex";
+  const repositories = vi.fn(
+    () => `<community-repositories>${folder}</community-repositories>`,
+  );
+  const f = fixture([], undefined, false, {}, repositories);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(repositories).toHaveBeenCalledWith(scope);
+  expect(
+    JSON.stringify(f.sent.filter((wire) => wire.method === "turn/start")),
+  ).toContain("/code/codex");
+  folder = "REPOS in your own workspace";
+  await f.runtime.run(f.delivery("second", "d".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turns = f.sent.filter((wire) => wire.method === "turn/start");
+  expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
+  expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });

@@ -438,7 +438,15 @@ test("thread media preserves its tab and draft while modal Escape restores focus
     await page.keyboard.press("Tab");
     await expect(remove).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(
+      confirmation.getByRole("button", { name: "Close", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(cancel).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(
+      confirmation.getByRole("button", { name: "Close", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Shift+Tab");
     await expect(remove).toBeFocused();
     await page.keyboard.press("Shift+Tab");

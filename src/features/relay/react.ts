@@ -1,6 +1,12 @@
 import { rowProfileIds } from "./membership";
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { ChannelMessage, ChannelQueries } from "./contracts";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -29,15 +35,20 @@ export function useRowProfiles(
   rows: readonly ChannelMessage[],
 ) {
   const ids = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
+  // New rows usually add authors whose profiles are still loading. Keep the map
+  // identity then, so memoized rows do not all re-render for each page.
+  const last = useRef<ReadonlyMap<string, Profile>>(undefined);
   const selection = useMemo(
-    () => selectProfiles(queries, ids ? ids.split(":") : []),
+    () => selectProfiles(queries, ids ? ids.split(":") : [], last.current),
     [queries, ids],
   );
-  return useSyncExternalStore(
+  const profiles = useSyncExternalStore(
     selection.subscribe,
     selection.snapshot,
     selection.snapshot,
   );
+  last.current = profiles;
+  return profiles;
 }
 
 /** Subscribe to replacement as well as connection readiness; never capture a startup session once. */

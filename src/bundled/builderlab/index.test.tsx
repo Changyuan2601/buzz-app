@@ -126,6 +126,7 @@ function provideAgents(
     searchProfiles: vi.fn(),
     upload: vi.fn(),
     media: vi.fn(),
+    gitAuth: vi.fn(),
     remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),

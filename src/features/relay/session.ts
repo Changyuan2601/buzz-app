@@ -57,6 +57,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { createTyping } from "./typing";
+import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
@@ -1925,7 +1926,67 @@ export function createRelaySession(
         listeners.delete(listener);
       };
     },
-    typing: typing.capability,
+    typing: {
+      ...typing.capability,
+      async send(
+        channelId: string,
+        threadRootId: string | undefined,
+        signal: AbortSignal,
+      ) {
+        const available = () =>
+          !closed &&
+          !signal.aborted &&
+          liveSnapshot.status === "connected" &&
+          channels.canParticipate(channelId) &&
+          channels.queries
+            .list()
+            .channels.some(
+              (channel) =>
+                channel.id === channelId &&
+                !channel.readOnly &&
+                !channel.archived &&
+                !channel.cached,
+            );
+        const publish = traffic?.publishTyping ?? traffic?.publish;
+        if (!writer || !publish || !available()) return;
+        const template = {
+          kind: 20002,
+          content: "",
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ["h", channelId],
+            ...(threadRootId !== undefined
+              ? [["e", threadRootId, "", "reply"]]
+              : []),
+          ],
+        };
+        if (!validTypingTemplate(template)) return;
+        const epoch = accessEpoch,
+          generation = liveGeneration;
+        // A pulse waiting for signing or socket admission quickly becomes stale.
+        const bounded = AbortSignal.any([
+          signal,
+          lifetime.signal,
+          AbortSignal.timeout(1_000),
+        ]);
+        const event = await writer.sign(template, bounded);
+        if (
+          bounded.aborted ||
+          !available() ||
+          epoch !== accessEpoch ||
+          generation !== liveGeneration
+        )
+          return;
+        if (
+          !validTypingTemplate(event) ||
+          event.pubkey !== transport?.viewer ||
+          event.created_at !== template.created_at ||
+          JSON.stringify(event.tags) !== JSON.stringify(template.tags)
+        )
+          return;
+        await publish(event, bounded);
+      },
+    },
     /** Says the viewer's `agents` are online or offline, on the live socket:
      * ephemeral, so nothing is queued or retried. The relay keeps only the
      * agents the viewer owns. False when this session can never send it. */

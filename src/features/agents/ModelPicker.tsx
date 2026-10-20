@@ -70,6 +70,7 @@ export function CustomModelDialog({
   const form = useId();
   return (
     <Dialog
+      size="compact"
       open
       onOpenChange={(open) => {
         if (!open) onClose();

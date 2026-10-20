@@ -761,7 +761,7 @@ it("recovers an uncertain deletion after the row and dialog disappear", async ()
   await act(async () =>
     h.publication(0).result.reject(new Error("Connection lost")),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+  fireEvent.click(await screen.findByText("Close", { exact: true }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Message actions" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));

@@ -43,6 +43,8 @@ const STATUS: Record<string, string> = {
   pending: "Pending",
   in_progress: "Running",
   failed: "Failed",
+  terminated: "Terminated",
+  yielded: "Yielded",
 };
 const line = (text: string) => text.split("\n").find(Boolean)?.trim() ?? "";
 const time = (at: number) =>
@@ -238,7 +240,7 @@ function Item({
         </div>
       );
     case "tool":
-      return <Tool item={item} />;
+      return <Tool item={item} agentName={agentName} />;
     case "plan":
       return (
         <div className={styles.row}>
@@ -333,10 +335,30 @@ function Diff({ diff }: { diff: ToolDiff }) {
   );
 }
 
-function Tool({ item }: { item: ToolItem }) {
+function ToolInput({ text }: { text: string }) {
+  const content: ReactNode[] = [];
+  let end = 0;
+  for (const match of text.matchAll(/\btools\.[A-Za-z_$][\w$]*(?=\s*\()/g)) {
+    content.push(
+      text.slice(end, match.index),
+      <span key={match.index} className="text-accent">
+        {match[0]}
+      </span>,
+    );
+    end = match.index + match[0].length;
+  }
+  content.push(text.slice(end));
+  return <pre className={styles.pre}>{content}</pre>;
+}
+
+function Tool({ item, agentName }: { item: ToolItem; agentName: string }) {
   const Icon = ICONS[item.kind] ?? WrenchIcon;
   const status = STATUS[item.status];
   const path = toolPath(item);
+  const failedChildren =
+    item.children?.filter(
+      (child) => child.type === "tool" && child.status === "failed",
+    ).length ?? 0;
   return (
     <details className={styles.tool} data-status={item.status}>
       <summary className={styles.row}>
@@ -344,6 +366,13 @@ function Tool({ item }: { item: ToolItem }) {
         <span className={styles.summary}>
           {status && <span className={styles.status}>{status} </span>}
           <span className={styles.subject}>{toolName(item)}</span>
+          {failedChildren > 0 && (
+            <span className={styles.error}>
+              {" "}
+              · {failedChildren} failed{" "}
+              {failedChildren === 1 ? "call" : "calls"}
+            </span>
+          )}
           {path && <span className={styles.path}> {path}</span>}
         </span>
         {item.permission && (
@@ -364,12 +393,22 @@ function Tool({ item }: { item: ToolItem }) {
       {item.title.includes("\n") && (
         <pre className={styles.pre}>{item.title}</pre>
       )}
-      {item.input && <pre className={styles.pre}>{item.input}</pre>}
+      {item.input && <ToolInput text={item.input} />}
       {item.diffs.map((diff, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: diffs are positional tool content.
         <Diff key={index} diff={diff} />
       ))}
       {item.output && <pre className={styles.pre}>{item.output}</pre>}
+      {item.children?.length ? (
+        <div className={styles.section}>
+          <p className="text-body-sm text-secondary">
+            Calls recorded during this script
+          </p>
+          {item.children.map((child) => (
+            <Item key={child.id} item={child} agentName={agentName} />
+          ))}
+        </div>
+      ) : null}
       {item.truncated && (
         <p className="text-body-sm text-secondary">
           Part of this tool call was too large and was elided by the agent.

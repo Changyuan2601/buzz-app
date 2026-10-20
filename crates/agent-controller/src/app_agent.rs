@@ -12,12 +12,12 @@ use std::path::PathBuf;
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
 /// (9), a channel member change (9000, 9001), edit (9002), creation (9007),
 /// deletion (9008), join (9021) or leave (9022), typing (20002), an edit of its
-/// own message (40003), a shared note (30023), a channel canvas (40100) or a
-/// request to open a DM (41010). The relay decides which channel changes it may
-/// make. Its profile (0) is the app's, and its memory (30174) is written by
-/// `memory`.
-const KINDS: [u16; 15] = [
-    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100, 41010,
+/// own message (40003), a shared note (30023), a channel canvas (40100), a
+/// request to open a DM (41010) or a repository announcement (30617). The relay
+/// decides which channel changes it may make. Its profile (0) is the app's, and
+/// its memory (30174) is written by `memory`.
+const KINDS: [u16; 16] = [
+    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
 ];
 
 /// One saved identity. The key itself stays in the OS credential store.
@@ -143,7 +143,7 @@ impl AppAgent {
     ) -> Result<serde_json::Value> {
         if !KINDS.contains(&kind) {
             return Err(
-                "Agents can sign messages, edits, reactions, deletions, notes and channel changes only"
+                "Agents can sign messages, edits, reactions, deletions, notes, channel changes and repositories only"
                     .into(),
             );
         }
@@ -224,6 +224,34 @@ impl AppAgent {
             return Err("Agents authorize only their own enrollment and tokens".into());
         }
         key.profile_auth(url, body)
+    }
+    /// NIP-98 authorization for Git over HTTP to repository `repo` of `owner`
+    /// in its community, and the URL it is bound to. Git reuses it for every
+    /// request of one clone, fetch or push; the community honors it for a minute.
+    pub fn git_auth(
+        &self,
+        key: &Secret,
+        owner: &str,
+        repo: &str,
+    ) -> Result<(String, serde_json::Value)> {
+        let name = repo.len() <= 64
+            && !repo.starts_with('.')
+            && !repo.contains("..")
+            && repo
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'));
+        if repo.is_empty() || !name || !crate::config::canonical_key(owner) {
+            return Err("Invalid repository".into());
+        }
+        let url = self.endpoint(&format!("/git/{owner}/{repo}.git"));
+        let tags = self.attested(
+            key,
+            vec![
+                vec!["u".into(), url.clone()],
+                vec!["method".into(), "GET".into()],
+            ],
+        )?;
+        Ok((url, key.signed(27235, String::new(), tags)?))
     }
     /// Blossom authorization (24242) to upload the blob with this SHA-256 to
     /// its community, valid for a minute.

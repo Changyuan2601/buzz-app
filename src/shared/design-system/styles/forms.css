@@ -162,6 +162,10 @@
     min-height: var(--size-control);
     cursor: pointer;
   }
+  .buzz-choice > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
   .buzz-choice:is([data-variant="card"], [data-variant="tile"]) {
     padding: var(--space-4);
     border: 1px solid var(--border-standard);

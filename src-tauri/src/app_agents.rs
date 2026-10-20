@@ -782,6 +782,29 @@ async fn upload(
     serde_json::from_slice(&body).map_err(|_| "Invalid upload receipt".into())
 }
 
+/// The URL of repository `repo` of `owner` in the agent's community, and the
+/// `Authorization` header Git sends there as the agent for the next minute.
+/// The key stays native; the header grants only that repository.
+#[tauri::command]
+pub(crate) async fn app_agent_git_auth(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    owner: String,
+    repo: String,
+) -> Result<Value, String> {
+    use base64::Engine;
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (url, auth) = agent.git_auth(&key, &owner, &repo)?;
+    let auth = serde_json::to_vec(&auth).map_err(|_| "Could not authorize Git")?;
+    Ok(serde_json::json!({
+        "url": url,
+        "header": format!(
+            "Authorization: Nostr {}",
+            base64::engine::general_purpose::STANDARD.encode(auth)
+        ),
+    }))
+}
+
 /// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
 /// strictest hosts, and base64 is 4 characters per 3 bytes.
 const MEDIA_LIMIT: u64 = 5 * 1024 * 1024 / 4 * 3;

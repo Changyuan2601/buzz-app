@@ -108,7 +108,7 @@ test("Membership action removes and restores the working Invite destination", as
   await menu();
   await expect(invite).toHaveCount(0);
   await expect(
-    page.getByRole("menuitem", { name: "Community settings", exact: true }),
+    page.getByRole("menuitem", { name: "Leave community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await plugins(page);

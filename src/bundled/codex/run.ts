@@ -17,7 +17,7 @@ export const codexRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
-  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings" | "resumes"
 > => ({
   models: (agent) => runtime.preview(agent),
   run: async (delivery) => {
@@ -33,4 +33,7 @@ export const codexRun = (
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,
   },
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

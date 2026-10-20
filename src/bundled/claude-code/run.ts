@@ -15,7 +15,7 @@ export const claudeRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
-  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings" | "resumes"
 > => ({
   models: (agent) => runtime.models(agent.pubkey),
   run: async (delivery) => {
@@ -31,4 +31,7 @@ export const claudeRun = (
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,
   },
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

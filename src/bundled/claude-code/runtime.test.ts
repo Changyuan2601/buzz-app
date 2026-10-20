@@ -15,7 +15,7 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
@@ -60,6 +60,7 @@ function setup(
     title?: string;
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -131,7 +132,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://agent.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
@@ -155,6 +161,7 @@ function setup(
     storage,
     config,
     () => added,
+    options.repositories,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -314,6 +321,7 @@ it("hands a mention to its thread's session", async () => {
     `Alice (${alice}) (1970-01-01T00:01:40.000Z): Build is red`,
   );
   expect(prompt).toContain("Content: @Claude can you look?");
+  expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
   expect(claude?.options).not.toHaveProperty("agent");
   expect(claude?.options.args).toContain("--mcp-config");
@@ -355,6 +363,22 @@ it("hands the host a stopper that interrupts the mention's running turn", async 
   expect(interrupts()).toHaveLength(1);
   claude?.finish();
   await flush(10);
+});
+
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const mention = message("2", "@Claude fix the build", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes } = setup([mention]);
+  await deliver({ type: "mention", event: mention, resumed: true });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("Content: @Claude fix the build");
+  expect(prompt).toContain(RESUMED_PROMPT);
 });
 
 const EFFORTS = [
@@ -1752,4 +1776,21 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.options.args).not.toContain("--add-dir");
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
+});
+
+it("hands a session its own community repositories without changing its workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/own</community-repositories>",
+  );
+  const { runtime, deliver, claudes } = setup([], { repositories });
+  try {
+    await deliver({ type: "mention", event: message("1", "@Claude work") });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
+    expect(JSON.stringify(process?.received)).toContain("/code/own");
+    expect(process?.options.cwd).toBe("~/.buzz");
+  } finally {
+    runtime.dispose();
+  }
 });

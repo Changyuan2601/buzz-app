@@ -172,6 +172,7 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_search_profiles",
         "app_agent_upload",
         "app_agent_media",
+        "app_agent_git_auth",
         "app_agent_remember",
         "app_agent_claim",
         "app_agent_release",

@@ -22,6 +22,8 @@ export function systemPrompt(
     /** Who the agent is, so it can name itself and the session viewer can too. */
     agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
+    /** Device-local repository location, supplied by the owning runtime. */
+    repositories?: string;
     /** A section for each team the agent is on, from the host. */
     team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
@@ -39,6 +41,7 @@ export function systemPrompt(
       : "",
     section("base", base.map((part) => part.trim()).join("\n\n")),
     section("workspace", `Current working directory: ${input.cwd}`),
+    input.repositories ?? "",
     input.instructions?.trim()
       ? section("agent-instructions", input.instructions)
       : "",

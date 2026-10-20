@@ -42,7 +42,7 @@ function Example({
   height?: "content" | "stable" | "stable-tall";
   chromeSpacing?: "default" | "padded";
   bodyLayout?: "flow" | "flex";
-  size?: "default" | "wide" | "expanded";
+  size?: "compact" | "default" | "wide" | "expanded";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -129,10 +129,26 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
 function ScrollToEdgeExample() {
   const [open, setOpen] = useState(false);
   return (
-    <>
-      <Button onClick={() => setOpen(true)}>
-        Open footerless scrolling list
-      </Button>
+    <section
+      className="component-specimen-group"
+      aria-label="Footerless scrolling list"
+    >
+      <SectionHeading
+        title="Footerless scrolling list"
+        description="A bounded list with no footer; content scrolls to the bottom inset."
+      />
+      <ExamplePreview
+        label="Footerless scrolling list"
+        code={
+          'const [open, setOpen] = useState(false);\n\n<Button onClick={() => setOpen(true)}>Open footerless scrolling list</Button>\n<Dialog\n  open={open}\n  onOpenChange={setOpen}\n  title="Scrolling list"\n  height="stable"\n  bodyLayout="flex"\n  footerGap="none"\n>\n  <div className="buzz-thin-scrollbar min-h-0 overflow-auto pb-6">\n    {Array.from(\n      { length: 24 },\n      (_, index) => "List item " + (index + 1),\n    ).map((label) => (\n      <p className="py-3 text-body" key={label}>\n        {label}\n      </p>\n    ))}\n  </div>\n</Dialog>'
+        }
+      >
+        <div className="flex w-full justify-center">
+          <Button onClick={() => setOpen(true)}>
+            Open footerless scrolling list
+          </Button>
+        </div>
+      </ExamplePreview>
       <Dialog
         open={open}
         onOpenChange={setOpen}
@@ -152,7 +168,7 @@ function ScrollToEdgeExample() {
           ))}
         </div>
       </Dialog>
-    </>
+    </section>
   );
 }
 
@@ -160,12 +176,24 @@ function NavigationExample() {
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState("General");
   return (
-    <section className="component-specimen-group">
+    <section
+      className="component-specimen-group"
+      aria-label="Integrated navigation"
+    >
       <SectionHeading
         title="Integrated navigation"
-        description="One expanded modal surface with a flush sidebar and independently scrolling content. The surface and contents fade in together with a slight entry scale, settling without a transform; narrow navigation stacks above the content."
+        description="One expanded modal surface with a flush sidebar and independently scrolling content. The surface and contents fade in together with a subtle upward fade, settling without a transform; narrow navigation stacks above the content."
       />
-      <Button onClick={() => setOpen(true)}>Open navigated modal</Button>
+      <ExamplePreview
+        label="Integrated navigation"
+        code={
+          'const [open, setOpen] = useState(false);\nconst [section, setSection] = useState("General");\n\n<Button onClick={() => setOpen(true)}>Open navigated modal</Button>\n<Dialog\n  open={open}\n  onOpenChange={setOpen}\n  title="Preferences"\n  navigation={{\n    label: "Preference sections",\n    content: (\n      <SidebarNavigation wrapSections>\n        <NavigationSection label="Preferences">\n          {["General", "Notifications"].map((label) => (\n            <NavigationItem\n              key={label}\n              label={label}\n              selected={section === label}\n              onClick={() => setSection(label)}\n            />\n          ))}\n        </NavigationSection>\n      </SidebarNavigation>\n    ),\n  }}\n>\n  <Header title={section} />\n  <p className="text-body text-secondary">\n    Existing controls keep their own save behavior. Closing returns to the\n    work underneath.\n  </p>\n</Dialog>'
+        }
+      >
+        <div className="flex w-full justify-center">
+          <Button onClick={() => setOpen(true)}>Open navigated modal</Button>
+        </div>
+      </ExamplePreview>
       <Dialog
         open={open}
         onOpenChange={setOpen}
@@ -236,18 +264,14 @@ export function DialogSpecimens() {
       </Example>
       <Example
         label="Simple message"
+        size="compact"
         description="A short message and a single action when no input is needed."
         title="A place for your team"
         informational
-        code={`<p className="text-body">
-  Keep project notes, conversations, and shared decisions together in
-  one workspace.
-</p>`}
+        intro="Keep project notes, conversations, and shared decisions together in one workspace."
+        code=""
       >
-        <p className="text-body">
-          Keep project notes, conversations, and shared decisions together in
-          one workspace.
-        </p>
+        {null}
       </Example>
       <Example
         label="Stable height"
@@ -324,6 +348,7 @@ export function DialogSpecimens() {
       </Example>
       <Example
         label="Single field"
+        size="compact"
         description="A focused edit with one field and a clear save action."
         title="Edit workspace"
         intro="Choose a name your team will recognize."
@@ -337,6 +362,7 @@ export function DialogSpecimens() {
       </Example>
       <Example
         label="Choose an option"
+        size="compact"
         description="A short list of mutually exclusive choices, with room to explain each one."
         title="Who can join?"
         intro="Choose how people join this workspace."

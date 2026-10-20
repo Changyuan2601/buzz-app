@@ -6,6 +6,7 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -169,6 +170,9 @@ export class ClaudeRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
 
   private get spawn(): Spawn {
@@ -389,23 +393,25 @@ export class ClaudeRuntime {
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
     // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) =>
-      this.review(
+    const prompt = async (fresh: boolean) => {
+      const text = turnPrompt({
+        ...(await this.turn(
+          entry,
+          agent.pubkey,
+          event,
+          channel,
+          key,
+          topLevel,
+          fresh,
+        )),
+        agent: agent.pubkey,
+        label: "@mention",
+      });
+      return this.review(
         entry,
-        turnPrompt({
-          ...(await this.turn(
-            entry,
-            agent.pubkey,
-            event,
-            channel,
-            key,
-            topLevel,
-            fresh,
-          )),
-          agent: agent.pubkey,
-          label: "@mention",
-        }),
+        trigger.resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
       );
+    };
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
@@ -737,6 +743,7 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            repositories: this.repositories(this.reads(pubkey)?.scope),
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,

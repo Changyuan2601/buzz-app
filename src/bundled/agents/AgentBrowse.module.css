@@ -1,29 +1,6 @@
 /* A shared agent's details: who it is, then its instructions. */
 .details {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
   min-width: 0;
-}
-.heading {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-5);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.portrait {
-  display: block;
-  flex-shrink: 0;
-  width: var(--space-16);
-  height: var(--space-16);
-}
-.byline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
 }
 .fact {
   display: inline-flex;
@@ -33,18 +10,32 @@
   min-width: 0;
 }
 .instructions {
-  max-height: 22rem;
-  overflow: auto;
+  position: relative;
   padding: var(--space-4);
   border-radius: var(--radius-container);
   background: var(--surface-inset);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.import {
+
+.instructions[data-collapsed] {
+  max-height: calc(var(--space-8) * 4);
+  overflow: hidden;
+}
+
+.instructions[data-collapsed]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: calc(var(--space-5) * 2);
+  background: linear-gradient(to bottom, transparent, var(--surface-inset));
+  pointer-events: none;
+}
+.instructionsAction {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  min-width: 0;
+  margin-top: var(--space-3);
+}
+.instructionsAction > * {
+  flex: 1;
 }

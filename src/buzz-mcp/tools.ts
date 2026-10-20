@@ -23,6 +23,7 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -207,6 +208,15 @@ export const TOOLS: readonly Tool[] = [
     ["url"],
   ),
   tool(
+    "repo",
+    "A channel's Git repository (default: current): its URL and a header that lets git clone, fetch and push it as you for 60 seconds. create starts one for the channel.",
+    {
+      channel: str,
+      create: { type: "string", description: "The new repository's name." },
+      repo: { type: "string", description: "owner/name, when it has several." },
+    },
+  ),
+  tool(
     "tabs",
     "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
     {
@@ -224,6 +234,13 @@ const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
+/** A repository name the community accepts. */
+const REPO = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$/;
+/** Pages of a channel's repository announcements read before giving up. */
+const REPO_PAGES = 5;
+/** Each agent's repository creation in progress, so its turns start one at a
+ * time: a second could otherwise pass the same checks and rebind the first. */
+const creating = new Map<string, Promise<unknown>>();
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -1001,6 +1018,57 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "saved";
   },
 
+  async repo(tools, args) {
+    const { client } = tools;
+    const { gitAuth } = client;
+    if (!gitAuth) throw new Error("Git access needs Buzz Desktop.");
+    const channel = target(tools, args);
+    const create = optional(args, "create");
+    if (create !== undefined) {
+      if (!REPO.test(create) || create.includes(".."))
+        throw new Error(
+          "create must be 1 to 64 letters, digits, '.', '_' or '-', not starting with '.'.",
+        );
+      const previous = creating.get(client.pubkey) ?? Promise.resolve();
+      const started = previous
+        .catch(() => {})
+        .then(async () => {
+          const created = await start(tools, channel, create);
+          try {
+            return await access(gitAuth, created);
+          } catch (error) {
+            throw new Error(
+              `Started ${create}, but its Git header failed: ${reason(error)} Call repo again without create.`,
+            );
+          }
+        });
+      creating.set(client.pubkey, started);
+      try {
+        return await started;
+      } finally {
+        if (creating.get(client.pubkey) === started)
+          creating.delete(client.pubkey);
+      }
+    }
+    const { found, complete } = await repos(tools, channel, false);
+    const name = optional(args, "repo");
+    const chosen = found.filter(
+      (event) => !name || `${event.pubkey}/${tag(event, "d")}` === name,
+    );
+    if (chosen.length === 1 && (complete || name))
+      return access(gitAuth, chosen[0] as BuzzEvent);
+    const listed = found.map((event) => `${event.pubkey}/${tag(event, "d")}`);
+    if (!complete)
+      throw new Error(
+        `This channel's repositories could not all be read; try again${listed.length ? `, or choose repo: ${listed.join(", ")}` : ""}.`,
+      );
+    if (!found.length)
+      throw new Error(
+        "This channel has no repository from its owners or admins.",
+      );
+    throw new Error(`Choose repo: ${listed.join(", ")}`);
+  },
+
   async media_get(tools, args) {
     const media = await tools.client.media(required(args, "url"));
     const saved = `Saved ${media.path} (${media.type}, ${media.size} bytes).`;
@@ -1659,6 +1727,116 @@ const unseen = (channel: string) =>
   new Error(
     `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
   );
+
+/** The repositories bound to `channel` by its owners and admins or their
+ * agents, and whether every announcement naming it was read. Git access
+ * follows a repository's first `buzz-channel` tag, which anyone may set, so
+ * only those that name it first and that it trusts. `strong` reads from the
+ * relay's writer, never a replica that may lag a just-accepted write. */
+async function repos(tools: Tools, channel: string, strong: boolean) {
+  const bound: BuzzEvent[] = [];
+  let cursor = {};
+  let complete = false;
+  for (let page = 0; page < REPO_PAGES && !complete; page++) {
+    const events = await tools.client.query([
+      {
+        kinds: [30617],
+        "#buzz-channel": [channel],
+        limit: 100,
+        ...(strong ? { consistency: "strong" } : {}),
+        ...cursor,
+      },
+    ]);
+    bound.push(
+      ...events.filter((event) => tag(event, "buzz-channel") === channel),
+    );
+    complete = events.length < 100;
+    // The relay's cursor: at or before `until`, after `before_id` at a tie.
+    const last = events.at(-1);
+    if (last) cursor = { until: last.created_at, before_id: last.id };
+  }
+  const trusted = await Promise.all(
+    bound.map(async (event) =>
+      leads(tools, channel, event.pubkey, await attestedOwner(event)),
+    ),
+  );
+  return { found: bound.filter((_, index) => trusted[index]), complete };
+}
+
+/** Announces repository `name` for `channel`, protected, once every check
+ * passes, and confirms the relay now binds it there. */
+async function start(tools: Tools, channel: string, name: string) {
+  const { client } = tools;
+  const { found, complete } = await repos(tools, channel, true);
+  if (found.length) throw new Error("This channel already has a repository.");
+  if (!complete)
+    throw new Error(
+      "This channel's repositories could not all be read, so none was started; try again.",
+    );
+  if (!(await tools.metadata(channel))) throw unseen(channel);
+  // Announcing it again would move it, history and all, to this channel.
+  const coordinate = {
+    kinds: [30617],
+    authors: [client.pubkey],
+    "#d": [name],
+    limit: 1,
+    consistency: "strong",
+  };
+  const [mine] = await client.query([coordinate]);
+  if (mine) throw new Error(`You already have a repository named ${name}.`);
+  if (!(await leads(tools, channel, client.pubkey, client.owner)))
+    throw new Error(
+      "Only a channel's owner or an admin, or their agent, can start its repository.",
+    );
+  // Members may push; no one may rewrite or delete a branch, nested or not.
+  const created = await client.publish({
+    kind: 30617,
+    content: "",
+    tags: [
+      ["d", name],
+      ["name", name],
+      ["buzz-channel", channel],
+      ["buzz-protect", "refs/heads/**", "no-force-push", "no-delete"],
+    ],
+  });
+  let current: BuzzEvent | undefined;
+  try {
+    [current] = await client.query([coordinate]);
+  } catch (error) {
+    throw new Error(`${name} was announced, but ${unread(error).message}`);
+  }
+  if (current?.id !== created.id || tag(current, "buzz-channel") !== channel)
+    throw new Error(`${name} was announced, but the relay binds it elsewhere.`);
+  return created;
+}
+
+/** The repository's URL and a Git command with its header. */
+async function access(
+  gitAuth: NonNullable<BuzzClient["gitAuth"]>,
+  event: BuzzEvent,
+) {
+  const { url, header } = await gitAuth(event.pubkey, tag(event, "d") ?? "");
+  return [
+    `${tag(event, "name") ?? tag(event, "d")}: ${url}`,
+    "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
+    `git -c http.${url}.extraHeader='${header}' clone ${url}`,
+  ].join("\n");
+}
+
+/** Whether `author`, or the `owner` it acts for, is an owner or admin of
+ * `channel`. */
+async function leads(
+  tools: Tools,
+  channel: string,
+  author: string,
+  owner: string | undefined,
+) {
+  return (await tools.members(channel)).some(
+    (member) =>
+      (member.role === "owner" || member.role === "admin") &&
+      (member.pubkey === author || member.pubkey === owner),
+  );
+}
 
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>
