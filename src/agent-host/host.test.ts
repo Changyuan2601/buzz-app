@@ -27,7 +27,7 @@ it("publishes the kinds the app's custody signs, and no others", () => {
   for (const kind of [9007, 9002, 20002])
     expect(() => checkKind(kind)).not.toThrow();
   expect(() => checkKind(0)).toThrow("Agents cannot publish kind 0");
-  expect(() => checkKind(30023)).toThrow("Agents cannot publish kind 30023");
+  expect(() => checkKind(1)).toThrow("Agents cannot publish kind 1");
 });
 
 it("resolves blank settings from the owner's saved defaults, as they are now", () => {

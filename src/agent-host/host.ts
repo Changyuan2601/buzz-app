@@ -59,7 +59,8 @@ import { stateStorage } from "./storage";
  * attestation: agent-controller app_agent.rs `KINDS`, which a test keeps this
  * list equal to. The relay decides which channel changes it may make. */
 export const KINDS: readonly number[] = Object.freeze([
-  5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+  5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100,
+  41010,
 ]);
 /** Throws for a kind the app's custody would not sign. */
 export function checkKind(kind: number) {
