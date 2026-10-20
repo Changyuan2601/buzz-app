@@ -599,7 +599,6 @@ confirmedPresence(
         "Channel templates",
         "Software updates",
         "Manage plugins",
-        "Builderlab agents",
         "Builderlab hosting",
         "Jev classifier",
       ]) {
@@ -609,7 +608,11 @@ confirmedPresence(
         ).toBeFocused();
       }
       await tab();
-      // Wide Settings includes the shared sidebar resize stop before its content.
+      // Settings navigation follows the app sidebar before the resize stop.
+      await expect(
+        page.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
+      await tab();
       const handle = page.getByRole("separator", {
         name: "Resize sidebar",
         exact: true,
@@ -619,6 +622,12 @@ confirmedPresence(
         await tab();
       }
       // The current profile form begins with its avatar editor before text fields.
+      await expect(
+        sections.getByRole("button", {
+          name: "Builderlab agents",
+          exact: true,
+        }),
+      ).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "Edit avatar", exact: true }),
       ).toBeFocused();

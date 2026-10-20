@@ -4,11 +4,11 @@ mod enterprise_adapter_url;
 mod enterprise_auth_build;
 #[path = "src/enterprise_relay_url.rs"]
 mod enterprise_relay_url;
-#[path = "src/nsec_backup_config.rs"]
-mod nsec_backup_config;
 #[path = "src/federated_identity/config.rs"]
 #[allow(dead_code)]
 mod federated_identity_config;
+#[path = "src/nsec_backup_config.rs"]
+mod nsec_backup_config;
 
 fn main() {
     configure_nsec_backup();
@@ -66,6 +66,15 @@ fn main() {
             "sign_out_wipe_refusal",
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
+            "huddle_window_reset_incoming",
+            "huddle_window_open",
+            "huddle_window_update",
+            "huddle_window_watch",
+            "huddle_window_action",
+            "huddle_open",
+            "huddle_close",
+            "huddle_touch",
+            "huddle_pcm",
             "federated_identity_snapshot",
             "federated_identity_sign_in",
             "federated_identity_cancel_sign_in",

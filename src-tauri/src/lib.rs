@@ -76,8 +76,8 @@ mod terminal;
 mod test_executable;
 use buzzodz_plugins::{
     imports::{
-        prepare_folder, prepare_git, prepare_git_authorized, prepare_upload, repository_url,
-        FolderUpload, PreparedImport, Preview,
+        prepare_folder, prepare_git_authorized, prepare_upload, repository_url, FolderUpload,
+        PreparedImport, Preview,
     },
     Catalog, InstallationResult, Manager,
 };

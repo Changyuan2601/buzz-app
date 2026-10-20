@@ -183,6 +183,7 @@ it.each(["1", "0"])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideUnconfiguredIdentity(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     provideAgents(root, community);
@@ -385,7 +386,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     });
     picker.unmount();
     const card = cards.snapshot()[0];
-    expect(card?.group).toBe("Plugins");
+    expect(card?.group).toBe("Integrations");
     if (!card) throw new Error("Missing Builderlab login card");
     const Card = card.component;
     const mounted = render(<Card active={() => true} />);

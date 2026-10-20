@@ -252,7 +252,7 @@ function bindingWithHeldSignature() {
 }
 
 it("verifies a signed binding with the session that requested it", async () => {
-  const { start, verified } = bindingWithHeldSignature();
+  const { start, verified, invoke } = bindingWithHeldSignature();
   const { binding, release } = await start();
   release();
   await expect(binding).resolves.toEqual({
@@ -260,7 +260,7 @@ it("verifies a signed binding with the session that requested it", async () => {
     value: { identity: {} },
   });
   expect(verified()).toHaveLength(1);
-  expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_retry", {
     source: "hosted",
   });
   expect(verified()[0]).toMatchObject({

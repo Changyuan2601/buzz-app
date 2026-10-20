@@ -429,6 +429,7 @@ pub(crate) async fn relay_agent_memories_read(
             })
         })
     };
+    let fi = fi.inner().clone();
     let mut listing = read_memories(
         budget,
         |cursor| {
@@ -439,10 +440,11 @@ pub(crate) async fn relay_agent_memories_read(
             }
             let url = url.clone();
             let host = host.inner();
+            let fi = fi.clone();
             async move {
                 let response = send(
                     host,
-                    Some(fi.inner()),
+                    Some(&fi),
                     url,
                     "POST",
                     Some(json!([page]).to_string()),

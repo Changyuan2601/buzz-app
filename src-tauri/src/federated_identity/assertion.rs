@@ -358,7 +358,7 @@ impl FederatedIdentity {
     }
     pub(crate) fn authorization_current(&self, authorization: &Authorization) -> bool {
         self.discovery_current(authorization)
-            && authorization.assertion.as_ref().map_or(true, |assertion| {
+            && authorization.assertion.as_ref().is_none_or(|assertion| {
                 self.current(&assertion.revision)
                     && now().is_ok_and(|time| (time as u64) < assertion.expires_at)
             })

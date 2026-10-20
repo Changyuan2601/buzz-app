@@ -365,6 +365,7 @@ jobs:
     name: Linux x64 installers
     env:
       BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     runs-on: ubuntu-latest
     # Shipped old-Buzz recipe, without its mesh/Kubernetes/updater dependencies.
     container: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
@@ -372,8 +373,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - name: Install build and packaging dependencies
         run: |

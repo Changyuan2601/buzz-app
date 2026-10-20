@@ -132,7 +132,9 @@ export function createNativeBackend(identity: FederatedIdentity) {
           verified.status < 300 &&
           !(verified.value as { error?: unknown }).error
         )
-          void invoke("nsec_backup_retry", { source: "hosted" }).catch(() => {});
+          void invoke("nsec_backup_retry", { source: "hosted" }).catch(
+            () => {},
+          );
         return verified;
       }
       const route = Object.hasOwn(ROUTES, action) ? ROUTES[action] : undefined;

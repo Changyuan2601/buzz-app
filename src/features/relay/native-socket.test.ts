@@ -47,6 +47,7 @@ it.each([
   "re-enters live reconnect after transient native admission: %s",
   async (error) => {
     vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(1);
     const first = deferred<"public">();
     const next = deferred<"public">();
     let attempts = 0;

@@ -207,7 +207,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 />
               ) : (
                 <PrimarySidebar
-                  federatedIdentity={services.federatedIdentity}
                   relay={services.relay}
                   navigator={services.navigation}
                   agents={services.agents}
