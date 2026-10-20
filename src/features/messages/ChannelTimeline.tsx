@@ -604,6 +604,14 @@ function Timeline({
         if (ended) frame = requestAnimationFrame(release);
       });
     });
+    // A scroll's event can arrive after the frame that applies row sizes, and
+    // the hold would then return the row to where it was before that scroll.
+    // Also read the row in each frame before the sizes land: this callback is
+    // requested a frame ahead, so it runs before Virtua's size callback.
+    let sample = requestAnimationFrame(function each() {
+      read();
+      sample = requestAnimationFrame(each);
+    });
     const hold = new MutationObserver(() => {
       const row = top();
       if (list.style.height === height) return;
@@ -616,6 +624,7 @@ function Timeline({
     });
     const release = () => {
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(sample);
       hold.disconnect();
       element.removeEventListener("scroll", read);
       element.removeEventListener("scrollend", end);

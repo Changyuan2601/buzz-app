@@ -321,6 +321,54 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  test("a held pointer keeps a scroll whose event follows the rows' sizes", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    try {
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      const before = await anchor(page);
+      // A drag's scroll event can arrive after the frame that applies
+      // measured row sizes. Hold the event back, change the list height in
+      // the next frame, then deliver the event.
+      await history(page).evaluate(
+        (e) =>
+          new Promise((resolve) => {
+            const document = e.ownerDocument;
+            const hold = (event) => {
+              if (event.target !== e || !event.isTrusted) return;
+              event.stopImmediatePropagation();
+              document.removeEventListener("scroll", hold, true);
+              requestAnimationFrame(() => {
+                const list = e.querySelector("ol");
+                list.style.height = `${parseFloat(list.style.height) + 1}px`;
+                // In a later task, after the size change's observers run.
+                setTimeout(() => {
+                  e.dispatchEvent(new Event("scroll"));
+                  resolve();
+                });
+              });
+            };
+            document.addEventListener("scroll", hold, true);
+            e.scrollTop -= 150;
+          }),
+      );
+      await settle(page);
+      await expectAnchor(page, { ...before, y: before.y + 150 });
+    } finally {
+      await page.mouse.up();
+    }
+  });
+
   // Release the held page, read `distance` px further up, then grow the row
   // in view: it grows downward from the reader.
   async function grows(page, pending, distance) {
