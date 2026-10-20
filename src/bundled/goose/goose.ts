@@ -212,6 +212,9 @@ export class GooseProcess {
       choice?: () => Choice;
       /** goose built-ins beside the Buzz tools; developer when left out. */
       platform?: readonly PlatformExtension[];
+      /** Replaces goose's own base prompt with `systemPrompt` instead of
+       * appending it, for small models that a long prompt throws off. */
+      replacePrompt?: boolean;
     }>,
   ): Promise<GooseSession> {
     const provider = launch.choice?.().provider ?? "";
@@ -282,11 +285,23 @@ export class GooseProcess {
     }
     try {
       // Appended under goose's own prompt, which carries each extension's
-      // instructions; `set` would replace it, and render ours as a template.
+      // instructions. `set` replaces that prompt and renders the text as a
+      // template, so ours goes in raw.
       if (launch.systemPrompt)
         await this.request(
           "_goose/unstable/session/system-prompt/set",
-          { sessionId, mode: "append", key: "buzz", text: launch.systemPrompt },
+          launch.replacePrompt
+            ? {
+                sessionId,
+                mode: "set",
+                text: `{% raw %}${launch.systemPrompt.replaceAll("{% endraw %}", "")}{% endraw %}`,
+              }
+            : {
+                sessionId,
+                mode: "append",
+                key: "buzz",
+                text: launch.systemPrompt,
+              },
           REQUEST_TIMEOUT_MS,
         );
     } catch (error) {

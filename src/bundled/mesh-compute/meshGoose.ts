@@ -160,6 +160,9 @@ export class MeshGoose {
         systemPrompt: system,
         tools,
         platform: MESH_EXTENSIONS,
+        // goose's own prompt is ~6.7 KB; with it Gemma writes tool calls as
+        // fenced text the mesh does not parse.
+        replacePrompt: true,
         choice: () => ({ provider: "openai", model: inference.model }),
       });
       const stop = () => session.interrupt();

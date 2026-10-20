@@ -119,6 +119,17 @@ describe("GooseProcess", () => {
     expect(process.prompts.get(session.id)).toBe("Be Buzz");
   });
 
+  it("replaces goose's base prompt with ours, raw, when asked", async () => {
+    const { open, process } = await start();
+    const session = await open({
+      systemPrompt: "Be {{brief}}",
+      replacePrompt: true,
+    });
+    expect(process.prompts.get(session.id)).toBe(
+      "{% raw %}Be {{brief}}{% endraw %}",
+    );
+  });
+
   it("gives each session its own server, closed with it", async () => {
     const { goose, open, fake } = await start();
     const first = await open();
