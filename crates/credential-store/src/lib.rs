@@ -3,9 +3,7 @@
 //! Create-only writes are serialized across cooperating app processes, not profiles.
 //! Locks contain no secrets; missing/locked/broken secure storage never falls back.
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::fs::{self, File, OpenOptions};
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::path::Path;
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use zeroize::Zeroize;
@@ -77,7 +75,6 @@ fn entry(service: &str, account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(service, account).map_err(error)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn lock_root() -> Result<std::path::PathBuf> {
     // Resolve the OS account, not HOME/XDG overrides, profile, worktree or temp
     // paths: all processes writing the same per-user entry must share its lock.
@@ -166,10 +163,8 @@ fn delete_entry(entry: &impl Backend, root: &Path, service: &str, account: &str)
     entry.delete()
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 struct Lock(File);
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 impl Drop for Lock {
     fn drop(&mut self) {
         // fork/dup can retain the open-file description after our descriptor
@@ -178,7 +173,6 @@ impl Drop for Lock {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     if !root.is_absolute() {
         return Err(Error::Unavailable);
@@ -245,10 +239,7 @@ mod tests;
 
 /// Session records have a distinct mutable owner. Human-key `add` remains create-only.
 /// Erase an indexed session without reading its contents or knowing its schema.
-#[cfg(all(
-    not(test),
-    any(target_os = "macos", target_os = "windows", target_os = "linux")
-))]
+#[cfg(not(test))]
 pub fn delete_session(service: &str, account: &str) -> Result<()> {
     if !service.starts_with("dev.local.buzz.foundation.federated-session") {
         return Err(Error::Denied);
@@ -259,14 +250,13 @@ pub fn delete_session(service: &str, account: &str) -> Result<()> {
         .map_err(mac_error);
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     return entry(service, account)?.delete();
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    Err(Error::Unavailable)
 }
 
 /// Session records have a distinct mutable owner. Human-key `add` remains create-only.
 /// Compare the entire previously read record under the same interprocess lock.
-#[cfg(all(
-    not(test),
-    any(target_os = "macos", target_os = "windows", target_os = "linux")
-))]
+#[cfg(not(test))]
 pub fn compare_session(
     service: &str,
     account: &str,
@@ -350,19 +340,5 @@ pub fn read_session(_: &str, _: &str) -> Result<Zeroizing<Vec<u8>>> {
     not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
 ))]
 fn session_write(_: &str, _: &str, _: Option<&[u8]>) -> Result<()> {
-    Err(Error::Unavailable)
-}
-#[cfg(all(
-    not(test),
-    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
-))]
-pub fn delete_session(_: &str, _: &str) -> Result<()> {
-    Err(Error::Unavailable)
-}
-#[cfg(all(
-    not(test),
-    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
-))]
-pub fn compare_session(_: &str, _: &str, _: Option<&[u8]>, _: Option<&[u8]>) -> Result<()> {
     Err(Error::Unavailable)
 }
