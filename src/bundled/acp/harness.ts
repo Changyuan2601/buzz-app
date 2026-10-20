@@ -35,6 +35,9 @@ export function hooks(presetId: string, { command }: Launch): AcpHooks {
     label: preset(presetId)?.title ?? command,
     program: "harness",
     missing: missing(presetId, command),
+    missingHint:
+      preset(presetId)?.install ??
+      "Check the harness is installed and on your PATH.",
     env: {},
     diagnoseStartup: true,
   };
