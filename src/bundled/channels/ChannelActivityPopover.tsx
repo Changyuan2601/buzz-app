@@ -251,7 +251,7 @@ export function ChannelActivityPopover({
       open={open}
       actionsRef={actions}
       onOpenChange={(next, details) => {
-        if (next && !hasActivity) return;
+        if (next && !hasActivity) return details.cancel();
         if (details.reason === "trigger-press") {
           const mousePress =
             triggerPointerType.current === "mouse" &&

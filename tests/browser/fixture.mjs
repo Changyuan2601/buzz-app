@@ -49,6 +49,7 @@ export const test = base.extend({
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
   soloChannels: [[], { option: true }],
+  sessionMembers: [{}, { option: true }],
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -112,6 +113,7 @@ export const test = base.extend({
       openSearch,
       searchAuthor,
       soloChannels,
+      sessionMembers,
       channelWriteKinds,
       sidebarUnread,
       savedSidebar,
@@ -1059,6 +1061,12 @@ export const test = base.extend({
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
                 : []),
+              ...(sessionMembers[id] ?? []).map((pubkey) => [
+                "p",
+                pubkey,
+                "",
+                "member",
+              ]),
               ...(dmMembers[id]
                 ? dmMembers[id].map((index) => [
                     "p",

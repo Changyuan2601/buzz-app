@@ -52,10 +52,12 @@ mod microphone;
 
 mod notifications;
 mod os_idle;
+mod repositories_folder;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
 use os_idle::get_os_idle_seconds;
+use repositories_folder::repositories_folder_validate;
 mod relay;
 mod relay_admin;
 mod sign_out;
@@ -511,6 +513,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_stream_base,
         get_os_idle_seconds,
         workspace_pick_folder,
+        repositories_folder_validate,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,

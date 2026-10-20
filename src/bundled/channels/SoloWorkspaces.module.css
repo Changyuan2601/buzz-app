@@ -48,7 +48,6 @@
   min-width: 0;
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {
-  padding-inline-start: var(--session-row-inset);
   /* Status paints in the row-owned action slot outside the select button.
      Only the label clips text; clipping the button would hide that status. */
   overflow: visible;

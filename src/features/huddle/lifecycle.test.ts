@@ -348,9 +348,10 @@ it("fetches creation evidence in bounded batches after startup membership commit
   }
 });
 
-it.each(["missing", "failed"])(
-  "keeps ordinary access when creation evidence is %s",
+it.each(["missing", "failed", "legacy"])(
+  "preserves access and resolves parent proof after %s discovery",
   async (result) => {
+    const name = result === "legacy" ? `huddle-${room.slice(0, 8)}` : "Huddle";
     const wire = scriptedTransport(author.pubkey, relay.pubkey);
     let live!: LiveCallbacks;
     const owner = createRelaySession({
@@ -366,7 +367,8 @@ it.each(["missing", "failed"])(
         .next()
         .respond([
           roster(relay, room, [author.pubkey]),
-          metadata(relay, room, "Huddle", 30, [
+          metadata(relay, room, name, 30, [
+            ["ttl", "3600"],
             ["t", "stream"],
             ["P", author.pubkey],
             ["private"],
@@ -387,9 +389,14 @@ it.each(["missing", "failed"])(
       await flush();
       expect(owner.session.channels.get?.(room)).toMatchObject({
         id: room,
-        name: "Huddle",
+        name,
       });
-      expect(owner.session.channels.get?.(room)?.huddle).toBeUndefined();
+      expect(owner.session.channels.get?.(room)?.huddle).toBe(
+        result === "legacy" ? true : undefined,
+      );
+      expect(
+        owner.session.channels.get?.(room)?.parentChannelId,
+      ).toBeUndefined();
       // Writer resolution must revisit the same metadata version and await proof.
       const strong = async (fail: boolean) => {
         let settled = false;
@@ -440,7 +447,8 @@ it.each(["missing", "failed"])(
           .splice(metadataIndex, 1)[0]
           ?.respond([
             roster(relay, room, [author.pubkey]),
-            metadata(relay, room, "Huddle", 30, [
+            metadata(relay, room, name, 30, [
+              ["ttl", "3600"],
               ["t", "stream"],
               ["P", author.pubkey],
               ["private"],

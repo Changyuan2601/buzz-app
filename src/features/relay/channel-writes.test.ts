@@ -997,6 +997,7 @@ function setup(
     },
   };
   const outbox: Outbox = {
+    observeDismiss: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
     recover: async () => {},
@@ -1605,6 +1606,7 @@ it.each([true, false])(
         { event: creation, delivery: "unknown" },
       ];
       const outbox: Outbox = {
+        observeDismiss: () => () => {},
         observeSend: () => () => {},
         ready: async () => {},
         recover: async () => {},

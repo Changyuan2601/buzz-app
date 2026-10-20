@@ -1,3 +1,4 @@
+import { repositoriesContext } from "../../features/communities/repositories";
 // goose agents: an agent type whose agents are goose on this computer, all in
 // one `goose-acp` process. Each conversation an agent is in is one ACP session
 // in it; goose answers with the in-process Buzz tools, served to it over
@@ -26,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     () => agents.tools(),
+    repositoriesContext,
   );
   const desktop =
     host.spawn && host.resolveDirectory

@@ -756,6 +756,15 @@ whose light gray fill holds up over the list where glass would disappear.
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.
 
+Secondary actions on rows inside a compact inset container, currently queued
+follow-ups, use Button `subtle-muted` with `size="caption"`: a 32px control
+with caption text in `--text-subtle` that strengthens on hover, press and
+focus. Their removal glyph uses IconButton `destructive-quiet`, resting in
+`--text-quiet-control` (non-text contrast) and turning danger on hover and
+press. `shape="inset"` takes the container's `--control-inset-radius`
+(container radius minus inset) so nested corners stay concentric. Reuse these
+only for the same row-action role.
+
 Button labels stay on one line and do not shrink in flex layouts (`whitespace-nowrap
 shrink-0`). Parents must reflow whole controls or provide
 scrolling when space is limited. Composite reply summaries may reflow whole

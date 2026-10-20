@@ -22,7 +22,18 @@ import type {
   NewAgent,
   RegisteredAgentType,
 } from "../../features/agents/service";
+import {
+  emojiAvatar,
+  uploadAvatar,
+} from "../../features/profiles/avatar-upload";
 import { AgentCreateDialog } from "./AgentCreateDialog";
+
+vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
+  ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
+  uploadAvatar: vi.fn(),
+  emojiAvatar: vi.fn(),
+  paintEmojiAvatar: vi.fn(),
+}));
 
 const motion = vi.hoisted(() => ({ reduced: false }));
 vi.mock("motion/react", async (actual) => ({
@@ -118,6 +129,7 @@ const made = {
 function setup(
   types: readonly RegisteredAgentType[],
   create: (input: NewAgent) => Promise<Agent> = async () => made,
+  community?: string,
 ) {
   const agents = { create: vi.fn(create) } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
@@ -128,6 +140,7 @@ function setup(
     <AgentCreateDialog
       agents={agents}
       types={types}
+      community={community}
       onCreated={onCreated}
       onClose={onClose}
     />,
@@ -168,6 +181,68 @@ it("creates with the name, a pack picture and the config from the type's view", 
   });
   expect(avatar.url).toMatch(/^https:\/\//);
   expect(onCreated).toHaveBeenCalledExactlyOnceWith(made);
+});
+
+it("creates with a custom emoji on a chosen background", async () => {
+  const file = new File(["emoji"], "avatar.png", { type: "image/png" });
+  vi.mocked(emojiAvatar).mockResolvedValueOnce(file);
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/emoji.png",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose avatar" }),
+  );
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Use custom" }),
+  );
+  expect(within(dialog).getByRole("tab", { name: "Image" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Edit avatar" }),
+  ).toBeVisible();
+  await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
+  await user.click(within(dialog).getByRole("tab", { name: "Background" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Use #476CFF background" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith("😀", "#476CFF");
+  await waitFor(() =>
+    expect(uploadAvatar).toHaveBeenCalledWith(
+      file,
+      "https://a.example",
+      expect.any(AbortSignal),
+    ),
+  );
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Create agent" }),
+  );
+  expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ picture: "https://images.example/emoji.png" }),
+  );
+});
+
+it("keeps an emoji's Done disabled without a community to upload it to", async () => {
+  const { dialog, user } = setup([echo]);
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose avatar" }),
+  );
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Use custom" }),
+  );
+  await user.click(within(dialog).getByRole("tab", { name: "Background" }));
+  expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+  expect(
+    within(dialog).getByText(/Select a community in the sidebar/),
+  ).toBeVisible();
 });
 
 it("opens on the name field", async () => {

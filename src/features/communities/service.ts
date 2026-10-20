@@ -8,10 +8,25 @@ import { provideRelay, type RelayData } from "../relay/service";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
+import { fetchCommunityPresentation } from "./community-icon";
+import {
+  localCommunityNameKey,
+  readLocalCommunityName,
+  saveLocalCommunityName,
+} from "./names";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
-export type Membership = { id: string; name: string; icon?: string };
+export type Membership = {
+  id: string;
+  /** Last-known default from joining; never inferred to be a personal override. */
+  name: string;
+  icon?: string;
+  localName?: string | undefined;
+  /** Optional current public metadata; not ownership or membership evidence. */
+  publishedName?: string | undefined;
+  publishedIcon?: string | undefined;
+};
 type Saved = {
   profile: PersonalProfile;
   memberships: Membership[];
@@ -66,6 +81,10 @@ export function createCommunities(
   let disposed = false;
   const controller = new AbortController();
   const presenceActivity = createPresenceActivity();
+  let presentationReaders = 0;
+  let presentationRead: AbortController | undefined;
+  const presentations = new Set<string>();
+  const membershipVersions = new Map<string, number>();
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, RelayData>();
@@ -105,7 +124,13 @@ export function createCommunities(
           `buzz-client.v1:${next.viewer}`,
           JSON.stringify({
             profile: next.profile,
-            memberships: [...next.memberships, ...unresolvedMemberships],
+            memberships: [...next.memberships, ...unresolvedMemberships].map(
+              ({ id, name, icon }) => ({
+                id,
+                name,
+                ...(icon ? { icon } : {}),
+              }),
+            ),
             selected: next.selected ?? selection,
           }),
         );
@@ -262,8 +287,13 @@ export function createCommunities(
           saved.selected = null;
         presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected, viewer);
+        saved.memberships = saved.memberships.map((membership) => ({
+          ...membership,
+          localName: readLocalCommunityName(membership.id, viewer),
+        }));
         // A seeded record is saved once so later configuration changes cannot revoke it.
         update({ ...saved, viewer, status: "ready" }, seeded);
+        refreshPresentation();
       })
       .catch((error) => {
         if (!disposed)
@@ -272,11 +302,101 @@ export function createCommunities(
   ctx.effect(() => () => {
     disposed = true;
     controller.abort();
+    presentationRead?.abort();
     presenceActivity.dispose();
     listeners.clear();
     relayListeners.clear();
     return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
+  // The picker and Settings share the old bounded icon read, now including names.
+  // Retain while a current consumer is mounted; no new startup scan or polling.
+  function refreshPresentation() {
+    presentationRead?.abort();
+    if (
+      !presentationReaders ||
+      state.status !== "ready" ||
+      !state.relayAvailable
+    )
+      return;
+    const controller = new AbortController();
+    presentationRead = controller;
+    const viewer = state.viewer;
+    const memberships = state.memberships.filter(
+      (membership) => !presentations.has(membership.id),
+    );
+    let next = 0;
+    void Promise.all(
+      Array.from({ length: Math.min(2, memberships.length) }, async () => {
+        while (next < memberships.length && !controller.signal.aborted) {
+          const membership = memberships[next++];
+          if (!membership) break;
+          const version = membershipVersions.get(membership.id);
+          try {
+            const info = await fetchCommunityPresentation(
+              membership.id,
+              controller.signal,
+            );
+            const current = state.memberships.find(
+              (entry) => entry.id === membership.id,
+            );
+            if (
+              disposed ||
+              controller.signal.aborted ||
+              state.viewer !== viewer ||
+              !current ||
+              membershipVersions.get(membership.id) !== version
+            )
+              continue;
+            const changed = { ...current, ...info };
+            presentations.add(membership.id);
+            update(
+              {
+                memberships: state.memberships.map((entry) =>
+                  entry === current ? changed : entry,
+                ),
+              },
+              false,
+            );
+          } catch {
+            // Optional discovery never erases the saved label or a personal choice.
+          }
+        }
+      }),
+    );
+  }
+  const syncLocalNames = (event: StorageEvent) => {
+    const viewer = state.viewer;
+    if (!viewer) return;
+    try {
+      if (event.storageArea !== localStorage) return;
+      let changed = false;
+      const memberships = state.memberships.map((membership) => {
+        if (
+          event.key !== null &&
+          event.key !== localCommunityNameKey(membership.id, viewer)
+        )
+          return membership;
+        const localName = readLocalCommunityName(
+          membership.id,
+          viewer,
+          membership.localName,
+        );
+        if (localName === membership.localName) return membership;
+        changed = true;
+        const next = { ...membership, localName };
+        return next;
+      });
+      if (changed) update({ memberships }, false);
+    } catch {
+      // Closing/unavailable storage is not a reset command.
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", syncLocalNames);
+    ctx.effect(
+      () => () => window.removeEventListener("storage", syncLocalNames),
+    );
+  }
   return {
     presence: presenceActivity,
     relay,
@@ -286,6 +406,35 @@ export function createCommunities(
       return () => {
         listeners.delete(fn);
       };
+    },
+    retainPresentation() {
+      if (++presentationReaders === 1) refreshPresentation();
+      return () => {
+        if (--presentationReaders === 0) presentationRead?.abort();
+      };
+    },
+    setLocalName(id: string, viewer: string, value: string) {
+      id = communityDestination(id).id;
+      const membership = state.memberships.find((entry) => entry.id === id);
+      if (
+        disposed ||
+        state.status !== "ready" ||
+        state.viewer !== viewer ||
+        !membership
+      )
+        throw new Error(
+          "This account or community changed. Open Local settings again.",
+        );
+      const localName = saveLocalCommunityName(id, viewer, value);
+      const next = { ...membership, localName };
+      update(
+        {
+          memberships: state.memberships.map((entry) =>
+            entry === membership ? next : entry,
+          ),
+        },
+        false,
+      );
     },
     select(id: string | null) {
       if (id) id = communityDestination(id).id;
@@ -309,7 +458,15 @@ export function createCommunities(
       membership = {
         ...membership,
         id: communityDestination(membership.id).id,
+        ...(state.viewer
+          ? { localName: readLocalCommunityName(membership.id, state.viewer) }
+          : {}),
       };
+      presentations.delete(membership.id);
+      membershipVersions.set(
+        membership.id,
+        (membershipVersions.get(membership.id) ?? 0) + 1,
+      );
       update(
         {
           memberships: [
@@ -325,6 +482,7 @@ export function createCommunities(
       if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
       else acquire(membership.id);
       emitRelay();
+      refreshPresentation();
     },
     /** Forgets a saved community on this device once its relay has released
      * the membership (or never held one). Drops the membership, falls back to
@@ -357,6 +515,10 @@ export function createCommunities(
         true,
         !!nativeConnect && !live,
       );
+      // Fence metadata responses for the old membership, including remove/rejoin.
+      presentations.delete(id);
+      membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
+      refreshPresentation();
       const failures: PurgeFailure[] = [];
       const scope = sessionScopes.get(id);
       sessions.delete(id);

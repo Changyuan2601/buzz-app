@@ -76,7 +76,7 @@ it("loads and publishes the selected community profile before updating the local
       inspect.mockResolvedValue({ exists: true, existing, profile });
     });
   const user = userEvent.setup();
-  render(
+  const view = render(
     <ProfileSettings
       communities={service}
       community={{ id: "community-id", name: "Acme" }}
@@ -92,6 +92,18 @@ it("loads and publishes the selected community profile before updating the local
   );
   await user.clear(name);
   await user.type(name, "Updated community name");
+  view.rerender(
+    <ProfileSettings
+      communities={service}
+      community={{
+        id: "community-id",
+        name: "Acme",
+        publishedName: "New published label",
+      }}
+    />,
+  );
+  expect(name).toHaveValue("Updated community name");
+  expect(inspect).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() =>

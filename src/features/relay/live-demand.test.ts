@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { followUpQueue } from "../messages/follow-up-queue";
 import type { LiveCallbacks } from "./live";
 import { ReadError } from "./errors";
 import {
@@ -1540,3 +1541,37 @@ it("disposing from the pending-roster notification blocks subsequent list notifi
   expect(listChanged).not.toHaveBeenCalled();
   expect(h.wire.pending).toHaveLength(0);
 });
+
+it.each(["denied", "membership"])(
+  "retires queued follow-ups after remote %s access loss",
+  async (loss) => {
+    const h = setup();
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const publish = vi.fn(() => "queued-message");
+    try {
+      await readyRoster(h);
+      h.live.receive([roster(h.relay, "a", [h.viewer.pubkey])]);
+      const queue = followUpQueue(h.owner.session);
+      queue.submit({
+        channelId: "a",
+        text: "pending",
+        recipients: [],
+        publish,
+        beforeRelease: () => gate,
+      });
+      expect(queue.snapshot()).toHaveLength(1);
+      if (loss === "denied") h.live.denied("a", "restricted: not a member");
+      else h.live.receive([roster(h.relay, "a", [], 1700000001)]);
+      expect(queue.snapshot()).toEqual([]);
+      resume();
+      await gate;
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      resume();
+      h.owner.dispose();
+    }
+  },
+);

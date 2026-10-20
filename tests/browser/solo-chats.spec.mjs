@@ -61,7 +61,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   });
   await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
-  expect(actions).toContain("Share…");
+  expect(actions).toContain("Share");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("heading", { name: "New chat", exact: true }),
@@ -76,7 +76,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await row.focus();
   await row.press("Shift+F10");
   await expect(menu).toBeVisible();
-  await menu.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Share chat",
     exact: true,
@@ -399,7 +399,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
   const search = dialog.getByRole("combobox", { name: "People or channel" });
   // Text entry starts after the menu-to-dialog transition and focus handoff.
@@ -408,6 +408,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
       element.getAnimations().map((animation) => animation.finished),
     );
   });
+  await search.click();
   await expect(search).toBeFocused();
   await search.fill("Aria");
   await expect(search).toHaveValue("Aria");

@@ -1,3 +1,4 @@
+import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
@@ -34,6 +35,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.storage,
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
+    repositoriesContext,
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the

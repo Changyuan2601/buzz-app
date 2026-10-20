@@ -290,11 +290,6 @@ html[data-keyboard-navigation] .panelViewport {
   }
 }
 
-.inlineEditor[data-empty-image] {
-  grid-template-columns: minmax(0, 1fr);
-  max-width: 30rem;
-  margin-inline: auto;
-}
 .imagePanel[data-surface="panel"] {
   --surface-panel: var(--interaction-row-hover);
 }

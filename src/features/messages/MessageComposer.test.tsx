@@ -267,6 +267,7 @@ function mount(
     },
     media: (url: string) => url,
     outbox: {
+      observeDismiss: () => () => {},
       supports: () => true,
       snapshot: () => pending,
       subscribe(listener: () => void) {
@@ -7704,6 +7705,124 @@ it.each(["thread", "solo"])(
   },
 );
 
+it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
+  "revalidates a queued Solo follow-up when the chat is %s at completion",
+  async (mode) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount();
+    h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+    const listeners = new Set<() => void>();
+    let state = "working";
+    let members = [first.pubkey];
+    let activity = snapshot();
+    const channel = {
+      id: "channel",
+      channelType: "solo",
+      creator: "viewer",
+      archived: false,
+      readOnly: false,
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        viewer: "viewer",
+        channels: {
+          ...h.session.channels,
+          list: () => ({ status: "ready", channels: [channel] }),
+        },
+        channelWrites: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members,
+          }),
+          addAgents: vi.fn(),
+        },
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        },
+      } as unknown as RelaySession,
+    });
+    function snapshot() {
+      return {
+        status: "unavailable",
+        records: [],
+        turns: [],
+        typing: [],
+        local: [
+          {
+            agent: first.pubkey,
+            channelId: "channel",
+            messageId: "previous",
+            state,
+            scope: "scope",
+            threadRootId: "",
+            startedAt: 1,
+          },
+        ],
+      };
+    }
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("Follow up");
+    });
+    h.submit();
+    await screen.findByRole("region", { name: "Queued follow-ups" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeVisible();
+    h.fill("Keep typing");
+    if (mode === "removed") members = [];
+    else if (mode === "converted") {
+      channel.channelType = "group";
+      h.retarget({ ownSoloConversation: false });
+    } else if (mode !== "available") channel[mode] = true;
+    act(() => {
+      state = "done";
+      activity = snapshot();
+      for (const listener of listeners) listener();
+    });
+    if (mode !== "available") {
+      await screen.findByText(
+        mode === "removed"
+          ? "A queued recipient is no longer a member of this chat."
+          : mode === "converted"
+            ? "This Solo chat or its recipients are no longer available."
+            : "This chat is no longer available for sending.",
+      );
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("region", { name: "Queued follow-ups" }),
+      ).toContainElement(screen.getByText("@Honey Follow up"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove queued message" }),
+      );
+      expect(
+        screen.queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull();
+      expect(h.messages.send).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledWith(
+        "channel",
+        "@Honey Follow up",
+        [first.pubkey],
+        [],
+      ),
+    );
+    expect(h.input()).toHaveValue("Keep typing");
+    expect(
+      screen.queryByRole("region", { name: "Queued follow-ups" }),
+    ).toBeNull();
+  },
+);
+
 it("withholds recording tools while a message edit cannot take attachments", async () => {
   const empty: readonly never[] = [];
   const tools: readonly Contribution<ComposerTool>[] = [
@@ -7746,4 +7865,71 @@ it("withholds recording tools while a message edit cannot take attachments", asy
     within(view.container).getByRole("button", { name: "Cancel edit" }),
   );
   expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
+});
+
+it("recovers an uploaded follow-up instead of queuing it after its chat disappeared", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => gate.promise);
+  let present = true;
+  const activity = { status: "unavailable", local: [], turns: [], typing: [] };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      attachments: { upload },
+      channels: {
+        ...h.session.channels,
+        list: () => ({
+          status: "ready",
+          channels: present
+            ? [{ id: "channel", channelType: "solo", creator: "viewer" }]
+            : [],
+        }),
+      },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        subscribe: () => () => {},
+        snapshot: () => activity,
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("Follow up with attachment");
+  });
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: {
+      files: [new NodeFile(["notes"], "notes.txt", { type: "text/plain" })],
+    },
+  });
+  h.submit();
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  // Removal has already happened when background publication reaches the queue.
+  present = false;
+  await act(async () => gate.resolve(uploadDescriptor()));
+  await waitFor(() =>
+    expect(h.input()).toHaveValue("@Honey Follow up with attachment"),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("region", { name: "Queued follow-ups" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue("@Honey Follow up with attachment");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Remove notes.txt" }),
+    ).toBeVisible(),
+  );
 });

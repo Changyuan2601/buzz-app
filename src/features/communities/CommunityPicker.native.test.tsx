@@ -80,6 +80,7 @@ it("offers native owners invites while keeping unsupported read sync disabled", 
     },
   } as unknown as RelaySnapshot;
   const communities = {
+    retainPresentation: () => () => {},
     snapshot: () => snapshot,
     subscribe: () => () => {},
     select: vi.fn(),
@@ -107,7 +108,9 @@ it("offers native owners invites while keeping unsupported read sync disabled", 
     },
   );
   const menu = await screen.findByRole("menu", { name: "Actions for Primary" });
-  await within(menu).findByRole("menuitem", { name: "Community settings" });
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Community settings" }),
+  ).toBeNull();
   const invite = await within(menu).findByRole("menuitem", {
     name: "Invite to community",
   });

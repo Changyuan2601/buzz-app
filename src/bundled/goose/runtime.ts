@@ -142,6 +142,9 @@ export class GooseRuntime {
     private readonly storage: Storage = globalThis.localStorage,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
 
   /** The desktop host's methods goose agents run with. */
@@ -588,6 +591,9 @@ export class GooseRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            repositories: this.repositories(
+              this.relay(pubkey)?.snapshot().scope,
+            ),
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,

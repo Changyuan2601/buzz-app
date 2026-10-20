@@ -274,9 +274,17 @@ export class DiscoveryState {
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
+    // Legacy generated rooms lack creation proof. This is presentation only;
+    // their parent still needs independent signed lifecycle evidence.
+    const legacyHuddle =
+      event &&
+      channelType === "stream" &&
+      channelVisibility(event) === "private" &&
+      ttlSeconds !== undefined &&
+      metadataName(event) === `huddle-${id.slice(0, 8)}`;
     return {
       id,
-      ...(huddle ? { huddle: true as const } : {}),
+      ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
       ...(huddle ? { parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id)
         ? { readOnly: true as const }

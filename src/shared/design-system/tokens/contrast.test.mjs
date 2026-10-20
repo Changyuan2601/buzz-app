@@ -118,33 +118,27 @@ describe("semantic contrast contract", () => {
   it.each([
     [
       "wrong dark ink",
-      "--accent-contrast-dark: #ffffff;",
-      "--accent-contrast-dark: #000000;",
+      "--magenta-contrast-dark: #ffffff;",
+      "--magenta-contrast-dark: #000000;",
       "magenta/neutral/dark",
     ],
     [
       "unresolved ink",
-      "--accent-contrast-light: #ffffff;",
-      "--accent-contrast-light: var(--missing-ink);",
+      "--magenta-contrast-light: #ffffff;",
+      "--magenta-contrast-light: var(--missing-ink);",
       "magenta/neutral/light: unresolved accent pair",
     ],
     [
       "faint insertion line",
-      "--accent-11-light: #6c3149;",
-      "--accent-11-light: #feedf3;",
+      "--magenta-11-light: #6c3149;",
+      "--magenta-11-light: #feedf3;",
       "magenta/neutral/light: --border-accent",
     ],
   ])(
     "rejects a non-default accent family's %s",
     (_name, from, to, evidence) => {
-      const start = tokens.indexOf('[data-accent="magenta"] {');
-      expect(start).toBeGreaterThan(0);
-      const end = tokens.indexOf("}", start);
-      const family = tokens.slice(start, end);
-      expect(family).toContain(from);
-      const result = check(
-        tokens.slice(0, start) + family.replace(from, to) + tokens.slice(end),
-      );
+      expect(tokens).toContain(from);
+      const result = check(tokens.replace(from, to));
       expect(result.status, result.output).toBe(1);
       expect(result.output).toContain(evidence);
     },
@@ -236,8 +230,8 @@ describe("semantic contrast contract", () => {
     ],
     [
       "accent hover",
-      "--accent-10-light: #2176d9;",
-      "--accent-10-light: #9a5cd0;",
+      "--cobalt-10-light: #2176d9;",
+      "--cobalt-10-light: #9a5cd0;",
       "--text-on-accent",
     ],
   ])(

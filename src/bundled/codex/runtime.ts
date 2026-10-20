@@ -191,6 +191,9 @@ export class CodexRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -742,7 +745,13 @@ export class CodexRuntime {
           input: input(text),
           model,
           effort,
-          additionalContext: turnContext(agent, settings, team, memory),
+          additionalContext: turnContext(
+            agent,
+            settings,
+            team,
+            memory,
+            this.repositories(scope),
+          ),
         },
       );
       once.turnId ??= turnStarted.turn.id;
@@ -1223,7 +1232,13 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: turnContext(agent, settings, request.team, memory),
+        additionalContext: turnContext(
+          agent,
+          settings,
+          request.team,
+          memory,
+          this.repositories(request.scope),
+        ),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

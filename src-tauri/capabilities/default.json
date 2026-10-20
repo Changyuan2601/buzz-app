@@ -74,6 +74,7 @@
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
     "allow-workspace-pick-folder",
+    "allow-repositories-folder-validate",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
     "allow-plugin-import-install",

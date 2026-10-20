@@ -60,6 +60,7 @@ function setup(
     title?: string;
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -131,7 +132,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://agent.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
@@ -155,6 +161,7 @@ function setup(
     storage,
     config,
     () => added,
+    options.repositories,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -1752,4 +1759,21 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.options.args).not.toContain("--add-dir");
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
+});
+
+it("hands a session its own community repositories without changing its workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/own</community-repositories>",
+  );
+  const { runtime, deliver, claudes } = setup([], { repositories });
+  try {
+    await deliver({ type: "mention", event: message("1", "@Claude work") });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
+    expect(JSON.stringify(process?.received)).toContain("/code/own");
+    expect(process?.options.cwd).toBe("~/.buzz");
+  } finally {
+    runtime.dispose();
+  }
 });

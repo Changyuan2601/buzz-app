@@ -51,7 +51,7 @@ async function showSharedAction(page, app, row) {
     });
   });
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat", exact: true });
   await dialog.getByRole("button", { name: /^Other access/ }).click();
   await expect(

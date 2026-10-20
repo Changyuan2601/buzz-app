@@ -974,7 +974,7 @@ export function createChannelStore(
         event.pubkey !== transport.relayAuthor ||
         !id ||
         discovery.metadataVersion(id)?.id !== event.id ||
-        discovery.get(id)?.huddle ||
+        discovery.get(id)?.parentChannelId ||
         !identity.creator ||
         (settings?.consistency !== "strong" &&
           creationReads.get(id) === event.id)
@@ -1536,7 +1536,8 @@ export function createChannelStore(
         discovery.get(id)?.cached ||
         !discovery.metadataVersion(id) ||
         (unnamed && !discovery.named(id)) ||
-        (settings?.consistency === "strong" && !discovery.get(id)?.huddle),
+        (settings?.consistency === "strong" &&
+          !discovery.get(id)?.parentChannelId),
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");

@@ -56,6 +56,7 @@ import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 import { IdentitySettings } from "./IdentitySettings";
+import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -616,6 +617,7 @@ export function Settings({
     plugin.manifest.id === "buzz.moderation"
       ? membershipAccess
       : moderationAccess;
+  useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -1156,6 +1158,16 @@ export function Settings({
             onUnsavedChange={onUnsavedChange}
           />
         </div>
+        {selectedCommunity && (
+          <div hidden={selected !== "local-settings"}>
+            <CommunityLocalSettings
+              key={`${client.viewer}:${selectedCommunity.id}`}
+              communities={communities}
+              community={selectedCommunity}
+              viewer={client.viewer}
+            />
+          </div>
+        )}
         {selected === "identity" && (
           <IdentitySettings
             key={client.viewer}

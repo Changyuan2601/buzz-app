@@ -65,6 +65,7 @@ function setup(
     core?: string | null;
     /** The channel's Canvas. */
     canvas?: string;
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -123,7 +124,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://goose.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -131,7 +137,14 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new GooseRuntime(host, () => relay, core, storage);
+  const runtime = new GooseRuntime(
+    host,
+    () => relay,
+    core,
+    storage,
+    undefined,
+    options.repositories,
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -603,4 +616,22 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await shared.deliver(message("1", "@Gander hi"));
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});
+
+it("hands Goose its own community repositories while retaining the session workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/goose</community-repositories>",
+  );
+  const { runtime, deliver, goose } = setup({ repositories });
+  try {
+    await deliver(message("1", "@Gander work"));
+    await flush(100);
+    expect(repositories).toHaveBeenCalledWith(`https://goose.example:${alice}`);
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      "/code/goose",
+    );
+    expect(goose()?.opened[0]).toMatchObject({ cwd: "/home/test/.buzz" });
+  } finally {
+    runtime.dispose();
+  }
 });

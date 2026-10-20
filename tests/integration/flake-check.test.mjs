@@ -14,7 +14,7 @@ import {
   selectTests,
   testBodies,
   testCalls,
-  vitestLines,
+  vitestFilters,
 } from "../../scripts/flake-check.mjs";
 
 // A hunk writing new-side lines start..end; by default it removed nothing.
@@ -124,9 +124,15 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
   assert.deepEqual(select([hunk(7, 7)]), { lines: [6] });
   assert.deepEqual(select([hunk(21, 21)]), { lines: [19] });
   assert.deepEqual(select([hunk(23, 24)]), { lines: [22] });
-  // Vitest filters the `it.each` cases by the call's first line, not the
-  // line it lists.
-  assert.deepEqual(vitestLines([6, 19, 22], bodies), [6, 16, 22]);
+  // Filters preserve runtime-listed locations, including parameterized calls.
+  assert.deepEqual(vitestFilters("cases.test.tsx", { lines: [6, 19, 22] }), [
+    "cases.test.tsx:6",
+    "cases.test.tsx:19",
+    "cases.test.tsx:22",
+  ]);
+  assert.deepEqual(vitestFilters("cases.test.tsx", { whole: true }), [
+    "cases.test.tsx",
+  ]);
   // A helper between tests, a hook inside the group, and a hook after the
   // last test are shared code.
   for (const range of [hunk(10, 10), hunk(14, 14), hunk(27, 27), hunk(2, 2)])
@@ -213,7 +219,7 @@ test("the selection executes every case of a multiline Vitest parameterized test
   const report = join(dir, "result.json");
   const result = run([
     "run",
-    ...selection.lines.map((line) => `${file}:${line}`),
+    ...vitestFilters(file, selection),
     "--reporter=json",
     `--outputFile=${report}`,
   ]);

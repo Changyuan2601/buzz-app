@@ -6,7 +6,7 @@ import type {
 } from "../features/communities/service";
 import { CheckIcon } from "../shared/design-system/icons";
 import { Avatar } from "../shared/design-system/ui/Avatar";
-import { communityIcons } from "../features/communities/community-icon";
+import { communityIcon } from "../features/communities/community-icon";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { useToastNotification } from "../shared/design-system/ui/Toast";
@@ -19,10 +19,13 @@ export function CommunityAddress({
   community: Membership;
   communities: CommunityReader;
 }) {
-  const icons = communityIcons(communities);
-  const icon = useSyncExternalStore(icons.subscribe, () =>
-    icons.resolve(community),
-  );
+  const icon = useSyncExternalStore(communities.subscribe, () => {
+    const current =
+      communities
+        .snapshot()
+        .memberships.find((entry) => entry.id === community.id) ?? community;
+    return current.publishedIcon ?? communityIcon(current.icon);
+  });
   const destination = communityDestination(community.id);
   return (
     <CopyAddress

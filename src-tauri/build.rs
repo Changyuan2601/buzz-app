@@ -112,6 +112,7 @@ fn main() {
             "media_stream_base",
             "get_os_idle_seconds",
             "workspace_pick_folder",
+            "repositories_folder_validate",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",

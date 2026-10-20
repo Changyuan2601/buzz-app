@@ -72,6 +72,11 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  .buzz-button[data-size="caption"] {
+    @apply text-caption;
+    min-height: var(--size-control-sm);
+    padding: var(--space-2) var(--space-3);
+  }
   /* A leading icon sits as close to the leading edge as to the top and bottom. */
   .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
     padding-inline-start: var(--space-1);
@@ -147,6 +152,9 @@
   }
   .buzz-button[data-icon-variant] .buzz-button-attention rect {
     ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="inset"] {
+    border-radius: var(--control-inset-radius, var(--radius-icon-button));
   }
   .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
     ry: 50%;
@@ -401,6 +409,36 @@
   .buzz-button[data-icon-variant="tint"] {
     background: var(--affordance-accent);
     color: var(--text-accent);
+  }
+  .buzz-button[data-muted]:not([data-disabled]) {
+    color: var(--text-subtle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-muted]:hover:not([data-disabled]) {
+      background: var(--affordance-subtle-pressed);
+      color: var(--text-standard);
+    }
+  }
+  .buzz-button[data-muted]:is(:active, :focus-visible):not([data-disabled]) {
+    color: var(--text-standard);
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"] {
+    background: transparent;
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="destructive-quiet"]:hover:not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-danger-hover);
+      color: var(--text-danger);
+    }
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"]:active:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-danger-pressed);
+    color: var(--text-danger);
   }
   .buzz-button[data-icon-variant="chrome"] {
     background: transparent;
@@ -943,6 +981,12 @@
     gap: var(--space-2);
     padding-block: 0;
     padding-inline: var(--space-1);
+  }
+
+  /* The painted band includes the outer rim above and excludes the separator
+     below. Center its controls one hairline above the layout box's center. */
+  .panel-header > * {
+    translate: 0 -1px;
   }
 
   .panel-header::after {

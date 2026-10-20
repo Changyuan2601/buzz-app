@@ -24,7 +24,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
-const scope = "https://relay.test:owner";
+const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -47,6 +47,7 @@ function fixture(
   termination?: Promise<void>,
   plugin = false,
   configured: { model?: string; model_reasoning_effort?: string } = {},
+  repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -311,6 +312,7 @@ function fixture(
     store,
     config,
     () => added,
+    repositories,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -3572,4 +3574,24 @@ const canvasHead = (content: string, author = owner) => ({
   created_at: 1,
   tags: [],
   content,
+});
+
+it("updates Codex repository context from the agent’s captured community, including default restoration", async () => {
+  let folder = "/code/codex";
+  const repositories = vi.fn(
+    () => `<community-repositories>${folder}</community-repositories>`,
+  );
+  const f = fixture([], undefined, false, {}, repositories);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(repositories).toHaveBeenCalledWith(scope);
+  expect(
+    JSON.stringify(f.sent.filter((wire) => wire.method === "turn/start")),
+  ).toContain("/code/codex");
+  folder = "REPOS in your own workspace";
+  await f.runtime.run(f.delivery("second", "d".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turns = f.sent.filter((wire) => wire.method === "turn/start");
+  expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
+  expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });

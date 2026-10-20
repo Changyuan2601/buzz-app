@@ -41,7 +41,15 @@ import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
-afterEach(cleanup);
+vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
+  ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
+  paintEmojiAvatar: vi.fn(),
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const agent = (name: string, n: number): Agent => ({
   pubkey: String(n).repeat(64),
@@ -1873,7 +1881,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   expect(dialog).toHaveAttribute("data-height", "stable-tall");
   expect(
-    within(dialog).getByRole("button", { name: "Use image" }),
+    within(dialog).getByRole("button", { name: "Use custom" }),
   ).toBeVisible();
   expect(
     within(dialog).queryByRole("button", { name: "Back" }),
@@ -1891,6 +1899,50 @@ it("opens avatar and name editing from the profile menu", async () => {
     await screen.findByRole("textbox", { name: "Agent name" }),
   ).toHaveValue("Ada");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("leaves an open avatar picker by Back, Escape or Cancel without saving", async () => {
+  for (const name of ["ResizeObserver", "IntersectionObserver"])
+    vi.stubGlobal(
+      name,
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
+  // Let Mart finish mounting so it cannot outlive the test.
+  await waitFor(() =>
+    expect(
+      dialog
+        .querySelector("em-emoji-picker")
+        ?.shadowRoot?.querySelector("input"),
+    ).toBeTruthy(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  await user.keyboard("{Escape}");
+  expect(
+    await within(dialog).findByRole("button", { name: "Use custom" }),
+  ).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
   expect(agents.save).not.toHaveBeenCalled();
 });
 
@@ -2091,7 +2143,7 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  await user.click(within(dialog).getByRole("button", { name: "Use image" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   const url = within(dialog).getByRole("textbox", { name: /url/i });
   await user.clear(url);
   await user.click(within(dialog).getByRole("button", { name: "Done" }));

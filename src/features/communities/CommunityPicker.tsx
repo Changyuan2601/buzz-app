@@ -32,7 +32,11 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import styles from "./Communities.module.css";
-import { communityIcons, fetchCommunityIcon } from "./community-icon";
+import {
+  communityName,
+  communityDefaultName,
+  communityActionLabel,
+} from "./names";
 import { useCommunityRole } from "./useCommunityRole";
 
 const noSubscription = () => () => {};
@@ -51,7 +55,7 @@ export function CommunityPicker({
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
   onSelect?: ((id: string | null) => void) | undefined;
-  /** Menu destinations (Invites, Community settings) open through the host's navigation. */
+  /** Menu destinations (Invites, hosting) open through the host's navigation. */
   onOpenTarget?: ((target: OpenTarget) => void) | undefined;
 }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -108,37 +112,7 @@ export function CommunityPicker({
   );
   const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
-  const icons = communityIcons(communities);
-  useSyncExternalStore(icons.subscribe, icons.snapshot);
-  const membershipIds = client.memberships
-    .map((membership) => membership.id)
-    .join("\n");
-  useEffect(() => {
-    if (client.status !== "ready" || !client.relayAvailable) return;
-    const controller = new AbortController();
-    // Icon discovery is optional. Reserve browser connections for foreground work
-    // even when saved relays hold their NIP-11 responses indefinitely.
-    const ids = membershipIds.split("\n").filter(Boolean);
-    let next = 0;
-    const workers = Array.from(
-      { length: Math.min(2, ids.length) },
-      async () => {
-        while (next < ids.length && !controller.signal.aborted) {
-          const id = ids[next++];
-          if (id === undefined) break;
-          try {
-            const icon = await fetchCommunityIcon(id, controller.signal);
-            if (icon !== undefined && !controller.signal.aborted)
-              icons.remember(id, icon);
-          } catch {
-            // Unreachable relay: retain saved icon or initials.
-          }
-        }
-      },
-    );
-    void Promise.all(workers);
-    return () => controller.abort();
-  }, [client.status, client.relayAvailable, membershipIds, icons]);
+  useEffect(() => communities.retainPresentation(), [communities]);
   const select = (id: string | null) => {
     setSwitcherOpen(false);
     if (onSelect) onSelect(id);
@@ -163,12 +137,12 @@ export function CommunityPicker({
       notify(
         departure?.phase === "device"
           ? leaveCleanupFailureText(
-              membership.name,
+              communityActionLabel(membership),
               departure.reason,
               departure.outcome,
             )
           : leaveCommunityFailureText(
-              membership.name,
+              communityActionLabel(membership),
               departure?.reason ?? error,
             ),
         "error",
@@ -188,13 +162,17 @@ export function CommunityPicker({
       } catch (error) {
         // A host that cannot navigate is the host's failure, not the device's.
         console.error(
-          `Couldn't select Personal space after leaving ${membership.name}`,
+          `Couldn't select Personal space after leaving ${communityName(membership)}`,
           error,
         );
       }
     }
     notify(
-      leftCommunityText(membership.name, outcome, residue.length > 0),
+      leftCommunityText(
+        communityActionLabel(membership),
+        outcome,
+        residue.length > 0,
+      ),
       outcome === "left" ? "success" : "info",
     );
     setLeaving(null);
@@ -219,16 +197,16 @@ export function CommunityPicker({
                 size="md"
                 variant="avatar"
                 shape="round"
-                aria-label={`Community switcher: ${active?.name ?? "Personal space"}`}
-                title={active?.name ?? "Personal space"}
+                aria-label={`Community switcher: ${active ? communityName(active) : "Personal space"}`}
+                title={active ? communityName(active) : "Personal space"}
                 icon={
                   active ? (
                     <Avatar
                       size="small"
                       shape="squircle"
                       alt=""
-                      fallback={active.name}
-                      src={icons.resolve(active)}
+                      fallback={communityName(active)}
+                      src={active.publishedIcon ?? active.icon}
                     />
                   ) : (
                     <GlobeIcon size={22} aria-hidden="true" />
@@ -285,7 +263,7 @@ export function CommunityPicker({
                 <CommunityPickerItem
                   key={membership.id}
                   membership={membership}
-                  icon={icons.resolve(membership)}
+                  icon={membership.publishedIcon ?? membership.icon}
                   selected={selected}
                   viewer={client.viewer}
                   session={selected ? session : undefined}
@@ -354,8 +332,8 @@ export function CommunityPicker({
       )}
       {leaving && (
         <AlertDialog
-          title={`Leave ${leaving.membership.name}?`}
-          description={`This sends a leave request to the community’s relay, then removes ${leaving.membership.name} from this device along with its saved drafts and reading positions. Rejoining may need a new invite.`}
+          title={`Leave ${communityDefaultName(leaving.membership)}?`}
+          description={`This sends a leave request to the community’s relay, then removes ${communityDefaultName(leaving.membership)} from this device along with its saved drafts and reading positions. Rejoining may need a new invite.`}
           pending={leaving.pending}
           onClose={() => setLeaving(null)}
           // The picker's own effect places focus once the dialog is gone.
@@ -377,7 +355,20 @@ export function CommunityPicker({
               </Button>
             </>
           }
-        />
+        >
+          <div className="min-w-0 space-y-2 text-body-sm">
+            {leaving.membership.localName &&
+              leaving.membership.localName !==
+                communityDefaultName(leaving.membership) && (
+                <p className="text-muted">
+                  Shown as {leaving.membership.localName} on this device
+                </p>
+              )}
+            <p className="break-all">
+              {communityDestination(leaving.membership.id).url}
+            </p>
+          </div>
+        </AlertDialog>
       )}
     </>
   );

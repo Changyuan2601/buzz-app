@@ -1,3 +1,5 @@
+import { followUpQueue } from "../messages/follow-up-queue";
+import type { RelaySession } from "./session";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -1590,4 +1592,47 @@ describe("join from a public preview", () => {
       h.owner.dispose();
     }
   });
+});
+
+it("retires queued entries and waits only after confirmed removal, including pending validation", async () => {
+  const h = harness();
+  const deactivate = vi.fn();
+  const gate = deferred<void>();
+  const queue = followUpQueue({
+    channels: {
+      list: () => ({ channels: h.removed.mock.calls.length ? [] : [{ id }] }),
+    },
+    channelLifecycle: h.owner.capability,
+    agentActivity: {
+      activate: () => deactivate,
+      subscribe: () => () => {},
+      snapshot: () => ({ status: "unavailable", turns: [], local: [] }),
+    },
+  } as unknown as RelaySession);
+  const publish = vi.fn(() => "queued");
+  try {
+    queue.submit({
+      channelId: id,
+      text: "first",
+      recipients: [other],
+      publish: () => "first",
+    });
+    queue.submit({
+      channelId: id,
+      text: "queued",
+      recipients: [other],
+      publish,
+      beforeRelease: () => gate.promise,
+    });
+    queue.sendNow(queue.snapshot()[0]?.id ?? "missing");
+    await h.owner.capability.run("delete", id);
+    expect(queue.snapshot()).toEqual([]);
+    expect(deactivate).toHaveBeenCalledOnce();
+    gate.resolve();
+    await gate.promise;
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+    h.owner.dispose();
+  }
 });

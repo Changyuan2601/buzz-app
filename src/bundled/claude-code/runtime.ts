@@ -169,6 +169,9 @@ export class ClaudeRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
 
   private get spawn(): Spawn {
@@ -737,6 +740,7 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            repositories: this.repositories(this.reads(pubkey)?.scope),
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,

@@ -112,13 +112,13 @@ export function AgentIdentityDialog({
       bodyLayout={avatarActive ? "flex" : "flow"}
       initialFocus={initialAvatarPicker ? undefined : nameField}
       finalFocus={finalFocus}
-      preventClose={pending || avatarBusy}
+      preventClose={pending}
       dismissOnOutsideClick={false}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
       onEscape={() => {
-        if (pending || avatarBusy) return true;
+        if (pending) return true;
         if (back || (initialAvatarPicker && avatarCanGoBack)) {
           avatarNavigation.current?.back();
           return true;
@@ -127,7 +127,7 @@ export function AgentIdentityDialog({
       }}
       leadingActions={
         back && (
-          <Button disabled={pending || avatarBusy} onClick={back}>
+          <Button disabled={pending} onClick={back}>
             Back
           </Button>
         )
@@ -137,7 +137,7 @@ export function AgentIdentityDialog({
           <div ref={setAvatarAction} hidden={!avatarActive} />
           {(!avatarActive || initialAvatarPicker) && (
             <>
-              <Button disabled={pending || avatarBusy} onClick={onClose}>
+              <Button disabled={pending} onClick={onClose}>
                 Cancel
               </Button>
               <Button

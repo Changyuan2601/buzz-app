@@ -235,7 +235,7 @@ export function UsagePage({
       <EmptyState
         icon={<ChartBarIcon size="1.5rem" />}
         title="No agent usage to show"
-        description="Usage reads the sessions your Claude Code, Codex and goose agents run on this computer. Add one from Agents to see what it spends."
+        description="Usage & costs reads the sessions your Claude Code, Codex and goose agents run on this computer. Add one from Agents to see what it spends."
       />
     );
   else
@@ -340,12 +340,12 @@ export function UsagePage({
 
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Usage">
+      <FullPageSurface aria-label="Usage & costs">
         <div className="flex h-full min-h-0 flex-col">
           <PanelHeader
             title={
               <PanelHeaderLabel
-                title="Usage"
+                title="Usage & costs"
                 icon={<ChartBarIcon size="1rem" />}
               />
             }
