@@ -205,6 +205,26 @@ impl AppAgent {
         }
         key.profile_auth(url, body)
     }
+    /// NIP-98 authorization for this agent's own NIP-FI enrollment
+    /// (`/v1/nip-fi/agent-grant`) or token request (`/v1/nip-fi/agent-assertion`)
+    /// at its owner's identity issuer, whose origin the caller takes from the
+    /// app's build configuration.
+    pub fn issuer_auth(&self, key: &Secret, url: &str, body: &[u8]) -> Result<serde_json::Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
+        let path = url
+            .split_once("://")
+            .and_then(|(_, rest)| rest.find('/').map(|at| &rest[at..]));
+        if !path.is_some_and(|path| {
+            !path.contains(['?', '#'])
+                && (path.ends_with("/v1/nip-fi/agent-grant")
+                    || path.ends_with("/v1/nip-fi/agent-assertion"))
+        }) {
+            return Err("Agents authorize only their own enrollment and tokens".into());
+        }
+        key.profile_auth(url, body)
+    }
     /// Blossom authorization (24242) to upload the blob with this SHA-256 to
     /// its community, valid for a minute.
     pub fn upload_auth(&self, key: &Secret, sha256: &str) -> Result<serde_json::Value> {
