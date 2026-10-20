@@ -59,6 +59,9 @@ pub(crate) trait GrantStore: Send + Sync {
     fn read(&self, key: &str) -> Result<Option<Grant>, &'static str>;
     fn write(&self, key: &str, grant: &Grant) -> Result<(), &'static str>;
     fn delete(&self, key: &str) -> Result<(), &'static str>;
+    /// Whether the durable retirement record at `key` exists.
+    fn pending(&self, key: &str) -> Result<bool, &'static str>;
+    fn set_pending(&self, key: &str, pending: bool) -> Result<(), &'static str>;
 }
 
 /// Reads the grant at `key`, retiring it when the signed-in account differs.
@@ -96,6 +99,25 @@ impl GrantStore for SecureGrantStore {
             .map_err(|_| "Secure storage is unavailable")
         })
     }
+    fn pending(&self, key: &str) -> Result<bool, &'static str> {
+        raw(key).map(|raw| raw.is_some())
+    }
+    // Indexed like a grant, so a full Buzz sign-out erases it with them.
+    fn set_pending(&self, key: &str, pending: bool) -> Result<(), &'static str> {
+        if !pending {
+            return self.delete(key);
+        }
+        store::register_grant(storage_root()?, key, || {
+            let current = raw(key)?;
+            buzz_credential_store::compare_session(
+                SERVICE,
+                key,
+                current.as_deref().map(Vec::as_slice),
+                Some(b"retiring".as_slice()),
+            )
+            .map_err(|_| "Secure storage is unavailable")
+        })
+    }
     fn delete(&self, key: &str) -> Result<(), &'static str> {
         store::unregister_grant(
             storage_root()?,
@@ -126,8 +148,24 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
+    /// The next write signals `.0` once called, then waits for `.1`.
+    pub(crate) type Gate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+    /// Grants in memory, plus the retirement record. `failing` refuses deletes;
+    /// `gate` holds the next write.
     #[derive(Default)]
-    pub(crate) struct MemoryGrants(pub(crate) Mutex<HashMap<String, Vec<u8>>>);
+    pub(crate) struct MemoryGrants(
+        pub(crate) Mutex<HashMap<String, Vec<u8>>>,
+        std::sync::atomic::AtomicBool,
+        Mutex<Option<Gate>>,
+    );
+    impl MemoryGrants {
+        pub(crate) fn failing(&self, on: bool) {
+            self.1.store(on, std::sync::atomic::Ordering::SeqCst);
+        }
+        pub(crate) fn gate(&self, gate: Gate) {
+            *self.2.lock().unwrap() = Some(gate);
+        }
+    }
 
     impl GrantStore for MemoryGrants {
         fn read(&self, key: &str) -> Result<Option<Grant>, &'static str> {
@@ -137,12 +175,33 @@ pub(crate) mod tests {
                 .map(|raw| serde_json::from_slice(raw).unwrap()))
         }
         fn write(&self, key: &str, grant: &Grant) -> Result<(), &'static str> {
+            let gate = self.2.lock().unwrap().take();
+            if let Some((held, release)) = gate {
+                held.send(()).unwrap();
+                release.recv().unwrap();
+            }
             let raw = serde_json::to_vec(grant).unwrap();
             self.0.lock().unwrap().insert(key.into(), raw);
             Ok(())
         }
         fn delete(&self, key: &str) -> Result<(), &'static str> {
+            if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Secure storage is unavailable");
+            }
             self.0.lock().unwrap().remove(key);
+            Ok(())
+        }
+        fn pending(&self, key: &str) -> Result<bool, &'static str> {
+            Ok(self.0.lock().unwrap().contains_key(key))
+        }
+        fn set_pending(&self, key: &str, pending: bool) -> Result<(), &'static str> {
+            if !pending {
+                return self.delete(key);
+            }
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.into(), b"retiring".to_vec());
             Ok(())
         }
     }

@@ -132,9 +132,31 @@ impl AppAgentHost {
         &self,
         pubkey: String,
     ) -> Result<(AppAgent, Arc<Secret>, Option<Zeroizing<String>>), String> {
+        let incarnation = self.tokens.incarnation(&pubkey);
         let (agent, key) = self.key(self.agent(pubkey).await?).await?;
-        let evidence = self.tokens.evidence(&agent, &key).await?;
+        let evidence = self.tokens.evidence(&agent, &key, incarnation).await?;
         Ok((agent, key, evidence))
+    }
+    /// Saves an imported identity with its key, opening the agent's next
+    /// incarnation if it was deleted here before.
+    async fn install(
+        &self,
+        prepared: buzz_agent_controller::NewAppAgent,
+        auth: Vec<String>,
+    ) -> Result<(AppAgent, Arc<Secret>), String> {
+        let host = self.clone();
+        blocking(move || {
+            let mut keys = host.keys();
+            let (agent, key) =
+                host.agents
+                    .clone()?
+                    .commit(prepared, &auth, host.credentials.as_ref())?;
+            let key = Arc::new(key);
+            keys.insert(agent.pubkey.clone(), key.clone());
+            host.tokens.reopen(&agent.pubkey);
+            Ok((agent, key))
+        })
+        .await
     }
     /// Deletes the key once any profile publication in flight has settled, so
     /// the community's cleanup sees every profile it will ever have. The row
@@ -358,7 +380,8 @@ pub(crate) async fn app_agent_port(
     owner: String,
     agent_type: String,
 ) -> Result<Ported, String> {
-    let agents = state.agents.clone()?;
+    // Unavailable storage refuses before the old store gives up its key.
+    state.agents.clone()?;
     let old = state.old.clone()?;
     let credentials = state.credentials.clone();
     let (found, key) = blocking(move || {
@@ -388,15 +411,7 @@ pub(crate) async fn app_agent_port(
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
-    let host = state.inner().clone();
-    let (mut agent, key) = blocking(move || {
-        let mut keys = host.keys();
-        let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
-        let key = Arc::new(key);
-        keys.insert(agent.pubkey.clone(), key.clone());
-        Ok((agent, key))
-    })
-    .await?;
+    let (mut agent, key) = state.install(prepared, auth).await?;
     let mut notes = vec![];
     // Old Buzz kept some pictures inline; the community serves the upload. The
     // agent comes over without it if that fails, which the import reports.
@@ -413,7 +428,8 @@ pub(crate) async fn app_agent_port(
     if let Some((mime, bytes)) = inline.and_then(inline_picture) {
         let agents = state.agents.clone()?;
         let uploaded = async {
-            let evidence = state.tokens.evidence(&agent, &key).await?;
+            let incarnation = state.tokens.incarnation(&agent.pubkey);
+            let evidence = state.tokens.evidence(&agent, &key, incarnation).await?;
             let receipt = upload(
                 &agent,
                 &key,
@@ -550,12 +566,13 @@ pub(crate) async fn app_agent_publish_profile(
 ) -> Result<(), String> {
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
+    let incarnation = state.tokens.incarnation(&pubkey);
     let agent = state.agent(pubkey).await?;
     if agent.profile_is_current() {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
-    let evidence = state.tokens.evidence(&agent, &key).await?;
+    let evidence = state.tokens.evidence(&agent, &key, incarnation).await?;
     let signed = post(
         &agent,
         &key,
@@ -1121,6 +1138,160 @@ mod tests {
         assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
         drop(publishing);
         deleting.await.unwrap().unwrap();
+    }
+
+    /// Saved keys in memory; `gate` holds the next read once it is called.
+    #[derive(Default)]
+    struct Gated(
+        Mutex<HashMap<String, String>>,
+        Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    );
+    impl Credentials for Gated {
+        fn read_legacy(
+            &self,
+            _: buzz_agent_controller::LegacySource,
+            _: &str,
+        ) -> Result<Secret, String> {
+            unreachable!()
+        }
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+            let gate = self.1.lock().unwrap().take();
+            if let Some((held, release)) = gate {
+                held.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            let saved = self.0.lock().unwrap().get(id).cloned();
+            saved.map(|hex| Secret::parse(&hex, pubkey)).transpose()
+        }
+        fn add(&self, id: &str, key: &Secret) -> Result<(), String> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(id.into(), key.hex().to_string());
+            Ok(())
+        }
+        fn delete(&self, id: &str, _: &str) -> Result<(), String> {
+            self.0.lock().unwrap().remove(id);
+            Ok(())
+        }
+    }
+
+    /// The owner's NIP-OA tag for `agent`, from a fixed owner key.
+    fn attestation(agent: &str) -> Vec<String> {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
+        let secp = Secp256k1::new();
+        let mut bytes = [0; 32];
+        bytes[31] = 2;
+        let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(bytes).unwrap());
+        let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+        let sig = secp.sign_schnorr_no_aux_rand(&digest, &pair);
+        vec![
+            "auth".into(),
+            pair.x_only_public_key().0.to_string(),
+            String::new(),
+            sig.to_string(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn deletion_refuses_a_request_holding_the_key_and_a_re_import_works_again() {
+        use crate::federated_identity::agent::tests::{enrolled, fixture, issued, issuer, settled};
+        let key = Secret::generate().unwrap();
+        let owner = attestation(key.pubkey())[1].clone();
+        let probe = agent_at("wss://relay.example".into(), &key);
+        let probe = AppAgent {
+            owner: owner.clone(),
+            ..probe
+        };
+        let (base, served) = issuer(vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ])
+        .await;
+        let f = fixture(base);
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Arc::new(Gated::default());
+        let host = AppAgentHost {
+            agents: Ok(AppAgents::open(dir.path().join("identities.json"))),
+            old: Err("unused".into()),
+            credentials: credentials.clone(),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), true)),
+            tokens: f.tokens.clone(),
+        };
+        let import = |key: &Secret| {
+            let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
+            let auth = attestation(key.pubkey());
+            let prepared = AppAgents::adopt(
+                "https://relay.example/",
+                &owner,
+                "p/t",
+                key,
+                "Ada",
+                None,
+                None,
+            )
+            .unwrap();
+            let host = host.clone();
+            async move { host.install(prepared, auth).await.unwrap() }
+        };
+        let (agent, _) = import(&key).await;
+        let old_incarnation = host.tokens.incarnation(&agent.pubkey);
+        host.keys().clear();
+
+        // A request reads the agent, then is held reading its key.
+        let (held_tx, held) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        *credentials.1.lock().unwrap() = Some((held_tx, release_rx));
+        let stale = tokio::spawn({
+            let host = host.clone();
+            let pubkey = agent.pubkey.clone();
+            async move { host.signer(pubkey).await.map(drop) }
+        });
+        tokio::task::spawn_blocking(move || held.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let deleting = tokio::spawn({
+            let host = host.clone();
+            let pubkey = agent.pubkey.clone();
+            async move { host.delete(pubkey).await }
+        });
+        crate::federated_identity::agent::tests::bounded(async {
+            while !host.tokens.closed(&agent.pubkey) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        release.send(()).unwrap();
+        assert_eq!(
+            stale.await.unwrap().err().as_deref(),
+            Some("This agent was deleted")
+        );
+        deleting.await.unwrap().unwrap();
+        assert!(f.grants.0.lock().unwrap().is_empty(), "nothing persisted");
+
+        // The same key imported again enrolls and works; the old request's
+        // incarnation stays refused.
+        let (agent, key) = import(&key).await;
+        let (_, _, evidence) = host.signer(agent.pubkey.clone()).await.unwrap();
+        assert!(evidence.is_some());
+        assert_eq!(
+            host.tokens
+                .evidence(&agent, &key, old_incarnation)
+                .await
+                .err()
+                .as_deref(),
+            Some("This agent was deleted")
+        );
+        let seen = settled(served).await;
+        assert_eq!(
+            seen.len(),
+            2,
+            "only the re-imported agent's grant and assertion"
+        );
     }
 
     /// Answers one HTTP request with `status` and `body`, and returns the

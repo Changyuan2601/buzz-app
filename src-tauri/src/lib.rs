@@ -807,6 +807,13 @@ pub fn run() {
                     .map(|(root, _)| root.with_file_name(sign_out::AGENTS).join("state"))
                     .map_err(Clone::clone),
             ));
+            // Organization sign-out retires agent grants through this owner.
+            let tokens = federated_identity::agent::AgentTokens::new(
+                app.state::<federated_identity::FederatedIdentity>()
+                    .inner()
+                    .clone(),
+            );
+            app.manage(tokens.clone());
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
@@ -824,11 +831,7 @@ pub fn run() {
                     .map_err(Clone::clone),
                 // `just desktop` builds step aside for a packaged app.
                 !tauri::is_dev(),
-                federated_identity::agent::AgentTokens::new(
-                    app.state::<federated_identity::FederatedIdentity>()
-                        .inner()
-                        .clone(),
-                ),
+                tokens,
             ));
             Ok(())
         });

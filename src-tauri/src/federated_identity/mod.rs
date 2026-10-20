@@ -724,9 +724,9 @@ pub(crate) fn federated_identity_cancel_sign_in(host: tauri::State<'_, Federated
 }
 #[tauri::command]
 pub(crate) async fn federated_identity_sign_out(
-    host: tauri::State<'_, FederatedIdentity>,
+    tokens: tauri::State<'_, agent::AgentTokens>,
 ) -> Result<Snapshot, String> {
-    Ok(host.sign_out().await)
+    tokens.sign_out().await
 }
 
 #[cfg(test)]
