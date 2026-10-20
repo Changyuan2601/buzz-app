@@ -25,11 +25,7 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import {
-  readShareBack,
-  shareBackKey,
-  linkedDraftKey,
-} from "../../features/solo/linked-chat";
+import { linkedDraftKey } from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
@@ -217,9 +213,7 @@ function fixture({
         create: session.channelWrites.create(chat),
         ready: Promise.resolve(),
       })),
-      delivered: vi.fn<RelaySession["channelWrites"]["delivered"]>(
-        async () => {},
-      ),
+      delivered: vi.fn(async () => {}),
       refresh: vi.fn(async () => {}),
       addAgents: vi.fn(async () => {}),
       refreshMembership: vi.fn(async () => channel),
@@ -753,8 +747,6 @@ it("finishes a linked chat across roster updates without appending source prose"
   const source = {
     channelId: "33333333-3333-4333-8333-333333333333",
     link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
-    threadRootId: "e".repeat(64),
-    share: false,
   };
   writeView(f.scope, linkedDraftKey(linked), source);
   f.mount();
@@ -767,50 +759,6 @@ it("finishes a linked chat across roster updates without appending source prose"
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
   expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
-});
-
-it("keeps an interrupted first-send share for explicit retry without granting on reopen", async () => {
-  const f = fixture();
-  writeView(f.scope, shareBackKey(id), {
-    channelId: "design",
-    link: "buzz://channel/design",
-    share: true,
-    firstMessageId: "d".repeat(64),
-    attempted: true,
-  });
-  f.mount();
-  expect(
-    await screen.findByRole("dialog", { name: "Share chat" }),
-  ).toBeVisible();
-  expect(f.session.channelWrites.delivered).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(readShareBack(f.scope, id)?.attempted).toBe(true);
-});
-
-it("a failed first message retires the automatic gate so later manual sharing is not trapped", async () => {
-  const f = fixture();
-  writeView(f.scope, shareBackKey(id), {
-    channelId: "design",
-    link: "buzz://channel/design",
-    share: true,
-    firstMessageId: "d".repeat(64),
-  });
-  f.session.channelWrites.delivered.mockRejectedValue(
-    new Error("First send failed"),
-  );
-  f.mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "first message wasn’t confirmed",
-  );
-  expect(readShareBack(f.scope, id)).toBeUndefined();
-  expect(f.send).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Start over" }));
-  await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  await userEvent.click(screen.getByRole("button", { name: /^Share$/ }));
-  expect(
-    await screen.findByRole("dialog", { name: "Share chat" }),
-  ).toBeVisible();
-  expect(f.session.channelWrites.delivered).toHaveBeenCalledOnce();
 });
 
 it("opens the existing chat name editor from Rename", async () => {

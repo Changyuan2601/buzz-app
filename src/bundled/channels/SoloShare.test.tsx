@@ -336,7 +336,13 @@ function fixture(direct = false) {
       owner.session.channels.ensureList();
       await waitFor(() => expect(channel()?.channelType).toBe("solo"));
     },
-    mount(props: Partial<React.ComponentProps<typeof SoloShare>> = {}) {
+    mount(
+      props: {
+        signal?: AbortSignal;
+        onClose?: () => void;
+        onConvert?: (trigger: HTMLElement | null) => void;
+      } = {},
+    ) {
       const initial = channel();
       if (!initial) throw new Error("Chat not loaded");
       return render(
@@ -1760,144 +1766,4 @@ it("updates the row conversion guard for a share owned by another mounted entry 
   expect(
     await screen.findByRole("dialog", { name: "Convert to channel" }),
   ).toBeVisible();
-});
-
-it("automatically shares to the source thread through existing grants and preserves one card on explicit retry", async () => {
-  const t = fixture(true);
-  t.setDestinationMembers([t.viewer.pubkey, t.aria.pubkey]);
-  await t.ready();
-  t.failLink(true);
-  const queued = vi.fn();
-  const shared = vi.fn();
-  const attempted = vi.fn();
-  t.mount({
-    initialOpen: true,
-    initialDestination: destination,
-    destinationThread: "a".repeat(64),
-    autoShare: true,
-    onAttempt: attempted,
-    onLinkQueued: queued,
-    onShared: shared,
-  });
-  const dialog = await screen.findByRole("dialog", { name: "Share chat" });
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Post refused",
-  );
-  expect(attempted).toHaveBeenCalledOnce();
-  expect(shared).not.toHaveBeenCalled();
-  const firstCard = queued.mock.calls[0]?.[0];
-  expect(firstCard).toMatch(/^[0-9a-f]{64}$/);
-  expect(t.members.get(source)).toContain(t.aria.pubkey);
-  t.failLink(false);
-  await userEvent.click(
-    within(dialog).getByRole("button", { name: "Retry share" }),
-  );
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(shared).toHaveBeenCalledOnce();
-  const cards = t.published.filter((event) => event.kind === 9);
-  expect(cards).toHaveLength(1);
-  expect(cards[0]?.id).toBe(firstCard);
-  expect(cards[0]?.tags).toContainEqual(["e", "a".repeat(64), "", "reply"]);
-  expect(t.placement).not.toHaveBeenCalled();
-  // Reopening ordinary Share after the shortcut completed must not silently
-  // preserve its original destination and post another card on Done.
-  await userEvent.click(screen.getByRole("button", { name: "Share" }));
-  const reopened = screen.getByRole("dialog", { name: "Share chat" });
-  await userEvent.click(within(reopened).getByRole("button", { name: "Done" }));
-  expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
-});
-
-it("waits for the first-message gate before granting, reports failure, and retries without another consent", async () => {
-  const t = fixture(true);
-  t.setDestinationMembers([t.viewer.pubkey, t.aria.pubkey]);
-  await t.ready();
-  let reject!: (error: Error) => void;
-  const gate = new Promise<void>((_, fail) => {
-    reject = fail;
-  });
-  const attempt = vi
-    .fn<() => Promise<void>>()
-    .mockImplementationOnce(() => gate)
-    .mockResolvedValue(undefined);
-  t.mount({
-    initialOpen: true,
-    initialDestination: destination,
-    destinationThread: "a".repeat(64),
-    autoShare: true,
-    onAttempt: attempt,
-  });
-  try {
-    await waitFor(() => expect(attempt).toHaveBeenCalledOnce());
-    expect(t.published).toHaveLength(0);
-    expect(t.members.get(source)).not.toContain(t.aria.pubkey);
-  } finally {
-    await act(async () =>
-      reject(new Error("First message not delivered. Check Outbox.")),
-    );
-  }
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "First message not delivered",
-  );
-  expect(t.published).toHaveLength(0);
-  await userEvent.click(screen.getByRole("button", { name: "Retry share" }));
-  await waitFor(() =>
-    expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1),
-  );
-  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
-});
-
-it("automatic sharing keeps the composer focused and shows no dialog or success toast while posting", async () => {
-  const t = fixture(true);
-  t.setDestinationMembers([t.viewer.pubkey, t.aria.pubkey]);
-  await t.ready();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  t.holdLink(gate);
-  const shared = vi.fn();
-  const channel = t.channel();
-  if (!channel) throw new Error("Chat not loaded");
-  const view = render(
-    <ToastProvider>
-      <input aria-label="Continue working" />
-      <SoloShare
-        session={t.session}
-        channel={channel}
-        initialOpen
-        initialDestination={destination}
-        autoShare
-        onShared={shared}
-      />
-    </ToastProvider>,
-  );
-  const composer = screen.getByRole("textbox", {
-    name: "Continue working",
-    hidden: true,
-  });
-  composer.focus();
-  try {
-    await waitFor(() =>
-      expect(t.publish.mock.calls.some(([event]) => event.kind === 9)).toBe(
-        true,
-      ),
-    );
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(composer).toHaveFocus();
-    expect(shared).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => release());
-  }
-  await waitFor(() => expect(shared).toHaveBeenCalledOnce());
-  await waitFor(() =>
-    expect(soloShareAttempt(t.session, source)).toBeUndefined(),
-  );
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.queryByText(/Added to .*Shared sessions/)).toBeNull();
-  expect(composer).toHaveFocus();
-  await userEvent.click(screen.getByRole("button", { name: /^Share$/ }));
-  expect(
-    await screen.findByRole("dialog", { name: "Share chat" }),
-  ).toBeVisible();
-  view.unmount();
 });

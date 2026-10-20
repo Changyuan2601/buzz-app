@@ -5,7 +5,6 @@ import type { MemberAdditionIntent } from "../channel-members/members";
 
 export type ShareIntent = Readonly<{
   destination: string;
-  threadRootId?: string | undefined;
   chatPeople: readonly string[];
 }>;
 export type ShareAttempt = {

@@ -1,5 +1,4 @@
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { linkedDraftKey, shareBackKey, type LinkedChat } from "./linked-chat";
+import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -116,8 +115,9 @@ export function SoloDraft({
     : projectId
       ? `solo:project:${projectId}`
       : "solo";
+  // Before the composer reads it: a named agent replaces a saved draft that
+  // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
-  const notify = useToastNotification();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
@@ -293,29 +293,18 @@ export function SoloDraft({
           : undefined,
       );
       try {
-        const firstMessageId = session.messages.send(
+        session.messages.send(
           channelId,
           text,
           recipients,
           ...(uploaded.length ? [uploaded] : []),
         );
-        const shareSaved =
-          !source?.share ||
-          writeView(scope, shareBackKey(channelId), {
-            ...source,
-            firstMessageId,
-          });
         files.clear();
         writeView(
           scope,
           `draft:${channelId}`,
           rememberedMentions(session, draft, recipients),
         );
-        if (!shareSaved)
-          notify(
-            "Your message was queued, but sharing couldn’t be saved. Open Share to finish sharing this chat.",
-            "error",
-          );
       } catch (reason) {
         // The chat still starts; its own composer keeps the message to send.
         console.warn("Solo first message waits in its chat", reason);
@@ -336,7 +325,6 @@ export function SoloDraft({
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
         writeView(scope, `draft:${channelId}`, null);
-        if (source?.share) writeView(scope, shareBackKey(channelId), null);
         onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
       });
     } catch (reason) {

@@ -305,40 +305,16 @@ not complete visual acceptance.
 
 ## Start a Solo chat from a channel or message
 
-**Start Solo chat** offers **Start privately** and **Start and share here** in
-the existing channel/message menu. Both open an isolated ordinary Solo draft,
-with the selected message (or channel) link visibly in the editor and the default
-agent tagged. The link is normal editable message content: it can be removed,
-changed, or supplemented, and is sent exactly as authored. No permanent origin
-field, extra source paragraph, automatic source access or transcript copy remains.
-The shortcut uses ordinary Solo creation; it needs no new relay capability.
+**Start Solo chat** in the existing channel/message menu opens an isolated
+ordinary Solo draft, with the selected message (or channel) link visibly in the
+editor and the default agent tagged. The link is normal editable message content:
+it can be removed, changed, or supplemented, and is sent exactly as authored. No
+permanent origin field, extra source paragraph, automatic source access or
+transcript copy remains. The shortcut uses ordinary Solo creation; it needs no new
+relay capability. The chat stays private until it is shared through the existing
+Share flow.
 
-Choosing sharing authorizes the existing full-chat sharing flow for the source
-channel’s current members, including agents. A message start fixes the posting
-location to its thread; a channel start posts at channel level. Nothing is
-created, granted or posted until first send. After the first message is queued,
-the chat’s existing Share view waits for confirmed delivery before granting any
-access or posting its card. Successful automatic sharing stays in the background,
-without opening the Share dialog or showing a discovery toast. Failures reveal
-the existing Share recovery controls. No second consent is requested. A failed first send
-is not silently retried by sharing: automatic sharing stops with an Outbox warning,
-and any later share requires an explicit action. Start over clears the shortcut.
-
-The local one-time share request retains the first-message receipt, exact return
-destination, attempted state and queued card receipt. It clears after confirmed
-share completion, before optional discovery reads. Reopening an interrupted share
-requires explicit retry; retry preserves the card’s exact thread and event ID.
-Closing failure does not revoke confirmed grants. Ordinary Share remains available
-later and does not reuse a completed shortcut destination. This is not a
-cross-device transaction, nor a permanent source relationship. The companion relay
-origin experiment is no longer used by this app.
-
-Copying a chat link into a channel or thread still uses the send-time consent
-flow described in [sharing](sharing.md). Shared recipients’ sidebar rules are
-unchanged. Source permissions still apply when an agent follows the ordinary link;
-seeing a link does not mean it can read or post in that source.
-
-No generic message snapshot/preview attachment, linked-reference collection,
-source-side progress indicator or drag gesture is added in this slice. Rendered,
-live cross-account, restart and real-agent acceptance remain separate from focused
+Source permissions still apply when an agent follows the ordinary link; seeing a
+link does not mean it can read or post in that source. Rendered, live
+cross-account, restart and real-agent acceptance remain separate from focused
 component/service tests.
