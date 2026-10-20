@@ -82,6 +82,7 @@ async fn choices_persist_and_an_explicit_choice_repairs_corrupt_metadata() {
         assert_eq!(restored.automatic, Some(automatic));
         assert_eq!(restored.pubkey, pubkey);
         assert!(restored.available);
+        drop(restored);
     }
 }
 
