@@ -223,32 +223,3 @@ it("admits NIP-CL labels at the end of a channel creation, before the client id"
   ])
     expect(validChannelCommand(create(labels))).toBe(false);
 });
-
-it("admits an exact creation-time source before labels, never malformed or duplicate sources", () => {
-  const base = {
-    kind: 9007,
-    created_at: 1,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Work"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-    ],
-  };
-  const source = ["origin", id, "a".repeat(64), "b".repeat(64)];
-  expect(
-    validChannelCommand({
-      ...base,
-      tags: [...base.tags, source, ["t", "buzz.solo"]],
-    }),
-  ).toBe(true);
-  for (const tags of [
-    [...base.tags, source, source],
-    [...base.tags, ["origin", id, "bad"]],
-    [...base.tags, ["origin", id, "a".repeat(64), "a".repeat(64)]],
-    [...base.tags, ["t", "buzz.solo"], source],
-  ]) {
-    expect(validChannelCommand({ ...base, tags })).toBe(false);
-  }
-});

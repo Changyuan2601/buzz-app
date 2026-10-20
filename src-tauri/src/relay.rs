@@ -249,16 +249,7 @@ pub(crate) async fn relay_sign(
     event: EventTemplate,
 ) -> Result<serde_json::Value> {
     validate_event(&community, &event)?;
-    if event.kind == 9007
-        && !channel_creation_supported(
-            &community,
-            event
-                .tags
-                .iter()
-                .any(|t| t.first().is_some_and(|s| s == "origin")),
-        )
-        .await?
-    {
+    if event.kind == 9007 && !channel_creation_supported(&community).await? {
         return Err("Channel creation is unavailable".into());
     }
     if event.kind == 30078 {
@@ -655,19 +646,12 @@ fn verify_signature(event: &serde_json::Value) -> Result<()> {
         .map_err(|_| "Invalid outgoing signature".into())
 }
 
-async fn channel_creation_supported(community: &str, origin: bool) -> Result<bool> {
+async fn channel_creation_supported(community: &str) -> Result<bool> {
     let info = relay_info(community).await?;
-    Ok((!origin
-        || info
-            .get("supported_extensions")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|extensions| {
-                extensions.contains(&serde_json::Value::from("buzz-channel-origin-v1"))
-            }))
-        && info
-            .get("self")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(hex_key)
+    Ok(info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(hex_key)
         && info
             .get("supported_nips")
             .and_then(serde_json::Value::as_array)
@@ -745,16 +729,7 @@ pub(crate) async fn relay_http(
                 &event,
                 "Agent enrollment or channel operation unavailable or invalid",
             )?;
-            if !channel_writes::creation(&template)
-                || !channel_creation_supported(
-                    &community,
-                    template
-                        .tags
-                        .iter()
-                        .any(|t| t.first().is_some_and(|s| s == "origin")),
-                )
-                .await?
-            {
+            if !channel_writes::creation(&template) {
                 return Err("Agent enrollment or channel operation unavailable or invalid".into());
             }
         }

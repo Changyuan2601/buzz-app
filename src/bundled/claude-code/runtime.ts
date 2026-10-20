@@ -1,4 +1,3 @@
-import { channelOriginContext } from "../../features/relay/channel-origin";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -635,8 +634,6 @@ export class ClaudeRuntime {
       ]);
     const members = summary?.members ?? [];
     const project = await reading;
-    const context =
-      (project?.section ?? "") + channelOriginContext(summary?.origin);
     // An unread Canvas keeps the folders the chat had, not restarting it.
     if (project?.directories.length)
       entry.directories.set(key, project.directories);
@@ -655,7 +652,7 @@ export class ClaudeRuntime {
       context: unseen,
       total: earlier.length + 1,
       name: (pubkey: string) => reads?.name(pubkey, members),
-      ...(context ? { project: context } : {}),
+      ...(project?.section ? { project: project.section } : {}),
     };
   }
 

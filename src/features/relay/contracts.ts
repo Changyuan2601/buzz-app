@@ -1,4 +1,3 @@
-import type { ChannelOrigin } from "./channel-origin";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
@@ -55,8 +54,6 @@ export type ChannelSummary = Readonly<{
   labels?: readonly string[];
   /** Relay-written creator (NIP-CL `P`): the kind:9007 signer. Ownership can move later. */
   creator?: string;
-  /** Immutable creator-supplied source, never access authority. */
-  origin?: ChannelOrigin;
   /** Relay-written creation time in Unix seconds; compare channel age with this. */
   createdAt?: number;
   /** Other DM members from the authorized roster; empty for a self-DM. */

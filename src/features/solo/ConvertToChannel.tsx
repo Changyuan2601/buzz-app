@@ -319,13 +319,7 @@ export function ConvertToChannel({
           <Radio
             value="public"
             label="Public"
-            description={
-              session.channels
-                .list()
-                .channels.find((channel) => channel.id === id)?.origin
-                ? "Everyone in this community will be able to view this channel’s full history and its source reference."
-                : "Everyone in this community will be able to view this channel’s full history."
-            }
+            description="Everyone in this community will be able to view this channel’s full history."
           />
         </RadioGroup>
       </Field>

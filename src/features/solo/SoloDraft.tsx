@@ -1,6 +1,5 @@
-import { localOriginPreview, saveLocalOrigin } from "./local-origin-preview";
-import { linkedDraftKey } from "./linked-chat";
-import type { ChannelOrigin } from "../relay/channel-origin";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { linkedDraftKey, shareBackKey, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -94,7 +93,7 @@ export function SoloDraft({
   source,
 }: {
   linkedId?: string | undefined;
-  source?: ChannelOrigin | undefined;
+  source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
   agent?: string | undefined;
   focusRequest?: number | AbortSignal;
@@ -110,6 +109,7 @@ export function SoloDraft({
       ? `solo:project:${projectId}`
       : "solo";
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
+  const notify = useToastNotification();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
@@ -235,24 +235,15 @@ export function SoloDraft({
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
-      const localSource =
-        !!source &&
-        !session.channelWrites.originSupported &&
-        localOriginPreview();
-      if (source && localSource) saveLocalOrigin(scope, channelId, source);
       creation.current ??= session.channelWrites.create(
         channelId,
         name,
         ttlSeconds,
         named,
-        ...(source && !localSource ? [source] : []),
       );
       // Once requested, the chat finishes starting even if this view closes.
       await session.channelWrites.delivered(creation.current);
-      await session.channelWrites.refresh(
-        channelId,
-        source && !localSource ? { origin: source } : {},
-      );
+      await session.channelWrites.refresh(channelId);
       // The chat exists. From here its own composer keeps the text, so an
       // interruption leaves an ordinary chat to send from.
       if (replaceView(scope, `draft:${channelId}`, null, draft) === "failed")
@@ -288,18 +279,29 @@ export function SoloDraft({
         throw new Error(
           "This conversation is no longer in Solo. Open it in Team.",
         );
-      session.messages.send(
+      const firstMessageId = session.messages.send(
         channelId,
         text,
         recipients,
         ...(uploaded.length ? [uploaded] : []),
       );
+      const shareSaved =
+        !source?.share ||
+        writeView(scope, shareBackKey(channelId), {
+          ...source,
+          firstMessageId,
+        });
       chatFiles.clear();
       writeView(
         scope,
         `draft:${channelId}`,
         rememberedMentions(session, draft, recipients),
       );
+      if (!shareSaved)
+        notify(
+          "Your message was queued, but sharing couldn’t be saved. Open Share to finish sharing this chat.",
+          "error",
+        );
       if (mounted.current) onStarted(channelId);
     } catch (reason) {
       if (!mounted.current) return;
@@ -358,6 +360,7 @@ export function SoloDraft({
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
+          initialDraft: source?.link,
           locked: busy,
           disabled: busy || !available,
           attachments: true,

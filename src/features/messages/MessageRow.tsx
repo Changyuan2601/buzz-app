@@ -393,18 +393,33 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const actionItems = actions.map((action) => (
-    <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
-      {action.icon && (
-        <MenuIcon>
-          <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <action.icon />
-          </ContributionBoundary>
-        </MenuIcon>
-      )}
-      {action.title}
-    </MenuItem>
-  ));
+  const actionItems = actions.map((action) =>
+    action.placement === "menu" && session && extensions?.actions ? (
+      <ContributionBoundary key={contributionKey(action)} fallback={null}>
+        <WithTargetOpener
+          component={action.component}
+          props={{
+            message: row,
+            session,
+            close: () => setOpenAction(undefined),
+          }}
+          registry={extensions.actions}
+          entry={action}
+        />
+      </ContributionBoundary>
+    ) : (
+      <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
+        {action.icon && (
+          <MenuIcon>
+            <ContributionBoundary key={contributionKey(action)} fallback={null}>
+              <action.icon />
+            </ContributionBoundary>
+          </MenuIcon>
+        )}
+        {action.title}
+      </MenuItem>
+    ),
+  );
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {

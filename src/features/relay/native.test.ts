@@ -993,7 +993,6 @@ it("holds the shared admission lease until a cancelled native history request se
 
 it("advertises purpose-bound channel capabilities and gates creation on NIP-29", async () => {
   const transport = await connectNativeTransport(community);
-  expect(transport.channelOrigin).toBeUndefined();
   expect(transport.archiveAuthority).toBe(relay.pubkey);
   expect(transport.writer?.kinds).toContain(30078);
   expect(transport.writer?.kinds).not.toContain(9007);
@@ -1005,15 +1004,11 @@ it("advertises purpose-bound channel capabilities and gates creation on NIP-29",
   vi.mocked(invoke).mockResolvedValueOnce({
     status: 200,
     headers: {},
-    body: JSON.stringify({
-      self: relay.pubkey,
-      supported_nips: [29],
-      supported_extensions: ["buzz-channel-origin-v1"],
-    }),
+    body: JSON.stringify({ self: relay.pubkey, supported_nips: [29] }),
   });
-  const supported = await connectNativeTransport(community);
-  expect(supported.writer?.kinds).toContain(9007);
-  expect(supported.channelOrigin).toBe(true);
+  expect((await connectNativeTransport(community)).writer?.kinds).toContain(
+    9007,
+  );
 });
 
 it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {

@@ -980,7 +980,6 @@ function setup(
     status: "ready",
     channels: [],
   },
-  originSupported = false,
 ) {
   let items: readonly OutgoingEvent[] = [{ event, delivery: "accepted" }];
   let channelList = initialList;
@@ -1052,7 +1051,6 @@ function setup(
       undefined,
       reader,
       channelCreation,
-      originSupported,
     ),
     outbox,
     channels,
@@ -1817,41 +1815,4 @@ it("creates a NIP-CL system channel with its labels", () => {
     undefined,
     undefined,
   );
-});
-
-it("requires origin support and confirms the exact saved source before opening", async () => {
-  const id = "11111111-1111-4111-8111-111111111111";
-  const origin = {
-    channelId: "22222222-2222-4222-8222-222222222222",
-    messageId: "a".repeat(64),
-  };
-  const old = setup();
-  expect(() =>
-    old.service.create(id, "Work", undefined, false, origin),
-  ).toThrow("does not support linked chats");
-  expect(old.outbox.send).not.toHaveBeenCalled();
-  const t = setup(true, { status: "ready", channels: [] }, true);
-  t.service.create(id, "Work", undefined, false, origin);
-  expect(t.outbox.send).toHaveBeenCalledWith(
-    expect.objectContaining({
-      tags: expect.arrayContaining([
-        ["origin", origin.channelId, origin.messageId],
-      ]),
-    }),
-  );
-  t.resolve.mockImplementation(async () =>
-    t.setList({
-      status: "ready",
-      channels: [{ id, name: "Work", channelType: "solo" }],
-    }),
-  );
-  const pending = t.service.refresh(id, { origin });
-  await vi.waitFor(() => expect(t.refreshList).toHaveBeenCalledOnce());
-  expect(t.listListeners.size).toBe(1);
-  t.setList({
-    status: "ready",
-    channels: [{ id, name: "Work", channelType: "solo", origin }],
-  });
-  await pending;
-  expect(t.listListeners.size).toBe(0);
 });

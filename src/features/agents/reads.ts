@@ -1,5 +1,3 @@
-import { chatOrigin } from "../solo/local-origin-preview";
-import type { ChannelOrigin } from "../relay/channel-origin";
 // What an agent type reads of an agent's community beyond the agent's own
 // handle: the channel a turn is in, the conversation before it, the names of
 // the people in it, and the agent's memory. The desktop app reads these
@@ -20,7 +18,6 @@ export type MemoryListing = Readonly<{
 
 /** What a turn needs to know of its channel. */
 export type ChannelFacts = Readonly<{
-  origin?: ChannelOrigin;
   name?: string;
   dm: boolean;
   members: readonly string[];
@@ -86,13 +83,11 @@ export function ownerReads(
       const summary =
         session.channels.list().channels.find((item) => item.id === id) ??
         session.channels.get?.(id);
-      const origin = chatOrigin(session.scope, session.viewer, summary);
       return summary
         ? {
             ...(summary.name ? { name: summary.name } : {}),
             dm: summary.channelType === "dm",
             members: summary.members ?? [],
-            ...(origin ? { origin } : {}),
           }
         : undefined;
     },

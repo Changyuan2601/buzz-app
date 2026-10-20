@@ -211,6 +211,7 @@ export function createMessages(
       references: readonly string[] = [],
       picks: MentionPicks = {},
       sharedSessions: readonly string[] = [],
+      recovery?: OutboxRecovery,
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -218,21 +219,24 @@ export function createMessages(
       if (!/^[0-9a-f]{64}$/.test(parentId))
         throw new Error("A valid reply parent is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
-      return writer(9, channelId).send({
-        kind: 9,
-        content: text(message.content),
-        tags: [
-          ["h", channelId],
-          ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
-          ["e", parentId, "", "reply"],
-          ...mentionTags(channelId, mentions),
-          ...referenceTags(references),
-          ...pickTags(mentions, picks),
-          ...sharedSessionTags(content, sharedSessions),
-          ...emojiTags(content),
-          ...message.tags,
-        ],
-      });
+      return writer(9, channelId).send(
+        {
+          kind: 9,
+          content: text(message.content),
+          tags: [
+            ["h", channelId],
+            ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
+            ["e", parentId, "", "reply"],
+            ...mentionTags(channelId, mentions),
+            ...referenceTags(references),
+            ...pickTags(mentions, picks),
+            ...sharedSessionTags(content, sharedSessions),
+            ...emojiTags(content),
+            ...message.tags,
+          ],
+        },
+        ...(recovery ? [recovery] : []),
+      );
     },
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
     edit(messageId: string, content: string, attachmentSourceId: string) {

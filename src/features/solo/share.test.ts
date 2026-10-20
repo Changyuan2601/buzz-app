@@ -278,21 +278,49 @@ it("Everyone refuses missing fresh roster evidence instead of granting from the 
   expect(t.published).toHaveLength(0);
 });
 
-it("Everyone blocks a known-archived destination identity rather than silently dropping it", async () => {
-  const t = setup();
-  await t.ready();
-  t.addDestination(t.bot.pubkey);
-  await t.archive(t.bot.pubkey);
-  expect(t.session.archives.state(t.bot.pubkey)).toBe("archived");
-  await expect(
-    destinationShareAudience(
+it.each([false, true])(
+  "channel sharing skips archived members and still grants/posts without cleaning the roster (archived after capture=%s)",
+  async (afterCapture) => {
+    const t = setup();
+    await t.ready();
+    t.addDestination(t.bot.pubkey);
+    t.addDestination(t.human.pubkey);
+    if (!afterCapture) await t.archive(t.bot.pubkey);
+    const audience = await destinationShareAudience(
       t.session,
       channelId,
       new AbortController().signal,
-    ),
-  ).rejects.toThrow(/archived/);
-  expect(t.published).toHaveLength(0);
-});
+    );
+    if (afterCapture) await t.archive(t.bot.pubkey);
+    else expect(audience).toEqual([t.human.pubkey]);
+    const confirmed: string[] = [];
+    await grantSoloChatAccess(
+      t.session,
+      chatId,
+      audience,
+      new Map(),
+      new AbortController().signal,
+      (key) => confirmed.push(key),
+      true,
+      true,
+      true,
+    );
+    await publishSoloChatLink(
+      t.session,
+      chatId,
+      channelId,
+      undefined,
+      new AbortController().signal,
+      () => {},
+    );
+    expect(confirmed).toEqual([t.human.pubkey]);
+    expect(t.members.get(chatId)).toContain(t.human.pubkey);
+    expect(t.members.get(chatId)).not.toContain(t.bot.pubkey);
+    expect(t.members.get(channelId)).toContain(t.bot.pubkey);
+    expect(t.session.archives.state(t.bot.pubkey)).toBe("archived");
+    expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  },
+);
 
 it("does not publish on failed grant, nor duplicate an accepted grant or rejected link on retry", async () => {
   const t = setup();

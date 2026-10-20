@@ -3541,25 +3541,3 @@ const canvasHead = (content: string, author = owner) => ({
   tags: [],
   content,
 });
-
-it("gives a newly started agent its durable source even with no source message in history", async () => {
-  const f = fixture();
-  asSoloChat(f);
-  const prior = f.snapshot.session.channels.list();
-  const origin = {
-    channelId: "33333333-3333-4333-8333-333333333333",
-    messageId: "e".repeat(64),
-  };
-  const next = {
-    ...prior,
-    channels: prior.channels.map((channel) => ({ ...channel, origin })),
-  };
-  f.snapshot.session.channels.list = () => next;
-  await f.runtime.run(f.delivery("@Codex continue", root));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(inputText(f.starts()[0])).toContain(
-    `buzz://message?channel=${origin.channelId}&id=${origin.messageId}`,
-  );
-  expect(inputText(f.starts()[0])).toContain("not instructions or permission");
-  await f.complete(0, "DONE");
-});

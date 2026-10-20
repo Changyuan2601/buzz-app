@@ -15,9 +15,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
-import { chatOrigin } from "./local-origin-preview";
-import { linkedDraftKey } from "./linked-chat";
-import type { ChannelOrigin } from "../relay/channel-origin";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { linkedDraftKey, readShareBack, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
@@ -65,7 +64,6 @@ function setup(available = true) {
   const emoji = { status: "ready", entries: [] };
   const channelWrites = {
     available,
-    originSupported: true,
     addAgents: vi.fn(async () => {}),
     create: vi.fn<RelaySession["channelWrites"]["create"]>(() =>
       "c".repeat(64),
@@ -1273,73 +1271,18 @@ it("resumes a new chat's interrupted upload after navigating away and back", asy
   );
 });
 
-it("creates an isolated linked draft with durable origin and no source text or automatic share", async () => {
-  const t = setup();
-  const linkedId = "22222222-2222-4222-8222-222222222222";
-  const source: ChannelOrigin = {
-    channelId: "33333333-3333-4333-8333-333333333333",
-    messageId: "c".repeat(64),
-    threadRootId: "b".repeat(64),
-  };
-  writeView("test", linkedDraftKey(linkedId), source);
-  writeView(
-    "test",
-    `${linkedDraftKey(linkedId)}:new-draft`,
-    taggedDraft("Investigate this"),
-  );
-  writeView("test", "solo:new-draft", "Unrelated work");
-  const started = vi.fn();
-  render(
-    <SoloDraft
-      session={t.session}
-      scope="test"
-      linkedId={linkedId}
-      source={source}
-      onStarted={started}
-    />,
-  );
-  expect(t.channelWrites.create).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  const id = t.channelWrites.create.mock.calls[0]?.[0];
-  expect(t.channelWrites.create).toHaveBeenCalledWith(
-    id,
-    "Investigate this",
-    undefined,
-    false,
-    source,
-  );
-  expect(t.channelWrites.refresh).toHaveBeenCalledWith(id, { origin: source });
-  expect(t.messages.send).toHaveBeenCalledWith(
-    id,
-    "@Member agent Investigate this",
-    ["a".repeat(64)],
-  );
-  expect(t.channelWrites.addAgents.mock.calls).toEqual([
-    [id, ["a".repeat(64)], expect.any(Function)],
-  ]);
-  expect(readView("test", "solo:new-draft", null)).toBe("Unrelated work");
-  expect(readView("test", linkedDraftKey(linkedId), null)).toBeNull();
-});
-
 it.each([false, true])(
-  "local source preview uses ordinary creation only on unsupported relays (supported=%s)",
-  async (supported) => {
-    vi.stubEnv("DEV", true);
-    vi.stubEnv("VITE_BUZZ_LOCAL_ORIGIN_PREVIEW", "1");
+  "shows an editable ordinary source link and sends it with the default agent (share=%s)",
+  async (share) => {
     const t = setup();
-    t.channelWrites.originSupported = supported;
-    const source = {
-      channelId: "33333333-3333-4333-8333-333333333333",
-      messageId: "a".repeat(64),
-    };
     const linkedId = "22222222-2222-4222-8222-222222222222";
+    const source: LinkedChat = {
+      channelId: "design",
+      link: `buzz://message?channel=design&id=${"c".repeat(64)}&thread=${"b".repeat(64)}`,
+      threadRootId: "b".repeat(64),
+      share,
+    };
     writeView("test", linkedDraftKey(linkedId), source);
-    writeView(
-      "test",
-      `${linkedDraftKey(linkedId)}:new-draft`,
-      taggedDraft("Investigate"),
-    );
     const started = vi.fn();
     render(
       <SoloDraft
@@ -1350,65 +1293,98 @@ it.each([false, true])(
         onStarted={started}
       />,
     );
+    await waitFor(() =>
+      expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+    );
+    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(input.value).toContain(source.link);
+    expect(t.channelWrites.create).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
     const id = started.mock.calls[0]?.[0];
-    expect(t.channelWrites.create.mock.calls[0]).toEqual([
-      id,
-      "Investigate",
-      undefined,
-      false,
-      ...(supported ? [source] : []),
-    ]);
-    expect(t.channelWrites.refresh).toHaveBeenCalledWith(
-      id,
-      supported ? { origin: source } : {},
-    );
-    expect(
-      chatOrigin(
-        "test",
-        t.session.viewer,
-        t.session.channels.list().channels[0],
-      ),
-    ).toEqual(supported ? undefined : source);
+    expect(t.channelWrites.create.mock.calls[0]).toHaveLength(4);
     expect(t.messages.send).toHaveBeenCalledWith(
       id,
-      "@Member agent Investigate",
+      expect.stringContaining(source.link),
       ["a".repeat(64)],
+    );
+    expect(readShareBack("test", id)).toEqual(
+      share ? { ...source, firstMessageId: "d".repeat(64) } : undefined,
     );
   },
 );
-
-it("blocks creation when preview source persistence fails, then retries the preserved draft", async () => {
-  vi.stubEnv("DEV", true);
-  vi.stubEnv("VITE_BUZZ_LOCAL_ORIGIN_PREVIEW", "1");
+it("keeps an edited linked draft instead of reinserting its removed source", async () => {
   const t = setup();
-  t.channelWrites.originSupported = false;
-  const source = { channelId: "33333333-3333-4333-8333-333333333333" };
-  writeView("test", "solo:new-draft", taggedDraft("Investigate"));
   const started = vi.fn();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+    share: false,
+  };
+  writeView(
+    "test",
+    `${linkedDraftKey(linkedId)}:new-draft`,
+    taggedDraft("Changed request"),
+  );
   render(
     <SoloDraft
       session={t.session}
       scope="test"
+      linkedId={linkedId}
       source={source}
       onStarted={started}
     />,
   );
-  const original = Storage.prototype.setItem;
-  const storage = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(function (this: Storage, key, value) {
-      if (key.includes("dev:solo-origin:")) throw new Error("Storage full");
-      original.call(this, key, value);
-    });
-  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "source couldn’t be saved",
-  );
-  expect(t.channelWrites.create).not.toHaveBeenCalled();
-  expect(t.messages.send).not.toHaveBeenCalled();
-  storage.mockRestore();
+  expect(
+    (screen.getByRole("textbox") as HTMLTextAreaElement).value,
+  ).not.toContain(source.link);
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe(
+    "@Member agent Changed request",
+  );
+});
+
+it("does not leave an already-queued first prompt in the chat when saving share-back fails", async () => {
+  const t = setup();
+  const started = vi.fn();
+  writeView("test", "solo:new-draft", taggedDraft("Do this once"));
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+    share: true,
+  };
+  render(
+    <ToastProvider>
+      <SoloDraft
+        session={t.session}
+        scope="test"
+        source={source}
+        onStarted={started}
+      />
+    </ToastProvider>,
+  );
+  const original = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key,
+    value,
+  ) {
+    if (key.includes("solo:share-back:")) throw new Error("full");
+    original.call(this, key, value);
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(t.messages.send).toHaveBeenCalledOnce();
+  expect(
+    readView<{ text: string }>("test", `draft:${started.mock.calls[0]?.[0]}`, {
+      text: "",
+    }).text,
+  ).not.toContain("Do this once");
+  expect(
+    await screen.findByText(
+      /Your message was queued, but sharing couldn’t be saved/,
+    ),
+  ).toBeVisible();
 });

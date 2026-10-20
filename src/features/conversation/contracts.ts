@@ -174,7 +174,9 @@ export type MessageAction = Readonly<{
   title: string;
   icon?: ComponentType;
   matches(message: ChannelMessage, session: RelaySession): boolean;
-  /** Mounted by the row after the menu closes; call close() to dismiss. */
+  /** A menu contribution (such as a submenu) mounts inside the host menu. */
+  placement?: "menu";
+  /** Mounted after the menu closes by default; call close() to dismiss. */
   component: ComponentType<
     TargetOpener & {
       message: ChannelMessage;

@@ -25,7 +25,11 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { linkedDraftKey } from "../../features/solo/linked-chat";
+import {
+  readShareBack,
+  shareBackKey,
+  linkedDraftKey,
+} from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
@@ -700,7 +704,9 @@ it("finishes a linked chat across roster updates without appending source prose"
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
   const source = {
     channelId: "33333333-3333-4333-8333-333333333333",
-    messageId: "e".repeat(64),
+    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
+    threadRootId: "e".repeat(64),
+    share: false,
   };
   writeView(f.scope, linkedDraftKey(linked), source);
   f.mount();
@@ -711,33 +717,50 @@ it("finishes a linked chat across roster updates without appending source prose"
   await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
   expect(screen.queryByText("Draft unavailable")).toBeNull();
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
-  expect(f.session.channelWrites.create.mock.calls[0]?.[4]).toEqual(source);
+  expect(f.session.channelWrites.create.mock.calls[0]).toHaveLength(4);
+  expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
 });
 
-it("returns to the exact source from chat metadata without requiring message history", async () => {
+it("keeps an interrupted first-send share for explicit retry without granting on reopen", async () => {
   const f = fixture();
-  const source = {
-    channelId: "33333333-3333-4333-8333-333333333333",
-    messageId: "e".repeat(64),
-    threadRootId: "f".repeat(64),
-  };
-  const prior = f.session.channels.list();
-  const next = {
-    ...prior,
-    channels: prior.channels.map((channel) => ({ ...channel, origin: source })),
-  };
-  f.session.channels.list = () => next;
+  writeView(f.scope, shareBackKey(id), {
+    channelId: "design",
+    link: "buzz://channel/design",
+    share: true,
+    firstMessageId: "d".repeat(64),
+    attempted: true,
+  });
   f.mount();
-  await userEvent.click(screen.getByRole("button", { name: "Chat actions" }));
-  await userEvent.click(
-    await screen.findByRole("menuitem", { name: "Back to source" }),
+  expect(
+    await screen.findByRole("dialog", { name: "Share chat" }),
+  ).toBeVisible();
+  expect(f.session.channelWrites.delivered).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(readShareBack(f.scope, id)?.attempted).toBe(true);
+});
+
+it("a failed first message retires the automatic gate so later manual sharing is not trapped", async () => {
+  const f = fixture();
+  writeView(f.scope, shareBackKey(id), {
+    channelId: "design",
+    link: "buzz://channel/design",
+    share: true,
+    firstMessageId: "d".repeat(64),
+  });
+  f.session.channelWrites.delivered.mockRejectedValue(
+    new Error("First send failed"),
   );
-  expect(f.open).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: "conversation",
-      channelId: source.channelId,
-      messageId: source.messageId,
-      threadRootId: source.threadRootId,
-    }),
+  f.mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "first message wasn’t confirmed",
   );
+  expect(readShareBack(f.scope, id)).toBeUndefined();
+  expect(f.send).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Start over" }));
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  await userEvent.click(screen.getByRole("button", { name: /^Share$/ }));
+  expect(
+    await screen.findByRole("dialog", { name: "Share chat" }),
+  ).toBeVisible();
+  expect(f.session.channelWrites.delivered).toHaveBeenCalledOnce();
 });

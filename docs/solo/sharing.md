@@ -52,7 +52,7 @@ Direct selections stay separate. Start over is required to choose a new audience
 device-local display history, not proof of link delivery. The grant remains a
 snapshot: future joins/departures are not synchronized. **Share** grants the
 union of directly selected keys and one fresh relay-confirmed destination roster,
-including bots, then posts one ordinary kind-9 link without notification tags.
+including bots but excluding known-archived identities, then posts one ordinary kind-9 link without notification tags.
 Its hover/focus hint explains that channel sharing grants access and posts a link.
 The footer reuses shared Dialog wrapping: each whole action gets its own flex item,
 so Copy link and Share can occupy separate rows at narrow widths or enlarged text.
@@ -75,6 +75,33 @@ Unknown profiles remain unclassified; absence of the indicator is **not** a priv
 promise. The access dialog loads roles and profiles on demand, without per-row reads,
 polling. Its device-local share history is display-only and does not drive the
 indicator. Clicking the indicator opens that same dialog.
+
+## Sending a copied chat link
+
+Pasting a recognized Solo chat link into a stream/forum composer stages its
+existing session card. Sending that card (at channel level or in a thread) asks
+**Share and send** or **Send link only**. Closing preserves the draft. Share uses
+the existing fresh destination roster and membership grant helpers, including
+channel agents, before the composer queues its original message. It does not
+post a second card or retarget a thread reply. Link-only leaves access unchanged.
+
+Consent covers the full chat history and future messages, not just a preview.
+An unsuccessful grant leaves the message unsent and keeps Retry in the dialog;
+that retry preserves its captured audience and existing operation receipts.
+Partial grants remain real access even if the user cancels or sends only the link.
+Leaving the composer cancels further grants and sending, not already dispatched
+writes. Outbox remains their recovery owner. A separate in-progress Share for the
+same chat must finish first. Channel audiences skip known-archived members, including
+ones archived before their grant starts on retry. Other grant failures remain
+visible; direct-person choices still reject archived identities. Sharing never
+unarchives anyone or removes them from the source channel. Existing audience
+bounds still apply.
+
+This first slice covers staged cards in channels and their threads, not ordinary
+message links, DMs, Solo destinations, editing an already-sent message, or new-chat
+creation. No implicit invitation, sidebar redesign, source-origin change, or new
+relay protocol is added. Cross-account/live and rendered interaction checks remain
+separate from the signed fixture tests.
 
 ## Retry and operation ownership
 

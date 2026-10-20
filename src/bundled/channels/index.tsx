@@ -1,4 +1,4 @@
-import { StartLinkedMessage, canStartLinkedChat } from "./StartLinkedChat";
+import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
@@ -7,7 +7,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
 import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { CopyIcon } from "../../shared/design-system/icons";
+import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import type { ArchiveShortcut } from "./ChannelsPage";
@@ -38,15 +38,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
     title: "Start Solo chat",
+    placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
     matches: (message, session) =>
       canStartLinkedChat(session, message.channelId) &&
       (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
-    component: ({ message, session, close }) => (
-      <StartLinkedMessage
+    component: ({ message, session }) => (
+      <StartLinkedChat
         session={session}
         navigation={navigator}
-        close={close}
+        channelId={message.channelId}
         message={message}
       />
     ),

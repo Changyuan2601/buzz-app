@@ -324,7 +324,7 @@ pub(crate) async fn relay_direct_message(
 }
 
 pub(super) fn creation(event: &EventTemplate) -> bool {
-    if event.kind != 9007 || !event.content.is_empty() || !(4..=16).contains(&event.tags.len()) {
+    if event.kind != 9007 || !event.content.is_empty() || !(4..=15).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
@@ -368,27 +368,6 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         if ttl.starts_with('0')
             || !ttl.bytes().all(|b| b.is_ascii_digit())
             || !ttl.parse::<i32>().is_ok_and(|n| n > 0)
-        {
-            return false;
-        }
-        index += 1;
-    }
-    if event
-        .tags
-        .get(index)
-        .is_some_and(|t| t.first().is_some_and(|s| s == "origin"))
-    {
-        let origin = &event.tags[index];
-        if !(2..=4).contains(&origin.len())
-            || !uuid(&origin[1])
-            || origin[1] == "00000000-0000-0000-0000-000000000000"
-            || origin.iter().skip(2).any(|id| {
-                id.len() != 64
-                    || !id
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            })
-            || (origin.len() == 4 && origin[2] == origin[3])
         {
             return false;
         }
@@ -621,36 +600,6 @@ mod boundary_tests {
             );
             assert!(!valid("channel-details", &event), "{extra:?}");
         }
-    }
-
-    #[test]
-    fn creation_origin_is_exact_and_before_labels() {
-        let base = EventTemplate {
-            kind: 9007,
-            created_at: 12,
-            content: String::new(),
-            tags: vec![
-                vec!["h".into(), uuid::Uuid::new_v4().to_string()],
-                vec!["name".into(), "Work".into()],
-                vec!["visibility".into(), "private".into()],
-                vec!["channel_type".into(), "stream".into()],
-            ],
-        };
-        let origin = vec![
-            "origin".into(),
-            uuid::Uuid::new_v4().to_string(),
-            "a".repeat(64),
-            "b".repeat(64),
-        ];
-        let mut event = base;
-        event.tags.push(origin.clone());
-        event.tags.push(vec!["t".into(), "buzz.solo".into()]);
-        assert!(creation(&event));
-        event.tags[4][3] = "a".repeat(64);
-        assert!(!creation(&event));
-        event.tags[4] = origin;
-        event.tags.swap(4, 5);
-        assert!(!creation(&event));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import { useSessionLinkSharing } from "./useSessionLinkSharing";
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
@@ -496,6 +497,13 @@ function Composer({
     }
     focus();
   }, [disabled]);
+  const linkSharing = useSessionLinkSharing(
+    fullSession(session),
+    channelId,
+    () => {
+      if (permitted.current) input.current?.focus();
+    },
+  );
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -1110,7 +1118,12 @@ function Composer({
       autoTagged.current === draftKey
     )
       return;
-    if (value.recipients.length || draft.trim()) {
+    // A shortcut may seed an ordinary editable link. Still add the default
+    // agent once while that initial text is untouched; never restore a removed tag.
+    const untouchedInitial =
+      typeof submission?.initialDraft === "string" &&
+      draft === submission.initialDraft;
+    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
       autoTagged.current = draftKey;
       return;
     }
@@ -1350,6 +1363,28 @@ function Composer({
       const sharedSessions = sessionReferenceIds(content).filter((id) =>
         stagedSessions.has(id),
       );
+      if (sharedSessions.length) {
+        setSending(true);
+        setError(undefined);
+        const current = () =>
+          permitted.current &&
+          valueRef.current === captured &&
+          viewRevision(scope, draftKey) === savedRevision &&
+          sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          );
+        if (
+          !(await linkSharing.prepare(sharedSessions, attempt.signal, current))
+        )
+          return;
+        attempt.signal.throwIfAborted();
+        if (viewRevision(scope, draftKey) !== savedRevision) {
+          setConflict(true);
+          return;
+        }
+        if (!current()) return;
+      }
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
         return threadRootId
@@ -1605,6 +1640,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && linkSharing.dialog}
       <form
         ref={form}
         className={styles.composer}
