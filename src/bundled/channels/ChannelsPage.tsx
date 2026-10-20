@@ -6,6 +6,7 @@ import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
@@ -37,7 +38,6 @@ import {
   isBuzzLink,
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
-import { SoloMessageTarget } from "../../features/solo/SoloMessageTarget";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { UnreadOptions } from "./UnreadBadge";
@@ -569,9 +569,11 @@ function ChannelWorkspace({
     setSettings(undefined);
     afterClose("settings");
   };
-  // The Solo treatment: a flat agent conversation. In the owner's own chat it
+  // The Solo treatment: an agent conversation. In the owner's own chat it
   // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "solo";
+  // Solo has no main tab workspace; its threads open beside the chat.
+  const threadPane = solo ? ("side" as const) : undefined;
   const personal = ownSolo(current, queries.viewer);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
@@ -592,6 +594,19 @@ function ChannelWorkspace({
       },
     });
   };
+  // A Solo start that fails leaves its chat for New chat only while this
+  // workspace still shows that chat.
+  const showing = useRef(requestedChannel);
+  const notify = useToastNotification();
+  useLayoutEffect(() => {
+    showing.current = requestedChannel;
+  });
+  useLayoutEffect(
+    () => () => {
+      showing.current = undefined;
+    },
+    [],
+  );
   const chooseLatest = useRef(chooseLifecycle);
   useLayoutEffect(() => {
     chooseLatest.current = chooseLifecycle;
@@ -637,12 +652,7 @@ function ChannelWorkspace({
       if (archive.current === shortcut) archive.current = undefined;
     };
   }, [archive, archivableId, lifecycle, navigation]);
-  const onComposerSend = useComposerSent(
-    currentId,
-    solo && !!requestedMessage,
-    setSent,
-    select,
-  );
+  const onComposerSend = useComposerSent(currentId, setSent);
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -653,7 +663,7 @@ function ChannelWorkspace({
       current?.cached ||
       !navigation ||
       !requestedMessage ||
-      (!solo && requestedThread === requestedMessage) ||
+      requestedThread === requestedMessage ||
       !currentId ||
       navigation.signal.aborted
     )
@@ -669,11 +679,11 @@ function ChannelWorkspace({
       setExactOpening({
         request: navigation,
         inTimeline:
-          (solo || requestedThread !== requestedMessage) &&
+          requestedThread !== requestedMessage &&
           window.status === "ready" &&
           window.freshness !== "cached" &&
           window.rows.some(
-            (row) => row.id === requestedMessage && (solo || !row.threadRootId),
+            (row) => row.id === requestedMessage && !row.threadRootId,
           ),
       });
     };
@@ -688,17 +698,13 @@ function ChannelWorkspace({
     requestedThread,
     currentId,
     queries,
-    solo,
   ]);
   // A live connection can still be confirming its restored membership. Keep
   // the pending intent; an exact reader cannot use display-only authority.
   const exact =
     cached || current?.cached
       ? undefined
-      : !solo &&
-          navigation &&
-          requestedMessage &&
-          requestedThread === requestedMessage
+      : navigation && requestedMessage && requestedThread === requestedMessage
         ? { request: navigation, inTimeline: false }
         : exactOpening?.request === navigation
           ? exactOpening
@@ -708,7 +714,6 @@ function ChannelWorkspace({
   const routedThread = useMemo(
     () =>
       !cached &&
-      !solo &&
       current &&
       navigation &&
       requestedMessage &&
@@ -718,17 +723,18 @@ function ChannelWorkspace({
             channelId: current.id,
             messageId: requestedMessage,
             rootId: requestedThread ?? requestedMessage,
+            pane: threadPane,
             navigation,
           }
         : undefined,
     [
       cached,
-      solo,
       current,
       navigation,
       requestedMessage,
       requestedThread,
       exact,
+      threadPane,
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
@@ -758,7 +764,7 @@ function ChannelWorkspace({
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
-    mainPane: true,
+    mainPane: !solo,
     navigation: navigator,
     routed: routedThread,
     onCloseThread: (tab, active, last) => {
@@ -1016,7 +1022,13 @@ function ChannelWorkspace({
       open(undefined);
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
-      tabState.openThreadTab(currentId, messageId, threadRootId, intent);
+      tabState.openThreadTab(
+        currentId,
+        messageId,
+        threadRootId,
+        intent,
+        threadPane,
+      );
       const target = navigator?.snapshot().entry.target;
       if (
         navigator &&
@@ -1047,6 +1059,7 @@ function ChannelWorkspace({
       scope,
       open,
       setSettings,
+      threadPane,
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
@@ -1334,28 +1347,7 @@ function ChannelWorkspace({
         ref={historyContainer}
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >
-        {solo &&
-        current &&
-        navigation &&
-        requestedMessage &&
-        exact &&
-        !exact.inTimeline ? (
-          <SoloMessageTarget
-            key={`${current.id}:${requestedMessage}`}
-            session={queries}
-            scope={scope}
-            channelId={current.id}
-            messageId={requestedMessage}
-            navigation={navigation}
-            extensions={extensions}
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
-            onLatest={() => select(current.id)}
-            onRetry={() => {
-              void navigator?.retry();
-            }}
-          />
-        ) : current ? (
+        {current ? (
           <ChannelBody
             onContentReady={setContentReadyChannel}
             viewer={viewer}
@@ -1364,11 +1356,9 @@ function ChannelWorkspace({
             // The composer below mounts TypingIndicator for members of a live channel.
             activityLane={!current.readOnly && !current.cached}
             navigation={
-              solo || !requestedMessage || exact?.inTimeline
-                ? navigation
-                : undefined
+              !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
-            onOpenThread={solo ? undefined : openThread}
+            onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -1544,6 +1534,11 @@ function ChannelWorkspace({
               scope={scope}
               extensions={extensions}
               onStarted={select}
+              onFailed={(channelId, message) => {
+                notify(message, "error");
+                if (showing.current === channelId && navigator)
+                  void navigator.open(soloDraftTarget(scope, draft));
+              }}
             />
           ) : (
             <>

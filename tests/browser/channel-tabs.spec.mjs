@@ -201,9 +201,15 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
       ),
     )
     .toBe(true);
-  const row = beta
+  // Solo agents answer at top level, so a Solo row starts no thread.
+  const sent = beta
     .locator("[data-message-id]")
     .filter({ has: page.getByText("Beta draft", { exact: true }) });
+  await hoverMessage(sent);
+  await expect(
+    sent.getByRole("button", { name: "Reply", exact: true }),
+  ).toHaveCount(0);
+  const row = main.locator(`[data-message-id="${link.id}"]`);
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const reply = workspace.getByRole("textbox", {
@@ -211,14 +217,14 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   await expect(reply).toBeFocused();
-  await reply.fill("Beta reply draft");
+  await reply.fill("Alpha reply draft");
   await page.locator('button[data-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
-    workspace.locator('[role="tab"][data-tab-value^="thread:beta:"]'),
+    workspace.locator('[role="tab"][data-tab-value^="thread:alpha:"]'),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(reply).toHaveText("Beta reply draft");
+  await expect(reply).toHaveText("Alpha reply draft");
   const alphaComposer = main.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -230,10 +236,10 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(reply).toBeFocused();
-  await expect(reply).toHaveText("Beta reply draft");
+  await expect(reply).toHaveText("Alpha reply draft");
   await workspace
     .locator(
-      '.buzz-tabs-item:has([data-tab-value^="thread:beta:"][aria-selected="true"]) > button:not([role="tab"])',
+      '.buzz-tabs-item:has([data-tab-value^="thread:alpha:"][aria-selected="true"]) > button:not([role="tab"])',
     )
     .click();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
@@ -251,6 +257,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
+  // Alpha's own thread took its details tab; reopen it for Diagnostics.
+  await openChannelDetails(page);
   app.omitChannel("beta");
   await workspace
     .getByRole("tab", { name: "Channel settings", exact: true })

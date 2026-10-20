@@ -37,6 +37,9 @@ failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
+Activity shows the turns the agent published to its owner while Buzz has been
+open, for the conversation it was opened from or all of them. It needs the Agent
+Activity plugin, which owns the feed.
 Profile updates remain TODO and report an unsupported-operation error.
 
 The adapter retains the provider agent ID, server, verified account subject and

@@ -62,7 +62,7 @@ import {
   type LiveSubscription,
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
@@ -1355,7 +1355,7 @@ export async function connectSignedTransport(
             principal().api,
           ).catch((error) => {
             if (error instanceof ApiPaused || error instanceof ApiNotSent)
-              throw new PublishRejected(error.message);
+              throw new PublishNotSent(error.message);
             throw error;
           }),
           event.id,
@@ -1495,7 +1495,7 @@ export async function acceptPublish(response: Response, id: string) {
         return publicationRefusal(failure.error);
     });
     if (body.sent === false || body.quota === "api")
-      throw new PublishRejected(body.error);
+      throw new PublishNotSent(body.error);
     throw new Error(
       `Relay delivery could not be confirmed (${response.status})`,
     );
@@ -1508,12 +1508,16 @@ export async function acceptPublish(response: Response, id: string) {
   };
   if (result.event_id !== id || typeof result.accepted !== "boolean")
     throw new Error("Relay returned an invalid delivery receipt");
-  if (!result.accepted)
-    throw new PublishRejected(
+  if (!result.accepted) {
+    const message =
       typeof result.message === "string"
         ? result.message
-        : "Relay rejected the message",
-    );
+        : "Relay rejected the message";
+    // NIP-01: a rate limit asks the client to wait, not to give up.
+    throw message.startsWith("rate-limited:")
+      ? new PublishNotSent(message)
+      : new PublishRejected(message);
+  }
   return typeof result.message === "string" ? result.message : "";
 }
 

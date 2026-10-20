@@ -514,7 +514,7 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
   }
 });
 
-it("uses segmented tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
+it("uses chrome tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
   const current = createServices();
   services = current;
   const onSelect = vi.fn();
@@ -547,7 +547,7 @@ it("uses segmented tabs with manual keyboard selection, page linkage, and isolat
   );
   const { rerender } = render(shell("example/Messages"));
   const tabs = screen.getByRole("tablist", { name: "Topbar pages" });
-  expect(tabs.parentElement).toHaveAttribute("data-variant", "segmented");
+  expect(tabs.parentElement).toHaveAttribute("data-variant", "chrome");
   const messages = within(tabs).getByRole("tab", {
     name: /Messages\s*3 unread/,
   });

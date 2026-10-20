@@ -301,7 +301,7 @@
      alpha. */
   --neutral-quiet-hover: #f1f1f2; /* hover between quiet fill and selection */
   --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
-  --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
+  --neutral-3: #e8e8e8; /* chrome track in light; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
   --neutral-5: #cccccc; /* unused in light; float + selected, dark */
   --neutral-6: #b3b3b3; /* border-primary in dark mode             */
@@ -385,11 +385,11 @@
   --space-8: 2rem;
   --space-16: 4rem;
 
-  /* --- Corner. Containers stop at 20px; pills/circles are separate shapes. */
-  --corner-row: 0.5rem;
-  --corner-control: 0.75rem;
-  --corner-container: 1rem;
-  --corner-panel: 1.25rem;
+  /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
+  --corner-row: 1rem;
+  --corner-control: 1.25rem;
+  --corner-container: 1.5rem;
+  --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 
   /* --- Time. State is quick; geometry settles deliberately. - */
@@ -618,7 +618,7 @@
   --text-row-selected-detail: var(--neutral-standard-text);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
-  --affordance-chrome: var(--affordance-subtle);
+  --affordance-chrome: var(--neutral-3);
   --affordance-chrome-hover: var(--affordance-subtle-hover);
   --text-chrome-subtle: var(--text-subtle);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
@@ -863,13 +863,13 @@
   --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
   /* Independent icon controls use an even contour on all four corners. */
-  --radius-icon-button: 0.625rem;
-  /* Half the large (52px) action height; smaller controls clamp naturally. */
-  --radius-capsule: 1.625rem;
+  --radius-icon-button: 1.125rem;
+  /* Capsule actions stay rounded through 68px; smaller controls clamp naturally. */
+  --radius-capsule: 2.125rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */
-  --radius-chip: 0.25rem;
+  --radius-chip: 0.75rem;
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);

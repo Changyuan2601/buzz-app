@@ -92,6 +92,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     new HostService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -176,6 +177,7 @@ it.each(["1", "0"])(
     new HostService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
     provideAgents(root, community);
     const backupCalls = () =>
       native.invoke.mock.calls.filter(([command]) =>
@@ -333,6 +335,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   new HostService(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
+  root.provide("relay", community.relay as never);
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },

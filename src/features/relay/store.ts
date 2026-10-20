@@ -25,7 +25,6 @@ import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
-import { readSessionWindow } from "./session-window";
 import { ByteLru, byteSize, listByteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
@@ -144,7 +143,6 @@ export function createChannelStore(
   ) => {
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
-      includeReplies: discovery?.isSolo(channelId) ?? false,
       signingAuthority: transport?.archiveAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
@@ -232,8 +230,11 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  // A chat this device is starting is a Solo chat, not a temporary room, so
+  // it lists and opens before its metadata arrives.
   function metadataPending(id: string) {
     return discovery &&
+      !discovery.isPending(id) &&
       !discovery.metadataVersion(id) &&
       !checkedMetadata.has(id)
       ? true
@@ -269,6 +270,7 @@ export function createChannelStore(
         old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
+        old.pending === channel.pending &&
         old.members?.length === channel.members?.length &&
         (old.members ?? []).every(
           (id, index) => id === channel.members?.[index],
@@ -426,7 +428,6 @@ export function createChannelStore(
         channelId,
         transport?.relayAuthor ?? "",
         profiling,
-        () => discovery?.isSolo(channelId) ?? false,
         clock,
         transport?.archiveAuthority,
       ),
@@ -443,7 +444,10 @@ export function createChannelStore(
   }
   const authorized = (id: string) => discovery?.canAccess(id) ?? false;
   const canReadRemote = (id: string) =>
-    !options.cachedOnly && authorized(id) && !discovery?.get(id)?.cached;
+    !options.cachedOnly &&
+    authorized(id) &&
+    !discovery?.get(id)?.cached &&
+    !discovery?.isPending(id);
   const live = (state: WindowState, generation: number) =>
     !disposed &&
     authorized(state.channelId) &&
@@ -499,8 +503,6 @@ export function createChannelStore(
   function save(channelId: string, head: Head, previousProfiles?: string) {
     if (
       !persistence ||
-      // Compatibility queries have no signed bounds to restore from disk.
-      isSolo(channelId) ||
       !discovery?.authorized(channelId) ||
       disposed ||
       heads.peek(channelId) !== head
@@ -523,6 +525,9 @@ export function createChannelStore(
     return signature;
   }
   function denyChannel(channelId: string, error: unknown) {
+    // A chat still starting is not there to deny yet; only a refused or
+    // missing create ends it (see channelWrites.start).
+    if (discovery?.isPending(channelId)) return;
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
     allowed?.delete(channelId);
@@ -559,22 +564,12 @@ export function createChannelStore(
       saveDiscovery();
     }, [channelId]);
   }
-  const isSolo = (channelId: string) => !!discovery?.isSolo(channelId);
   async function readPage(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    if (isSolo(channelId)) {
-      const page = await readSessionWindow(
-        transport,
-        channelId,
-        cursor,
-        settings,
-      );
-      return { events: page.events, page };
-    }
     const events = await transport.read(
       [windowFilter(channelId, cursor)],
       settings,
@@ -771,7 +766,6 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       if (
         !allowed?.has(record.channelId) ||
-        isSolo(record.channelId) ||
         heads.peek(record.channelId) ||
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||
@@ -1045,6 +1039,9 @@ export function createChannelStore(
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
     if (cached) discovery.restrictToKnown();
+    const starting = [...windows.keys()].filter((id) =>
+      discovery.isPending(id),
+    );
     let discoveryChanged = false;
     for (const event of events) {
       discoveryChanged = discovery.accept(event, cached) || discoveryChanged;
@@ -1117,6 +1114,13 @@ export function createChannelStore(
     if (prepared && !hydration) {
       const reveal = revealHydration;
       hydration = hydrate().finally(() => reveal?.());
+    }
+    // A started chat the relay just confirmed now reads its history and live tail.
+    for (const id of starting) {
+      const state = windows.get(id);
+      if (!state || discovery.isPending(id) || !authorized(id)) continue;
+      setWindow(state, { status: "idle" });
+      if (current === id) queries.ensure(id);
     }
     if (!cached) {
       saveDiscovery();
@@ -2267,6 +2271,32 @@ export function createChannelStore(
       const channel = discovery?.get(id);
       return channel && { ...channel, metadataPending: metadataPending(id) };
     },
+    start(channel: Parameters<NonNullable<ChannelQueries["start"]>>[0]) {
+      if (disposed || !transport || !discovery) return;
+      const createdAt = Math.floor(now() / 1000);
+      discovery.start({
+        id: channel.id,
+        name: channel.name,
+        channelType: "solo",
+        members: Object.freeze(
+          [...new Set([transport.viewer, ...channel.members])].sort(),
+        ),
+        labels: channel.labels,
+        creator: transport.viewer,
+        createdAt,
+        updatedAt: createdAt,
+        ...(channel.ttlSeconds !== undefined
+          ? { ttlSeconds: channel.ttlSeconds }
+          : {}),
+      });
+      setList({ ...list, channels: discovery.channels() }, true);
+    },
+    abandon(channelId: string) {
+      if (!discovery?.abandon(channelId)) return;
+      const state = windows.get(channelId);
+      if (state && !authorized(channelId)) evict(state);
+      setList({ ...list, channels: discovery.channels() }, true);
+    },
     resolve,
     searchPublic,
     findLabeled,
@@ -2326,6 +2356,12 @@ export function createChannelStore(
         state.atHead = true;
         state.restored = retained.restored === true;
         setWindow(state, patchFromHead(retained));
+      }
+      if (discovery?.isPending(channelId)) {
+        // A chat still starting has no history yet; its own sends show locally.
+        if (state.snapshot.status === "idle")
+          setWindow(state, { status: "ready", hasMore: false });
+        return;
       }
       clientMetrics.channelEnsured(
         channelId,

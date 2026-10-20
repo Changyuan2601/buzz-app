@@ -388,10 +388,10 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   // The popup owns modal semantics; the active step owns the visible card.
   const surface = dialog.locator(".buzz-dialog-step:not([inert])");
   const body = dialog.locator(".buzz-dialog-body");
-  const group = dialog.getByRole("region", { name: "Members", exact: true });
+  const group = dialog.getByRole("region", { name: "People", exact: true });
   const list = dialog.getByRole("region", { name: "Member list", exact: true });
   const search = dialog.getByRole("searchbox");
-  // Browser-only: one flexing list owns scrolling; title, channel and search
+  // Browser-only: one flexing list owns scrolling; title and search
   // remain fixed across themes and viewport widths.
   for (const mode of ["light", "dark"]) {
     await page.evaluate((mode) => {

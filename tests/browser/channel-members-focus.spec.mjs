@@ -67,7 +67,7 @@ test("identity menus preserve modal focus and addition returns focus only to its
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
     await expect(add).toBeEnabled();
     if (!moved) {
-      // The Enter row uses the dialog's floating selection, not the panel's.
+      // The Enter target uses the same neutral fill as hover.
       const fills = await dialog
         .locator("[data-highlighted]")
         .evaluate((row) => {
@@ -81,12 +81,12 @@ test("identity menus preserve modal focus and addition returns focus only to its
           };
           return {
             row: getComputedStyle(row).backgroundColor,
-            floating: probe("--affordance-floating-selected"),
+            neutral: probe("--affordance-subtle"),
             panel: probe("--affordance-selected"),
           };
         });
-      expect(fills.floating).not.toBe(fills.panel);
-      expect(fills.row).toBe(fills.floating);
+      expect(fills.neutral).not.toBe(fills.panel);
+      expect(fills.row).toBe(fills.neutral);
     }
     const identity = dialog.getByRole("button", {
       name: /Open profile for Morgan/,
@@ -304,7 +304,7 @@ test("inline member identity geometry and separate addition focus", async ({
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
     const members = dialog.getByRole("region", {
-      name: "Members",
+      name: "People",
       exact: true,
     });
     const others = dialog.getByRole("region", {
@@ -315,24 +315,18 @@ test("inline member identity geometry and separate addition focus", async ({
       name: "Member list",
       exact: true,
     });
-    await expect(members.getByRole("heading")).toHaveCSS("position", "sticky");
+    await expect(members).toHaveCount(0);
     await expect(others.getByRole("heading")).toHaveCSS("position", "sticky");
-    // Browser-only: empty/short roster search results follow the group with
-    // just the shared gap, not after all remaining dialog height.
-    const gap = await list.evaluate((node) =>
-      parseFloat(getComputedStyle(node).rowGap),
+    // With no roster matches, search results start at the top without an orphan divider.
+    await expect(others).toHaveCSS("border-top-width", "0px");
+    expect((await others.boundingBox()).y).toBeCloseTo(
+      (await list.boundingBox()).y,
+      0,
     );
-    const roster = await members.boundingBox();
-    expect(
-      (await others.boundingBox()).y - roster.y - roster.height,
-    ).toBeCloseTo(gap, 0);
     // Browser-only: an unbadged identity centers at rest and moves up to
     // reveal its key, without shifting the avatar, row or Add action.
     const row = add.locator("../..");
-    // The typed letters are underlined in their own <mark>; measure the name.
-    const name = row
-      .getByText("Morgan", { exact: true })
-      .locator("xpath=ancestor-or-self::*[not(self::mark)][1]");
+    const name = row.getByText("Morgan", { exact: true });
     const key = row.locator('[aria-hidden="true"].text-mono');
     await search.hover();
     await expect(key).toBeHidden();
@@ -820,7 +814,7 @@ test("large known-agent searches mount only the first invitation page", async ({
 
 // Browser-only: shared Select/modal focus, animated search geometry and native
 // full-height row action hit testing cannot be established by jsdom.
-test("member role dropdown fits beside search and preserves modal focus", async ({
+test("member identity dropdown fits beside search and preserves modal focus", async ({
   page,
 }) => {
   for (const width of [1280, 768, 390]) {
@@ -833,7 +827,7 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     });
     const search = dialog.getByRole("searchbox");
     const filter = dialog.getByRole("combobox", {
-      name: "Filter members by role",
+      name: "Filter people and agents",
     });
     await expect(filter).toBeVisible();
     const searchBounds = await search.boundingBox();
@@ -861,8 +855,8 @@ test("member role dropdown fits beside search and preserves modal focus", async 
       0,
     );
     // Reopening after every choice must retain both width and right edge,
-    // including Members, whose label plus selection mark is the widest.
-    for (const name of ["Members · 1", "All · 61", "Agents · 60"]) {
+    // including each identity group and its selection mark.
+    for (const name of ["People · 1", "All · 61", "Agents · 60"]) {
       await page.getByRole("option", { name, exact: true }).click();
       await expect(popup).toBeHidden();
       await filter.click();
@@ -881,7 +875,7 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     await expect(filter).toBeFocused();
     await expect(filter).toHaveText("Agents");
     await expect(
-      dialog.getByRole("region", { name: "Members", exact: true }),
+      dialog.getByRole("region", { name: "People", exact: true }),
     ).toHaveCount(0);
     await search.fill("Agent 12");
     await expect(dialog.getByRole("listitem")).toHaveCount(1);
@@ -1125,7 +1119,7 @@ for (const rejected of [false, true]) {
     } else {
       await expect(
         members
-          .getByRole("region", { name: "Members", exact: true })
+          .getByRole("region", { name: "People", exact: true })
           .getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveCount(0);
       await expect(page.locator(".buzz-toast")).toHaveCount(0);
@@ -1135,3 +1129,160 @@ for (const rejected of [false, true]) {
     expect(errors).toEqual([]);
   });
 }
+
+// Browser layout is required to prove the helper inset and role-label geometry.
+test("member helper aligns with content and Owner stays beside a person's name", async ({
+  page,
+}, testInfo) => {
+  for (const [mode, width, fontSize] of [
+    ["light", 1280, 16],
+    ["dark", 390, 20],
+  ]) {
+    await page.setViewportSize({ width, height: 832 });
+    for (const visitor of [false, true]) {
+      await page.goto(`${url}?administration${visitor ? "&visitor" : ""}`);
+      await page.evaluate(
+        ({ mode, fontSize }) => {
+          document.documentElement.setAttribute("data-color-mode", mode);
+          document.documentElement.style.fontSize = `${fontSize}px`;
+        },
+        { mode, fontSize },
+      );
+      await page.getByRole("button", { name: "Channel members" }).click();
+      const dialog = page.getByRole("dialog", {
+        name: "Channel members",
+        exact: true,
+      });
+      const heading = dialog.getByRole("heading", { name: /^People ·/ });
+      await expect(heading).toBeVisible();
+      if (visitor) {
+        const helper = dialog.getByText(
+          "Join this channel to add people and agents.",
+        );
+        await expect(helper).toBeVisible();
+        expect((await helper.boundingBox()).x).toBeCloseTo(
+          (await heading.boundingBox()).x,
+          0,
+        );
+        const inset = await helper.evaluate((node) =>
+          Number.parseFloat(getComputedStyle(node).paddingLeft),
+        );
+        expect(inset).toBe(fontSize);
+        // Both boxes include the same shared content inset.
+        expect(
+          await helper.evaluate((node) => getComputedStyle(node).paddingLeft),
+        ).toBe(
+          await heading.evaluate((node) => getComputedStyle(node).paddingLeft),
+        );
+      } else {
+        const row = dialog
+          .getByRole("listitem")
+          .filter({ hasText: "Carl (you)" });
+        const name = row.getByText("Carl (you)", { exact: true });
+        const owner = row.getByText("Owner", { exact: true });
+        await expect(owner).toBeVisible();
+        const avatar = row.locator("[data-avatar-shape]");
+        const inset = await heading.evaluate((node) =>
+          Number.parseFloat(getComputedStyle(node).paddingLeft),
+        );
+        expect(inset).toBe(fontSize);
+        expect((await heading.boundingBox()).x + inset).toBeCloseTo(
+          (await avatar.boundingBox()).x,
+          0,
+        );
+        const nameBounds = await name.boundingBox();
+        const ownerBounds = await owner.boundingBox();
+        expect(ownerBounds.x).toBeGreaterThan(nameBounds.x + nameBounds.width);
+        expect(ownerBounds.y + ownerBounds.height / 2).toBeCloseTo(
+          nameBounds.y + nameBounds.height / 2,
+          0,
+        );
+      }
+      expect(
+        await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+      ).toBe(true);
+      await dialog.screenshot({
+        path: testInfo.outputPath(
+          `members-${mode}-${visitor ? "visitor" : "owner"}.png`,
+        ),
+      });
+    }
+  }
+});
+
+// Browser-only: native focus and rendered add/roster geometry after membership confirmation.
+test("Solo adds an agent with pointer or Enter and retains the search focus", async ({
+  page,
+}, testInfo) => {
+  for (const [mode, width, keyboard] of [
+    ["light", 1280, false],
+    ["dark", 390, true],
+  ]) {
+    await page.setViewportSize({ width, height: 832 });
+    await page.goto(`${url}?solo`);
+    await page.evaluate(
+      (mode) => document.documentElement.setAttribute("data-color-mode", mode),
+      mode,
+    );
+    await page.getByRole("button", { name: "Channel members" }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Channel members",
+      exact: true,
+    });
+    const search = dialog.getByRole("searchbox", {
+      name: "Search members and add agents",
+    });
+    await expect(search).toBeFocused();
+    await expect(search).toHaveAccessibleDescription(
+      /can read this chat and its history/,
+    );
+    const add = dialog.getByRole("button", { name: /Add Morgan/ });
+    await expect(add).toHaveCount(0);
+    await expect(dialog).toHaveAccessibleDescription("");
+    await search.fill("Morgan");
+    await expect(add).toBeEnabled();
+    await expect(
+      dialog.getByRole("region", { name: "People", exact: true }),
+    ).toHaveCount(0);
+    await expect(dialog.locator("mark")).toHaveCount(0);
+    const neutralFill = await add.locator("../..").evaluate((row) => {
+      const sample = document.createElement("span");
+      sample.style.backgroundColor = "var(--affordance-subtle)";
+      row.append(sample);
+      const color = getComputedStyle(sample).backgroundColor;
+      sample.remove();
+      return color;
+    });
+    await expect(add.locator("../..")).toHaveCSS(
+      "background-color",
+      neutralFill,
+    );
+    await dialog.screenshot({
+      path: testInfo.outputPath(`solo-add-${mode}.png`),
+    });
+    if (keyboard) {
+      await search.fill("Morgan");
+      await search.press("Enter");
+    } else await add.click();
+    await expect(add).toHaveAttribute("aria-disabled", "true");
+    await expect
+      .poll(() => page.evaluate(() => window.focusFixture.additions.length))
+      .toBe(1);
+    await page.evaluate(() => window.focusFixture.confirm());
+    await expect(
+      dialog.getByText("Morgan added.", { exact: true }),
+    ).toHaveClass("sr-only");
+    await expect(search).toHaveValue("");
+    await expect(
+      dialog.getByRole("region", { name: "People", exact: true }),
+    ).toContainText("Carl");
+    await expect(search).toBeFocused();
+    await expect(
+      dialog.getByRole("region", { name: "Agents", exact: true }),
+    ).toContainText("Morgan");
+    await expect(add).toHaveCount(0);
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+  }
+});

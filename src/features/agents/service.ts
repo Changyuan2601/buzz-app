@@ -1136,6 +1136,8 @@ export class AgentsService extends Service implements Agents {
       agent: (pubkey) => this.agent(pubkey),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
+      starting: (agent, channelId) =>
+        this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
       records: () => Object.values(this.records),
       checkpoints: {

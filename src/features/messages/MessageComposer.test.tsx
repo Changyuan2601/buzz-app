@@ -475,6 +475,31 @@ function mount(
   };
 }
 
+it("retires reply controls immediately and preserves the draft when replying again", () => {
+  const h = mount({
+    replyContext: <button type="button">Cancel reply to Honey</button>,
+  });
+  fireEvent.change(h.input(), { target: { value: "Draft in progress" } });
+  const previous = screen.getByRole("button", {
+    name: "Cancel reply to Honey",
+  });
+
+  h.retarget({ replyContext: undefined });
+  expect(previous.closest("[inert]")).not.toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Cancel reply to Honey" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue("Draft in progress");
+
+  h.retarget({
+    replyContext: <button type="button">Cancel reply to Wes</button>,
+  });
+  const current = screen.getByRole("button", { name: "Cancel reply to Wes" });
+  expect(current.closest("[inert]")).toBeNull();
+  expect(screen.queryByText("Cancel reply to Honey")).toBeNull();
+  expect(h.input()).toHaveValue("Draft in progress");
+});
+
 it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
   const viewer = keypair(),
     relay = keypair();
@@ -1455,7 +1480,9 @@ it.each(["never", "before the failure", "after the failure"])(
     if (remounted === "after the failure") remount();
     const input = () => within(container).getByRole("textbox");
     await waitFor(() => expect(input()).toHaveValue("think hard@Honey "));
-    expect(within(container).getByText("tuned.txt")).toBeVisible();
+    await waitFor(() =>
+      expect(within(container).getByText("tuned.txt")).toBeVisible(),
+    );
     // The restored draft brings its pick back with it, not the default run.
     const button = await picker();
     expect(button).toHaveAttribute("data-selected");
@@ -1536,7 +1563,9 @@ it.each(["cleanup", "restore"] as const)(
       await waitFor(() =>
         expect(h.input()).toHaveValue("recover this caption"),
       );
-      expect(within(h.form()).getByText("retained.txt")).toBeVisible();
+      await waitFor(() =>
+        expect(within(h.form()).getByText("retained.txt")).toBeVisible(),
+      );
       expect(
         screen.queryByRole("button", { name: "Retry draft cleanup" }),
       ).toBeNull();
@@ -1607,7 +1636,9 @@ it("does not overwrite a later local edit when a background upload fails", async
   await userEvent.clear(h.input());
   await userEvent.click(retry);
   await waitFor(() => expect(h.input()).toHaveValue("original caption"));
-  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(h.form()).getByText("original.txt")).toBeVisible(),
+  );
   expect(
     screen.queryByRole("button", { name: "Retry failed send recovery" }),
   ).toBeNull();
@@ -1636,7 +1667,9 @@ it("restores a failed upload after the composer remounts in the same session", a
       "remount caption",
     ),
   );
-  expect(within(again.container).getByText("remount.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(again.container).getByText("remount.txt")).toBeVisible(),
+  );
 });
 
 it("reconciles failed-cleanup recovery after remount before stale cleanup can overwrite the caption", async () => {
@@ -1676,7 +1709,9 @@ it("reconciles failed-cleanup recovery after remount before stale cleanup can ov
       expect(replacement).toHaveValue("recover this caption"),
     );
     expect(replacement).toHaveAttribute("contenteditable", "true");
-    expect(within(again.container).getByText("retained.txt")).toBeVisible();
+    await waitFor(() =>
+      expect(within(again.container).getByText("retained.txt")).toBeVisible(),
+    );
     expect(
       within(again.container).queryByRole("button", {
         name: "Retry draft cleanup",
@@ -1724,7 +1759,9 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
   await userEvent.click(retry);
   await waitFor(() => expect(replacement).toHaveValue("original caption"));
   expect(replacement).toHaveAttribute("contenteditable", "true");
-  expect(within(again.container).getByText("original.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(again.container).getByText("original.txt")).toBeVisible(),
+  );
   expect(
     screen.queryByRole("button", { name: "Retry failed send recovery" }),
   ).toBeNull();
@@ -1765,7 +1802,9 @@ it("does not replace an active message edit when a remounted upload recovers", a
     within(again.container).getByRole("button", { name: "Cancel edit" }),
   );
   await waitFor(() => expect(replacement).toHaveValue("original caption"));
-  expect(within(again.container).getByText("original.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(again.container).getByText("original.txt")).toBeVisible(),
+  );
   expect(h.publish).not.toHaveBeenCalled();
 });
 
@@ -1807,7 +1846,9 @@ it("defers a failed upload recovery until an empty active message edit ends", as
     within(h.form()).getByRole("button", { name: "Cancel edit" }),
   );
   await waitFor(() => expect(editor).toHaveValue("original caption"));
-  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(h.form()).getByText("original.txt")).toBeVisible(),
+  );
 });
 
 it("retains preparation retry when recovery is deferred by an edit then unmounted", async () => {
@@ -1860,7 +1901,9 @@ it("retains preparation retry when recovery is deferred by an edit then unmounte
   );
   const composer = within(returned.container);
   expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
-  expect(composer.getByText("edit-remount.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(composer.getByText("edit-remount.txt")).toBeVisible(),
+  );
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji unavailable",
   );
@@ -1901,7 +1944,9 @@ it("offers message preparation retry after a failed attachment send remounts", a
   await waitFor(() =>
     expect(composer.getByRole("textbox")).toHaveValue("caption :party:"),
   );
-  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
+  );
   expect(composer.getByRole("alert")).toHaveTextContent(
     "Community emoji unavailable",
   );
@@ -1913,7 +1958,9 @@ it("offers message preparation retry after a failed attachment send remounts", a
     expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
   );
   expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
-  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
+  );
   expect(h.publish).not.toHaveBeenCalled();
   again.unmount();
   const returned = render(
@@ -7226,9 +7273,11 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
     screen.queryByRole("button", { name: "Remove helper.agent.png" }),
   ).toBeNull();
   fireEvent.click(finish);
-  expect(
-    await screen.findByRole("button", { name: "Remove voice-note.wav" }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Remove voice-note.wav" }),
+    ).toBeVisible(),
+  );
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
@@ -7304,7 +7353,9 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   );
   expect(form).not.toHaveAttribute("data-editing");
   expect(form).toHaveAttribute("data-attachments");
-  expect(within(view.container).getByText("pending.txt")).toBeVisible();
+  await waitFor(() =>
+    expect(within(view.container).getByText("pending.txt")).toBeVisible(),
+  );
 });
 
 it("stages session cards above an ordinary caption editor, persists them, and sends both", async () => {

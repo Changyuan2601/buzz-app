@@ -2009,12 +2009,7 @@ export function createUnread({
             await dm;
             return;
           }
-          // A timeline that shows replies (Solo chats) can end at one. It
-          // anchors the live bottom; channel catch-up never reads replies.
-          const anchor = rootId
-            ? target
-            : { kind: "message" as const, channelId, messageId: id };
-          const event = requireMessage(anchor, id);
+          const event = requireMessage(target, id);
           const key = rootId
             ? `thread-activity:${rootId}`
             : `activity:${channelId}`;
@@ -2044,7 +2039,7 @@ export function createUnread({
           const frontiers = reads.state().frontiers;
           const current = (journal: ReadJournal) =>
             valid(journal) &&
-            requireMessage(anchor, id) === event &&
+            requireMessage(target, id) === event &&
             (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
           // channel. Unseen mentions, replies and marked messages stay unread.

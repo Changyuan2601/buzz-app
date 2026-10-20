@@ -54,6 +54,8 @@ function setup(
     signal?: AbortSignal;
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    /** Solo chats the owner's device is still creating. */
+    pending?: Set<string>;
     named?: Delivery["named"];
     title?: string;
     /** The channel's Canvas, as it reads now. */
@@ -100,6 +102,7 @@ function setup(
             name: "general",
             channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
+            ...(options.pending?.has(channel) ? { pending: true } : {}),
           },
         ],
       }),
@@ -112,6 +115,7 @@ function setup(
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: !!options.canvas,
       read: vi.fn(
@@ -1414,6 +1418,31 @@ it("continues an owner's Solo chat as one channel session posted at the top leve
       ["p", alice],
     ],
   ]);
+});
+
+it("starts a turn in a chat its owner is still creating without reading its history", async () => {
+  const first = message("2", "@Claude first", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, read } = setup([first], {
+    hold: true,
+    solo: new Set([channel]),
+    pending: new Set([channel]),
+  });
+  await deliver({ type: "mention", event: first });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("@Claude first");
+  expect(read).not.toHaveBeenCalledWith(
+    [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+    expect.anything(),
+  );
+  expect(prompt).not.toContain("<conversation-context");
 });
 
 it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {

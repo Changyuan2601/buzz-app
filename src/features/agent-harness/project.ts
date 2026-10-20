@@ -43,7 +43,9 @@ type CanvasHead = Pick<
 >;
 
 /** The channel's Canvas text when `owner`, or an agent they attest, wrote its
- * current head; undefined when it has none or someone else wrote it. */
+ * current head; undefined when it has none or someone else wrote it. A chat
+ * the owner's device is still `starting` answers with the Canvas it starts
+ * with, before the relay has it. */
 export async function ownerCanvas(
   canvas:
     | Readonly<{
@@ -53,7 +55,9 @@ export async function ownerCanvas(
     | undefined,
   owner: string,
   channelId: string,
+  starting?: string,
 ): Promise<string | undefined> {
+  if (starting !== undefined) return starting || undefined;
   if (!canvas?.available) return undefined;
   const head = await canvas.read(channelId);
   if (!head) return undefined;

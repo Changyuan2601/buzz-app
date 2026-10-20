@@ -103,6 +103,7 @@ function setup(
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: options.canvas !== undefined,
       read: vi.fn(async () =>

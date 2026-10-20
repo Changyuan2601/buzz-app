@@ -491,7 +491,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       "rgba(255, 255, 255, 0.9)",
     );
     await expect(region).toHaveCSS("backdrop-filter", "blur(8px)");
-    await expect(region).toHaveCSS("border-radius", "16px");
+    await expect(region).toHaveCSS("border-radius", "24px");
     await expect(region).toHaveCSS("border-top-width", "1px");
     await expect(region).not.toHaveCSS("box-shadow", "none");
     await expect(

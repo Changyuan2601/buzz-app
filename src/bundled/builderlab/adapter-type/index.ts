@@ -1,5 +1,7 @@
+import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
 import type { AgentType } from "../../../features/agents/service";
+import type { RelayData } from "../../../features/relay/service";
 import type { AgentClient } from "../agents/client";
 import {
   clearRegistration,
@@ -20,6 +22,7 @@ type Identity = {
 export function builderlabType(
   client: AgentClient,
   session: OAuthSession,
+  relay: RelayData,
 ): AgentType {
   const scope = () => ({
     target: oauthTarget(),
@@ -81,6 +84,12 @@ export function builderlabType(
         role: "settings",
         splitSettings: true,
         component: createSettingsTab(client, session),
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: createActivityTab(relay),
       },
     ],
     remote: {

@@ -1941,12 +1941,69 @@ html[data-keyboard-input] .quickReactionGlyph {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  padding-inline-end: var(--space-2);
   color: var(--text-standard);
   background: var(--surface-inset);
   border-radius: var(--radius-control);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+/* The slot owns its gap so closing leaves no empty flex-row spacing. */
+.composerReplySlot {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-block-end: calc(-1 * var(--composer-gap));
+  margin-block-start: 0;
+}
+.composerReplySlot[data-open] {
+  grid-template-rows: 1fr;
+  margin-block-start: calc(-1 * var(--space-1h));
+}
+.composerReplyClip {
+  min-height: 0;
+  overflow: hidden;
+}
+.composerReplyContent {
+  padding-block-end: var(--composer-gap);
+  opacity: 0;
+  transform: translateY(var(--space-1h));
+}
+.composerReplySlot[data-open] .composerReplyContent {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .composerReplySlot {
+    transition:
+      grid-template-rows var(--duration-state) var(--easing-enter),
+      margin-block-start var(--duration-state) var(--easing-enter);
+  }
+  html:not([data-keyboard-navigation]) .composerReplySlot[data-open] {
+    transition-duration: var(--duration-settle);
+
+    @starting-style {
+      grid-template-rows: 0fr;
+      margin-block-start: 0;
+    }
+  }
+  html:not([data-keyboard-navigation]) .composerReplyContent {
+    transition:
+      opacity var(--duration-fast) var(--easing-enter),
+      transform var(--duration-state) var(--easing-enter);
+  }
+  html:not([data-keyboard-navigation])
+    .composerReplySlot[data-open]
+    .composerReplyContent {
+    transition:
+      opacity var(--duration-state) var(--easing-enter),
+      transform var(--duration-settle) var(--easing-enter);
+
+    @starting-style {
+      opacity: 0;
+      transform: translateY(var(--space-1h));
+    }
+  }
 }
 .replyContext > div {
   min-width: 0;

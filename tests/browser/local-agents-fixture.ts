@@ -5,6 +5,7 @@ import type {
   AgentIdentity,
 } from "../../src/features/agents/native";
 import type { BundledPlugin } from "../../src/plugins/manager";
+import { createActivityTab } from "../../src/bundled/builderlab/adapter-type/Activity";
 import type { WorkOutcome } from "../../src/features/agents/local-activity";
 
 // A real curve point: the owner's session derives a NIP-44 key with it to read
@@ -101,6 +102,15 @@ export const localAgentPlugin: BundledPlugin = {
         id: "tester",
         title: "Local tester",
         defaults: () => ({ config: {} }),
+        // The remote agent type's Activity tab, so published turns can be seen.
+        tabs: [
+          {
+            id: "activity",
+            title: "Activity",
+            role: "activity",
+            component: createActivityTab(ctx.relay),
+          },
+        ],
         run(delivery) {
           if (delivery.trigger.type !== "mention")
             throw new Error("Unexpected trigger");

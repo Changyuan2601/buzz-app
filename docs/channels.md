@@ -1200,7 +1200,7 @@ moves focus to the first revealed reply; deleting a focused reply returns focus 
 its available parent or thread history. Labeled expansion controls remain available
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
-notice. Solo chats remain flat.
+notice.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.

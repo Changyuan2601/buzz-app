@@ -862,8 +862,14 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    return conversationHistory(request.event, request.conversation, (filters) =>
-      reads.read(filters, signal),
+    // A chat its owner is still creating has nothing earlier to read.
+    const starting = (await reads.channel(request.conversation.channelId))
+      ?.starting;
+    return conversationHistory(
+      request.event,
+      request.conversation,
+      (filters) =>
+        starting ? Promise.resolve([]) : reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake

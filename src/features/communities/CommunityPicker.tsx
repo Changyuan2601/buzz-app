@@ -2,7 +2,11 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { GlobeIcon, PlusIcon } from "../../shared/design-system/icons/index";
+import {
+  GlobeIcon,
+  PlusIcon,
+  UsersPlusIcon,
+} from "../../shared/design-system/icons/index";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import type { SettingsCards } from "../settings/service";
 import type { OpenTarget } from "../navigation/targets";
@@ -310,7 +314,7 @@ export function CommunityPicker({
             })}
             <NavigationItem
               label="Join a community"
-              icon={<PlusIcon size={20} />}
+              icon={<UsersPlusIcon size={20} />}
               onClick={() => {
                 setSwitcherOpen(false);
                 setJoining(true);

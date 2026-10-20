@@ -296,13 +296,11 @@ export function AppShell({
           )}
           {navigationControls}
         </div>
-        <div className="shell-center-capsule shell-capsule">
+        <div className="shell-center-capsule shell-capsule chrome-navigation">
           <div ref={creationRef} className="shell-create-action shell-capsule">
-            <Panel as="div" shape="capsule">
-              {creationAction}
-            </Panel>
+            {creationAction}
           </div>
-          <Panel as="div" shape="capsule">
+          <div className="shell-page-switcher">
             {headerPages.length > 0 && (
               <PopoverRoot
                 open={overflowOpen && compactPages}
@@ -369,15 +367,13 @@ export function AppShell({
                 />
               </nav>
             )}
-          </Panel>
+          </div>
           <div ref={searchRef} className="shell-search-action shell-capsule">
-            <Panel as="div" shape="capsule">
-              <PageSearch
-                pages={pages}
-                onSelect={onSelect}
-                services={searchServices}
-              />
-            </Panel>
+            <PageSearch
+              pages={pages}
+              onSelect={onSelect}
+              services={searchServices}
+            />
           </div>
         </div>
         <div

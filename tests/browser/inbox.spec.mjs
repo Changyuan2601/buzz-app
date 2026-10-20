@@ -573,15 +573,14 @@ test.describe("signed newest-first Inbox windows", () => {
   });
 });
 
-// Solo chat policy must survive bundled Inbox -> shared thread composer -> broker
-// publication, including the inferred exact recipient and signed roster preflight.
-test.describe("Inbox Solo chat reply admission", () => {
+// Solo agents answer at top level: Inbox still opens a Solo thread, read-only.
+test.describe("Inbox Solo chat thread", () => {
   test.use({
     soloChannels: ["alpha"],
     agentPeers: true,
     inboxSoloAgent: true,
   });
-  test("plain Solo chat reply notifies the sole member agent through the shared composer", async ({
+  test("a Solo chat thread reply opens its thread without a reply composer", async ({
     page,
     app,
   }) => {
@@ -599,40 +598,10 @@ test.describe("Inbox Solo chat reply admission", () => {
     await expect(
       inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab"),
     ).toHaveCount(1);
-    const editor = detail.getByRole("textbox", { name: "Reply to thread" });
-    await expect(editor).toBeVisible();
-    const root = app.histories
-      .get("primary/alpha")
-      .find((event) => event.content === "Thread root 1");
-    if (!root) throw new Error("Missing Solo chat root fixture");
-    const roster = app
-      .startupCache()
-      .discovery.find(
-        (event) =>
-          event.kind === 39002 &&
-          event.tags.some(([name, value]) => name === "d" && value === "alpha"),
-      );
-    if (!roster) throw new Error("Missing verified Solo chat roster");
-    const agents = roster.tags
-      .filter(([name, key]) => name === "p" && key !== app.viewer)
-      .map(([, key]) => key);
-    expect(agents).toHaveLength(1);
-    await editor.fill("Inbox Solo chat reply without a typed mention");
-    await detail.getByRole("button", { name: "Send message" }).click();
-    await expect
-      .poll(() =>
-        app.report.publications.filter(({ event }) => event?.kind === 9),
-      )
-      .toHaveLength(1);
-    const sent = app.report.publications.find(
-      ({ event }) => event?.kind === 9,
-    )?.event;
-    if (!sent) throw new Error("Missing signed Solo chat reply");
-    expect(sent.tags).toContainEqual(["h", "alpha"]);
-    expect(sent.tags).toContainEqual(["e", root.id, "", "reply"]);
-    expect(sent.tags.filter(([name]) => name === "p")).toEqual([
-      ["p", agents[0]],
-    ]);
+    await expect(detail.getByText("Unread reply 1")).toBeVisible();
+    await expect(
+      detail.getByRole("textbox", { name: "Reply to thread" }),
+    ).toHaveCount(0);
   });
 });
 

@@ -306,59 +306,6 @@ describe("channel store", () => {
   });
 });
 
-it("opens an ordinary private Solo chat with existing agent replies in its main timeline", async () => {
-  const { store, queries, next } = setup();
-  queries.ensureList();
-  next().respond([
-    roster(relay, "work", [viewer.pubkey]),
-    signed(relay, {
-      kind: 39000,
-      content: "",
-      tags: [
-        ["d", "work"],
-        ["name", "Work"],
-        ["t", "stream"],
-        ["private"],
-        ["t", "buzz.solo"],
-      ],
-    }),
-    profile(alice, { name: "Alice" }),
-    profile(viewer, { name: "Viewer" }),
-  ]);
-  await flush();
-  queries.ensure("work");
-  const request = next();
-  expect(request.filters[0]).not.toHaveProperty("top_level");
-  expect(request.filters[0]).not.toHaveProperty("session_timeline");
-  const root = message(viewer, "work", "Prompt", 20);
-  const reply = message(alice, "work", "Answer", 21, [
-    ["e", root.id, "", "reply"],
-  ]);
-  request.respond([reply, root]);
-  await flush();
-  expect(queries.window("work").rows).toEqual([]);
-  next().respond([]); // Fetch message overlays before presenting the page.
-  await flush();
-  expect(queries.window("work").rows.map((row) => row.content)).toEqual([
-    "Prompt",
-    "Answer",
-  ]);
-  expect(queries.window("work").hasMore).toBe(true);
-  next().respond([]); // Optional profile enrichment is independent of history.
-  await flush();
-  queries.loadOlder("work");
-  const older = next();
-  expect(older.filters[0]).toMatchObject({ until: 20, before_id: root.id });
-  older.respond([]);
-  await flush();
-  expect(queries.window("work").hasMore).toBe(false);
-  expect(queries.window("work").rows.map((row) => row.content)).toEqual([
-    "Prompt",
-    "Answer",
-  ]);
-  store.dispose();
-});
-
 it("projects explicit visibility and replaces description-only changes", async () => {
   const { store, queries, next } = setup();
   try {

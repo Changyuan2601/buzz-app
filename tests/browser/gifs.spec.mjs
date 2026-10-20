@@ -161,7 +161,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     page.getByRole("tab", { name: "GIF", exact: true }),
   ).toBeVisible();
   await expect(picker).toBeVisible();
-  await expect(picker).toHaveCSS("border-radius", "16px");
+  await expect(picker).toHaveCSS("border-radius", "24px");
   await expect(picker).toHaveCSS("border-top-width", "1px");
   await expect(picker).not.toHaveCSS("box-shadow", "none");
   const emojiTab = page.getByRole("tab", { name: "Emoji", exact: true });

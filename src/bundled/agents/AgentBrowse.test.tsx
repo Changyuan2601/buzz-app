@@ -90,7 +90,7 @@ it("browses shared agents and opens read-only details", async () => {
   ).toBeVisible();
   expect(screen.getByText("Help with tasks.")).toBeVisible();
   // Unknown to the profile directory, the sharer shows as their short key.
-  expect(screen.getByText("Shared by")).toBeVisible();
+  expect(screen.getByText("By")).toBeVisible();
   expect(screen.getByText(/^npub…/)).toBeVisible();
 });
 
@@ -247,7 +247,7 @@ it("names the sharer by their profile, with their key on hover", async () => {
   expect(within(dialog).getByText("Cora")).toBeVisible();
   expect(within(dialog).queryByText(/^npub…/)).not.toBeInTheDocument();
   expect(profiles.ensure).toHaveBeenCalledWith([shared.pubkey]);
-  expect(within(dialog).getByText("test-model")).toBeVisible();
+  expect(within(dialog).getByText("Model: test-model")).toBeVisible();
 });
 
 it("imports a shared agent through the import path, then hands back", async () => {

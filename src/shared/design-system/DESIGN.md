@@ -428,7 +428,7 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
+- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (24px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
 - **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state.
 - **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
@@ -438,7 +438,7 @@ Use the surface that matches the content and its position in the interface.
 ### Floating surfaces
 
 Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
-mode-aware fill, 8px backdrop blur, standard border, 16px `radius-container` corners,
+mode-aware fill, 8px backdrop blur, standard border, 24px `radius-container` corners,
 and shared lift. `popover-surface` composes this same recipe for feature-owned
 anchored content. Reduced transparency, forced colors, and browsers without blur
 support use the opaque fill.
@@ -449,16 +449,16 @@ horizontal padding and corners derived from the outer radius and inset. Their ho
 actions and nested submenus, Select for a value, and Popover for interactive
 content; Base UI retains each control's keyboard and focus semantics.
 
-Short action menus and compact account popovers retain 8px `radius-row`
+Short action menus and compact account popovers retain 16px `radius-row`
 corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
 never automatically because the viewport is narrow. Dialogs and alert dialogs
 use opaque `surface-popover` so inset fields stay distinct above the dimmed
-page, retaining their 20px `radius-panel` corners and modal backdrop. Stepped
+page, retaining their 28px `radius-panel` corners and modal backdrop. Stepped
 dialogs apply the fill to each step; their shared wrapper stays transparent.
 
 ### Corner scale and nesting
 
-Standalone containers use the 4 / 8 / 12 / 16 / 20px scale: `radius-chip` for
+Standalone containers use the 12 / 16 / 20 / 24 / 28px scale: `radius-chip` for
 tight details, `radius-row` for independent rows, `radius-control` for fields,
 `radius-container` for medium containers and standard floating surfaces, and
 `radius-panel` for large surfaces. These are rem-based values at the default
@@ -468,8 +468,8 @@ can be square.
 When a nested fill or container follows its parent's contour, use
 `max(0px, outer radius - inset)`, measured between the painted edges. Include
 padding and the parent's border in that inset. Do not round a derived radius
-back to a scale step: a 16px menu with 4px padding and a 1px border has 11px
-row corners; an 8px compact menu with the same inset has 3px row corners.
+back to a scale step: a 24px menu with 4px padding and a 1px border has 19px
+row corners; a 16px compact menu with the same inset has 11px row corners.
 
 `floating-surface` owns `--floating-radius`, `--floating-inset` (the padding),
 and `--floating-inner-radius` (subtracting its 1px border). Menu, Select,
@@ -502,16 +502,19 @@ glass remains; the flat shell does not establish a general glass contrast guaran
 
 ### Match controls to their surface
 
-Shell control groups use `Panel shape="capsule"` to share the workspace panel
-fill and shadow with rounded ends. Layout and overflow remain shell-owned.
+The shell groups creation, page tabs, and search in one `chrome-navigation`
+track. Nested chrome tabs retain their selected fill without a second track.
+Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
-Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule,
+Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
+(neutral 3 in light mode, distinct from the app background),
 with `affordance-chrome-hover` for an inactive item and `text-chrome-subtle` labels. Selection uses the pane color
 in light mode and neutral 5 in dark mode, where it stays stronger than hover.
+Chrome icon controls inside the shared track use the same hover fill as its tabs.
 Standalone chrome icon controls remain unfilled and use backdrop hover/pressed
 fills. No blur or glass rim is added.
 A chrome selection can blend into a white panel; choose the appropriate variant
@@ -648,16 +651,16 @@ expansion. It retains shared disabled, loading, and keyboard-focus behavior;
 pair it with `size="inline"` for quiet history labels. Their 32 / 40 / 52px sizes are sm / md /
 lg at the default scale, with minimum
 heights that accommodate larger text. Text buttons use `--radius-capsule`
-(1.625rem / 26px): capsule-shaped through the default 52px large size,
+(2.125rem / 34px): capsule-shaped through the default 52px large size,
 clamped naturally on shorter controls, and bounded on taller ones. Reuse this
 role for similarly sized actions; `--radius-pill` remains the fully round role
 for circles and pills of any height. Fields retain `--radius-control`.
 
-Settings scopes the text-button radius to 12px `--radius-control` so actions
-use rounded rectangles. Icon actions retain their independent 10px radius.
+Settings scopes the text-button radius to 20px `--radius-control` so actions
+use rounded rectangles. Icon actions retain their independent 18px radius.
 
 Floating unread cues and Jump to latest use Button's `shape="control"` with
-12px `--radius-control` corners in every state. Any backing surface uses the
+20px `--radius-control` corners in every state. Any backing surface uses the
 same radius so its painted edges align with the button.
 A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
@@ -810,7 +813,7 @@ gap between named groups.
 
 InputGroup shares the inline frame for SearchField and Combobox. Icons use an
 8px gap, and trailing actions retain a stable slot. SearchField uses the same
-12px control radius as other fields, with no separate navigator shape. Focus belongs to
+20px control radius as other fields, with no separate navigator shape. Focus belongs to
 the input or action,
 while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
@@ -858,8 +861,8 @@ for identity choices, retaining human/agent shapes.
 
 PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
 spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem
-width and 8px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
-hover treatment for short action lists. Content and wide popovers retain 16px corners.
+width and 16px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
+hover treatment for short action lists. Content and wide popovers retain 24px corners.
 Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as
@@ -1132,7 +1135,7 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead, except for the
 wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, hug their contents up to a 12rem maximum with ellipsis, use 10px corners matching adjacent icon
+semantics, hug their contents up to a 12rem maximum with ellipsis, use 18px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
@@ -1175,8 +1178,8 @@ the hovered row’s trailing action unobstructed.
 ## Menu row corners
 
 Menu rows use `--floating-inner-radius` in every position, including grouped
-choices and submenu triggers. Default and wide menus derive 11px inner corners
-from their 16px surface; compact menus derive 3px from their 8px surface.
+choices and submenu triggers. Default and wide menus derive 19px inner corners
+from their 24px surface; compact menus derive 11px from their 16px surface.
 Both include the 4px padding and 1px border in the inset.
 
 Use these shared recipes. Do not add positional or feature-local radius overrides,
@@ -1681,7 +1684,7 @@ inside `nav.chrome-navigation`. It shares the chrome tab material and selected f
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
 The wide shell topbar is the deliberate exception: global destinations use
-`Tabs variant="segmented"` linked to the retained, labelled page panel. Arrow keys
+`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
@@ -1741,14 +1744,14 @@ and the composer panel surface. Keep outside-click dismissal and Escape enabled.
 Its `SearchField variant="palette"` uses a transparent fill and border with no shadow. Keyboard focus
 uses a single perimeter border. It retains
 24px vertical and 12px horizontal padding, and the complete 20px `body-lg` role. Both surfaces use smooth (`squircle`)
-corners where supported; the input radius is the 24px modal radius minus the 12px
-outer inset, giving 12px. The body retains top padding inside its scrollport for the focus stroke.
+corners where supported; the input radius is the 32px modal radius minus the 12px
+outer inset, giving 20px. The body retains top padding inside its scrollport for the focus stroke.
 Other dialogs and search fields retain their existing presentation.
 
 The palette omits the magnifying glass and uses the subdued “Search...” placeholder.
 
 Search result rows use `NavigationItem variant="search"`, with 12px vertical
-and horizontal padding and 21px icons. Their 12px radius follows the modal radius minus
+and horizontal padding and 21px icons. Their 20px radius follows the modal radius minus
 the 12px gutter, and their hover surfaces align with the input.
 
 Inline search settings use the search variant of PreferenceRow with a gear icon and the same title/subtitle hierarchy as destination rows. Results height transitions for 180ms, disabled with reduced motion. The clear control reserves space to keep input dimensions stable.

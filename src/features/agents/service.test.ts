@@ -1043,6 +1043,41 @@ it("wakes on a reply in a thread it started only by a mention or a watch", async
   ]);
 });
 
+it("publishes an agent's reply in a chat its owner is still starting once the start lands", async () => {
+  const { service, run, emit, native, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  let land = () => {};
+  const starting = new Promise<void>((resolve) => {
+    land = resolve;
+  });
+  vi.spyOn(session.channelWrites, "starting").mockImplementation((id) =>
+    id === channel ? starting : undefined,
+  );
+  let replied = false;
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+    replied = true;
+  });
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  await settle();
+  expect(await published(native, 9)).toEqual([]);
+  land();
+  await vi.waitFor(() => expect(replied).toBe(true));
+  expect(await published(native, 9)).toHaveLength(1);
+});
+
 it("keeps room for mentions however much watch work waits", async () => {
   const { service, run, emit } = await setup({ identities: [echo] });
   await service.save(bot, {

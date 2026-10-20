@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import type { RelayData } from "../../../features/relay/service";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
@@ -66,7 +67,10 @@ function fixture() {
   const request = vi.fn<Host["request"]>().mockResolvedValue(response());
   const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   const type = {
-    ...builderlabType(client, session),
+    ...builderlabType(client, session, {
+      snapshot: () => ({ status: "disconnected", generation: 0 }),
+      subscribe: () => () => {},
+    } as unknown as RelayData),
     key: "block.builderlab/builderlab",
     pluginId: "block.builderlab",
     revision: "test",

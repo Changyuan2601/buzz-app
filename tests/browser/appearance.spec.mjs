@@ -588,7 +588,7 @@ test("compiled host preserves compatibility utility meanings", async ({
     ).toBeGreaterThanOrEqual(4.5);
     await expect(page.locator("#old-primary")).toHaveCSS(
       "border-radius",
-      "12px",
+      "20px",
     );
     for (const id of ["old-code", "old-mono"]) {
       await expect(page.locator(`#${id}`)).toHaveCSS(

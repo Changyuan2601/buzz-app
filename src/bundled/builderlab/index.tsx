@@ -14,7 +14,7 @@ import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
-export const inject = ["host", "settingsCards", "agents"];
+export const inject = ["host", "settingsCards", "agents", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -82,7 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       </div>
     );
     ctx.agents.register({
-      ...builderlabType(agents, session),
+      ...builderlabType(agents, session, ctx.relay),
       provider: {
         snapshot: () => providerState,
         subscribe: (listener) => {

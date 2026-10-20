@@ -593,7 +593,8 @@ export class ClaudeRuntime {
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
-    if (reads && (thread || dm || topLevel))
+    // A chat its owner is still creating has nothing earlier to read.
+    if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
         const events = await reads.read(
           thread && !topLevel

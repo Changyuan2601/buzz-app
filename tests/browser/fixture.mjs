@@ -2530,7 +2530,11 @@ export const test = base.extend({
             Math.floor(Date.now() / 1000) + 1,
           );
           threadSummaries.push(event);
-          relay.publish("primary", event);
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              if (client.channels.includes("alpha"))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
         reply(rootId, own = false, deliver = true) {

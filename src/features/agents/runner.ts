@@ -310,6 +310,9 @@ export type RunnerHost = {
   member(agent: Agent, event: RelayEvent): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** While the owner is still starting this chat, settles once it can take
+   * the agent's events; undefined otherwise. */
+  starting?(agent: Agent, channelId: string): Promise<void> | undefined;
   /** Its community, while live. */
   community(agent: Agent): LiveCommunity | undefined;
   /** Every saved record, whose watches' catch-up progress is kept. */
@@ -2067,6 +2070,12 @@ export class AgentRunners {
     return this.host.custody;
   }
   private async publish(runner: Runner, event: AgentEventTemplate) {
+    const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
+    const agent = this.host.agent(runner.pubkey);
+    // The relay takes a reply in a starting chat only once it confirms it;
+    // a failed start leaves the relay to refuse it.
+    if (channel && agent)
+      await this.host.starting?.(agent, channel)?.catch(() => {});
     const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;

@@ -2168,20 +2168,6 @@ it.each(["markMessageRead", "markMessageUnread"] as const)(
   },
 );
 
-it("bottom catch-up can end at a reply in a timeline that shows replies", async () => {
-  const h = setup();
-  h.grant("room");
-  const root = message(h.alice, "room", "root", 11);
-  const later = message(h.alice, "room", "later", 12);
-  const reply = message(h.alice, "room", "reply", 13, [
-    ["e", root.id, "", "reply"],
-  ]);
-  h.emit([root, later, reply]);
-  await h.session.unread.reading("room").catchUp(reply.id);
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 13 });
-  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
-});
-
 it("bottom catch-up preserves mentions, broadcasts, participating threads and later activity", async () => {
   const h = setup();
   h.grant("room");

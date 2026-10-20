@@ -616,3 +616,63 @@ test("finishing a zero-reply summary hands focus back only when it owns focus", 
     ).toBeFocused();
   }
 });
+
+test("the published-activity tab shows turns its agent published", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  // Activity is best effort; publish only once the owner's observer route is live.
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  // The fixture agent's key is the curve generator, so secret key 1 signs as it.
+  const key = new Uint8Array(32);
+  key[31] = 1;
+  const frame = (kind, payload) => ({
+    kind,
+    seq: 1,
+    timestamp: new Date().toISOString(),
+    channelId: "alpha",
+    sessionId: "S",
+    turnId: "published",
+    payload,
+  });
+  app.observer(frame("turn_started", {}), key);
+  app.observer(
+    frame("acp_read", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "S",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "m1",
+          content: { type: "text", text: "Published reply" },
+        },
+      },
+    }),
+    key,
+  );
+  await page
+    .getByRole("form", { name: "Send a message to Alpha", exact: true })
+    .locator("..")
+    .getByRole("button", { name: /^Activity: .+ working$/ })
+    .hover();
+  const popup = page.getByRole("dialog", { name: "Working now", exact: true });
+  await popup
+    .getByRole("button", {
+      name: /^Open (?:thread|conversation) for Local tester/,
+    })
+    .hover();
+  await popup
+    .getByRole("button", { name: /^View .*Local tester.* activity$/ })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Activity", selected: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Published reply", { exact: true }),
+  ).toBeVisible();
+});

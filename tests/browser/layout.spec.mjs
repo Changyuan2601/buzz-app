@@ -265,7 +265,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   // conversation regions still join the main panel.
   const mainPanel = page.locator("#main-content > [data-joined]");
   await expect(mainPanel).toHaveCSS("border-top-width", "1px");
-  await expect(mainPanel).toHaveCSS("border-radius", "16px");
+  await expect(mainPanel).toHaveCSS("border-radius", "24px");
   await expect(page.locator(".shell-content")).toHaveCSS(
     "background-color",
     "rgba(0, 0, 0, 0)",
@@ -275,7 +275,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     exact: true,
   });
   await expect(navigation).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await expect(navigation).toHaveCSS("border-radius", "16px");
+  await expect(navigation).toHaveCSS("border-radius", "24px");
   await expect(navigation).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await expect(mainPanel).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   expect(

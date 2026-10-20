@@ -15,15 +15,15 @@
 }
 .board {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(20rem, 1fr) minmax(0, 0px);
   height: 100%;
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
-.board:has(> [data-panel-dock]:not([hidden])) {
-  grid-template-columns: minmax(20rem, 1.1fr) minmax(
-      19.75rem,
-      var(--secondary-panel-width, 1fr)
+.board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
+  grid-template-columns: minmax(20rem, 1fr) minmax(
+      0,
+      max(19.75rem, var(--secondary-panel-width, calc(100% / 2.1)))
     );
 }
 .sidebar,
@@ -479,6 +479,7 @@ html[data-keyboard-navigation]
   flex: 1;
 }
 .panelStack {
+  width: max(19.75rem, var(--secondary-panel-width, calc(100cqw / 2.1)));
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
   grid-column: 2;
@@ -544,8 +545,9 @@ html[data-keyboard-navigation]
 /* Match the shell's physical navigation breakpoint, regardless of interface size. */
 @media (max-width: 650px) {
   .board,
-  .board:has(> [data-panel-dock]:not([hidden])) {
+  .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -564,8 +566,10 @@ html[data-keyboard-navigation]
 }
 /* Otherwise use available workspace width, including sidebar and interface sizing. */
 @container (max-width: 40.6875rem) {
-  .board:has(> [data-panel-dock]:not([hidden])) {
+  .board,
+  .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -585,8 +589,9 @@ html[data-keyboard-navigation]
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {
   .board,
-  .board:has(> [data-panel-dock]:not([hidden])) {
+  .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack {
     grid-column: 1 / -1;
@@ -870,6 +875,7 @@ html[data-keyboard-navigation]
   gap: var(--space-1h);
 }
 .channelDrawer {
+  --panel-motion-exit-duration: 0ms;
   --panel-motion-offset: translateY(var(--space-3));
   height: 42%;
   min-height: 11.25rem;
