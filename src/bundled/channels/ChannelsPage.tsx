@@ -5,7 +5,6 @@ import { readDefaultAgent } from "../../features/solo/default-agent";
 import { useWelcomeReceipt } from "../../features/sessions/welcome";
 import { SoloWelcome, useWelcomeProfile, WelcomeControls } from "./SoloWelcome";
 import { InlineUiHost } from "../../features/inline-ui/host";
-import { WelcomeComposer } from "./WelcomeComposer";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -1484,42 +1483,39 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current && welcomeChat && !welcomeChat.complete ? (
-        <WelcomeComposer phase="customize" />
-      ) : (
-        current &&
-        (!current.readOnly || current.cached) && (
-          <ConversationComposer
-            key={`composer:${current.id}`}
-            autoFocus={
-              // Conversion remounts the body, but isn't a new conversation opening.
-              // Its dialog hands off focus after closing and releasing modality.
-              !(
-                continuingVisit &&
-                committedVisit.current?.channelType === "solo" &&
-                current.channelType !== "solo"
-              ) &&
-              // The bound request arrives after the composer's first render.
-              (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
-                "preserve" &&
-              !current.readOnly &&
-              !requestedMessage &&
-              !requestedThread &&
-              !routedThread
-            }
-            trailingTool={
-              personal ? (
-                <WorkspaceControl
-                  session={queries}
-                  channelId={current.id}
-                  disabled={!!current.archived}
-                />
-              ) : undefined
-            }
-            onSend={onComposerSend}
-            focusRequest={composerFocus}
-          />
-        )
+      {current && (!current.readOnly || current.cached) && (
+        <ConversationComposer
+          key={`composer:${current.id}`}
+          autoFocus={
+            // Conversion remounts the body, but isn't a new conversation opening.
+            // Its dialog hands off focus after closing and releasing modality.
+            !(
+              continuingVisit &&
+              committedVisit.current?.channelType === "solo" &&
+              current.channelType !== "solo"
+            ) &&
+            // The bound request arrives after the composer's first render.
+            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+              "preserve" &&
+            !current.readOnly &&
+            !requestedMessage &&
+            !requestedThread &&
+            !routedThread
+          }
+          trailingTool={
+            personal ? (
+              <WorkspaceControl
+                session={queries}
+                channelId={current.id}
+                disabled={!!current.archived}
+              />
+            ) : undefined
+          }
+          onSend={onComposerSend}
+          focusRequest={composerFocus}
+          // Get started holds the composer until its agent is named.
+          disabled={!!welcomeChat && !welcomeChat.complete}
+        />
       )}
     </>
   );

@@ -6577,7 +6577,14 @@ it("starts Welcome through the claimed runner with app input, target-only signed
   expect(reply.content).toBe("Welcome!");
   expect(started).toHaveBeenCalledTimes(1);
   expect(native.claim).toHaveBeenCalledWith(bot);
-  expect(native.publish).toHaveBeenCalledTimes(1);
+  // One introduction, with typing at the chat's top level while it worked.
+  const kinds = native.publish.mock.calls.map(([, template]) => template.kind);
+  expect(kinds.filter((kind) => kind === 9)).toHaveLength(1);
+  expect(native.publish).toHaveBeenCalledWith(bot, {
+    kind: 20002,
+    content: "",
+    tags: [["h", channel]],
+  });
   expect(held).not.toHaveProperty("trigger");
   expect(held?.prompt).toContain("app-authored onboarding instruction");
   await expect(
@@ -6885,11 +6892,15 @@ it("preserves an accepted startup publication already in native custody when nav
     ],
   });
   let finish!: (event: RelayEvent) => void;
-  native.publish.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
+  const publish = native.publish.getMockImplementation();
+  if (!publish) throw new Error("fakeNative publishes");
+  // Hold the introduction in custody; typing pulses pass through.
+  native.publish.mockImplementation((pubkey, template) =>
+    template.kind === 9
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : publish(pubkey, template),
   );
   execute = async ({ agent }) => {
     await agent.publish({ kind: 9, content: "Hello", tags: [["h", channel]] });
@@ -6898,7 +6909,7 @@ it("preserves an accepted startup publication already in native custody when nav
   const controller = new AbortController();
   const requested = service.welcome(bot, channel, controller.signal);
   try {
-    await vi.waitFor(() => expect(native.publish).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(finish).toBeDefined());
     controller.abort();
     const reply = event("published", {
       pubkey: bot,

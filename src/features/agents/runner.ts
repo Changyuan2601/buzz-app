@@ -2124,6 +2124,14 @@ export class AgentRunners {
       attention: this.attention(agent.pubkey),
     });
     runner.working++;
+    // Typing shows as it does for any reply, at the Solo chat's top level.
+    const typing = pulseTyping(
+      async (pulse) => this.require().publish(runner.pubkey, pulse),
+      Promise.resolve(true),
+      undefined,
+      job.channelId,
+      runner.typing,
+    );
     try {
       const input: ConversationStart = {
         agent: handle,
@@ -2157,6 +2165,7 @@ export class AgentRunners {
           "The provider finished without publishing an introduction. Retry or send a message yourself.",
       );
     } finally {
+      typing();
       finished = true;
       runner.working--;
     }

@@ -79,7 +79,7 @@ export function SoloWelcome({
           </p>
         )}
       </div>
-      <WelcomeComposer phase="connect" />
+      <WelcomeComposer />
     </SoloDraftView>
   );
 }

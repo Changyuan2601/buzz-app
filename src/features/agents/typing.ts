@@ -23,11 +23,12 @@ export type Pulses = Map<string, { turns: number; stop: () => void }>;
  * tell where to answer fails, and shows no typing. The pulse ends with it:
  * clients drop typing when the agent replies, or a few seconds after its last
  * pulse. Turns in the same conversation share one pulse in `pulses`, which
- * lasts until the last of them stops. */
+ * lasts until the last of them stops. A turn the app starts has no `event`,
+ * so it shows typing only at channel top level. */
 export function pulseTyping(
   publish: (event: AgentEventTemplate) => Promise<unknown>,
   topLevel: Promise<boolean>,
-  event: RelayEvent,
+  event: RelayEvent | undefined,
   channelId: string,
   pulses: Pulses,
 ): () => void {
@@ -35,8 +36,8 @@ export function pulseTyping(
   let stopped = false;
   topLevel.then(
     (flat) => {
-      if (stopped) return;
-      const root = threadReference(event)?.rootId ?? event.id;
+      if (stopped || (!flat && !event)) return;
+      const root = event ? (threadReference(event)?.rootId ?? event.id) : "";
       const key = `${channelId}:${flat ? "" : root}`;
       let shared = pulses.get(key);
       if (!shared) {
@@ -51,8 +52,8 @@ export function pulseTyping(
               ...(flat
                 ? []
                 : [
-                    ...(root === event.id ? [] : [["e", root, "", "root"]]),
-                    ["e", event.id, "", "reply"],
+                    ...(root === event?.id ? [] : [["e", root, "", "root"]]),
+                    ["e", event?.id ?? "", "", "reply"],
                   ]),
             ],
           },
