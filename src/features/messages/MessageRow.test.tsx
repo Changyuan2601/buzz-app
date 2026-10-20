@@ -20,6 +20,7 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { InlineUiHost } from "../inline-ui/host";
 import { MessageRow } from "./MessageRow";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage } from "../relay/contracts";
@@ -2998,7 +2999,7 @@ it("keeps own-message and bubble styling off a shown thread root", () => {
   }
 });
 
-it("offers an agent's choice only while it is the newest message, and sends a pick as a reply", async () => {
+it("offers an agent's choice only while it is the newest message, and sends the answer as a reply", async () => {
   const agent = keypair();
   const ui = { pattern: "choice", options: ["Warm", "Direct"] };
   const [folded] = foldMessages("channel", keypair().pubkey, [
@@ -3036,28 +3037,106 @@ it("offers an agent's choice only while it is the newest message, and sends a pi
   try {
     expect(screen.getByText("What tone should I use?")).toBeInTheDocument();
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
-    expect(screen.getByText("Or type your own answer.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Warm" }));
+    const submit = screen.getByRole("button", { name: "Submit" });
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Warm" }));
+    expect(submit).toBeEnabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Write your own" }));
+    expect(submit).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), {
+      target: { value: " Playful " },
+    });
+    fireEvent.click(submit);
     await waitFor(() =>
-      expect(send).toHaveBeenCalledWith("channel", "Warm", [agent.pubkey]),
+      expect(send).toHaveBeenCalledWith("channel", "Playful", [agent.pubkey]),
     );
-    expect(screen.getByRole("button", { name: "Direct" })).toBeDisabled();
 
     view.rerender(show(false));
     expect(
-      screen.queryByRole("button", { name: "Direct" }),
+      screen.queryByRole("radio", { name: "Direct" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("What tone should I use?")).toBeInTheDocument();
 
     // A pattern from anyone but an agent reads as its plain-text version.
     view.rerender(show(true, new Set()));
     expect(
-      screen.queryByRole("button", { name: "Warm" }),
+      screen.queryByRole("radio", { name: "Warm" }),
     ).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("listitem").map((item) => item.textContent),
     ).toEqual(["Warm", "Direct"]);
     expect(send).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers an agent's profile names only where the host can save them", async () => {
+  const agent = keypair();
+  const ui = { pattern: "profile", options: ["Pip", "Juniper"] };
+  const [folded] = foldMessages("channel", keypair().pubkey, [
+    message(
+      agent,
+      "channel",
+      "We're connected! What should I go by?\n\n1. Pip\n2. Juniper\n\nChoose in the Buzz app to save a name and avatar.",
+      1,
+      [["ui", JSON.stringify(ui)]],
+    ),
+  ]);
+  if (!folded) throw new Error("No folded message");
+  const send = vi.fn();
+  const session = {
+    messages: { send },
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const row = (
+    <MessageRow
+      row={folded}
+      session={session}
+      agentPubkeys={new Set([agent.pubkey])}
+      latest
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />
+  );
+  const view = renderDom(row);
+  try {
+    expect(
+      screen.getByText("We're connected! What should I go by?"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: "Pip" }),
+    ).not.toBeInTheDocument();
+
+    const saveProfile = vi.fn(async () => {});
+    view.rerender(
+      <InlineUiHost.Provider value={{ saveProfile }}>
+        {row}
+      </InlineUiHost.Provider>,
+    );
+    const avatar = () =>
+      screen
+        .getByRole("form", { name: "Name and avatar" })
+        .querySelector("img")
+        ?.getAttribute("src");
+    const first = avatar();
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle avatar" }));
+    expect(avatar()).not.toBe(first);
+    fireEvent.click(screen.getByRole("radio", { name: "Juniper" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(saveProfile).toHaveBeenCalledWith(agent.pubkey, {
+        name: "Juniper",
+        picture: expect.any(String),
+      }),
+    );
+    expect(send).not.toHaveBeenCalled();
   } finally {
     cleanup();
   }

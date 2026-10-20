@@ -27,6 +27,7 @@ import {
   CHOICE_OPTIONS_MAX,
   CHOICE_OPTIONS_MIN,
   inlineUiContent,
+  PATTERNS,
   readInlineUi,
   UI_TAG,
 } from "../features/inline-ui/patterns";
@@ -76,9 +77,9 @@ export const TOOLS: readonly Tool[] = [
       ui: {
         type: "object",
         description:
-          "Tappable answers under your text in the Buzz app, for a question with a few clear answers; they can still type their own. Text is the question. Other clients get a numbered list.",
+          "Answers under your text in the Buzz app, for a question with a few clear answers; they pick one or write their own. Text is the question. Other clients get a numbered list. pattern profile offers names for yourself beside an avatar picker; use it only when Buzz asks.",
         properties: {
-          pattern: { type: "string", enum: ["choice"] },
+          pattern: { type: "string", enum: [...PATTERNS] },
           options: {
             type: "array",
             items: str,

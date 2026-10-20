@@ -10,12 +10,15 @@ export const CHOICE_OPTIONS_MIN = 2;
 export const CHOICE_OPTIONS_MAX = 6;
 export const CHOICE_OPTION_MAX = 80;
 
-/** Pick one of a few agent-written answers, or type your own. */
-export type ChoiceUi = Readonly<{
-  pattern: "choice";
+export const PATTERNS = ["choice", "profile"] as const;
+
+/** Pick one of a few agent-written answers, or write your own. `profile`
+ * offers names for the agent itself beside an app-chosen avatar; only a host
+ * that can save the agent's profile makes it live. */
+export type InlineUi = Readonly<{
+  pattern: (typeof PATTERNS)[number];
   options: readonly string[];
 }>;
-export type InlineUi = ChoiceUi;
 
 /** A pattern from untrusted input, or the reason it is not one, worded for
  * the agent that sent it. */
@@ -25,7 +28,8 @@ export function readInlineUi(
   if (!value || typeof value !== "object" || Array.isArray(value))
     return { error: "ui must be an object." };
   const { pattern, options, ...rest } = value as Record<string, unknown>;
-  if (pattern !== "choice") return { error: "ui.pattern must be choice." };
+  if (!PATTERNS.includes(pattern as InlineUi["pattern"]))
+    return { error: `ui.pattern must be ${PATTERNS.join(" or ")}.` };
   if (Object.keys(rest).length)
     return { error: `ui has unknown fields: ${Object.keys(rest).join(", ")}.` };
   if (
@@ -47,12 +51,17 @@ export function readInlineUi(
       return { error: `ui options repeat “${label}”.` };
     labels.push(label);
   }
-  return { ui: Object.freeze({ pattern, options: Object.freeze(labels) }) };
+  return {
+    ui: Object.freeze({
+      pattern: pattern as InlineUi["pattern"],
+      options: Object.freeze(labels),
+    }),
+  };
 }
 
 /** What a client without the pattern shows after the message text. */
 export const fallbackText = (ui: InlineUi) =>
-  `${ui.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}\n\nOr reply with your own answer.`;
+  `${ui.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}\n\n${ui.pattern === "profile" ? "Choose in the Buzz app to save a name and avatar." : "Or reply with your own answer."}`;
 
 /** The message content for `text` with `ui` attached. */
 export const inlineUiContent = (text: string, ui: InlineUi) =>

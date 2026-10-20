@@ -16,7 +16,10 @@ it("accepts a choice and trims its answers", () => {
 
 it.each([
   [undefined, "ui must be an object."],
-  [{ pattern: "form", options: ["a", "b"] }, "ui.pattern must be choice."],
+  [
+    { pattern: "form", options: ["a", "b"] },
+    "ui.pattern must be choice or profile.",
+  ],
   [{ pattern: "choice", options: ["a"] }, "ui.options must list 2–6 answers."],
   [
     { pattern: "choice", options: ["a", "b", "c", "d", "e", "f", "g"] },

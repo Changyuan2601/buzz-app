@@ -76,6 +76,8 @@ export const ArrowsClockwiseIcon = defineIcon(
   "tabler",
   TablerArrowsClockwiseIcon,
 );
+import TablerArrowsShuffleIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsShuffle.mjs";
+export const ArrowsShuffleIcon = defineIcon("tabler", TablerArrowsShuffleIcon);
 import TablerArrowsInIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMinimize.mjs";
 export const ArrowsInIcon = defineIcon("tabler", TablerArrowsInIcon);
 import TablerArrowsOutIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMaximize.mjs";

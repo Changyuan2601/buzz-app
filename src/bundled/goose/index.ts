@@ -6,7 +6,6 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
-import { suggestNames } from "./name-ideas";
 import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
@@ -75,8 +74,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       DefaultControl,
     },
     startConversation: (input) => runtime.startConversation(input),
-    suggestNames: (raw, exclude, signal) =>
-      suggestNames(spawn, config(raw), exclude, signal),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

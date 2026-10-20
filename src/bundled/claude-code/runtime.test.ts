@@ -1746,9 +1746,7 @@ it("seeds a real continuing Solo session with app input and reuses it for the ow
     expect(result).toEqual({ ok: true });
     const process = f.fake.processes.find((entry) => entry.prompts.length);
     expect(process?.prompts[0]).toContain("<app-conversation-start>");
-    expect(process?.prompts[0]).toContain(
-      "Great, we’re connected! Before we get started, take a sec to give me a name and choose an avatar, and then I can show you around.",
-    );
+    expect(process?.prompts[0]).toContain('ui {"pattern": "profile"');
     expect(process?.prompts[0]).not.toContain("<buzz-event");
     const done: PromiseLike<unknown>[] = [];
     await runtime.run({

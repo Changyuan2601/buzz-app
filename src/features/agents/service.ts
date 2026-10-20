@@ -582,12 +582,6 @@ export type AgentType<Config = unknown> = {
   /** App-authored first turn in an owned Solo conversation; no synthetic event.
    * Optional: unsupported types must not be offered for this onboarding action. */
   startConversation?: ConversationStarter<Config>;
-  /** Private, tools-free onboarding name ideas; never a chat turn or identity save. */
-  suggestNames?(
-    config: Config,
-    exclude: readonly string[],
-    signal: AbortSignal,
-  ): Promise<readonly string[]>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */

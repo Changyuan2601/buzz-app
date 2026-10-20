@@ -5,7 +5,10 @@ import { WelcomeNextSteps } from "./WelcomeNextSteps";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { SoloWelcome, WelcomeControls } from "./SoloWelcome";
+import { SoloWelcome, useWelcomeProfile, WelcomeControls } from "./SoloWelcome";
+import { InlineUiCard } from "../../features/inline-ui/InlineUiCard";
+import { InlineUiHost } from "../../features/inline-ui/host";
+import type { WelcomeReceipt } from "../../features/sessions/welcome";
 import { AgentsContext } from "../../features/agents/react";
 import {
   readWelcome,
@@ -30,7 +33,7 @@ afterEach(() => {
 const agentKey = "a".repeat(64);
 const channelId = "11111111-1111-4111-8111-111111111111";
 const receipt = { type: "claude/claude", agent: agentKey, channelId };
-function fixture(suggestNames?: RegisteredAgentType["suggestNames"]) {
+function fixture() {
   let agent = {
     pubkey: agentKey,
     name: "Welcome",
@@ -45,7 +48,6 @@ function fixture(suggestNames?: RegisteredAgentType["suggestNames"]) {
     title: "Claude",
     defaults: () => ({ config: {} }),
     startConversation: async () => ({ ok: true }),
-    ...(suggestNames ? { suggestNames } : {}),
   } as RegisteredAgentType;
   const types = [type];
   const emptyWindow = { status: "ready", rows: [] };
@@ -74,6 +76,49 @@ function fixture(suggestNames?: RegisteredAgentType["suggestNames"]) {
     },
   } as unknown as RelaySession;
   return { agents, session, types };
+}
+
+/** Welcome as the chat shows it: the controls, and the agent's profile
+ * pattern saved through the Welcome host. */
+function Welcome({
+  f,
+  receipt: current,
+  signal,
+  onSaved = () => {},
+}: {
+  f: ReturnType<typeof fixture>;
+  receipt: WelcomeReceipt;
+  signal: AbortSignal;
+  onSaved?: () => void;
+}) {
+  const host = useWelcomeProfile({
+    agents: f.agents,
+    scope: "scope",
+    receipt: current,
+    signal,
+    onSaved,
+  });
+  return (
+    <>
+      <WelcomeControls {...f} scope="scope" signal={signal} receipt={current} />
+      <InlineUiHost.Provider value={host}>
+        <InlineUiCard
+          ui={{ pattern: "profile", options: ["Quibble", "Tumble"] }}
+          agent={agentKey}
+          live
+          onReply={() => {}}
+        />
+      </InlineUiHost.Provider>
+    </>
+  );
+}
+
+async function submitOwnName(name: string) {
+  await userEvent.click(screen.getByRole("radio", { name: "Write your own" }));
+  const field = screen.getByRole("textbox", { name: "Your name for me" });
+  await userEvent.clear(field);
+  await userEvent.type(field, name);
+  await userEvent.click(screen.getByRole("button", { name: "Submit" }));
 }
 
 it("offers only the providers that can finish Welcome, in the provider's own setup words", async () => {
@@ -268,7 +313,6 @@ it("starts once across StrictMode/reopen and saves the actual agent name before 
         scope="scope"
         signal={controller.signal}
         receipt={receipt}
-        onSaved={() => {}}
       />
     </StrictMode>,
   );
@@ -281,22 +325,19 @@ it("starts once across StrictMode/reopen and saves the actual agent name before 
   if (!observed) throw new Error("Missing setup receipt");
   const onSaved = vi.fn();
   render(
-    <WelcomeControls
-      {...f}
-      scope="scope"
+    <Welcome
+      f={f}
       signal={controller.signal}
       receipt={observed}
       onSaved={onSaved}
     />,
   );
-  const name = screen.getByRole("textbox", { name: "Name" });
-  expect(name).toHaveFocus();
-  await userEvent.type(name, " Welcome ");
-  expect(screen.getByRole("button", { name: /Looks good/ })).toBeDisabled();
+  await submitOwnName(" Welcome ");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Choose a name other than Welcome.",
+  );
   expect(f.agents.save).not.toHaveBeenCalled();
-  await userEvent.clear(name);
-  await userEvent.type(name, "Ada");
-  await userEvent.click(screen.getByRole("button", { name: /Looks good/ }));
+  await submitOwnName("Ada");
   await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
   expect(f.agents.save).toHaveBeenCalledWith(
     agentKey,
@@ -321,7 +362,6 @@ it("never repeats an uncertain kickoff automatically and does not claim a failed
       scope="scope"
       signal={new AbortController().signal}
       receipt={uncertain}
-      onSaved={() => {}}
     />,
   );
   expect(
@@ -334,111 +374,16 @@ it("never repeats an uncertain kickoff automatically and does not claim a failed
     new Error("Could not save name"),
   );
   render(
-    <WelcomeControls
-      {...f}
-      scope="scope"
-      signal={new AbortController().signal}
-      receipt={observed}
-      onSaved={() => {}}
-    />,
+    <Welcome f={f} signal={new AbortController().signal} receipt={observed} />,
   );
-  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Pip");
-  await userEvent.click(screen.getByRole("button", { name: /Looks good/ }));
+  await userEvent.click(screen.getByRole("radio", { name: "Tumble" }));
+  await userEvent.click(screen.getByRole("button", { name: "Submit" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not save name",
   );
   expect(readDefaultAgent("scope")).toBeUndefined();
   expect(readWelcome("scope")?.complete).not.toBe(true);
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Pip");
-});
-
-it("prefills a generated name and avatar, shuffles both from the batch, and only saves on confirmation", async () => {
-  const suggest = vi.fn(async () => ["Quibble", "Tumble"]);
-  const f = fixture(suggest);
-  const observed = {
-    ...receipt,
-    kickoff: "observed" as const,
-    replyId: "c".repeat(64),
-  };
-  saveWelcome("scope", observed);
-  const onSaved = vi.fn();
-  render(
-    <WelcomeControls
-      {...f}
-      scope="scope"
-      signal={new AbortController().signal}
-      receipt={observed}
-      onSaved={onSaved}
-    />,
-  );
-  const name = screen.getByRole("textbox", { name: "Name" });
-  await waitFor(() => expect(name).toHaveValue("Quibble"));
-  const firstAvatar = screen
-    .getByRole("button", { name: "Change avatar" })
-    .querySelector("img")
-    ?.getAttribute("src");
-  expect(firstAvatar).toBeTruthy();
-  expect(f.agents.save).not.toHaveBeenCalled();
-  expect(readDefaultAgent("scope")).toBeUndefined();
-  await userEvent.click(screen.getByRole("button", { name: "Shuffle" }));
-  expect(name).toHaveValue("Tumble");
-  expect(
-    screen
-      .getByRole("button", { name: "Change avatar" })
-      .querySelector("img")
-      ?.getAttribute("src"),
-  ).not.toBe(firstAvatar);
-  expect(suggest).toHaveBeenCalledTimes(1);
-  await userEvent.click(screen.getByRole("button", { name: /Looks good/ }));
-  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
-  expect(f.agents.save).toHaveBeenCalledWith(
-    agentKey,
-    expect.objectContaining({ name: "Tumble", picture: expect.any(String) }),
-  );
-  expect(f.agents.welcome).not.toHaveBeenCalled();
-});
-
-it("keeps manual edits when a name suggestion arrives late and recovers from a provider failure", async () => {
-  let release!: (names: readonly string[]) => void;
-  const suggest = vi.fn(
-    () =>
-      new Promise<readonly string[]>((resolve) => {
-        release = resolve;
-      }),
-  );
-  const f = fixture(suggest);
-  const observed = {
-    ...receipt,
-    kickoff: "observed" as const,
-    replyId: "c".repeat(64),
-  };
-  saveWelcome("scope", observed);
-  render(
-    <WelcomeControls
-      {...f}
-      scope="scope"
-      signal={new AbortController().signal}
-      receipt={observed}
-      onSaved={() => {}}
-    />,
-  );
-  await waitFor(() => expect(suggest).toHaveBeenCalledOnce());
-  const name = screen.getByRole("textbox", { name: "Name" });
-  await userEvent.type(name, "My choice");
-  release(["Late name"]);
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Shuffle" })).not.toBeDisabled(),
-  );
-  expect(name).toHaveValue("My choice");
-  suggest.mockImplementationOnce(async () => {
-    throw new Error("Provider unavailable");
-  });
-  await userEvent.click(screen.getByRole("button", { name: "Shuffle" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Provider unavailable",
-  );
-  expect(name).toHaveValue("My choice");
-  expect(f.agents.save).not.toHaveBeenCalled();
+  expect(screen.getByRole("radio", { name: "Tumble" })).toBeChecked();
 });
 
 it("reconciles a top-level introduction behind a newer threaded reply without starting another turn", async () => {
@@ -476,7 +421,6 @@ it("reconciles a top-level introduction behind a newer threaded reply without st
       scope="scope"
       signal={new AbortController().signal}
       receipt={attempted}
-      onSaved={() => {}}
     />,
   );
   await userEvent.click(
@@ -514,17 +458,7 @@ it("greets only after confirmed identity/default save, shows the next actions af
   );
   function Harness() {
     const { receipt: current } = useWelcomeReceipt("scope");
-    return (
-      current && (
-        <WelcomeControls
-          {...f}
-          scope="scope"
-          signal={signal}
-          receipt={current}
-          onSaved={() => {}}
-        />
-      )
-    );
+    return current && <Welcome f={f} signal={signal} receipt={current} />;
   }
   const signal = new AbortController().signal;
   const view = render(
@@ -534,8 +468,7 @@ it("greets only after confirmed identity/default save, shows the next actions af
   );
   try {
     expect(f.agents.welcome).not.toHaveBeenCalled();
-    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Ada");
-    await userEvent.click(screen.getByRole("button", { name: /Looks good/ }));
+    await submitOwnName("Ada");
     await waitFor(() => expect(f.agents.welcome).toHaveBeenCalledOnce());
     expect(screen.getByText("Your agent is saying hello…")).toBeVisible();
     expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();

@@ -907,13 +907,14 @@ function MessageRowContent({
               {inlineUi && (
                 <InlineUiCard
                   ui={inlineUi.ui}
+                  agent={row.authorId}
                   live={
                     latest &&
                     layout === "timeline" &&
                     !row.threadRootId &&
                     !!session?.messages
                   }
-                  onPick={(answer) =>
+                  onReply={(answer) =>
                     session?.messages.send(row.channelId, answer, [
                       row.authorId,
                     ])

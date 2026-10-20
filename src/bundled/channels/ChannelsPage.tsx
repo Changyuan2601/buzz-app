@@ -3,7 +3,8 @@ import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { readDefaultAgent } from "../../features/solo/default-agent";
 import { useWelcomeReceipt } from "../../features/sessions/welcome";
-import { SoloWelcome, WelcomeControls } from "./SoloWelcome";
+import { SoloWelcome, useWelcomeProfile, WelcomeControls } from "./SoloWelcome";
+import { InlineUiHost } from "../../features/inline-ui/host";
 import {
   WelcomeComposer,
   WelcomeConnected,
@@ -607,6 +608,13 @@ function ChannelWorkspace({
   const welcomeType =
     welcomeChat &&
     agents?.types().find((type) => type.key === welcomeChat.type);
+  const welcomeProfile = useWelcomeProfile({
+    agents,
+    scope,
+    receipt: welcomeChat,
+    signal: navigation?.signal,
+    onSaved: useCallback(() => setComposerFocus((value) => value + 1), []),
+  });
   const welcomeControls =
     welcomeChat && agents ? (
       <WelcomeControls
@@ -615,7 +623,6 @@ function ChannelWorkspace({
         scope={scope}
         signal={navigation?.signal ?? new AbortController().signal}
         receipt={welcomeChat}
-        onSaved={() => setComposerFocus((value) => value + 1)}
         onSend={(id) => current && setSent({ channelId: current.id, id })}
         openProfile={(target) => canOpenLink(target) && openLink(target)}
       />
@@ -1404,36 +1411,38 @@ function ChannelWorkspace({
             }}
           />
         ) : current ? (
-          <ChannelBody
-            onContentReady={setContentReadyChannel}
-            viewer={viewer}
-            key={current.id}
-            cached={cached}
-            // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={!current.readOnly && !current.cached}
-            navigation={
-              solo || !requestedMessage || exact?.inTimeline
-                ? navigation
-                : undefined
-            }
-            onOpenThread={solo ? undefined : openThread}
-            revealMessageId={
-              sent?.channelId === current.id
-                ? sent.id
-                : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
-            }
-            beforeMessages={
-              welcomeControls ? (
-                <WelcomeIntro>
-                  {welcomeType && <WelcomeConnected type={welcomeType} />}
-                </WelcomeIntro>
-              ) : undefined
-            }
-            afterMessages={welcomeControls}
-            afterMessageId={
-              welcomeControls ? welcomeChat?.greetingId : undefined
-            }
-          />
+          <InlineUiHost.Provider value={welcomeProfile}>
+            <ChannelBody
+              onContentReady={setContentReadyChannel}
+              viewer={viewer}
+              key={current.id}
+              cached={cached}
+              // The composer below mounts TypingIndicator for members of a live channel.
+              activityLane={!current.readOnly && !current.cached}
+              navigation={
+                solo || !requestedMessage || exact?.inTimeline
+                  ? navigation
+                  : undefined
+              }
+              onOpenThread={solo ? undefined : openThread}
+              revealMessageId={
+                sent?.channelId === current.id
+                  ? sent.id
+                  : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
+              }
+              beforeMessages={
+                welcomeControls ? (
+                  <WelcomeIntro>
+                    {welcomeType && <WelcomeConnected type={welcomeType} />}
+                  </WelcomeIntro>
+                ) : undefined
+              }
+              afterMessages={welcomeControls}
+              afterMessageId={
+                welcomeControls ? welcomeChat?.greetingId : undefined
+              }
+            />
+          </InlineUiHost.Provider>
         ) : (
           <div
             className={styles.empty}

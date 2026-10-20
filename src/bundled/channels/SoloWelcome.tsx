@@ -2,6 +2,7 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
   useContext,
   useCallback,
+  useMemo,
   useEffect,
   useRef,
   useState,
@@ -16,7 +17,6 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { RelaySession } from "../../features/relay/session";
 import {
   observedWelcome,
@@ -27,6 +27,7 @@ import {
   type WelcomeReceipt,
 } from "../../features/sessions/welcome";
 import { writeView } from "../../shared/view-state";
+import type { InlineUiHostValue } from "../../features/inline-ui/host";
 import { setDefaultAgent } from "../../features/solo/default-agent";
 import { followupDraft } from "../../features/messages/mention-draft";
 import { ProviderDialog } from "../agents/ProviderDialog";
@@ -36,8 +37,6 @@ import {
   contributionKey,
 } from "../../features/conversation/ContributionBoundary";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Select } from "../../shared/design-system/ui/Select";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -45,19 +44,7 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { WelcomeNextSteps } from "./WelcomeNextSteps";
 import { WelcomeIntro, WelcomeComposer } from "./WelcomeIntro";
-import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import {
-  PopoverRoot,
-  PopoverTrigger,
-  PopoverPopup,
-  PopoverTitle,
-} from "../../shared/design-system/ui/Popover";
-import {
-  GearIcon,
-  PencilSimpleIcon,
-  ArrowsClockwiseIcon,
-  CircleNotchIcon,
-} from "../../shared/design-system/icons";
+import { GearIcon, CircleNotchIcon } from "../../shared/design-system/icons";
 import soloStyles from "../../features/solo/Solo.module.css";
 import styles from "./SoloWelcome.module.css";
 
@@ -371,13 +358,63 @@ function ReadyProvider({
 }
 
 /** Only a real saved Welcome chat mounts this. Actual history uses ChannelTimeline. */
+/** Saves the name and avatar the owner submits on the Welcome agent's
+ * profile pattern, then hands the chat to the saved-welcome greeting.
+ * Outside an unfinished Welcome chat, patterns get no profile save. */
+export function useWelcomeProfile({
+  agents,
+  scope,
+  receipt,
+  signal,
+  onSaved,
+}: {
+  agents: Agents | undefined;
+  scope: string;
+  receipt: WelcomeReceipt | undefined;
+  signal: AbortSignal | undefined;
+  onSaved(): void;
+}): InlineUiHostValue {
+  return useMemo(
+    () =>
+      !agents || !receipt || receipt.complete
+        ? {}
+        : {
+            async saveProfile(agent, { name, picture }) {
+              if (agent !== receipt.agent)
+                throw new Error("Welcome changed. Reopen the current setup.");
+              if (name.toLocaleLowerCase() === "welcome")
+                throw new Error("Choose a name other than Welcome.");
+              signal?.throwIfAborted();
+              await agents.save(agent, { name, picture });
+              signal?.throwIfAborted();
+              if (!setDefaultAgent(scope, agent))
+                throw new Error(
+                  "The default agent could not be saved on this device.",
+                );
+              // Solo turns start from mentions: the chat's composer tags this agent.
+              writeView(
+                scope,
+                `draft:${receipt.channelId}`,
+                followupDraft([{ pubkey: agent, name }]),
+              );
+              saveWelcome(scope, {
+                ...receipt,
+                complete: true,
+                greeting: "pending",
+              });
+              onSaved();
+            },
+          },
+    [agents, scope, receipt, signal, onSaved],
+  );
+}
+
 export function WelcomeControls({
   agents,
   session,
   scope,
   signal,
   receipt,
-  onSaved,
   openProfile,
   onSend,
 }: {
@@ -386,7 +423,6 @@ export function WelcomeControls({
   scope: string;
   signal: AbortSignal;
   receipt: WelcomeReceipt;
-  onSaved(): void;
   openProfile?: ((target: string) => boolean) | undefined;
   onSend?: ((id: string) => void) | undefined;
 }) {
@@ -530,291 +566,8 @@ export function WelcomeControls({
             </Button>
           )}
         </div>
-      ) : (
-        <CustomizeAgent
-          key={found.agent.pubkey}
-          agent={found.agent}
-          agents={agents}
-          suggestNames={found.type?.suggestNames}
-          scope={scope}
-          receipt={receipt}
-          signal={signal}
-          onSaved={onSaved}
-        />
-      )}
+      ) : null}
       {error && <p role="alert">{error}</p>}
     </div>
-  );
-}
-
-function CustomizeAgent({
-  agent,
-  agents,
-  suggestNames,
-  scope,
-  receipt,
-  signal,
-  onSaved,
-}: {
-  agent: NonNullable<ReturnType<Agents["find"]>>;
-  agents: Agents;
-  suggestNames: RegisteredAgentType["suggestNames"];
-  scope: string;
-  receipt: WelcomeReceipt;
-  signal: AbortSignal;
-  onSaved(): void;
-}) {
-  const [name, setName] = useState("");
-  const validName =
-    !!name.trim() && name.trim().toLocaleLowerCase() !== "welcome";
-  const [picture, setPicture] = useState(
-    () =>
-      agent.picture ||
-      agentAvatars[Math.floor(Math.random() * agentAvatars.length)]?.url ||
-      "",
-  );
-  const [avatarOpen, setAvatarOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [suggesting, setSuggesting] = useState(false);
-  const nameField = useRef<HTMLInputElement>(null);
-  const active = useRef(false);
-  const generation = useRef(0);
-  const request = useRef<AbortController | undefined>(undefined);
-  const ideas = useRef<string[]>([]);
-  const used = useRef(new Set<string>());
-  const { snapshot } = useAgents(agents);
-  const exclude = useRef<readonly string[]>([]);
-  exclude.current = snapshot.agents.map((item) => item.name);
-  const draft = useRef({ name, picture });
-  draft.current = { name, picture };
-  const shuffle = useCallback(
-    async (initial = false) => {
-      if (!suggestNames) return;
-      const originalPicture = draft.current.picture;
-      const version = ++generation.current;
-      request.current?.abort();
-      const controller = new AbortController();
-      request.current = controller;
-      const lifetime = AbortSignal.any([signal, controller.signal]);
-      setSuggesting(true);
-      setError("");
-      try {
-        lifetime.throwIfAborted();
-        const blocked = new Set(
-          [...exclude.current, ...used.current, draft.current.name].map(
-            (value) => value.trim().toLocaleLowerCase(),
-          ),
-        );
-        let next = ideas.current.shift();
-        while (next && blocked.has(next.toLocaleLowerCase()))
-          next = ideas.current.shift();
-        if (!next) {
-          const names = await suggestNames(
-            agent.config,
-            [...blocked],
-            lifetime,
-          );
-          lifetime.throwIfAborted();
-          if (!active.current || version !== generation.current) return;
-          ideas.current = names.filter(
-            (value) => !blocked.has(value.toLocaleLowerCase()),
-          );
-          next = ideas.current.shift();
-        }
-        const currentNames = new Set(
-          exclude.current.map((value) => value.trim().toLocaleLowerCase()),
-        );
-        while (next && currentNames.has(next.toLocaleLowerCase()))
-          next = ideas.current.shift();
-        if (!next)
-          throw new Error(
-            "No new name ideas came back. Try Shuffle again or enter your own.",
-          );
-        if (!active.current || version !== generation.current) return;
-        if (initial && draft.current.name) return;
-        used.current.add(next);
-        const avatars = agentAvatars.filter(
-          (item) => item.url !== draft.current.picture,
-        );
-        const avatar = avatars[Math.floor(Math.random() * avatars.length)];
-        setName(next);
-        if (avatar && draft.current.picture === originalPicture)
-          setPicture(avatar.url);
-      } catch (reason) {
-        if (
-          active.current &&
-          version === generation.current &&
-          !signal.aborted &&
-          !controller.signal.aborted
-        )
-          setError(
-            `Couldn't suggest a name. ${errorText(reason)} You can enter your own or try Shuffle again.`,
-          );
-      } finally {
-        if (active.current && version === generation.current)
-          setSuggesting(false);
-      }
-    },
-    [agent.config, suggestNames, signal],
-  );
-  const initialShuffle = useRef(shuffle);
-  useEffect(() => {
-    active.current = true;
-    nameField.current?.focus();
-    void initialShuffle.current(true);
-    return () => {
-      active.current = false;
-      generation.current++;
-      request.current?.abort();
-    };
-  }, []);
-  const selectedAvatar = agentAvatars.find((item) => item.url === picture);
-  return (
-    <form
-      className={`${styles.customize} ${styles.stepCard}`}
-      aria-label="Make this agent yours"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        if (busy || !validName) return;
-        generation.current++;
-        request.current?.abort();
-        setSuggesting(false);
-        setBusy(true);
-        setError("");
-        try {
-          signal.throwIfAborted();
-          await agents.save(agent.pubkey, { name: name.trim(), picture });
-          signal.throwIfAborted();
-          if (!setDefaultAgent(scope, agent.pubkey))
-            throw new Error(
-              "The default agent could not be saved on this device.",
-            );
-          // Solo turns start from mentions: the chat's composer tags this agent.
-          writeView(
-            scope,
-            `draft:${receipt.channelId}`,
-            followupDraft([{ pubkey: agent.pubkey, name: name.trim() }]),
-          );
-          saveWelcome(scope, {
-            ...receipt,
-            complete: true,
-            greeting: "pending",
-          });
-          onSaved();
-        } catch (reason) {
-          if (active.current && !signal.aborted) {
-            setError(errorText(reason));
-            setBusy(false);
-          }
-        }
-      }}
-    >
-      <div className={styles.cardHeader}>
-        <InlineHeader title="Make this agent yours" level={2} />
-      </div>
-      <div className={styles.cardBody}>
-        <div className={styles.identity}>
-          <PopoverRoot open={avatarOpen} onOpenChange={setAvatarOpen}>
-            <PopoverTrigger
-              render={
-                <SurfaceButton
-                  className={styles.avatar}
-                  aria-label="Change avatar"
-                  disabled={busy}
-                />
-              }
-            >
-              <Avatar
-                size="fill"
-                shape="squircle"
-                src={selectedAvatar?.preview ?? picture}
-                alt=""
-                fallback={name || agent.name}
-              />
-              <span className={styles.editBadge}>
-                <PencilSimpleIcon size={16} aria-hidden="true" />
-              </span>
-            </PopoverTrigger>
-            <PopoverPopup size="wide">
-              <PopoverTitle>Choose an avatar</PopoverTitle>
-              <div className={styles.avatarGrid}>
-                {agentAvatars.map((item) => (
-                  <SurfaceButton
-                    key={item.id}
-                    aria-label={item.label}
-                    aria-pressed={picture === item.url}
-                    onClick={() => {
-                      draft.current = { ...draft.current, picture: item.url };
-                      setPicture(item.url);
-                      setAvatarOpen(false);
-                    }}
-                  >
-                    <Avatar
-                      size="large"
-                      shape="squircle"
-                      src={item.preview}
-                      alt=""
-                      fallback={item.label}
-                    />
-                  </SurfaceButton>
-                ))}
-              </div>
-            </PopoverPopup>
-          </PopoverRoot>
-          <Field
-            label="Name"
-            labelVisibility="hidden"
-            error={
-              name.trim().toLocaleLowerCase() === "welcome"
-                ? "Choose a name other than Welcome."
-                : undefined
-            }
-          >
-            <Input
-              ref={nameField}
-              appearance="title"
-              value={name}
-              onChange={(event) => {
-                generation.current++;
-                request.current?.abort();
-                setSuggesting(false);
-                draft.current = { ...draft.current, name: event.target.value };
-                setName(event.target.value);
-              }}
-              disabled={busy}
-              required
-              maxLength={64}
-              placeholder={suggesting ? "Thinking of a name…" : "Choose a name"}
-            />
-          </Field>
-        </div>
-        <p className="text-body-sm text-subtle text-center">
-          You can change this any time.
-        </p>
-      </div>
-      <div className={styles.cardFooter}>
-        <div className={styles.actions}>
-          <Button
-            disabled={busy || !suggestNames}
-            loading={suggesting}
-            variant="ghost"
-            onClick={() => void shuffle()}
-          >
-            <ArrowsClockwiseIcon size={16} aria-hidden="true" />
-            Shuffle
-          </Button>
-          <Button
-            loading={busy}
-            disabled={!validName}
-            variant="prominent"
-            type="submit"
-          >
-            Looks good
-          </Button>
-        </div>
-        {error && <p role="alert">{error}</p>}
-      </div>
-    </form>
   );
 }
