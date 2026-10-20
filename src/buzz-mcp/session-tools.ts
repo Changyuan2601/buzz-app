@@ -44,7 +44,7 @@ export const BUZZ_SESSION: BuzzSession = Object.freeze({
     {
       name: "propose_instructions",
       description:
-        "Only available after the owner explicitly sends Finish setting up this agent in their Welcome Solo chat. Offers one complete editable instructions draft, never saves. Unavailable elsewhere. The owner must Apply to draft then Save in the agent profile.",
+        "Only available after the owner explicitly sends Finish setting up this agent in their Get started chat. Offers one complete editable instructions draft, never saves. Unavailable elsewhere. The owner must Apply to draft then Save in the agent profile.",
       inputSchema: {
         type: "object",
         properties: { text: { type: "string" } },

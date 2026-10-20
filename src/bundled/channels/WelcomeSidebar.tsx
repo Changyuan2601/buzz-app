@@ -5,6 +5,7 @@ import {
   readWelcome,
   useWelcomeReceipt,
   WELCOME_KEY,
+  WELCOME_CHAT_NAME,
 } from "../../features/sessions/welcome";
 import { clearView } from "../../shared/view-state";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -55,7 +56,11 @@ export function WelcomeSidebar({
       {!receipt?.complete &&
         (!import.meta.env.DEV || !!receipt) &&
         !chats.includes(receipt?.channelId ?? "") && (
-          <NavigationItem label="Welcome" selected={selected} onClick={open} />
+          <NavigationItem
+            label={WELCOME_CHAT_NAME}
+            selected={selected}
+            onClick={open}
+          />
         )}
       {import.meta.env.DEV && (
         <NavigationItem

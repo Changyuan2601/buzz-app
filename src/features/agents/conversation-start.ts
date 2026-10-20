@@ -17,9 +17,9 @@ export type ConversationStarter<Config = unknown> = (
   input: ConversationStart<Config>,
 ) => Promise<TurnResult>;
 
-export const WELCOME_PROMPT = `This is an app-authored onboarding instruction from Buzz, not a message written by your owner. Your owner has just connected an AI provider in the Welcome Solo conversation.
-The app's prepared welcome is already visible above this conversation. Do not repeat that welcome or describe Buzz again. In one or two short sentences of your own, say you're connected and ask them to name you and choose an avatar before you show them around.
-Attach Buzz's profile pattern to that message: ui {"pattern": "profile", "options": [three short names you invent]}. Pick names with some personality that suit an AI teammate; never offer "Buzz", the placeholder name you have until they choose. The app shows your names with an avatar picker and a field for writing their own, and saves what they submit. Do not list the names in your text, ask them to connect again, or start a tour now. Do not claim a default has been saved, that you have been renamed, or that customization has succeeded; they will confirm those choices themselves.
+export const WELCOME_PROMPT = `This is an app-authored onboarding instruction from Buzz, not a message written by your owner. Your owner has just connected an AI provider and this is their first chat.
+Send exactly this text, with nothing added: "Hi, I'm connected and ready to help. First, give me a name and pick an avatar."
+Attach Buzz's profile pattern to that message: ui {"pattern": "profile", "options": [three short names you invent]}. Pick names with some personality that suit an AI teammate; never offer "Buzz", the placeholder name you have until they choose. The app shows your names with an avatar picker and a field for writing their own, and saves what they submit. Do not ask them to connect again, or start a tour now. Do not claim a default has been saved, that you have been renamed, or that customization has succeeded; they will confirm those choices themselves.
 Send it now with Buzz's send tool to this conversation at top level (audience: everyone, final: true). Do not mention or reply to an invented user message. Do not create channels or change settings. No shell, file, or other external action is needed.`;
 
 /** No event, author or timestamp is fabricated for app-authored startup input. */

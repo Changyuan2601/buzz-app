@@ -14,6 +14,7 @@ import {
 export const WELCOME_KEY = "me:welcome";
 /** The first agent speaks as the app until its owner names it. */
 export const BUZZ_AGENT_NAME = "Buzz";
+export const WELCOME_CHAT_NAME = "Get started";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const pubkey = /^[0-9a-f]{64}$/;
 export type WelcomeReceipt = {
@@ -140,7 +141,7 @@ export async function prepareWelcome(
       ...receipt,
       creationId: session.channelWrites.create(
         receipt.channelId,
-        "Welcome",
+        WELCOME_CHAT_NAME,
         undefined,
         true,
       ),
