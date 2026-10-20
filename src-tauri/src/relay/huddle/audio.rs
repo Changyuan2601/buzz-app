@@ -1,4 +1,5 @@
 use super::{now, template, Call, Channel, IdentityHost, Result, Update};
+use crate::federated_identity::{assertion, FederatedIdentity};
 use buzz_audio_client::{
     connection::{self, AudioSocket as Socket},
     encoder::AudioEncoder,
@@ -11,7 +12,11 @@ use serde_json::json;
 use serde_json::Value;
 use std::{collections::BTreeMap, time::Duration};
 use tokio::sync::{mpsc, watch};
-use tokio_tungstenite::{tungstenite::Message, Connector};
+use tokio_tungstenite::{
+    tungstenite::{client::IntoClientRequest, handshake::client::Request, Message},
+    Connector,
+};
+use url::Url;
 
 type Peers = BTreeMap<u8, String>;
 
@@ -47,16 +52,50 @@ fn roster(value: &Value) -> Result<Peers> {
 }
 pub(super) async fn connect(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     call: &Call,
     room: &str,
 ) -> Result<(Socket, Peers)> {
-    let mut url = super::origin(&call.community)?;
+    let community = super::origin(&call.community)?;
+    // Issued for the community's HTTPS origin and the signing identity, like
+    // every other relay route; without a NIP-FI session it carries nothing.
+    let authorization = super::super::evidence(host, Some(fi), &community)
+        .await?
+        .ok_or("Huddle authorization unavailable")?;
+    let request = audio_request(&community, room, authorization.header())?;
+    fi.during_authorization(host, &authorization, open(host, call, request))
+        .await?
+}
+
+/// The audio upgrade request: `Authorization` stays NIP-98 territory, so the
+/// NIP-FI assertion travels in its own header, as on the main socket.
+fn audio_request(community: &Url, room: &str, assertion: Option<&str>) -> Result<Request> {
+    let mut url = community.clone();
     url.set_scheme("wss").map_err(|_| "Invalid Huddle relay")?;
-    // Use the same origin string as the existing desktop v2 client for NIP-42.
-    let relay = url.as_str().trim_end_matches('/').to_owned();
     url.set_path(&format!("/huddle/{room}/audio"));
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| "Invalid Huddle relay")?;
+    if let Some(assertion) = assertion {
+        request.headers_mut().insert(
+            assertion::HEADER,
+            assertion
+                .parse()
+                .map_err(|_| "Invalid federated authorization")?,
+        );
+    }
+    Ok(request)
+}
+
+async fn open(host: &IdentityHost, call: &Call, request: Request) -> Result<(Socket, Peers)> {
+    // Use the same origin string as the existing desktop v2 client for NIP-42.
+    let relay = super::origin(&call.community)?
+        .as_str()
+        .trim_end_matches('/')
+        .replacen("https://", "wss://", 1);
     let joined = connection::connect(
-        url.as_str(),
+        request,
         Some(&call.parent),
         Some(Connector::Rustls(tls_config()?)),
         |challenge| async move {
@@ -239,6 +278,19 @@ mod tests {
     use super::*;
     use buzz_audio_client::encoder::FRAME_SAMPLES;
 
+    #[test]
+    fn the_audio_upgrade_carries_the_assertion_only_in_its_own_header() {
+        let community = Url::parse("https://relay.example/").unwrap();
+        let request = audio_request(&community, "room", Some("Bearer jwt")).unwrap();
+        assert_eq!(request.uri(), "wss://relay.example/huddle/room/audio");
+        assert_eq!(request.headers()[assertion::HEADER], "Bearer jwt");
+        assert!(request.headers().get("authorization").is_none());
+
+        // Without a NIP-FI session the upgrade is exactly the old bare URL.
+        let bare = audio_request(&community, "room", None).unwrap();
+        assert!(bare.headers().get(assertion::HEADER).is_none());
+        assert!(bare.headers().get("authorization").is_none());
+    }
     #[test]
     fn tls_uses_an_explicit_provider_with_system_trust() {
         assert!(tls_config().is_ok());
