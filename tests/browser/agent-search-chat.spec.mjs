@@ -26,16 +26,20 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   await page.keyboard.press(`${modifier}+k`);
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   await dialog.getByRole("combobox", { name: "Search Buzz" }).fill("honey");
-  const choice = dialog
-    .getByRole("group", { name: "Agents" })
-    .getByRole("option", { name: /Owned Honey/ });
+  // Results are a listbox of options, or a grid of rows when any result has
+  // its own control (a plugin's switch can match "honey" loosely).
+  const result = (section, name) => {
+    const group = dialog
+      .getByRole("group", { name: section })
+      .or(dialog.getByRole("rowgroup", { name: section }));
+    return group
+      .getByRole("option", { name })
+      .or(group.getByRole("row", { name }));
+  };
+  const choice = result("Agents", /Owned Honey/);
   await expect(choice).toContainText("New chat");
   // The earlier chat is still found by its name.
-  await expect(
-    dialog
-      .getByRole("group", { name: "Channels" })
-      .getByRole("option", { name: /Earlier with Honey/ }),
-  ).toContainText("Chat");
+  await expect(result("Channels", /Earlier with Honey/)).toContainText("Chat");
   await page.screenshot({ path: testInfo.outputPath("search.png") });
   await choice.click();
   await expect(dialog).toHaveCount(0);
