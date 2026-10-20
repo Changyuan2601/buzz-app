@@ -10,6 +10,8 @@ Open **Bestie** and choose **Set up Bestie**. Setup signs you in to Builderlab,
 creates your hosted Bestie, gives it its instructions, creates your private
 channel and sends a first message on your behalf so Bestie introduces itself.
 
+---
+
 ## Changing Bestie's instructions
 
 Bestie's instructions live in `prompt.ts`. When they differ from the ones a

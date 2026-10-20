@@ -877,6 +877,37 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
     tauri::generate_context!()
 }
 
+/// Where earlier Buzz apps keep the agents Agents can import. A development
+/// sandbox starts as a clean install, so it sees none.
+pub(crate) fn legacy_data_dir<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<std::path::PathBuf> {
+    if buzz_credential_store::dev_sandbox().is_some() {
+        return app
+            .path()
+            .app_data_dir()
+            .ok()
+            .map(|dir| dir.join("no-legacy-apps"));
+    }
+    app.path().data_dir().ok()
+}
+
+/// A development sandbox's WebView data store (`BUZZ_DEV_WEBVIEW_STORE`, 32 hex
+/// digits), set by `just desktop --sandbox`.
+#[cfg(target_os = "macos")]
+pub(crate) fn dev_webview_store() -> Option<[u8; 16]> {
+    buzz_credential_store::dev_sandbox()?;
+    let hex = std::env::var("BUZZ_DEV_WEBVIEW_STORE").ok()?;
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut store = [0u8; 16];
+    for (index, byte) in store.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(store)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -947,35 +978,4 @@ mod tests {
             )
         );
     }
-}
-
-/// Where earlier Buzz apps keep the agents Agents can import. A development
-/// sandbox starts as a clean install, so it sees none.
-pub(crate) fn legacy_data_dir<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Option<std::path::PathBuf> {
-    if buzz_credential_store::dev_sandbox().is_some() {
-        return app
-            .path()
-            .app_data_dir()
-            .ok()
-            .map(|dir| dir.join("no-legacy-apps"));
-    }
-    app.path().data_dir().ok()
-}
-
-/// A development sandbox's WebView data store (`BUZZ_DEV_WEBVIEW_STORE`, 32 hex
-/// digits), set by `just desktop --sandbox`.
-#[cfg(target_os = "macos")]
-pub(crate) fn dev_webview_store() -> Option<[u8; 16]> {
-    buzz_credential_store::dev_sandbox()?;
-    let hex = std::env::var("BUZZ_DEV_WEBVIEW_STORE").ok()?;
-    if hex.len() != 32 {
-        return None;
-    }
-    let mut store = [0u8; 16];
-    for (index, byte) in store.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(store)
 }
