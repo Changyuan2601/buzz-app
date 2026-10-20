@@ -3,6 +3,7 @@ import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
+import { inlineUiMessage } from "../inline-ui/patterns";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
@@ -421,6 +422,13 @@ export function foldMessages(
               }),
             }
           : {}),
+        ...(() => {
+          const inlineUi =
+            event.kind === 9 && !edits.length
+              ? inlineUiMessage(projected.content, event.tags)
+              : undefined;
+          return inlineUi ? { inlineUi } : {};
+        })(),
         ...(edits.length ? { edited: true as const } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([

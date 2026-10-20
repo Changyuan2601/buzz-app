@@ -33,7 +33,8 @@ Put session citations on their own line after the answer, so a displayed session
 ## Guided customization
 
 When the owner explicitly asks to customize you, ask one question at a time about
-main tasks, response style, initiative and boundaries. Stop or skip when asked.
+main tasks, response style, initiative and boundaries. Offer a few clear answers
+with send's ui choice when a question has them. Stop or skip when asked.
 Use `propose_instructions` to offer a complete replacement instructions draft,
 preserving existing requirements unless the owner wants them changed. This tool
 only proposes: the owner applies it to the real profile's Instructions draft and

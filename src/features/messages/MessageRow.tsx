@@ -70,6 +70,7 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { InlineUiCard } from "../inline-ui/InlineUiCard";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -124,6 +125,8 @@ export type MessageRowProps = {
   stackPrevious?: boolean;
   stackNext?: boolean;
   alignViewer?: boolean;
+  /** The conversation's newest message: only it can offer live inline UI. */
+  latest?: boolean;
 
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
@@ -186,6 +189,7 @@ function MessageRowContent({
   stackPrevious = layout === "continuation",
   stackNext = false,
   alignViewer = true,
+  latest = false,
 
   mediaMode = "inline",
   mediaSeekTo,
@@ -305,7 +309,15 @@ function MessageRowContent({
     row.authorId,
   );
   const presenceId = useId();
-  const shown = shownRow ?? row;
+  // Only an agent's own message may present a pattern; others read as plain text.
+  const inlineUi =
+    !shownRow && row.inlineUi && agentPubkeys?.has(row.authorId)
+      ? row.inlineUi
+      : undefined;
+  const shown = useMemo(
+    () => shownRow ?? (inlineUi ? { ...row, content: inlineUi.text } : row),
+    [shownRow, row, inlineUi],
+  );
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const sourceRow = timeReply
     ? { ...shown, content: timeReply.content }
@@ -891,6 +903,23 @@ function MessageRowContent({
                     body
                   )}
                 </div>
+              )}
+              {inlineUi && (
+                <InlineUiCard
+                  ui={inlineUi.ui}
+                  live={
+                    latest &&
+                    layout === "timeline" &&
+                    !row.threadRootId &&
+                    !!session?.messages
+                  }
+                  onPick={(answer) =>
+                    session?.messages.send(row.channelId, answer, [
+                      row.authorId,
+                    ])
+                  }
+                  className={styles.messageAttachments}
+                />
               )}
               {attachmentGroups.length > 0 && (
                 <div

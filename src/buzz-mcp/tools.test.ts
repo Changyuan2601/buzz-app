@@ -159,6 +159,46 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
+it("attaches a choice with its plain-text version, and explains a bad one", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const ui = { pattern: "choice", options: ["Warm", "Direct"] };
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "What tone should I use?",
+    ui,
+  });
+  expect(published[0]).toEqual({
+    kind: 9,
+    content:
+      "What tone should I use?\n\n1. Warm\n2. Direct\n\nOr reply with your own answer.",
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+      ["ui", JSON.stringify(ui)],
+    ],
+  });
+  await expect(
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text: "Tone?",
+      ui: { pattern: "choice", options: ["Warm"] },
+    }),
+  ).rejects.toThrow("ui.options must list 2–6 answers.");
+  await expect(
+    callTool(client, context, "send", { audience: "everyone", ui }),
+  ).rejects.toThrow("Give text or path.");
+  await expect(
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text: "Tone?",
+      ui,
+      files: ["/tmp/a.png"],
+    }),
+  ).rejects.toThrow("Send files in their own message, not with ui.");
+  expect(published).toHaveLength(1);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

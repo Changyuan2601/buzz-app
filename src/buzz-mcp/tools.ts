@@ -23,6 +23,13 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import {
+  CHOICE_OPTIONS_MAX,
+  CHOICE_OPTIONS_MIN,
+  inlineUiContent,
+  readInlineUi,
+  UI_TAG,
+} from "../features/inline-ui/patterns";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -65,6 +72,22 @@ export const TOOLS: readonly Tool[] = [
       final: {
         type: "boolean",
         description: "Your last message this turn; ends the turn.",
+      },
+      ui: {
+        type: "object",
+        description:
+          "Tappable answers under your text in the Buzz app, for a question with a few clear answers; they can still type their own. Text is the question. Other clients get a numbered list.",
+        properties: {
+          pattern: { type: "string", enum: ["choice"] },
+          options: {
+            type: "array",
+            items: str,
+            minItems: CHOICE_OPTIONS_MIN,
+            maxItems: CHOICE_OPTIONS_MAX,
+          },
+        },
+        required: ["pattern", "options"],
+        additionalProperties: false,
       },
     },
     ["audience"],
@@ -350,8 +373,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     if (args.audience !== "everyone" && args.audience !== "agents")
       throw new Error("audience must be everyone or agents.");
+    const ui = args.ui === undefined ? undefined : readInlineUi(args.ui);
+    if (ui && "error" in ui) throw new Error(ui.error);
+    if (ui && list(args.files).length)
+      throw new Error("Send files in their own message, not with ui.");
     const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    const body = (await tools.body(args, !files.links || !!ui)) ?? "";
+    if (ui && !body.trim()) throw new Error("ui needs text: the question.");
+    const content = ui ? inlineUiContent(body, ui.ui) : `${body}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];
     const mentions = await tools.mentions(
       channel,
@@ -367,6 +396,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...mentions.map((pubkey) => ["p", pubkey]),
         ...files.tags,
         ...(args.audience === "agents" ? [["audience", "agents"]] : []),
+        ...(ui ? [[UI_TAG, JSON.stringify(ui.ui)]] : []),
       ],
     });
     return `sent ${event.id}`;

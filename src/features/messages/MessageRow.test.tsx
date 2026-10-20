@@ -2997,3 +2997,68 @@ it("keeps own-message and bubble styling off a shown thread root", () => {
     cleanup();
   }
 });
+
+it("offers an agent's choice only while it is the newest message, and sends a pick as a reply", async () => {
+  const agent = keypair();
+  const ui = { pattern: "choice", options: ["Warm", "Direct"] };
+  const [folded] = foldMessages("channel", keypair().pubkey, [
+    message(
+      agent,
+      "channel",
+      "What tone should I use?\n\n1. Warm\n2. Direct\n\nOr reply with your own answer.",
+      1,
+      [["ui", JSON.stringify(ui)]],
+    ),
+  ]);
+  if (!folded) throw new Error("No folded message");
+  const send = vi.fn(() => "sent");
+  const session = {
+    messages: { send },
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const show = (latest: boolean, agents = new Set([agent.pubkey])) => (
+    <MessageRow
+      row={folded}
+      session={session}
+      agentPubkeys={agents}
+      latest={latest}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />
+  );
+  const view = renderDom(show(true));
+  try {
+    expect(screen.getByText("What tone should I use?")).toBeInTheDocument();
+    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+    expect(screen.getByText("Or type your own answer.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Warm" }));
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith("channel", "Warm", [agent.pubkey]),
+    );
+    expect(screen.getByRole("button", { name: "Direct" })).toBeDisabled();
+
+    view.rerender(show(false));
+    expect(
+      screen.queryByRole("button", { name: "Direct" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("What tone should I use?")).toBeInTheDocument();
+
+    // A pattern from anyone but an agent reads as its plain-text version.
+    view.rerender(show(true, new Set()));
+    expect(
+      screen.queryByRole("button", { name: "Warm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual(["Warm", "Direct"]);
+    expect(send).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+  }
+});

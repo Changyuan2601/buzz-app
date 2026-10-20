@@ -1085,6 +1085,7 @@ function Timeline({
                       retry={queries.outbox?.retry}
                       keepMounted={keepRowMounted}
                       day={day && !disclosure}
+                      latest={index === rows.length - 1}
                     />
                   )}
                 </ActivityExpansion>

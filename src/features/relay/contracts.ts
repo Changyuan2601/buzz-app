@@ -2,6 +2,7 @@ import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
+import type { InlineUi } from "../inline-ui/patterns";
 
 export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
 
@@ -127,6 +128,9 @@ export type ChannelMessage = Readonly<{
     description?: string | undefined;
     truncated: boolean;
   }>;
+  /** Valid signed inline-UI pattern; `text` is the content before its plain-text version.
+   * Untrusted display data: renderers decide whether the author may show it. */
+  inlineUi?: Readonly<{ ui: InlineUi; text: string }>;
   membership?: MembershipChange;
   huddle?: Readonly<{
     room: string;
