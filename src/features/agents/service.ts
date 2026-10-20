@@ -2,8 +2,6 @@ import { InstructionSuggestions } from "./instruction-suggestions";
 import {
   welcomeActionGuidance,
   welcomeActionOf,
-  welcomeActions,
-  type WelcomeAction,
   type InstructionProposal,
 } from "./onboarding";
 import { readWelcome } from "../sessions/welcome";
@@ -770,13 +768,6 @@ export type Agents = {
     signal: AbortSignal,
     phase?: "connected" | "saved",
   ): Promise<RelayEvent>;
-  /** Sends the selected visible wording as an ordinary owner message. */
-  welcomeAction(
-    pubkey: string,
-    channelId: string,
-    action: WelcomeAction,
-    signal: AbortSignal,
-  ): Promise<string>;
   instructionProposal(pubkey: string): InstructionProposal | undefined;
   subscribeInstructionProposals(listener: () => void): () => void;
   dismissInstructionProposal(pubkey: string, id: string): void;
@@ -1597,26 +1588,6 @@ export class AgentsService extends Service implements Agents {
       check,
       phase === "saved" ? savedWelcomeClientId(channelId) : undefined,
     );
-  }
-  async welcomeAction(
-    pubkey: string,
-    channelId: string,
-    action: WelcomeAction,
-    signal: AbortSignal,
-  ) {
-    const binding = this.selectedBinding();
-    await binding.session.channelWrites.refresh(channelId, { member: pubkey });
-    signal.throwIfAborted();
-    const agent = this.ready(pubkey);
-    const label = welcomeActions.find(([key]) => key === action)?.[1];
-    if (
-      !agent ||
-      !label ||
-      this.selectedBinding() !== binding ||
-      !this.welcomeContext(agent, channelId)
-    )
-      throw new Error("Reopen your Welcome chat before choosing an action.");
-    return binding.session.messages.send(channelId, label, [pubkey]);
   }
   private welcomeContext(agent: Agent, channelId: string) {
     const binding = this.bindingOf(agent);

@@ -24,12 +24,13 @@ const channel = "11111111-1111-4111-8111-111111111111";
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function fixture() {
   const created = {
     pubkey: agent,
     type: "claude/claude",
-    name: "Welcome",
+    name: "Buzz",
     owner: "a".repeat(64),
   } as Agent;
   const agents = {
@@ -55,6 +56,54 @@ function fixture() {
   } as unknown as RelaySession;
   return { agents, session, channelWrites, messages };
 }
+
+it("creates the first agent as Buzz, wearing the uploaded Buzz mark when uploads work", async () => {
+  const { agents, session } = fixture();
+  const upload = vi.fn(async (_file: File, _signal: AbortSignal) => ({
+    url: "https://media.example/buzz.png",
+  }));
+  const fetch = vi.fn(async () => new Response(new Blob(["png"])));
+  vi.stubGlobal("fetch", fetch);
+  Object.assign(session, { attachments: { uploadForNewChat: upload } });
+  const signal = new AbortController().signal;
+  await prepareWelcome(session, agents, scope, "claude/claude", {}, signal);
+  expect(fetch).toHaveBeenCalledWith("/app-icon.png", { signal });
+  expect(upload.mock.calls[0]?.[0]).toMatchObject({ type: "image/png" });
+  expect(agents.create).toHaveBeenCalledWith({
+    type: "claude/claude",
+    name: "Buzz",
+    picture: "https://media.example/buzz.png",
+    config: {},
+  });
+});
+
+it("still creates Buzz, with its initial, when the mark cannot be uploaded", async () => {
+  const { agents, session } = fixture();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(new Blob(["png"]))),
+  );
+  Object.assign(session, {
+    attachments: {
+      uploadForNewChat: vi.fn(async () => {
+        throw new Error("Uploads unavailable");
+      }),
+    },
+  });
+  await prepareWelcome(
+    session,
+    agents,
+    scope,
+    "claude/claude",
+    {},
+    new AbortController().signal,
+  );
+  expect(agents.create).toHaveBeenCalledWith({
+    type: "claude/claude",
+    name: "Buzz",
+    config: {},
+  });
+});
 
 it("resumes exact agent/channel/invitation after interrupted setup without sending a viewer message", async () => {
   const { agents, session, channelWrites, messages } = fixture();

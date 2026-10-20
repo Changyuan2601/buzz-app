@@ -340,7 +340,6 @@ function setup(
       return team;
     }),
     core: vi.fn(async () => undefined),
-    welcomeAction: vi.fn(async () => "c".repeat(64)),
     instructionProposal: () => undefined,
     subscribeInstructionProposals: () => () => {},
     dismissInstructionProposal() {},

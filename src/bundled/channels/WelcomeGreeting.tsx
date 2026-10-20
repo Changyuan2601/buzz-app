@@ -8,26 +8,23 @@ import {
   type WelcomeReceipt,
 } from "../../features/sessions/welcome";
 import { Button } from "../../shared/design-system/ui/Button";
-import { WelcomeActions } from "./WelcomeActions";
 import styles from "./SoloWelcome.module.css";
 
-/** Post-save work is still a real agent turn; the card is app-owned content. */
-export function WelcomeNextSteps({
+/** Asks the saved agent for its greeting, a real agent turn that offers the
+ * next steps as its own choice. Shows nothing unless the greeting needs the
+ * owner to check and retry. */
+export function WelcomeGreeting({
   agents,
   session,
   scope,
   receipt,
   signal,
-  openProfile,
-  onSend,
 }: {
   agents: Agents;
   session: RelaySession;
   scope: string;
   receipt: WelcomeReceipt;
   signal: AbortSignal;
-  openProfile?: ((target: string) => boolean) | undefined;
-  onSend?: ((id: string) => void) | undefined;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -106,33 +103,27 @@ export function WelcomeNextSteps({
   useEffect(() => {
     if (receipt.greeting === "pending" && !receipt.greetingId) void greet();
   }, [greet, receipt.greeting, receipt.greetingId]);
+  if (
+    receipt.greetingId ||
+    (!error && (busy || receipt.greeting === "pending"))
+  )
+    return null;
   return (
     <div className={styles.setupControls}>
-      {!receipt.greetingId ? (
-        <div className={styles.step}>
-          <p className="text-body-sm text-subtle" role="status">
-            {busy
-              ? "Your agent is saying hello…"
-              : "Your agent is saved. Its greeting may still arrive; check before trying again."}
-          </p>
-          {!busy && (
+      <div className={styles.step}>
+        {!busy && (
+          <>
+            <p className="text-body-sm text-subtle" role="status">
+              Your agent is saved. Its greeting may still arrive; check before
+              trying again.
+            </p>
             <Button onClick={() => void greet(true)}>
               Check and retry greeting
             </Button>
-          )}
-          {error && <p role="alert">{error}</p>}
-        </div>
-      ) : (
-        <WelcomeActions
-          agents={agents}
-          session={session}
-          scope={scope}
-          receipt={receipt}
-          signal={signal}
-          openProfile={openProfile}
-          onSend={onSend}
-        />
-      )}
+          </>
+        )}
+        {error && <p role="alert">{error}</p>}
+      </div>
     </div>
   );
 }

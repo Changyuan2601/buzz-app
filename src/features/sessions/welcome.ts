@@ -12,6 +12,8 @@ import {
 } from "../../shared/view-state";
 
 export const WELCOME_KEY = "me:welcome";
+/** The first agent speaks as the app until its owner names it. */
+export const BUZZ_AGENT_NAME = "Buzz";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const pubkey = /^[0-9a-f]{64}$/;
 export type WelcomeReceipt = {
@@ -105,11 +107,14 @@ export async function prepareWelcome(
       throw new Error(
         "An agent may have been created before setup was interrupted. Choose its exact identity below to resume; no second agent was created.",
       );
+    const picture = await buzzPicture(session, signal);
+    check();
     receipt = { ...receipt, creatingAgent: true };
     save();
     const agent = await agents.create({
       type: receipt.type,
-      name: "Welcome",
+      name: BUZZ_AGENT_NAME,
+      ...(picture ? { picture } : {}),
       config,
     });
     // Record the exact key even if this view retired while native was writing it.
@@ -167,6 +172,25 @@ export async function prepareWelcome(
   }
   check();
   return receipt;
+}
+
+/** The Buzz mark as a community-hosted picture other clients can load.
+ * Media is content-addressed, so every owner's upload shares one file. The
+ * agent falls back to its initial when uploads are unavailable. */
+async function buzzPicture(session: RelaySession, signal: AbortSignal) {
+  const upload = session.attachments?.uploadForNewChat;
+  if (!upload) return undefined;
+  try {
+    const response = await fetch("/app-icon.png", { signal });
+    if (!response.ok) return undefined;
+    const file = new File([await response.blob()], "buzz.png", {
+      type: "image/png",
+    });
+    return (await upload(file, signal)).url;
+  } catch {
+    signal.throwIfAborted();
+    return undefined;
+  }
 }
 
 /** Read actual agent-authored history before an explicit retry. A successful

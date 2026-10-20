@@ -24,6 +24,7 @@ import {
   readWelcome,
   saveWelcome,
   useWelcomeReceipt,
+  BUZZ_AGENT_NAME,
   type WelcomeReceipt,
 } from "../../features/sessions/welcome";
 import { writeView } from "../../shared/view-state";
@@ -31,26 +32,24 @@ import type { InlineUiHostValue } from "../../features/inline-ui/host";
 import { setDefaultAgent } from "../../features/solo/default-agent";
 import { followupDraft } from "../../features/messages/mention-draft";
 import { ProviderDialog } from "../agents/ProviderDialog";
-import { SoloTitle } from "../../features/solo/SoloPresentation";
+import { SoloDraftView } from "../../features/solo/SoloPresentation";
 import {
   ContributionBoundary,
   contributionKey,
 } from "../../features/conversation/ContributionBoundary";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Select } from "../../shared/design-system/ui/Select";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { WelcomeNextSteps } from "./WelcomeNextSteps";
-import { WelcomeIntro, WelcomeComposer } from "./WelcomeIntro";
+import { WelcomeGreeting } from "./WelcomeGreeting";
+import { WelcomeComposer } from "./WelcomeComposer";
 import { GearIcon, CircleNotchIcon } from "../../shared/design-system/icons";
-import soloStyles from "../../features/solo/Solo.module.css";
 import styles from "./SoloWelcome.module.css";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-/** Prepared app content inside real Solo. It never impersonates an agent turn. */
+/** A new chat's empty state until an AI provider is connected. */
 export function SoloWelcome({
   session,
   scope,
@@ -64,27 +63,24 @@ export function SoloWelcome({
 }) {
   const agents = useContext(AgentsContext);
   return (
-    <section className={soloStyles.work} aria-label="Welcome">
-      <SoloTitle channel={{ name: "Welcome" }} />
-      <div className={styles.welcome}>
-        <WelcomeIntro>
-          {agents ? (
-            <WelcomeSetup
-              agents={agents}
-              session={session}
-              scope={scope}
-              signal={signal}
-              onCreated={onCreated}
-            />
-          ) : (
-            <p role="status">
-              Enable Agents in Settings to set up your assistant.
-            </p>
-          )}
-        </WelcomeIntro>
+    <SoloDraftView>
+      <div className={styles.connect}>
+        {agents ? (
+          <WelcomeSetup
+            agents={agents}
+            session={session}
+            scope={scope}
+            signal={signal}
+            onCreated={onCreated}
+          />
+        ) : (
+          <p role="status">
+            Enable Agents in Settings to set up your assistant.
+          </p>
+        )}
       </div>
       <WelcomeComposer phase="connect" />
-    </section>
+    </SoloDraftView>
   );
 }
 
@@ -149,7 +145,7 @@ function WelcomeSetup({
   if (snapshot.status === "loading")
     return <p role="status">Loading your agents…</p>;
   return (
-    <div className={`${styles.setup} ${styles.stepCard}`}>
+    <div className={styles.stepCard}>
       <div className={styles.cardHeader}>
         <InlineHeader title="Connect your AI provider" level={2} />
       </div>
@@ -382,8 +378,10 @@ export function useWelcomeProfile({
             async saveProfile(agent, { name, picture }) {
               if (agent !== receipt.agent)
                 throw new Error("Welcome changed. Reopen the current setup.");
-              if (name.toLocaleLowerCase() === "welcome")
-                throw new Error("Choose a name other than Welcome.");
+              if (
+                name.toLocaleLowerCase() === BUZZ_AGENT_NAME.toLocaleLowerCase()
+              )
+                throw new Error(`Choose a name other than ${BUZZ_AGENT_NAME}.`);
               signal?.throwIfAborted();
               await agents.save(agent, { name, picture });
               signal?.throwIfAborted();
@@ -415,16 +413,12 @@ export function WelcomeControls({
   scope,
   signal,
   receipt,
-  openProfile,
-  onSend,
 }: {
   agents: Agents;
   session: RelaySession;
   scope: string;
   signal: AbortSignal;
   receipt: WelcomeReceipt;
-  openProfile?: ((target: string) => boolean) | undefined;
-  onSend?: ((id: string) => void) | undefined;
 }) {
   const found = useAgent(agents, receipt.agent ?? "");
   const [busy, setBusy] = useState(false);
@@ -514,60 +508,42 @@ export function WelcomeControls({
   if (!found)
     return (
       <p role="status">
-        The Welcome agent is unavailable. Open Agents to check it.
+        Your new agent is unavailable. Open Agents to check it.
       </p>
     );
-  if (receipt.complete && receipt.greeting)
-    return (
-      <WelcomeNextSteps
+  if (receipt.complete)
+    return receipt.greeting ? (
+      <WelcomeGreeting
         agents={agents}
         session={session}
         scope={scope}
         receipt={receipt}
         signal={signal}
-        openProfile={openProfile}
-        onSend={onSend}
       />
-    );
-  if (receipt.complete)
-    return (
-      <div className={styles.setupControls} role="status">
-        <div className={`${styles.step} ${styles.savedAgent}`}>
-          <PreferenceRow
-            icon={
-              <Avatar
-                src={found.agent.picture}
-                shape="squircle"
-                alt=""
-                fallback={found.agent.name}
-              />
-            }
-            title={found.agent.name}
-            subtitle="Your default agent for new Solo chats"
-          />
-        </div>
-      </div>
-    );
+    ) : null;
+  // The agent's typing shows the introduction is on its way; only a stalled
+  // or failed one needs the owner.
+  if (!error && (busy || receipt.replyId || receipt.kickoff !== "attempted"))
+    return null;
   return (
     <div className={styles.setupControls}>
-      {!receipt.replyId || busy ? (
-        <div className={styles.step}>
-          <p className="text-message" role="status">
-            {busy
-              ? "Getting things ready…"
-              : "Your welcome may still arrive. Check for it before trying again."}
-          </p>
-          {!busy && (
+      <div className={styles.step}>
+        {!busy && (
+          <>
+            <p className="text-body-sm text-subtle" role="status">
+              Your agent's hello may still arrive. Check for it before trying
+              again.
+            </p>
             <Button
               disabled={!found.type?.startConversation}
               onClick={() => void kickoff(true)}
             >
               Check and retry introduction
             </Button>
-          )}
-        </div>
-      ) : null}
-      {error && <p role="alert">{error}</p>}
+          </>
+        )}
+        {error && <p role="alert">{error}</p>}
+      </div>
     </div>
   );
 }

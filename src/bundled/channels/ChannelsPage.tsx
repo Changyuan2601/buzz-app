@@ -5,11 +5,7 @@ import { readDefaultAgent } from "../../features/solo/default-agent";
 import { useWelcomeReceipt } from "../../features/sessions/welcome";
 import { SoloWelcome, useWelcomeProfile, WelcomeControls } from "./SoloWelcome";
 import { InlineUiHost } from "../../features/inline-ui/host";
-import {
-  WelcomeComposer,
-  WelcomeConnected,
-  WelcomeIntro,
-} from "./WelcomeIntro";
+import { WelcomeComposer } from "./WelcomeComposer";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -599,15 +595,12 @@ function ChannelWorkspace({
   // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "solo";
   const personal = ownSolo(current, queries.viewer);
-  // The Welcome chat keeps its setup steps around the agent's first messages,
+  // The Welcome chat runs its setup turns behind the agent's messages,
   // and holds the composer until the agent is named.
   const welcomeChat =
     personal && welcomeReceipt?.channelId === current?.id
       ? welcomeReceipt
       : undefined;
-  const welcomeType =
-    welcomeChat &&
-    agents?.types().find((type) => type.key === welcomeChat.type);
   const welcomeProfile = useWelcomeProfile({
     agents,
     scope,
@@ -623,8 +616,6 @@ function ChannelWorkspace({
         scope={scope}
         signal={navigation?.signal ?? new AbortController().signal}
         receipt={welcomeChat}
-        onSend={(id) => current && setSent({ channelId: current.id, id })}
-        openProfile={(target) => canOpenLink(target) && openLink(target)}
       />
     ) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
@@ -1429,13 +1420,6 @@ function ChannelWorkspace({
                 sent?.channelId === current.id
                   ? sent.id
                   : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
-              }
-              beforeMessages={
-                welcomeControls ? (
-                  <WelcomeIntro>
-                    {welcomeType && <WelcomeConnected type={welcomeType} />}
-                  </WelcomeIntro>
-                ) : undefined
               }
               afterMessages={welcomeControls}
               afterMessageId={

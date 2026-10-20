@@ -6157,12 +6157,8 @@ it("starts Welcome through the claimed runner with app input, target-only signed
         ["customize", "Finish setting up this agent"],
       ] as const) {
         const count = run.mock.calls.length;
-        const id = await service.welcomeAction(
-          bot,
-          channel,
-          key,
-          new AbortController().signal,
-        );
+        // Picking the agent's choice sends its label as an owner message.
+        const id = await session.messages.send(channel, label, [bot]);
         await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(count + 1));
         expect(published.at(-1)).toMatchObject({
           id,
@@ -6207,12 +6203,9 @@ it("starts Welcome through the claimed runner with app input, target-only signed
       expect(seenGuidance.at(-1)).toBeUndefined();
       // Ordinary owner follow-ups can propose after a fresh explicit setup request.
       run.mockImplementationOnce(() => {});
-      await service.welcomeAction(
+      await session.messages.send(channel, "Finish setting up this agent", [
         bot,
-        channel,
-        "customize",
-        new AbortController().signal,
-      );
+      ]);
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
       run.mockImplementationOnce((delivery) =>
         delivery.agent.proposeInstructions?.(proposed, channel),

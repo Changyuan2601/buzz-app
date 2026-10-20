@@ -1,60 +1,28 @@
-.welcome {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-panel-inset);
-}
-.intro {
-  width: min(100%, 52rem);
-  margin: var(--space-6) auto var(--space-8);
-}
-.introExtras {
-  padding-inline-start: calc(var(--size-control-sm) + var(--space-3));
+/* Provider setup sits above the locked composer, like a new chat's prompt. */
+.connect {
+  width: min(calc(100% - 2 * var(--space-4)), 32rem);
+  margin: 0 auto var(--space-6);
 }
 .lockedComposer {
   flex: 0 0 auto;
   width: min(calc(100% - 2 * var(--space-4)), 52rem);
   margin: 0 auto var(--space-3);
 }
-.welcomeHeading {
-  margin-block: var(--space-3) var(--space-4);
-  padding-inline-start: calc(var(--size-control-sm) + var(--space-3));
-}
-.welcomeTitle {
-  display: block;
-  text-wrap: balance;
-}
-.step,
-.setup,
-.customize {
-  width: min(100%, 32rem);
-}
 .step {
   display: grid;
   gap: var(--space-3);
-}
-.setup,
-.step {
+  width: min(100%, 32rem);
   margin-top: var(--space-4);
 }
 /* Inline setup is recessed, not an overlay. One surface owns the whole step. */
 .stepCard {
-  margin-inline: auto;
   min-width: 0;
   background: var(--surface-inset);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-container);
 }
-.savedAgent {
-  border-top: 1px solid var(--border-standard);
-}
 .cardHeader {
   padding: var(--space-5) var(--space-5) 0;
-}
-.cardBody {
-  display: grid;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5) var(--space-6);
 }
 .providerChoices {
   padding: var(--space-2) var(--space-5);
@@ -62,70 +30,13 @@
 .providerChoices > * + * {
   border-block-start: 1px solid var(--border-standard);
 }
-.cardFooter {
-  display: grid;
-  gap: var(--space-3);
-  border-block-start: 1px solid var(--border-standard);
-  padding: var(--space-4) var(--space-5);
-}
 .cardNotice {
   padding: var(--space-3) var(--space-5);
-}
-.connected {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 .setupControls {
   width: min(100%, 52rem);
   margin: var(--space-3) auto var(--space-8);
   padding-inline-start: calc(var(--size-control-sm) + var(--space-3));
-}
-.identity {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) 0 var(--space-2);
-}
-.identity > :last-child {
-  width: min(100%, 22rem);
-  text-align: center;
-}
-.avatar {
-  display: inline-flex;
-  position: relative;
-  width: 8rem;
-  height: 8rem;
-}
-.editBadge {
-  position: absolute;
-  inset-inline-end: 0;
-  inset-block-end: 0;
-  display: grid;
-  place-items: center;
-  width: var(--space-6);
-  height: var(--space-6);
-  border-radius: var(--radius-pill);
-  background: var(--surface-panel);
-  color: var(--text-standard);
-}
-.avatarGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(3rem, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  padding: var(--space-1);
-  max-height: 18rem;
-  overflow-y: auto;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
 }
 .recovery {
   display: grid;
@@ -133,21 +44,10 @@
   padding: var(--space-4) var(--space-5);
 }
 @container session-conversation (max-width: 30rem) {
-  .welcomeTitle {
-    font-size: var(--text-title);
-    line-height: var(--text-title--line-height);
-    letter-spacing: var(--text-title--letter-spacing);
-    font-weight: var(--text-title--font-weight);
-  }
-  .welcome {
-    padding: var(--space-3);
-  }
   .setupControls {
     padding-inline-start: 0;
   }
   .cardHeader,
-  .cardBody,
-  .cardFooter,
   .providerChoices,
   .cardNotice,
   .recovery {

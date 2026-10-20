@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
-import { WelcomeNextSteps } from "./WelcomeNextSteps";
+import { WelcomeGreeting } from "./WelcomeGreeting";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -36,7 +36,7 @@ const receipt = { type: "claude/claude", agent: agentKey, channelId };
 function fixture() {
   let agent = {
     pubkey: agentKey,
-    name: "Welcome",
+    name: "Buzz",
     type: receipt.type,
   } as Agent;
   const listeners = new Set<() => void>();
@@ -160,20 +160,11 @@ it("offers only the providers that can finish Welcome, in the provider's own set
     </AgentsContext.Provider>,
   );
   expect(
-    screen.getByText(
-      "This is a space to think things through, ask questions, and get work done with your agents. Start by connecting your AI provider.",
-    ),
-  ).toBeVisible();
-  expect(
     screen.getByRole("button", { name: "Configure Claude" }),
   ).toBeEnabled();
-  expect(
-    screen.getByRole("heading", { name: "Welcome to Buzz", level: 1 }),
-  ).toBeVisible();
-  expect(screen.getByText("Welcome", { selector: "strong" })).toBeVisible();
-  expect(
-    screen.getByRole("img", { name: "Welcome placeholder" }),
-  ).toBeVisible();
+  // An ordinary new chat, not a special Welcome conversation.
+  expect(screen.getByRole("region", { name: "New chat" })).toBeVisible();
+  expect(screen.queryByText("Welcome to Buzz")).toBeNull();
   expect(
     screen.getByRole("textbox", { name: "Message your agent" }),
   ).toBeDisabled();
@@ -331,9 +322,9 @@ it("starts once across StrictMode/reopen and saves the actual agent name before 
       onSaved={onSaved}
     />,
   );
-  await submitOwnName(" Welcome ");
+  await submitOwnName(" buzz ");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Choose a name other than Welcome.",
+    "Choose a name other than Buzz.",
   );
   expect(f.agents.save).not.toHaveBeenCalled();
   await submitOwnName("Ada");
@@ -431,7 +422,7 @@ it("reconciles a top-level introduction behind a newer threaded reply without st
   expect(f.agents.welcome).not.toHaveBeenCalled();
 });
 
-it("greets only after confirmed identity/default save, shows the next actions after a real reply, and never repeats on reopen", async () => {
+it("greets only after confirmed identity/default save, leaves the next steps to that reply, and never repeats on reopen", async () => {
   const f = fixture();
   const observed = {
     ...receipt,
@@ -469,22 +460,15 @@ it("greets only after confirmed identity/default save, shows the next actions af
     expect(f.agents.welcome).not.toHaveBeenCalled();
     await submitOwnName("Ada");
     await waitFor(() => expect(f.agents.welcome).toHaveBeenCalledOnce());
-    expect(screen.getByText("Your agent is saying hello…")).toBeVisible();
-    expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
+    // The chat itself shows the agent working; the app adds nothing.
+    expect(screen.queryByRole("status")).toBeNull();
     resolveGreeting({ id: "d".repeat(64) });
-    expect(
-      await screen.findByRole("region", { name: "Get started" }),
-    ).toBeVisible();
-    for (const name of [
-      "Tell me about Buzz",
-      "Tell me about this community",
-      "Finish setting up this agent",
-    ])
-      expect(screen.getByRole("button", { name })).toBeEnabled();
-    expect(readWelcome("scope")?.greetingId).toBe("d".repeat(64));
+    await waitFor(() =>
+      expect(readWelcome("scope")?.greetingId).toBe("d".repeat(64)),
+    );
+    expect(screen.queryByRole("button", { name: /retry/ })).toBeNull();
     view.unmount();
     render(<Harness />);
-    expect(screen.getByRole("region", { name: "Get started" })).toBeVisible();
     expect(f.agents.welcome).toHaveBeenCalledOnce();
   } finally {
     resolveGreeting({ id: "d".repeat(64) });
@@ -523,7 +507,7 @@ it("reconciles an uncertain saved greeting by its exact marker without mistaking
     },
   ]);
   render(
-    <WelcomeNextSteps
+    <WelcomeGreeting
       {...f}
       scope="scope"
       receipt={attempted}
@@ -548,7 +532,7 @@ it("keeps the completed identity when greeting fails and leaves an explicit retr
     new Error("Provider unavailable"),
   );
   render(
-    <WelcomeNextSteps
+    <WelcomeGreeting
       {...f}
       scope="scope"
       receipt={saved}
@@ -591,7 +575,7 @@ it("does not use an ordinary agent reply as saved-greeting evidence", async () =
     new Error("Hosting unavailable"),
   );
   render(
-    <WelcomeNextSteps
+    <WelcomeGreeting
       {...f}
       scope="scope"
       receipt={attempted}
@@ -611,5 +595,4 @@ it("does not use an ordinary agent reply as saved-greeting evidence", async () =
     "saved",
   );
   expect(readWelcome("scope")?.greetingId).toBeUndefined();
-  expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
 });
