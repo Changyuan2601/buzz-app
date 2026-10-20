@@ -101,18 +101,10 @@ test("coordination keeps its first line visible throughout expansion and collaps
   expect(result).toEqual({ failures: [], animated: true });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await toggle.click();
-  const addReaction = row.getByRole("button", {
-    name: "Add reaction",
-    exact: true,
-  });
-  await expect(addReaction).toBeVisible();
-  await addReaction.click();
-  await expect(addReaction).toHaveAttribute("aria-expanded", "true");
   await expect(
-    page.getByRole("dialog", { name: "Emoji picker" }),
+    row.getByText("Three café names:", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("dialog", { name: "Emoji picker" }).press("Escape");
-  await expect(addReaction).toBeFocused();
+  await expect(row.getByTestId("inline-add-reaction")).toHaveCount(0);
   // A real nested link owns its handled keyboard gesture; the row still owns
   // the same gesture on its disclosure. Verify each portal's focus return.
   const link = row.getByRole("link", {

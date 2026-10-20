@@ -7,8 +7,7 @@ it("carries connection authorities independently of query event authors", async 
   const client = appClient(
     { pubkey: "agent", query } as unknown as AgentHandle,
     {
-      cwd: "/workspace",
-      spawn: vi.fn(),
+      read: vi.fn(),
       memories: async () => ({ entries: [], partial: false }),
       relayAuthor: "trusted-relay",
       signingAuthority: "trusted-workflows",
@@ -22,8 +21,7 @@ it("carries connection authorities independently of query event authors", async 
 
 it("does not invent authority when a host has none", () => {
   const client = appClient({ pubkey: "agent" } as AgentHandle, {
-    cwd: "/workspace",
-    spawn: vi.fn(),
+    read: vi.fn(),
     memories: async () => ({ entries: [], partial: false }),
   });
   expect(client.relayAuthor).toBeUndefined();
@@ -43,8 +41,7 @@ it("withholds a query result when the owning turn ends during the read", async (
   const client = appClient(
     { pubkey: "agent", query } as unknown as AgentHandle,
     {
-      cwd: "/workspace",
-      spawn: vi.fn(),
+      read: vi.fn(),
       signal: controller.signal,
       memories: async () => ({ entries: [], partial: false }),
     },
@@ -74,8 +71,7 @@ it("binds current audience decisions to the connected community and fences turn 
   const client = appClient(
     { pubkey, audienceAuthority: authority } as unknown as AgentHandle,
     {
-      cwd: "/workspace",
-      spawn: vi.fn(),
+      read: vi.fn(),
       memories: async () => ({ entries: [], partial: false }),
       audienceAuthorityCommunity: community,
       signal: controller.signal,

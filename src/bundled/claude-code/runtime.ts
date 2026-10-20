@@ -11,14 +11,16 @@ import {
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
-import { respond } from "../../buzz-mcp/rpc";
+import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
   addedKey,
+  sessionHint,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -33,7 +35,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -130,6 +132,17 @@ const where = ({ workspace, model, effort }: Config) => ({
   ...(effort ? { effort } : {}),
 });
 
+/** How Claude lists the session tools: in full up front only those marked
+ * `alwaysLoad`, and the rest by name until its tool search loads them, with
+ * the server's instructions saying what they are. */
+const listing = (added: readonly AddedTool[]): Listing => ({
+  instructions: sessionHint(added),
+  tool: ({ load, ...tool }) =>
+    load === "always"
+      ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
+      : tool,
+});
+
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly memoryReads = new MemoryReads();
@@ -145,7 +158,8 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    (_conversation, message) =>
+      respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
     () => addedKey(this.added()),
   );
@@ -156,7 +170,7 @@ export class ClaudeRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = globalThis.localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -645,7 +659,8 @@ export class ClaudeRuntime {
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
-    if (reads && (thread || dm || topLevel))
+    // A chat its owner is still creating has nothing earlier to read.
+    if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
         const events = await reads.read(
           thread && !topLevel
@@ -733,14 +748,19 @@ export class ClaudeRuntime {
             audienceAuthorityCommunity:
               this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
-            spawn: this.spawn,
-            cwd,
+            read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, this.added());
+        return respond(
+          client,
+          context,
+          message,
+          this.added(),
+          listing(this.added()),
+        );
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),

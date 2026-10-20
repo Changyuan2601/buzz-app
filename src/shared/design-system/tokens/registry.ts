@@ -298,7 +298,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt: "accent step 4 at Hummin’; step 9 at Buzzin’",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
         use: "Own message bubbles; pair with --text-message-own.",
         status: "core",
       },
@@ -487,16 +487,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt:
-          "blue-11 at Snoozin’; the family link partner from Hummin’ (chartreuse: blue-11 light, bright chartreuse dark)",
+        pointsAt: "the family link partner at every vibe level",
         use: "Inline links in prose. Mentions use text-mention on a highlight instead.",
         status: "core",
       },
       {
         token: "text-message-own",
         variable: "--text-message-own",
-        pointsAt:
-          "text-standard at Neutral; accent 12, or contrast ink at Buzzin’",
+        pointsAt: "accent 12 at low contrast; accent ink at high contrast",
+
         use: "Prose on the selected outgoing message surface.",
         status: "core",
       },
@@ -504,7 +503,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-link-own",
         variable: "--text-message-link-own",
         pointsAt:
-          "text-link on neutral bubbles; accent ink on the brand-filled bubble from Swarmin’",
+          "text-link on neutral bubbles; accent ink on solid Buzzin’ bubbles",
         use: "Links on the selected outgoing message surface.",
         status: "core",
       },
@@ -519,7 +518,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-mention-own",
         variable: "--text-mention-own",
         pointsAt:
-          "text-mention; the own bubble's ink from Swarmin’ (tone-on-tone chip)",
+          "text-mention; the own bubble's ink at Buzzin’ (tone-on-tone chip)",
         use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
         status: "core",
       },
@@ -737,9 +736,40 @@ export const ROLE_GROUPS: RoleGroup[] = [
     description: "Shared affordance roles, with values for both themes.",
     roles: [
       {
+        token: "bg-surface-control-selected",
+        variable: "--surface-control-selected",
+        pointsAt:
+          "neutral panel at Snoozin’; accent 4 at Hummin’; accent 9 at Buzzin’",
+        use: "Persistent segmented selection; pair with text-control-selected.",
+        status: "core",
+      },
+      {
+        token: "text-control-selected",
+        variable: "--text-control-selected",
+        pointsAt:
+          "standard ink at Snoozin’; accent 11 at Hummin’; accent contrast at Buzzin’",
+        use: "Labels and icons on surface-control-selected.",
+        status: "core",
+      },
+      {
+        token: "--surface-navigation-selected",
+        variable: "--surface-navigation-selected",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
+        use: "Selected navigation fill, paired with text-navigation-selected.",
+        status: "core",
+      },
+      {
+        token: "--text-navigation-selected",
+        variable: "--text-navigation-selected",
+        pointsAt: "accent 11 at low contrast; accent contrast at high contrast",
+        use: "Labels and icons on selected navigation.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-prominent",
         variable: "--affordance-prominent",
-        pointsAt: "accent step 9 at every accent level",
+        pointsAt: "accent step 9 in both modes",
+
         use: "The main action fill.",
         status: "core",
       },
@@ -833,7 +863,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-affordance-chrome",
         variable: "--affordance-chrome",
         pointsAt:
-          "affordance-subtle; accent step 3 once the shell takes the accent",
+          "neutral-3 light / affordance-subtle dark; accent step 3 once the shell takes the accent",
         use: "The grouped chrome capsule on the app shell, such as Solo and Multiplayer.",
         status: "proposed",
       },
@@ -1021,14 +1051,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-mention-own",
         variable: "--affordance-mention-own",
-        pointsAt: "affordance-mention; accent 10 from Swarmin’",
+        pointsAt: "affordance-mention; accent 10 at Buzzin’",
         use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-own-hover",
         variable: "--affordance-mention-own-hover",
-        pointsAt: "affordance-mention-hover; accent pressed from Swarmin’",
+        pointsAt: "affordance-mention-hover; accent pressed at Buzzin’",
         use: "Own-bubble mention chip under the pointer.",
         status: "core",
       },
@@ -1664,44 +1694,44 @@ export const RADII = [
   {
     token: "radius-chip",
     variable: "--radius-chip",
-    value: "4px",
+    value: "12px",
     use: "Small chips and tight details.",
   },
   {
     token: "radius-row",
     variable: "--radius-row",
-    value: "8px",
+    value: "16px",
     use: "Dense navigator rows, compact selected regions and compact floating surfaces.",
   },
   {
     token: "radius-icon-button",
     variable: "--radius-icon-button",
-    value: "10px",
+    value: "18px",
     use: "Independent icon controls, including top-bar and content-toolbar actions, with the same radius on every corner.",
   },
   {
     token: "radius-control",
     variable: "--radius-control",
-    value: "12px",
+    value: "20px",
     use: "Inputs, rounded cue buttons and the message action toolbar. Icon controls use radius-icon-button; text buttons default to radius-capsule.",
   },
   {
     token: "radius-container",
     variable: "--radius-container",
-    value: "16px",
+    value: "24px",
     use: "Medium containers, including menus, content popovers, pickers and the media review frame.",
   },
   {
     token: "radius-panel",
     variable: "--radius-panel",
-    value: "20px",
+    value: "28px",
     use: "Major workspace panels and dialogs. Maximum standalone container radius.",
   },
   {
     token: "radius-capsule",
     variable: "--radius-capsule",
-    value: "26px",
-    use: "Text buttons and similarly sized actions: capsule-shaped through large (52px), bounded on taller controls.",
+    value: "34px",
+    use: "Text buttons and similarly sized actions: capsule-shaped through 68px, bounded on taller controls.",
   },
   {
     token: "radius-pill",

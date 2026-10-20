@@ -17,9 +17,9 @@ import {
 } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
-const administration = new URLSearchParams(location.search).has(
-  "administration",
-);
+const solo = new URLSearchParams(location.search).has("solo");
+const administration =
+  new URLSearchParams(location.search).has("administration") || solo;
 const rejectRemoval = new URLSearchParams(location.search).has(
   "reject-removal",
 );
@@ -59,7 +59,9 @@ const inventory = invitationScale
       pubkey: keypair().pubkey,
       name: `Helper ${String(index + 1).padStart(3, "0")}`,
     }))
-  : [];
+  : solo
+    ? [{ pubkey: person.pubkey, name: "Morgan" }]
+    : [];
 const searchScale = new URLSearchParams(location.search).has("search-scale");
 const managed = searchScale
   ? Array.from({ length: 60 }, (_, index) => ({
@@ -91,9 +93,10 @@ const managedProfiles = await Promise.all(
     });
   }),
 );
+const visitor = new URLSearchParams(location.search).has("visitor");
 const members = [
-  viewer.pubkey,
-  ...(administration ? [person.pubkey] : []),
+  ...(visitor ? [] : [viewer.pubkey]),
+  ...(administration && !solo ? [person.pubkey] : []),
   ...scrollMembers.map(({ key }) => key.pubkey),
   ...managed.map(({ key }) => key.pubkey),
 ];
@@ -171,6 +174,12 @@ const { session: sharedSession } = createRelaySession(
             ["t", "stream"],
             ["private"],
             ["name", "Design"],
+            ...(solo
+              ? [
+                  ["t", "buzz.solo"],
+                  ["P", viewer.pubkey],
+                ]
+              : []),
           ],
         }),
         profile(viewer, { name: "Carl" }),
@@ -198,7 +207,7 @@ const { session: sharedSession } = createRelaySession(
         }
       : {}),
     writer: {
-      kinds: [9000],
+      kinds: solo ? [9000, 9007] : [9000],
       sign: async (template) => signed(viewer, template),
       publish: async (event) => {
         const key = event.tags.find(([tag]) => tag === "p")?.[1];

@@ -117,6 +117,8 @@ export type MessageRowProps = {
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onReply?: ((messageId: string) => void) | undefined;
+  /** False: existing threads open, but the row offers none to start or reply in. */
+  startsThreads?: boolean;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -180,6 +182,7 @@ function MessageRowContent({
   keepMounted,
   onOpenThread,
   onReply,
+  startsThreads = true,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -209,7 +212,7 @@ function MessageRowContent({
     row.threadRootId ?? row.id,
   );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
-    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
+    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
       ? session
       : undefined,
     row.channelId,
@@ -541,7 +544,7 @@ function MessageRowContent({
       messageId={row.id}
       onReply={
         (onReply ? () => onReply(row.id) : undefined) ??
-        (onOpenThread
+        (onOpenThread && startsThreads
           ? () =>
               onOpenThread(
                 row.threadRootId ?? row.id,
@@ -656,6 +659,9 @@ function MessageRowContent({
       )}
     </>
   );
+  // Accessories may only point at a thread the row could open or start.
+  const summaryThread =
+    startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -665,7 +671,7 @@ function MessageRowContent({
       : undefined;
     return (
       ((row.replyCount > 0 ||
-        (!row.threadRootId && threadAgents.length > 0) ||
+        (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
         activity) &&
         onOpenThread && (
           <Button
@@ -1124,7 +1130,7 @@ function MessageRowContent({
             <ComposerAccessories
               registry={extensions.accessories}
               renderMessageSummary={
-                onOpenThread ? renderMessageSummary : undefined
+                summaryThread ? renderMessageSummary : undefined
               }
               session={session}
               scope={scope}
@@ -1135,9 +1141,9 @@ function MessageRowContent({
                 menuTrigger.current?.focus({ preventScroll: true })
               }
               openThread={
-                onOpenThread
+                summaryThread
                   ? () => {
-                      onOpenThread(row.id, row.threadRootId ?? row.id);
+                      summaryThread(row.id, row.threadRootId ?? row.id);
                       return true;
                     }
                   : undefined
@@ -1288,11 +1294,7 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
-              {props.stackPrevious && !props.day && !open ? (
-                <span className={styles.audienceAvatar} aria-hidden="true" />
-              ) : (
-                avatar(author)
-              )}
+              {avatar(author)}
               {to.length > 0 && (
                 <>
                   <ArrowRightIcon

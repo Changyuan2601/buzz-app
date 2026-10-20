@@ -10,8 +10,9 @@ const settings = {
 } as const;
 const hash = (target: unknown) =>
   `#buzz=${encodeURIComponent(JSON.stringify(target))}`;
-function browser(initialHash = "") {
+function browser(initialHash = "", deferredTraversal = false) {
   const events = new EventTarget();
+  const pending: number[] = [];
   let entries = [{ state: null as unknown, hash: initialHash }],
     index = 0;
   const location = { pathname: "/", search: "", hash: initialHash };
@@ -35,6 +36,10 @@ function browser(initialHash = "") {
     },
     forward() {
       traverse(1);
+    },
+    go(delta: number) {
+      if (deferredTraversal) pending.push(delta);
+      else traverse(delta);
     },
   };
   function notify() {
@@ -65,6 +70,10 @@ function browser(initialHash = "") {
       history.pushState(null, "", `/${value}`);
       notify();
     },
+    flush() {
+      for (const delta of pending.splice(0)) traverse(delta);
+    },
+    pending: () => pending.length,
     length: () => entries.length,
   };
 }
@@ -148,4 +157,32 @@ it("resolving a visit rewrites its address without losing identity or the forwar
   host.navigation.forward();
   expect(host.navigation.snapshot().entry).toEqual(forward);
   host.dispose();
+});
+
+it("returns from multiple Settings sections to the original workspace visit without pushing", () => {
+  const b = browser();
+  const driver = createBrowserHistory(b.host);
+  const original = driver.snapshot().current;
+  driver.push(settings);
+  driver.push({ ...settings, section: "profile" });
+  expect(driver.returnTo(original.id)).toBe(true);
+  expect(driver.snapshot().current).toEqual(original);
+  expect(b.length()).toBe(3);
+  expect(driver.snapshot().canGoForward).toBe(true);
+  expect(driver.returnTo("unknown")).toBe(false);
+  driver.dispose();
+});
+
+it("coalesces repeated Close requests before browser traversal commits", () => {
+  const b = browser("", true);
+  const driver = createBrowserHistory(b.host);
+  const original = driver.snapshot().current;
+  driver.push(settings);
+  driver.push({ ...settings, section: "profile" });
+  expect(driver.returnTo(original.id)).toBe(true);
+  expect(driver.returnTo(original.id)).toBe(true);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(original);
+  driver.dispose();
 });

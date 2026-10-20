@@ -5,6 +5,8 @@ struct Memory {
     denied: Mutex<bool>,
     write_denied: Mutex<bool>,
     reads: Mutex<usize>,
+    legacy: Mutex<Option<String>>,
+    legacy_reads: Mutex<usize>,
 }
 impl Store for Arc<Memory> {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
@@ -24,6 +26,15 @@ impl Store for Arc<Memory> {
         }
         *saved = Some(value.to_vec());
         Ok(())
+    }
+    fn legacy(&self) -> Result<Zeroizing<String>> {
+        *self.legacy_reads.lock().unwrap() += 1;
+        self.legacy
+            .lock()
+            .unwrap()
+            .clone()
+            .map(Zeroizing::new)
+            .ok_or_else(|| "No identity from the earlier Buzz app was found".into())
     }
     fn delete(&self) -> Result<()> {
         if *self.write_denied.lock().unwrap() {
@@ -57,6 +68,41 @@ fn imports_exact_key_then_restores_and_exports_without_repeated_reads() {
     assert_eq!(restarted.restore().unwrap(), Some(public));
     assert_eq!(restarted.export().unwrap(), nsec);
     assert_eq!(*store.reads.lock().unwrap(), 2);
+}
+#[test]
+fn legacy_import_adopts_only_a_valid_old_key_and_never_replaces_one() {
+    let nsec = fixture().nsec().unwrap();
+    let other = Key(Zeroizing::new([2; 32])).nsec().unwrap();
+    // (saved, own store denied, legacy entry, imports, reads legacy)
+    for (saved, denied, legacy, imports, reads_legacy) in [
+        (None, false, Some(format!(" {nsec}\n")), true, true),
+        (None, false, None, false, true),
+        (None, false, Some("not-a-key".into()), false, true),
+        (Some(other.clone()), false, Some(nsec.clone()), false, false),
+        (None, true, Some(nsec.clone()), false, false),
+    ] {
+        let store = Arc::new(Memory::default());
+        *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
+        *store.denied.lock().unwrap() = denied;
+        *store.legacy.lock().unwrap() = legacy;
+        let result = identity(&store).import_legacy();
+        assert_eq!(result.is_ok(), imports, "{result:?}");
+        assert_eq!(
+            *store.legacy_reads.lock().unwrap(),
+            usize::from(reads_legacy)
+        );
+        let expected = if imports { Some(nsec.clone()) } else { saved };
+        assert_eq!(
+            *store.saved.lock().unwrap(),
+            expected.map(String::into_bytes)
+        );
+        if imports {
+            assert_eq!(
+                identity(&store).restore().unwrap(),
+                Some(fixture().viewer().unwrap())
+            );
+        }
+    }
 }
 #[test]
 fn denied_and_corrupt_reads_cannot_create_or_overwrite() {

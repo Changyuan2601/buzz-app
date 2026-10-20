@@ -124,7 +124,7 @@
   background: var(--affordance-panel-hover);
 }
 .organizedRow:has([aria-current="page"])::before {
-  background: var(--interaction-selected);
+  background: var(--surface-navigation-selected);
 }
 
 .organizedRow {

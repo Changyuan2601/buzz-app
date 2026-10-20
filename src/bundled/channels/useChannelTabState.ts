@@ -232,7 +232,7 @@ const named = (tab: ConversationTab, name: string): ConversationTab =>
   tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
 // Until its reader verifies the root, a tab's id holds the root it was opened
 // with, before any disambiguating suffix.
-const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
+export const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
   tab.rootId ??
   (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
 /** A channel's own thread tabs in its workspace, changed from outside the
@@ -279,7 +279,9 @@ export function channelTabs(session: RelaySession) {
       if (threads(channelId).some((thread) => thread.root === rootId))
         return false;
       store.update(keyOf("messages", channelId), (state) => {
-        const pane = threadPlacementPreference();
+        // Solo chats have no main tab workspace.
+        const pane =
+          channel.channelType === "solo" ? "side" : threadPlacementPreference();
         const opened = withThread(
           state,
           channelId,
@@ -435,7 +437,12 @@ export function useChannelTabState(
   const enterVisit = useCallback(
     (
       visit: string,
-      routed?: { channelId: string; messageId: string; rootId: string },
+      routed?: {
+        channelId: string;
+        messageId: string;
+        rootId: string;
+        pane?: TabPane | undefined;
+      },
       /** A new visit keeps the current selection instead of the conversation. */
       keep = false,
     ) =>
@@ -450,7 +457,7 @@ export function useChannelTabState(
             routed.messageId,
             routed.rootId,
             "select",
-            threadPlacementPreference(),
+            routed.pane ?? threadPlacementPreference(),
           );
         const saved = visits?.[visit];
         return saved

@@ -18,8 +18,8 @@ import { ConversationChannel, ConversationComposer } from "./Conversation";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ComponentProps } from "react";
 import { createAgentLibrary } from "../agents/library";
-import type { MessageComposerProps } from "../messages/MessageComposer";
 import { useMessageDeletion } from "../messages/MessageManagement";
+import type { MessageComposerProps } from "../messages/MessageComposer";
 import type { MessageRowProps } from "../messages/MessageRow";
 import type { PanelProps, RegisteredPanel } from "../panels/service";
 import type { ChannelMessage } from "../relay/contracts";
@@ -52,14 +52,10 @@ vi.mock("../messages/MessageRow", () => ({
   ),
 }));
 vi.mock("../messages/MessageComposer", () => ({
-  MessageComposer: ({
-    soloConversation,
-    ownSoloConversation,
-  }: MessageComposerProps) => (
+  MessageComposer: ({ soloConversation }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-solo-conversation={String(!!soloConversation)}
-      data-own-solo-conversation={String(!!ownSoloConversation)}
       data-deletion={String(!!useMessageDeletion())}
     />
   ),
@@ -284,35 +280,19 @@ it("a panel opened from media review replaces the viewer, and media review repla
   expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
 });
 
-it.each([
-  ["stream", "false"],
-  ["solo", "true"],
-] as const)(
-  "the %s-channel reply composer gets message management and Solo chat recipients=%s",
-  (channelType, soloConversation) => {
-    render(<EmbeddedThread {...fixture(channelType).props} />);
-    const composer = screen.getByLabelText("Composer");
-    expect(composer).toHaveAttribute("data-deletion", "true");
-    expect(composer).toHaveAttribute(
-      "data-solo-conversation",
-      soloConversation,
-    );
-  },
-);
+it("the channel reply composer gets message management", () => {
+  render(<EmbeddedThread {...fixture("stream").props} />);
+  expect(screen.getByLabelText("Composer")).toHaveAttribute(
+    "data-deletion",
+    "true",
+  );
+});
 
-it.each([
-  ["the viewer's own", "true", "a".repeat(64)],
-  ["someone else's", "false", "b".repeat(64)],
-] as const)(
-  "the reply composer in %s Solo chat gets personal composition=%s",
-  (_, ownSoloConversation, creator) => {
-    render(<EmbeddedThread {...fixture("solo", [], creator).props} />);
-    expect(screen.getByLabelText("Composer")).toHaveAttribute(
-      "data-own-solo-conversation",
-      ownSoloConversation,
-    );
-  },
-);
+it("a Solo thread opens without a reply composer", () => {
+  render(<EmbeddedThread {...fixture("solo").props} />);
+  expect(screen.getByRole("article")).toBeVisible();
+  expect(screen.queryByLabelText("Composer")).not.toBeInTheDocument();
+});
 
 it("selecting a channel supplies its readers without remounting the page below", () => {
   const { props } = fixture();

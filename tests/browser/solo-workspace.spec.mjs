@@ -1,7 +1,13 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  newChat,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 const id = "33333333-3333-4333-8333-333333333333";
 const other = "44444444-4444-4444-8444-444444444444";
@@ -206,13 +212,14 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
   await expect(trigger).toBeFocused();
   await trigger.press("Enter");
   await expect(panel).toBeVisible();
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await page
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
   await pluginAction(page, "Agent Activity").click();
-  await newChat(page);
+  // Closing Settings returns to the retained Solo visit without the trigger.
+  await closeSettings(page);
   await expect(trigger).toHaveCount(0);
 });
 // Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.

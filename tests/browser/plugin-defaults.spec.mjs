@@ -1,13 +1,17 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { openCommunityPicker } from "./navigation.mjs";
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import {
+  closeSettings,
+  openSettings,
+  openPage,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function plugins(page) {
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
 }
 
@@ -29,6 +33,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(bestie).toHaveAccessibleName(/^Disable /);
   await page.reload();
   await expect(bestie).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await openPage(page, "Messages");
   await expect(
     page
@@ -48,6 +53,8 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(bestie).toHaveAccessibleName(/^Enable /);
   await page.reload();
   await expect(bestie).toHaveAccessibleName(/^Enable /);
+  // The workspace behind Settings is hidden from the accessibility tree.
+  await closeSettings(page);
   await expect(button(page, "Bestie")).toHaveCount(0);
 });
 
@@ -90,19 +97,24 @@ test("Membership action removes and restores the working Invite destination", as
   await page.reload();
   await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
   await expect(admin).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await menu();
   await expect(invite).toBeVisible();
   await page.keyboard.press("Escape");
+  await plugins(page);
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Enable /);
+  await closeSettings(page);
   await menu();
   await expect(invite).toHaveCount(0);
   await expect(
     page.getByRole("menuitem", { name: "Community settings", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  await plugins(page);
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await menu();
   await invite.click();
   await expect(

@@ -72,8 +72,11 @@ function setup(
     hold: options.hold ?? false,
     ...(options.reply ? { reply: options.reply } : {}),
   });
+  const readFile = vi.fn<NonNullable<Host["readFile"]>>();
   const host = {
     spawn: fake.spawn,
+    resolveDirectory: fake.resolveDirectory,
+    readFile,
     serveMcp: fake.serve,
     request: vi.fn(),
   } as unknown as Host;
@@ -105,6 +108,7 @@ function setup(
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: options.canvas !== undefined,
       read: vi.fn(async () =>
@@ -177,11 +181,30 @@ function setup(
     goose,
     published,
     read,
+    readFile,
     memoryOpen: session.agentMemories.open,
   };
 }
 
 describe("GooseRuntime", () => {
+  it("reads a file a tool names from the agent's workspace through the host", async () => {
+    const { deliver, goose, published, readFile } = setup({ hold: true });
+    readFile.mockResolvedValueOnce(new TextEncoder().encode("From a file"));
+    await deliver(message("1", "@Gander post my notes"));
+    await flush(100);
+    const process = goose();
+    const reply = await process?.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      { name: "send", arguments: { audience: "everyone", path: "notes.md" } },
+    );
+    expect(reply?.result).not.toMatchObject({ isError: true });
+    expect(readFile).toHaveBeenCalledWith("notes.md", {
+      cwd: DEFAULT_CONFIG.workspace,
+    });
+    expect(published.at(-1)?.content).toBe("From a file");
+  });
+
   it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
     const earlier = message("1", "Earlier in the chat", {
       tags: [["h", channel]],

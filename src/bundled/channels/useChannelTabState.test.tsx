@@ -593,6 +593,30 @@ test("an agent's main-pane tab leaves the conversation showing", () => {
   expect(tabs.close("alpha", "r1")).toBe("shown");
 });
 
+test("Solo threads open beside the chat even when the device prefers main", () => {
+  setThreadPlacementPreference("main");
+  const session = tabSession([
+    { id: "alpha", name: "Alpha", channelType: "solo" },
+  ]);
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  act(() =>
+    page.result.current.enterVisit("link", {
+      channelId: "alpha",
+      messageId: "r2",
+      rootId: "r2",
+      pane: "side",
+    }),
+  );
+  expect(page.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", pane: "side" },
+    { id: "thread:alpha:r2", pane: "side" },
+  ]);
+});
+
 function tabSession(
   channels: readonly ChannelSummary[] = [{ id: "alpha", name: "Alpha" }],
 ) {

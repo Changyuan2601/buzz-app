@@ -1330,32 +1330,28 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes the Solo recipient, readiness and direct Activity contract through to thread composition", () => {
+it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
   const h = messagesHarness();
   const view = render(
-    <ThreadPanel
-      {...h.props}
-      ownSoloConversation
-      activityClickOpensPanel
-      disabled
-    />,
+    <ThreadPanel {...h.props} activityClickOpensPanel disabled />,
   );
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-own-solo", "true");
   expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
   view.rerender(
-    <ThreadPanel
-      {...h.props}
-      ownSoloConversation
-      activityClickOpensPanel
-      disabled={false}
-    />,
+    <ThreadPanel {...h.props} activityClickOpensPanel disabled={false} />,
   );
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-own-solo");
   expect(composer).not.toHaveAttribute("data-direct-activity");
+  // Solo agents answer at top level: its threads are read-only.
+  view.rerender(<ThreadPanel {...h.props} soloConversation />);
+  expect(
+    screen.queryByRole("region", { name: "Composer" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Thread messages" }),
+  ).toBeInTheDocument();
 });
 
 it.each([

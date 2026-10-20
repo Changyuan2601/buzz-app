@@ -154,7 +154,11 @@ export function createIdentity() {
     }
   }
   async function run(
-    command: "identity_restore" | "identity_create" | "identity_import",
+    command:
+      | "identity_restore"
+      | "identity_create"
+      | "identity_import"
+      | "identity_import_legacy",
     nsec?: string,
   ) {
     if (busy || disposed) return;
@@ -201,6 +205,10 @@ export function createIdentity() {
     retry: () => run("identity_restore"),
     importKey: (nsec: string) => run("identity_import", nsec),
     create: () => run("identity_create"),
+    /** Whether installed old Buzz left data here; never opens secure storage. */
+    legacyAvailable: () => invoke<boolean>("identity_legacy_available"),
+    /** Reads old Buzz's saved key only now, so any OS prompt follows this click. */
+    importLegacy: () => run("identity_import_legacy"),
     backupAvailable: () => invoke<boolean>("nsec_backup_available"),
     beginRecovery,
     installRecovery,

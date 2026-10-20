@@ -1,10 +1,15 @@
 import { test, expect } from "./fixture.mjs";
-import { selectSettingsSection } from "./navigation.mjs";
+import {
+  closeSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 
-// Real menu dismissal must hand focus to Settings even without a relay session.
-test("account avatar opens profile Settings after a failed connection", async ({
+// Settings stays usable without a relay session. The account menu is covered
+// below; behind the modal it would race the reconnecting launch surface.
+test("profile Settings opens after a failed connection", async ({
   page,
   app,
 }) => {
@@ -21,21 +26,11 @@ test("account avatar opens profile Settings after a failed connection", async ({
     .getByRole("button", { name: "Open Settings", exact: true })
     .click();
   await selectSettingsSection(page, "Appearance");
-  const trigger = page.getByRole("button", {
-    name: "Your profile",
-    exact: true,
-  });
-  await trigger.focus();
-  await trigger.press("Enter");
-  const menu = page.locator("[data-profile-menu]");
-  const edit = menu.getByRole("menuitem", { name: /, edit profile$/ });
-  await expect(edit).toBeFocused();
-  await edit.press("Enter");
-  await expect(menu).toHaveCount(0);
+  await selectSettingsSection(page, "Profile");
   await expect(
     page.getByRole("region", { name: "Profile", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
 });
 
 // Portaled submenus need real hit testing, collision handling and keyboard focus.
@@ -128,10 +123,11 @@ test("account menu choices remain reachable across themes, widths and enlarged t
   await trigger.click();
   await menu.getByRole("menuitem", { name: "Plugins", exact: true }).click();
   await expect(menu).toHaveCount(0);
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await expect(
     page.getByRole("region", { name: "Manage plugins", exact: true }),
   ).toBeVisible();
+  await closeSettings(page);
   await trigger.click();
   await menu.getByRole("menuitem", { name: /, edit profile$/ }).click();
   await expect(

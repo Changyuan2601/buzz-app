@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { openPage, openSettings, settingsDialog } from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
 import { preview } from "./vite-server.mjs";
@@ -759,5 +759,56 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await page.reload();
   await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
+  expect(app.errors.unexplained()).toEqual([]);
+});
+
+test("a send finishing behind Settings keeps Settings and its unsaved edit", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Message Avery Chen", exact: true })
+    .fill("Sent while Settings is open");
+  app.holdDelivery();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => app.publications.filter((event) => event.kind === 9).length)
+    .toBe(1);
+  await openSettings(page);
+  const name = settingsDialog(page).getByRole("textbox", {
+    name: "Display name",
+    exact: true,
+  });
+  await name.fill("Unsaved name");
+  app.confirm();
+  // The new DM joins the retained sidebar behind the modal without leaving it.
+  await expect(
+    page.locator('[aria-label="Sidebar"] button', {
+      hasText: "Avery Chen",
+    }),
+  ).toHaveCount(1);
+  // The send has finished once its status clears behind the modal.
+  await expect(page.getByText("Sending message…")).toHaveCount(0);
+  expect(decodeURIComponent(new URL(page.url()).hash)).toContain(
+    '"kind":"settings"',
+  );
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(name).toHaveValue("Unsaved name");
+  // The edit is still unsaved, so closing asks before discarding it.
+  await settingsDialog(page)
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog", { name: "Discard changes?" })
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("complementary", { name: "Sidebar", exact: true })
+      .getByRole("button", { name: "Avery Chen", exact: true }),
+  ).toBeVisible();
   expect(app.errors.unexplained()).toEqual([]);
 });

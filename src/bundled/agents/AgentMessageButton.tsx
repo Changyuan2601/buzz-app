@@ -69,7 +69,10 @@ export function AgentMessageButton({
       );
       if (
         controller.signal.aborted ||
-        relay.snapshot().session !== connection.session
+        relay.snapshot().session !== connection.session ||
+        // An open that finishes behind the Settings modal must not navigate
+        // away from Settings, which would discard its unsaved edits.
+        navigator.snapshot().entry.target.kind === "settings"
       )
         return;
       await navigator.open({

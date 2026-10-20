@@ -77,7 +77,7 @@ it.each([
     [
       [
         "community",
-        "Primary",
+        "Community",
         [
           "profile",
           "buzz.emoji/custom-emoji",

@@ -546,15 +546,18 @@ export function subscribeRelayTraffic(
             ? [scope(route)]
             : scope(route).map((id) => [id])
           ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
-        : [
-            route.id === "presence"
-              ? { kinds: [20001], authors: presenceAuthors }
-              : route.id === "profiles"
-                ? { kinds: [0, 10100, 30177] }
-                : route.id === "observer"
-                  ? { kinds: [OBSERVER_KIND], "#p": [viewer] }
-                  : { kinds: [44100, 44101], "#p": [viewer] },
-          ];
+        : route.id === "presence"
+          ? [{ kinds: [20001], authors: presenceAuthors }]
+          : route.id === "profiles"
+            ? [{ kinds: [0, 10100, 30177] }]
+            : route.id === "observer"
+              ? [{ kinds: [OBSERVER_KIND], "#p": [viewer] }]
+              : [
+                  { kinds: [44100, 44101], "#p": [viewer] },
+                  // NIP-CL: the relay sends a system channel's notices only
+                  // to a filter that asks for them with #t.
+                  { kinds: [44100, 44101], "#p": [viewer], "#t": ["system"] },
+                ];
       send([
         "REQ",
         wire,

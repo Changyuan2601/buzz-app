@@ -82,6 +82,8 @@ export const test = base.extend({
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
+  // Rows sharing each history second; above the page size, pages split seconds.
+  historyRowsPerSecond: [1, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
@@ -140,6 +142,7 @@ export const test = base.extend({
       membershipActivity,
       launchAnimation,
       historyCounts,
+      historyRowsPerSecond,
       channelIds: channels,
       pluginFixtures,
       developmentReact,
@@ -438,10 +441,22 @@ export const test = base.extend({
                 ...(syntax.startsWith("@")
                   ? [["p", getPublicKey(peerKey)]]
                   : []),
+                // Shared seconds keep the send order real messages carry.
+                ...(historyRowsPerSecond > 1
+                  ? [
+                      [
+                        "ms",
+                        String(
+                          (i % historyRowsPerSecond) *
+                            Math.floor(1000 / historyRowsPerSecond),
+                        ),
+                      ],
+                    ]
+                  : []),
               ],
               `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
-              1700000100 + i,
+              1700000100 + Math.floor(i / historyRowsPerSecond),
             );
           }),
         );
@@ -2515,7 +2530,11 @@ export const test = base.extend({
             Math.floor(Date.now() / 1000) + 1,
           );
           threadSummaries.push(event);
-          relay.publish("primary", event);
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              if (client.channels.includes("alpha"))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
         reply(rootId, own = false, deliver = true) {

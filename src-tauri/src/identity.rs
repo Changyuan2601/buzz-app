@@ -151,6 +151,8 @@ impl Key {
 trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
+    /// The key installed old Buzz saved, read-only, after the person asks for it.
+    fn legacy(&self) -> Result<Zeroizing<String>>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
 }
@@ -165,6 +167,11 @@ fn read_saved() -> Result<Option<Zeroizing<Vec<u8>>>> {
         Err(credentials::Error::Corrupt) => Err(MALFORMED.into()),
         Err(_) => Err("Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.".into()),
     }
+}
+#[cfg(not(test))]
+fn read_legacy() -> Result<Zeroizing<String>> {
+    buzz_agent_controller::PlatformCredentials::default()
+        .read_legacy_human(buzz_agent_controller::LegacySource::Installed)
 }
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
@@ -185,6 +192,9 @@ mod platform {
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved()
+        }
+        fn legacy(&self) -> Result<Zeroizing<String>> {
+            read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
             SecKeychain::default()
@@ -228,6 +238,9 @@ mod keyring_platform {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved()
         }
+        fn legacy(&self) -> Result<Zeroizing<String>> {
+            read_legacy()
+        }
         fn add(&self, value: &[u8]) -> Result<()> {
             credentials::add(
                 credentials::HUMAN_SERVICE,
@@ -254,6 +267,9 @@ impl Store for OsStore {
         Err("Secure identity storage is not available on this platform yet".into())
     }
     fn add(&self, _: &[u8]) -> Result<()> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
+    fn legacy(&self) -> Result<Zeroizing<String>> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
     fn delete(&self) -> Result<()> {
@@ -321,6 +337,18 @@ impl Identity {
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
+    }
+    /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
+    fn import_legacy(&mut self) -> Result<String> {
+        if self.restore()?.is_some() {
+            return Err("An identity is already saved; nothing was overwritten".into());
+        }
+        let nsec = self.store.legacy()?;
+        let nsec = nsec.trim();
+        if Key::parse(nsec).is_err() {
+            return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
+        }
+        self.save(Some(nsec))
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -1105,6 +1133,26 @@ pub async fn identity_import(
         identity.save(Some(&nsec))
     })
     .await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
+}
+/// Whether installed old Buzz left data here; never reads secure storage.
+#[tauri::command]
+pub fn identity_legacy_available<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> bool {
+    use tauri::Manager;
+    app.path().data_dir().is_ok_and(|dir| {
+        dir.join(buzz_agent_controller::LegacySource::Installed.app_directory())
+            .is_dir()
+    })
+}
+#[tauri::command]
+pub async fn identity_import_legacy(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+) -> Result<String> {
+    let public = with_identity(host.inner().clone(), Identity::import_legacy).await?;
     let backup = backup.inner().clone();
     let identity = host.inner().clone();
     tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));

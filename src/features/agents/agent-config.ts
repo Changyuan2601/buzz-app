@@ -5,6 +5,7 @@
 // from storage. Dormant until config channels ship.
 import { verifyEvent } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
+import { localStore, type AgentStore } from "./store";
 import {
   artifactOp,
   artifactPrev,
@@ -55,7 +56,7 @@ const hadKey = (s: Subject) =>
 export class AgentConfigStore {
   private stored: Stored;
 
-  constructor(private readonly storage: Storage = localStorage) {
+  constructor(private readonly storage: AgentStore = localStore()) {
     this.stored = this.load();
   }
 
@@ -182,13 +183,18 @@ export class AgentConfigStore {
     this.save();
   }
   private save() {
-    this.storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(this.stored));
+    // Unsaved, the next start reads the last saved copy and syncs again.
+    void this.storage
+      .set(CONFIG_STORAGE_KEY, JSON.stringify(this.stored))
+      .catch((error: unknown) =>
+        console.warn("Agent synced settings were not saved", error),
+      );
   }
   private load(): Stored {
     const empty: Stored = { version: 1, entries: {}, hadVersion: {} };
     let value: Stored;
     try {
-      value = JSON.parse(this.storage.getItem(CONFIG_STORAGE_KEY) ?? "null");
+      value = JSON.parse(this.storage.get(CONFIG_STORAGE_KEY) ?? "null");
     } catch {
       return empty;
     }

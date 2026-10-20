@@ -90,35 +90,15 @@ Nous Research copyright notice.
 
 ## Plugin catalog artwork
 
-The bundled plugin PNG artwork in `src/bundled/*/icon.png` was created by
-Taylor Ho using GPT Image 2.5 and supplied for Buzz. Claude, Codex and Goose
-reuse the Agents artwork; their catalog tiles contain no third-party agent marks.
+The generated plugin PNG artwork in `src/bundled/*/icon.png` was created by
+Taylor Ho using GPT Image 2.5 and supplied for Buzz, including the Claude Code,
+Codex, goose and GitHub catalog illustrations. These generated integration
+illustrations incorporate third-party marks; those marks remain the property of their respective
+owners. Claude is a trademark of Anthropic; OpenAI and the Blossom logo are
+trademarks of OpenAI; goose is a trademark of LF Projects; GitHub and Octocat
+are trademarks of GitHub, Inc. Their inclusion identifies the corresponding
+integrations and does not imply endorsement.
 
-The GitHub catalog PNG rasterizes Tabler's `brand-github` glyph with unchanged
-paths and proportions, flat white at half-canvas size on a transparent 376×376
-RGBA canvas. It uses the same bundled image rendering as the other plugins;
-the category gradient belongs to the separate tile background. Tabler Icons 3.46.0: https://tabler.io/icons.
-The MIT license below covers the icon file, not trademark rights or endorsement.
-GitHub is a trademark of GitHub, Inc.
-
-MIT License
-
-Copyright (c) 2020-2026 Paweł Kuna
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The Huddles, Voice Notes, Usage and Mermaid diagrams illustrations were supplied
+separately by Taylor Ho and resized for the catalog; the generation attribution
+above does not cover these four assets.

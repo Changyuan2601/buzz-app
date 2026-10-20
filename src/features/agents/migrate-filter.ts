@@ -4,7 +4,8 @@
 // The spec replaced it with `authors`, `exclude_authors` and `is_reply`, so
 // startup converts each stored filter once, with the spec's export mapping.
 import { validateObject } from "./attention";
-import { STORAGE_KEY } from "./store";
+import type { AgentStore } from "./state";
+import { RECORD_PREFIX, STORAGE_KEY } from "./store";
 
 const fail = (message: string): never => {
   throw new Error(message);
@@ -168,43 +169,62 @@ export function upgradeWatch(value: unknown, agent: string): unknown {
   };
 }
 
-/** Converts every stored watch filter in place. A filter that cannot be
- * converted stays as it is: the reader then skips that watch and shows it for
- * repair. A failure must not stop startup. */
-export function migrateWatchFilters(storage: Storage) {
-  let stored: unknown;
-  try {
-    stored = JSON.parse(storage.getItem(STORAGE_KEY) ?? "null");
-  } catch {
-    return;
+/** Converts every stored watch filter in place, in the legacy shared record
+ * and in each agent's own record. A filter that cannot be converted stays as
+ * it is: the reader then skips that watch and shows it for repair. A failure
+ * must not stop startup, so each failed save is only logged. */
+export async function migrateWatchFilters(storage: AgentStore) {
+  const saves: Promise<void>[] = [];
+  const legacy = parsed(storage.get(STORAGE_KEY));
+  const agents = isObject(legacy) ? legacy.agents : undefined;
+  if (isObject(agents)) {
+    let changed = false;
+    for (const [pubkey, record] of Object.entries(agents))
+      if (upgradeRecord(pubkey, record)) changed = true;
+    if (changed) saves.push(save(storage, STORAGE_KEY, legacy));
   }
-  const agents = isObject(stored) ? stored.agents : undefined;
-  if (!isObject(agents)) return;
-  let changed = false;
-  for (const [pubkey, record] of Object.entries(agents)) {
-    const attention = isObject(record) ? record.attention : undefined;
-    if (!isObject(attention)) continue;
-    for (const [slug, object] of Object.entries(attention)) {
-      if (!isObject(object)) continue;
-      try {
-        const value = upgradeWatch(object.value, pubkey);
-        if (value === object.value) continue;
-        // Never replace a filter with a watch the reader would skip.
-        const problem = validateObject(slug, value);
-        if (problem) fail(`the converted watch is invalid: ${problem}`);
-        object.value = value;
-        changed = true;
-      } catch (error) {
-        console.error(
-          `Cannot convert the filter of ${slug}: ${(error as Error).message}`,
-        );
-      }
-    }
+  for (const key of storage.keys()) {
+    if (!key.startsWith(RECORD_PREFIX)) continue;
+    const record = parsed(storage.get(key));
+    if (upgradeRecord(key.slice(RECORD_PREFIX.length), record))
+      saves.push(save(storage, key, record));
   }
-  if (changed)
-    try {
-      storage.setItem(STORAGE_KEY, JSON.stringify(stored));
-    } catch (error) {
-      console.error("Cannot save the converted watch filters", error);
-    }
+  await Promise.all(saves);
 }
+
+function parsed(text: string | null): unknown {
+  try {
+    return JSON.parse(text ?? "null");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Converts the record's watches in place; true when any changed. */
+function upgradeRecord(pubkey: string, record: unknown) {
+  const attention = isObject(record) ? record.attention : undefined;
+  if (!isObject(attention)) return false;
+  let changed = false;
+  for (const [slug, object] of Object.entries(attention)) {
+    if (!isObject(object)) continue;
+    try {
+      const value = upgradeWatch(object.value, pubkey);
+      if (value === object.value) continue;
+      // Never replace a filter with a watch the reader would skip.
+      const problem = validateObject(slug, value);
+      if (problem) fail(`the converted watch is invalid: ${problem}`);
+      object.value = value;
+      changed = true;
+    } catch (error) {
+      console.error(
+        `Cannot convert the filter of ${slug}: ${(error as Error).message}`,
+      );
+    }
+  }
+  return changed;
+}
+
+const save = (storage: AgentStore, key: string, value: unknown) =>
+  storage.set(key, JSON.stringify(value)).catch((error: unknown) => {
+    console.error("Cannot save the converted watch filters", error);
+  });

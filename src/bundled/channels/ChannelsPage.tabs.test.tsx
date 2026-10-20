@@ -22,6 +22,7 @@ import {
   signed,
 } from "../../features/relay/testing";
 import { writeView } from "../../shared/view-state";
+import type { Navigation } from "../../features/navigation/controller";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { SOLO_LABEL } from "../../features/solo/labels";
@@ -55,7 +56,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function page(type: "stream" | "solo" = "stream") {
+async function page(
+  type: "stream" | "solo" = "stream",
+  navigator?: Navigation,
+) {
   const viewer = keypair(),
     authority = keypair();
   const channelId = "alpha";
@@ -70,6 +74,8 @@ async function page(type: "stream" | "solo" = "stream") {
         ? [["t", "stream"], ["private"], ["t", SOLO_LABEL]]
         : [["t", "stream"]],
     ),
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [["t", "stream"]]),
   ];
   const owner = createRelaySession(
     {
@@ -130,14 +136,21 @@ async function page(type: "stream" | "solo" = "stream") {
     resolve: () => undefined,
     register() {},
   };
-  render(<ChannelsPage relay={relay} panels={panels} />);
+  render(<ChannelsPage relay={relay} panels={panels} navigator={navigator} />);
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
   });
   const open = () =>
     user.click(screen.getByRole("button", { name: "Open notes" }));
-  return { user, composer, open, session: owner.session };
+  return {
+    user,
+    composer,
+    open,
+    session: owner.session,
+    scope,
+    viewer: viewer.pubkey,
+  };
 }
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
@@ -323,3 +336,76 @@ it.each(["side", "main"] as const)(
     expect(target).toHaveFocus();
   },
 );
+
+it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const h = await page("stream", {
+    open,
+    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+  } as unknown as Navigation);
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side");
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+  });
+  const menu = async (name: string) => {
+    await h.user.pointer({
+      target: await screen.findByRole("tab", { name }),
+      keys: "[MouseRight]",
+    });
+    return within(await screen.findByRole("menu"));
+  };
+  expect(
+    (await menu("Thread · Alpha")).queryByRole("menuitem", {
+      name: "Open in channel",
+    }),
+  ).not.toBeInTheDocument();
+  await h.user.keyboard("{Escape}");
+  await h.user.click(
+    (await menu("Beta")).getByRole("menuitem", { name: "Open in channel" }),
+  );
+  const scope = {
+    viewer: h.viewer,
+    communityOrigin: h.scope.slice(0, -(h.viewer.length + 1)),
+  };
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+    }),
+  );
+  // A tab whose id was taken keeps its root before a suffix in its own id.
+  const other = "e".repeat(64);
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      {
+        id: `thread:beta:${other}:${crypto.randomUUID()}`,
+        kind: "thread",
+        channelId: "beta",
+        messageId: other,
+      },
+    ]),
+  );
+  await h.user.click(
+    (await menu("Thread · Beta")).getByRole("menuitem", {
+      name: "Open in channel",
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+      messageId: other,
+      threadRootId: other,
+    }),
+  );
+});

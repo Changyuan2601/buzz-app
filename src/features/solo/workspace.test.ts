@@ -2,7 +2,6 @@ import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { parseKitRecord } from "../channel-templates/model";
 import {
-  applyChatSetup,
   loadChatSetup,
   readWorkspace,
   projectTemplateId,
@@ -83,47 +82,19 @@ it("preserves ordinary Canvas and refuses malformed or manually changed workspac
 });
 
 function fixture() {
-  let canvas: { id: string; content: string } | undefined;
-  let assignments: Record<string, string> = {};
-  const calls: string[] = [];
   const kit = { status: "ready", entries: [] as unknown[] };
   const session = {
-    canvas: {
-      read: vi.fn(async () => canvas),
-      save: vi.fn(async (_id: string, content: string) => {
-        calls.push("canvas");
-        canvas = { id: "revision", content };
-        return canvas;
-      }),
-    },
     soloPreferences: {
       writable: true,
       refresh: vi.fn(async () => {}),
       snapshot: () => ({
         status: "ready",
-        data: { sections: [{ id: "work", name: "Work" }], assignments },
-      }),
-      assign: vi.fn(async (id: string, group: string) => {
-        calls.push("placement");
-        assignments = { ...assignments, [id]: group };
+        data: { sections: [{ id: "work", name: "Work" }], assignments: {} },
       }),
     },
     channelKit: { refresh: vi.fn(async () => {}), snapshot: () => kit },
-    channelWrites: {
-      addAgents: vi.fn(async () => {
-        calls.push("agents");
-      }),
-    },
   };
-  return {
-    session: session as unknown as RelaySession,
-    raw: session,
-    kit,
-    calls,
-    changeCanvas: (content: string) => {
-      canvas = { id: "changed", content };
-    },
-  };
+  return { session: session as unknown as RelaySession, kit };
 }
 it("loads exact project defaults and blocks when the catalog fails", async () => {
   const f = fixture();
@@ -145,84 +116,54 @@ it("loads exact project defaults and blocks when the catalog fails", async () =>
     projectId: "work",
     canvas: "Work here",
     agents: [],
+    revision: "head",
   });
   f.kit.status = "error";
   await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
     "defaults couldn’t load",
   );
 });
-it("applies Canvas before placement and agents, and resumes without replacing an existing Canvas", async () => {
+it("names the saved defaults it read, even when they change while agents load", async () => {
   const f = fixture();
-  const setup = {
-    projectId: "work",
-    canvas: "Use /repo",
-    agents: ["a".repeat(64)],
-  };
-  await applyChatSetup(f.session, "channel", setup, () => true);
-  expect(f.calls).toEqual(["canvas", "placement", "agents"]);
-  await applyChatSetup(f.session, "channel", setup, () => true);
-  expect(f.raw.canvas.save).toHaveBeenCalledTimes(1);
-  expect(f.raw.soloPreferences.assign).toHaveBeenCalledTimes(1);
-  f.changeCanvas("Someone edited this");
-  await expect(
-    applyChatSetup(f.session, "channel", setup, () => true),
-  ).rejects.toThrow("different Canvas");
+  const pubkey = "a".repeat(64);
+  const template = (canvas: string) => ({
+    type: "template",
+    id: "",
+    canvas,
+    agents: [pubkey],
+    teamIds: [],
+  });
+  const id = await projectTemplateId("work");
+  f.kit.entries = [
+    { eventId: "first", record: { value: { ...template("Old"), id } } },
+  ];
+  Object.assign(f.session, {
+    agentChoices: {
+      // Workspace settings save new defaults while the agents load.
+      refresh: vi.fn(async () => {
+        f.kit.entries = [
+          { eventId: "second", record: { value: { ...template("New"), id } } },
+        ];
+      }),
+      snapshot: () => ({
+        templates: {
+          status: "ready",
+          complete: true,
+          identities: [{ pubkey, name: "Agent", managed: false }],
+        },
+        archives: { status: "ready", archived: [] },
+      }),
+    },
+    channels: {
+      refreshList: vi.fn(),
+      list: () => ({ status: "ready", channels: [{ members: [pubkey] }] }),
+    },
+  });
+  expect(await loadChatSetup(f.session, "work")).toMatchObject({
+    canvas: "Old",
+    revision: "first",
+  });
 });
-it("stops after failed Canvas or revoked lifetime before placing or inviting", async () => {
-  const f = fixture();
-  f.raw.canvas.save.mockRejectedValueOnce(new Error("Relay unavailable"));
-  await expect(
-    applyChatSetup(
-      f.session,
-      "channel",
-      { projectId: "work", canvas: "Context", agents: [] },
-      () => true,
-    ),
-  ).rejects.toThrow("Relay unavailable");
-  expect(f.raw.soloPreferences.assign).not.toHaveBeenCalled();
-  expect(f.raw.channelWrites.addAgents).not.toHaveBeenCalled();
-  await applyChatSetup(
-    f.session,
-    "channel",
-    { projectId: "work", canvas: "Context", agents: [] },
-    () => false,
-  );
-  expect(f.raw.canvas.read).toHaveBeenCalledTimes(1);
-});
-
-it("checks an empty frozen Canvas before placing or inviting on retry", async () => {
-  const f = fixture();
-  f.changeCanvas("Written on another device");
-  await expect(
-    applyChatSetup(
-      f.session,
-      "channel",
-      {
-        projectId: "work",
-        canvas: "",
-        agents: ["a".repeat(64)],
-      },
-      () => true,
-    ),
-  ).rejects.toThrow("different Canvas");
-  expect(f.calls).toEqual([]);
-});
-
-it("accepts matching empty Canvas without publishing a new revision", async () => {
-  const f = fixture();
-  for (const existing of [false, true]) {
-    if (existing) f.changeCanvas("");
-    await applyChatSetup(
-      f.session,
-      "channel",
-      { canvas: "", agents: [] },
-      () => true,
-    );
-  }
-  expect(f.raw.canvas.read).toHaveBeenCalledTimes(2);
-  expect(f.raw.canvas.save).not.toHaveBeenCalled();
-});
-
 it.each([
   "incomplete",
   "archived",
@@ -286,7 +227,6 @@ it.each([
         : "unavailable",
     );
   if (state === "incomplete" || rosterIncomplete) {
-    expect(f.calls).toEqual([]);
     if (rosterIncomplete) expect(refreshRoster).toHaveBeenCalledOnce();
     complete = true;
     rosterIncomplete = false;
@@ -294,22 +234,6 @@ it.each([
       agents: [pubkey],
     });
   }
-});
-
-it("does not offer deleted-project recovery when project refresh fails", async () => {
-  const f = fixture();
-  Object.assign(f.session.soloPreferences, {
-    snapshot: () => ({ status: "error", data: undefined }),
-  });
-  await expect(
-    applyChatSetup(
-      f.session,
-      "channel",
-      { projectId: "work", canvas: "", agents: [] },
-      () => true,
-    ),
-  ).rejects.toThrow("Workspaces couldn’t load");
-  expect(f.calls).toEqual([]);
 });
 
 it("finds an agent's folders even in a hand-edited workspace block", () => {

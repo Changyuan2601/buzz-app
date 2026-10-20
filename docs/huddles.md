@@ -1,6 +1,6 @@
 # Huddles plugin
 
-**Huddles** is enabled by default on macOS desktop and can be turned off in
+**Huddles** is enabled by default on desktop (macOS, Linux and Windows) and can be turned off in
 Settings → Plugins. Click the headphone button immediately after members in a
 channel or DM header to join the latest available Huddle or start one when none
 is found. The Huddle window opens and receives focus by default once connected. The mini

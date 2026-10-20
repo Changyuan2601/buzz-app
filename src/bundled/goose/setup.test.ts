@@ -72,7 +72,7 @@ const setup = (options: Parameters<typeof fakeSpawn>[0] = {}) => {
     defaults: { providerId: "ollama", modelId: "qwen3" },
     ...options,
   });
-  return { fake, setup: new GooseSetup(fake.spawn) };
+  return { fake, setup: new GooseSetup(fake) };
 };
 
 describe("GooseSetup", () => {
@@ -323,14 +323,15 @@ describe("GooseSetup", () => {
   });
 
   it("says when the bundled goose-acp is missing", async () => {
+    const fake = fakeSpawn();
     const spawn: Spawn = async (id, options) => {
       if (id === "goose")
         throw new Error(
           "Could not start goose-acp: No such file or directory (os error 2)",
         );
-      return fakeSpawn().spawn(id, options);
+      return fake.spawn(id, options);
     };
-    const goose = new GooseSetup(spawn);
+    const goose = new GooseSetup({ ...fake, spawn });
     await expect(goose.providers()).rejects.toThrow("goose-acp is missing");
     expect(await goose.test({ provider: "", model: "" })).toMatchObject({
       ok: false,
@@ -385,7 +386,7 @@ it("reports unavailable Goose as needing attention", async () => {
 it("invalidates runtime defaults only after a successful save", async () => {
   const fake = fakeSpawn({ providers: PROVIDERS });
   const changed = vi.fn();
-  const goose = new GooseSetup(fake.spawn, changed);
+  const goose = new GooseSetup(fake, changed);
   await goose.check();
   expect(changed).not.toHaveBeenCalled();
   await goose.saveDefaults({ provider: "ollama", model: "qwen3" });
@@ -427,9 +428,9 @@ it("invalidates inherited sessions when a fresh check finds external defaults ch
     defaults: { providerId: "ollama", modelId: "qwen3" },
   });
   const changed = vi.fn();
-  const goose = new GooseSetup(fake.spawn, changed);
+  const goose = new GooseSetup(fake, changed);
   await goose.check();
-  await new GooseSetup(fake.spawn).saveDefaults({
+  await new GooseSetup(fake).saveDefaults({
     provider: "ollama",
     model: "llama4",
   });
@@ -496,7 +497,7 @@ it("preserves a provider's custom model when switching away and back after resta
     defaults: { providerId: "ollama", modelId: "custom-model" },
   });
   await goose.saveDefaults({ provider: "anthropic", model: "" });
-  const restarted = new GooseSetup(fake.spawn);
+  const restarted = new GooseSetup(fake);
   await restarted.saveDefaults({ provider: "ollama", model: "" });
   expect((await restarted.providers()).defaults).toEqual({
     provider: "ollama",

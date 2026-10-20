@@ -31,6 +31,7 @@ mockIPC((command, payload) => {
     return saved ? getPublicKey(bytesFrom(saved)) : null;
   }
   if (command === "nsec_backup_available") return recoveryMode !== "disabled";
+  if (command === "identity_legacy_available") return false;
   if (command === "nsec_restore_begin") {
     activeRecovery = true;
     return { attempt: "fixture-attempt" };

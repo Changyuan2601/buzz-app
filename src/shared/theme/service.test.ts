@@ -1,10 +1,4 @@
-import {
-  ACCENTS,
-  ACCENT_KEY,
-  COLOR_LEVELS,
-  COLOR_LEVEL_KEY,
-  LEGACY_BUBBLE_KEY,
-} from "./accent";
+import { ACCENTS, ACCENT_KEY, LEGACY_BUBBLE_KEY } from "./accent";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
@@ -112,10 +106,10 @@ it.each([
       error: null,
       fontScale: 1,
       fontError: null,
-      accent: "chartreuse",
+      accent: "citrus",
       accentError: null,
-      colorLevel: "touch",
-      colorLevelError: null,
+      contrast: "low",
+      contrastError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -293,9 +287,16 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
 
 it.each<[string, string | null, string]>([
   ...ACCENTS.map((color): [string, null, string] => [color, null, color]),
-  ["invalid", null, "chartreuse"],
-  ["purple", null, "chartreuse"],
-  ["neutral", null, "chartreuse"],
+  ["chartreuse", null, "citrus"],
+  ["lime", null, "citrus"],
+  ["invalid", null, "citrus"],
+  ["citron", null, "citrus"],
+  ["gray", null, "mono"],
+  ["pear", null, "citrus"],
+  ["jade", null, "citrus"],
+  ["flame", null, "bee"],
+  ["purple", null, "citrus"],
+  ["neutral", null, "citrus"],
   // The saved accent wins over the former bubble color.
   ["iris", "blue", "iris"],
 ])(
@@ -318,19 +319,19 @@ it.each<[string, string | null, string]>([
   },
 );
 it.each<[string | null, string]>([
-  [null, "chartreuse"],
+  [null, "citrus"],
   ["blue", "cobalt"],
   ["cyan", "cobalt"],
   ["indigo", "cobalt"],
-  ["green", "jade"],
-  ["orange", "flame"],
+  ["green", "citrus"],
+  ["orange", "bee"],
   ["pink", "magenta"],
   ["red", "magenta"],
   ["lilac", "iris"],
   ["purple", "iris"],
   // The former "Default" bubble now means the new default accent.
-  ["neutral", "chartreuse"],
-  ["#ffffff", "chartreuse"],
+  ["neutral", "citrus"],
+  ["#ffffff", "citrus"],
 ])("carries a former bubble color %s over as accent %s", (bubble, expected) => {
   const b = browser();
   if (bubble) b.values.set(LEGACY_BUBBLE_KEY, bubble);
@@ -362,49 +363,68 @@ it("saves the accent, recovers from denied storage, synchronizes reset, and disp
   expect(app.snapshot().accent).toBe("iris");
   b.values.delete(ACCENT_KEY);
   b.change(null);
-  expect(app.snapshot().accent).toBe("chartreuse");
+  expect(app.snapshot().accent).toBe("citrus");
   app.dispose();
   app.setAccent("magenta");
-  expect(b.root.dataset.accent).toBe("chartreuse");
+  expect(b.root.dataset.accent).toBe("citrus");
 });
 
-it.each<[string | null, string]>([
-  ...COLOR_LEVELS.map((level): [string, string] => [level, level]),
-  [null, "touch"],
-  ["loud", "touch"],
-])(
-  "restores color amount %s as %s before and after startup",
-  (value, expected) => {
+it.each(["neutral", "touch", "more", "full"])(
+  "ignores retired vibe preference %s before and after startup",
+  (level) => {
     const b = browser();
-    if (value) b.values.set(COLOR_LEVEL_KEY, value);
+    b.values.set("buzz-color-level.v1", level);
+    b.values.set(ACCENT_KEY, "cobalt");
     runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
       localStorage: b.storage,
       document: b.host.document,
       matchMedia: b.host.matchMedia,
     });
-    expect(b.root.dataset.colorLevel).toBe(expected);
+    expect(b.root.dataset.colorLevel).toBe("touch");
     const app = createAppearance(b.host);
-    expect(app.snapshot().colorLevel).toBe(expected);
-    expect(b.root.dataset.colorLevel).toBe(expected);
+    expect(b.root.dataset.colorLevel).toBe("touch");
+    expect(app.snapshot().accent).toBe("cobalt");
+    b.change("buzz-color-level.v1");
+    expect(b.root.dataset.colorLevel).toBe("touch");
     app.dispose();
   },
 );
-it("saves the color amount, recovers from denied storage, and follows other windows", () => {
+
+it.each(["quiet", "low", "high"] as const)(
+  "restores %s contrast before paint and after startup",
+  (contrast) => {
+    const b = browser();
+    b.values.set("buzz-contrast.v1", contrast);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    expect(b.root.dataset.colorLevel).toBe(
+      contrast === "low" ? "touch" : contrast,
+    );
+    const app = createAppearance(b.host);
+    expect(app.snapshot().contrast).toBe(contrast);
+    app.dispose();
+  },
+);
+
+it("keeps contrast active on storage failure, retries, and follows other windows", () => {
   const b = browser();
   const app = createAppearance(b.host);
   b.storage.setItem.mockImplementationOnce(() => {
     throw new Error("denied");
   });
-  app.setColorLevel("full");
-  expect(b.root.dataset.colorLevel).toBe("full");
-  expect(app.snapshot().colorLevelError).not.toBeNull();
-  app.setColorLevel("full");
-  expect(b.values.get(COLOR_LEVEL_KEY)).toBe("full");
-  expect(app.snapshot().colorLevelError).toBeNull();
-  b.values.set(COLOR_LEVEL_KEY, "touch");
-  b.change(COLOR_LEVEL_KEY);
-  expect(b.root.dataset.colorLevel).toBe("touch");
+  app.setContrast("high");
+  expect(b.root.dataset.colorLevel).toBe("high");
+  expect(app.snapshot().contrastError).not.toBeNull();
+  app.setContrast("high");
+  expect(b.values.get("buzz-contrast.v1")).toBe("high");
+  expect(app.snapshot().contrastError).toBeNull();
+  b.values.set("buzz-contrast.v1", "low");
+  b.change("buzz-contrast.v1");
+  expect(app.snapshot().contrast).toBe("low");
   app.dispose();
-  app.setColorLevel("full");
+  app.setContrast("high");
   expect(b.root.dataset.colorLevel).toBe("touch");
 });

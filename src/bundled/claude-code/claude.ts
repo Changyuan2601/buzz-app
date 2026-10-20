@@ -203,12 +203,9 @@ export class ClaudeProcess {
               "--mcp-config",
               JSON.stringify({
                 mcpServers: {
-                  // Listed up front, so Claude need not search for them first.
-                  [TOOL_SERVER]: {
-                    type: "sdk",
-                    name: TOOL_SERVER,
-                    alwaysLoad: true,
-                  },
+                  // Its tools load on search, but for those it marks with
+                  // `_meta["anthropic/alwaysLoad"]`.
+                  [TOOL_SERVER]: { type: "sdk", name: TOOL_SERVER },
                 },
               }),
             ]

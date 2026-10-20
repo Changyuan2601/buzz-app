@@ -435,12 +435,10 @@ export function createTabs({
             effort={saved.effort ?? ""}
             effortLabel={saved.effort ? effortLabel(saved.effort) : "Automatic"}
             onEffortChange={(model, effort) => {
-              try {
-                defaults.save({ model, effort });
-                setError("");
-              } catch (reason) {
-                setError(String(reason));
-              }
+              defaults.save({ model, effort }).then(
+                () => setError(""),
+                (reason) => setError(String(reason)),
+              );
             }}
             value={
               saved.model
@@ -452,12 +450,10 @@ export function createTabs({
             defaultLabel={providerDefaultLabel("", state.models)}
             onConfigure={onConfigure}
             onChange={(model) => {
-              try {
-                defaults.save({ model });
-                setError("");
-              } catch (reason) {
-                setError(String(reason));
-              }
+              defaults.save({ model }).then(
+                () => setError(""),
+                (reason) => setError(String(reason)),
+              );
             }}
           />
         </ModelDiscoveryRecovery>

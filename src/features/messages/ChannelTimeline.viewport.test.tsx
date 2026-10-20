@@ -15,7 +15,11 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 
-const viewport = vi.hoisted(() => ({ size: 0, caches: [] as unknown[] }));
+const viewport = vi.hoisted(() => ({
+  size: 0,
+  start: 0,
+  caches: [] as unknown[],
+}));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
 vi.mock("virtua", async () => {
@@ -41,6 +45,8 @@ vi.mock("virtua", async () => {
             return viewport.size;
           },
           cache: [[], 40],
+          findItemIndex: () => viewport.start,
+          getItemOffset: () => 0,
           scrollTo: vi.fn(),
           scrollToIndex: vi.fn(),
         }),
@@ -807,6 +813,39 @@ it("keeps host actions after their exact message as later messages arrive, and n
     ]);
     view.unmount();
   } finally {
+    owner.dispose();
+  }
+});
+
+it.each([
+  ["above the reader's rows", 1, "true"],
+  ["among the reader's rows", 2, "false"],
+])("rows added below the first row shift only %s", (_, start, shift) => {
+  viewport.size = 600;
+  viewport.start = start;
+  const { owner, updates, content } = activityFixture();
+  // Relay pages break same-second ties by id, so a page can sort below the
+  // loaded first row. Only Virtua's first visible item and below must stay.
+  const rows = updates(5);
+  const loaded = rows.slice(0, 4);
+  const at = start === 1 ? 1 : 3;
+  try {
+    const view = render(content(loaded, undefined, false));
+    const boundary = screen.getByRole("list", {
+      name: "Virtualized messages",
+    });
+    expect(boundary).toHaveAttribute("data-shift", "false");
+    view.rerender(
+      content(
+        [...loaded.slice(0, at), ...rows.slice(4), ...loaded.slice(at)],
+        undefined,
+        false,
+      ),
+    );
+    expect(boundary).toHaveAttribute("data-shift", shift);
+    view.unmount();
+  } finally {
+    viewport.start = 0;
     owner.dispose();
   }
 });

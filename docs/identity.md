@@ -30,7 +30,13 @@ Neither Windows Credential Manager nor Secret Service supplies per-app access
 isolation from other programs running as the same OS user.
 
 There is no file/environment fallback, automatic legacy migration or human key
-replacement. The human key is deleted from this device only by
+replacement. When installed old Buzz's data folder (`xyz.block.buzz.app`) exists,
+setup also offers **Continue with your Buzz identity**. Only that click reads old
+Buzz's `buzz-desktop`/`secrets` item, so any OS access prompt follows it; the
+offer itself checks only the folder. It takes the item's `identity` entry and
+saves it exactly as a pasted import would: validated, create-only, never over a
+saved key, and never writing the old item. The offer returns after Sign out while
+old Buzz's data remains. The human key is deleted from this device only by
 [Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
 delete it. Agents' bring-over (`app_agent_port`) may read only the selected
 old Buzz service/account and copy the selected agent key into this app's separate

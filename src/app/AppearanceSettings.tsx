@@ -1,21 +1,16 @@
-import {
-  ACCENTS,
-  COLOR_LEVELS,
-  accentButtonStyle,
-  type ColorLevel,
-} from "../shared/theme/accent";
 import { Select } from "../shared/design-system/ui/Select";
-import styles from "./AccentLevelIndicator.module.css";
+import { ACCENTS, accentButtonStyle } from "../shared/theme/accent";
+
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import {
   ArrowCounterClockwiseIcon,
-  CheckIcon,
+  CircleIcon,
 } from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
-import { ThemePicker } from "../shared/design-system/ui/ThemePicker";
+import { AppearancePreview } from "./AppearancePreview";
 import { Button } from "../shared/design-system/ui/Button";
 import {
   useCallback,
@@ -29,18 +24,6 @@ import {
   setThreadPlacementPreference,
   useThreadPlacementPreference,
 } from "../features/messages/thread-preferences";
-
-const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
-  neutral: "Snoozin’",
-  touch: "Hummin’",
-  more: "Swarmin’",
-  full: "Buzzin’",
-};
-const COLOR_LEVEL_OPTIONS = COLOR_LEVELS.map((level) => ({
-  value: level,
-  label: COLOR_LEVEL_LABELS[level],
-  leading: <AccentLevelIndicator level={level} />,
-}));
 
 export function AppearanceSettings({
   appearance,
@@ -73,22 +56,42 @@ export function AppearanceSettings({
     fontError,
     accent,
     accentError,
-    colorLevel,
-    colorLevelError,
+    contrast,
+    contrastError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
+      <AppearancePreview />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
             id="setting-mode"
-            title="Color mode"
+            title="Mode"
             trailing={
-              <ThemePicker
+              <Select
+                variant="compact"
+                label="Mode"
                 value={preference}
-                onValueChange={appearance.setMode}
+                groups={[
+                  {
+                    label: "Mode",
+                    options: [
+                      { value: "system", label: "System" },
+                      { value: "light", label: "Light" },
+                      { value: "dark", label: "Dark" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (
+                    value === "system" ||
+                    value === "light" ||
+                    value === "dark"
+                  )
+                    appearance.setMode(value);
+                }}
               />
             }
           />
@@ -150,10 +153,14 @@ export function AppearanceSettings({
                   className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto p-1 scroll-p-1 [&>button]:scroll-m-1"
                 >
                   {ACCENTS.map((color) => {
-                    const colorLabel = `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
+                    const colorLabel =
+                      color === "bee"
+                        ? "Honey"
+                        : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
                     return (
                       <IconButton
                         key={color}
+                        data-color-swatch=""
                         data-accent={color}
                         data-color-mode={mode}
                         style={accentButtonStyle}
@@ -171,7 +178,9 @@ export function AppearanceSettings({
                         }
                         onClick={() => appearance.setAccent(color)}
                         icon={
-                          <CheckIcon
+                          <CircleIcon
+                            size={24}
+                            strokeWidth={3}
                             aria-hidden="true"
                             className={
                               accent === color ? "opacity-100" : "opacity-0"
@@ -186,17 +195,26 @@ export function AppearanceSettings({
             )}
           />
           <PreferenceRow
-            title="Accent level"
+            title="Vibe level"
             trailing={
               <Select
                 variant="compact"
-                label="Accent level"
-                value={colorLevel}
-                leading={<AccentLevelIndicator level={colorLevel} />}
-                groups={[{ label: "", options: COLOR_LEVEL_OPTIONS }]}
-                onValueChange={(value) =>
-                  appearance.setColorLevel(value as ColorLevel)
-                }
+                label="Vibe level"
+                value={contrast}
+                groups={[
+                  {
+                    label: "Vibe level",
+                    options: [
+                      { value: "quiet", label: "Snoozin’" },
+                      { value: "low", label: "Hummin’" },
+                      { value: "high", label: "Buzzin’" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "quiet" || value === "low" || value === "high")
+                    appearance.setContrast(value);
+                }}
               />
             }
           />
@@ -244,6 +262,16 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
+        {active && contrastError && (
+          <ToastNotice
+            title="Vibe level wasn’t saved"
+            description={contrastError}
+          >
+            <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
+              Retry saving vibe level
+            </Button>
+          </ToastNotice>
+        )}
         {active && accentError && (
           <ToastNotice
             title="Accent color wasn’t saved"
@@ -254,19 +282,7 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
-        {active && colorLevelError && (
-          <ToastNotice
-            title="Accent level wasn’t saved"
-            description={colorLevelError}
-          >
-            <Button
-              size="sm"
-              onClick={() => appearance.setColorLevel(colorLevel)}
-            >
-              Retry saving accent level
-            </Button>
-          </ToastNotice>
-        )}
+
         {active && fontError && (
           <ToastNotice
             title="Interface size wasn’t saved"
@@ -294,17 +310,5 @@ export function AppearanceSettings({
         )}
       </div>
     </section>
-  );
-}
-
-function AccentLevelIndicator({ level }: { level: ColorLevel }) {
-  return (
-    <span
-      className={styles.chip}
-      aria-hidden="true"
-      style={{
-        opacity: (COLOR_LEVELS.indexOf(level) + 1) / COLOR_LEVELS.length,
-      }}
-    />
   );
 }

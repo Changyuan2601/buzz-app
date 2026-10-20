@@ -50,7 +50,11 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
   const { host, bridge, controller } = fixture();
   expect(await browserCredential(host, controller.signal, bridge)).toEqual({
     value: "private-token",
-    account: { subject: "user", email: "a@example.com" },
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
   expect(options).not.toHaveProperty("id");
@@ -86,6 +90,34 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
   expect(bridge.wait).toHaveBeenCalledWith(attemptId);
   expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
 });
+
+it.each([
+  [undefined, false],
+  [null, false],
+  [{}, false],
+  [{ can_use_remote_agents: false }, false],
+  [{ can_use_remote_agents: "true" }, false],
+  [{ can_use_remote_agents: 1 }, false],
+  [{ can_use_remote_agents: true }, true],
+])(
+  "normalizes remote-agent capability %j to %s",
+  async (capabilities, expected) => {
+    const { host, bridge, controller } = fixture();
+    vi.mocked(host.request)
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: '{"session_credential":"private-token"}',
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ ...account, capabilities }),
+      });
+    const credential = await browserCredential(host, controller.signal, bridge);
+    expect(credential.account.canUseRemoteAgents).toBe(expected);
+  },
+);
 
 it("redacts a rejected exchange and retries with a fresh verifier without downgrading", async () => {
   const { host, bridge, controller } = fixture();
@@ -191,7 +223,7 @@ it.each([
       });
     expect(await browserCredential(host, controller.signal, bridge)).toEqual({
       value: "private-token",
-      account: { subject: "user", email: expected },
+      account: { subject: "user", email: expected, canUseRemoteAgents: false },
     });
   },
 );

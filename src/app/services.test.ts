@@ -364,6 +364,7 @@ it.each(["Linux x86_64", "Win32"])(
 );
 
 it("restores the selected native community and recovers discovery failure without a broker fallback", async () => {
+  vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "https://ignored-default.test");
   await services.dispose();
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
   vi.mocked(isTauri).mockReturnValue(true);
@@ -415,6 +416,90 @@ it("restores the selected native community and recovers discovery failure withou
     scope: `${community}:${viewer}`,
   });
   expect(new Set(destinations)).toEqual(new Set([community]));
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("seeds a packaged native community after onboarding and preserves the user's selection on restart", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "https://packaged.example");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(fetch).mockClear();
+  let identified = false;
+  let unavailable = true;
+  const destinations: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return identified ? viewer : null;
+    if (command === "identity_import") {
+      identified = true;
+      return viewer;
+    }
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    if (command === "relay_http") {
+      const request = args as { community: string; path: string };
+      destinations.push(request.community);
+      if (unavailable) throw new Error("Discovery offline");
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify(
+          request.path === "/" ? { self: "b".repeat(64) } : [],
+        ),
+      };
+    }
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.identity?.snapshot().status).toBe("missing");
+  expect(destinations).toEqual([]);
+  expect(values.has(`buzz-client.v1:${viewer}`)).toBe(false);
+  await services.identity?.importKey("fixture-key");
+  await vi.advanceTimersByTimeAsync(0);
+  const membership = {
+    id: "https://packaged.example",
+    name: "packaged.example",
+  };
+  expect(services.communities.snapshot()).toMatchObject({
+    selected: membership.id,
+    memberships: [membership],
+  });
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "error",
+    error: expect.stringContaining("Discovery offline"),
+  });
+  unavailable = false;
+  services.relay.retry();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.relay.snapshot()).toMatchObject({
+    status: "ready",
+    viewer,
+    scope: `${membership.id}:${viewer}`,
+  });
+  expect(JSON.parse(values.get(`buzz-client.v1:${viewer}`) ?? "null")).toEqual({
+    profile: { name: "", picture: "", about: "" },
+    memberships: [membership],
+    selected: membership.id,
+  });
+  // A later build's default cannot change the saved selection.
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "https://new-default.example");
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.snapshot().selected).toBe(membership.id);
+  expect(services.relay.snapshot().status).toBe("ready");
+  // Choosing Personal space also survives restart, without a new relay connection.
+  services.communities.select(null);
+  await services.dispose();
+  destinations.length = 0;
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.snapshot()).toMatchObject({
+    selected: null,
+    memberships: [membership],
+  });
+  expect(destinations).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();
 });
 

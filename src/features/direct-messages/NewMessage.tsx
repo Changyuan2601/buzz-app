@@ -1,5 +1,6 @@
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -153,6 +154,13 @@ export function NewMessage({
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || !!busy || (!!pending && !failed);
+  const retire = useCallback(() => {
+    retiring.current = undefined;
+    prepared.current = undefined;
+    setRecipients([]);
+    setRestoredDraft(mentionDraft(""));
+    setDraftRevision((revision) => revision + 1);
+  }, []);
   useLayoutEffect(() => {
     const confirmed = pending && session.directMessages.delivery(pending.id);
     if (pending) {
@@ -163,12 +171,10 @@ export function NewMessage({
     } else if (retiring.current) {
       // A different mount may have completed acknowledgement while this page
       // restored its recovery payload. Never leave that payload as a fresh draft.
-      retiring.current = undefined;
-      setRecipients([]);
-      setRestoredDraft(mentionDraft(""));
-      setDraftRevision((revision) => revision + 1);
+      retire();
     }
-  }, [pending, session.directMessages]);
+  }, [pending, session.directMessages, retire]);
+
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -348,6 +354,9 @@ export function NewMessage({
       await outbox?.acknowledge(current.id);
       if (controller.signal.aborted) return;
       setLegacy(undefined);
+      // The page can stay mounted (Settings open), so never leave the sent
+      // message as an editable draft that could be published again.
+      retire();
       onStarted(current.channelId, current.id);
     } catch (reason) {
       if (!controller.signal.aborted)

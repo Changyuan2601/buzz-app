@@ -213,3 +213,27 @@ it("reveals labelled custom fields and saves a future time with the note", async
     "Follow up",
   );
 });
+
+it("stays open after a stray outside click", async () => {
+  const close = vi.fn();
+  render(
+    <RemindDialog
+      message={
+        {
+          id: "m",
+          channelId: "c",
+          authorId: "a",
+          content: "hello",
+        } as unknown as ChannelMessage
+      }
+      session={{ reminders: { create: vi.fn() } } as unknown as RelaySession}
+      close={close}
+    />,
+  );
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(close).not.toHaveBeenCalled();
+});

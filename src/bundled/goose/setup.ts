@@ -7,8 +7,7 @@ import type {
   AgentProviderSnapshot,
   Models,
 } from "../../features/agents/service";
-import { GooseProcess, type Choice, type Spawn } from "./goose";
-import { absolute } from "./sessions";
+import { GooseProcess, type Choice, type GooseHost, type Spawn } from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -94,7 +93,7 @@ export class GooseSetup {
   private checking: Promise<void> | undefined;
 
   constructor(
-    private readonly spawn: Spawn | undefined,
+    private readonly host: GooseHost | undefined,
     private readonly defaultsChanged: () => void = () => {},
   ) {}
 
@@ -404,26 +403,26 @@ export class GooseSetup {
     env: Readonly<Record<string, string>> = {},
     signal?: AbortSignal,
   ): Promise<T> {
-    return briefly(this.spawn, run, env, signal);
+    return briefly(this.host, run, env, signal);
   }
 }
 
 /** Runs `run` against a `goose-acp` started for it in the home folder, and
  * stops it after. It serves no Buzz tools. */
 export async function briefly<T>(
-  spawn: Spawn | undefined,
+  host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
   signal?: AbortSignal,
 ): Promise<T> {
-  if (!spawn) throw new Error("goose runs only in the desktop app");
+  if (!host) throw new Error("goose runs only in the desktop app");
   const active = AbortSignal.any([
     ...(signal ? [signal] : []),
     AbortSignal.timeout(60_000),
   ]);
   const start: Spawn = async (id, options) => {
     active.throwIfAborted();
-    const child = await spawn(id, options);
+    const child = await host.spawn(id, options);
     const kill = () => void child.kill();
     active.addEventListener("abort", kill, { once: true });
     void child.exited.finally(() => active.removeEventListener("abort", kill));
@@ -433,7 +432,8 @@ export async function briefly<T>(
     }
     return child;
   };
-  const cwd = await absolute(start, "~");
+  active.throwIfAborted();
+  const cwd = await host.resolveDirectory("~");
   const goose = await GooseProcess.start(start, {
     cwd,
     env,

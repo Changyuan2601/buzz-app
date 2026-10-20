@@ -47,6 +47,7 @@ export function ComposerLinkDialog({
   return (
     <Dialog
       open
+      dismissOnOutsideClick={false}
       onOpenChange={(open) => {
         if (!open) close();
       }}

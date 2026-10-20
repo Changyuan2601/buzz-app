@@ -8,6 +8,7 @@ import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { ownerReads } from "../../features/agents/reads";
 import { WELCOME_PROMPT } from "../../features/agents/conversation-start";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -55,6 +56,8 @@ function setup(
     signal?: AbortSignal;
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    /** Solo chats the owner's device is still creating. */
+    pending?: Set<string>;
     named?: Delivery["named"];
     title?: string;
     /** The channel's Canvas, as it reads now. */
@@ -101,6 +104,7 @@ function setup(
             name: "general",
             channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
+            ...(options.pending?.has(channel) ? { pending: true } : {}),
           },
         ],
       }),
@@ -113,6 +117,7 @@ function setup(
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: !!options.canvas,
       read: vi.fn(
@@ -131,10 +136,11 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
-  const storage = {
+  const storage = localStore({
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
-  } as Storage;
+    removeItem: (key: string) => void data.delete(key),
+  } as Storage);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -260,11 +266,11 @@ function setup(
 it("names each saved session's channel as the community lists it", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
-    {
+    localStore({
       getItem: (key: string) => data.get(key) ?? null,
       setItem: (key: string, value: string) => void data.set(key, value),
       removeItem: (key: string) => void data.delete(key),
-    } as Storage,
+    } as Storage),
     self,
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
@@ -1045,7 +1051,7 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(prompt).toMatch(/<attention>\nHandle the work that caused this turn/);
   // Its process stops once the turn is done, and no session is kept for it.
   expect(claude?.killed).toBe(true);
-  expect(data.get("buzz.claude-code.sessions.v1") ?? "{}").toBe("{}");
+  expect(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}").toBe("{}");
   expect(runtime.sessions(self)).toEqual([]);
 });
 
@@ -1121,7 +1127,7 @@ it("gives up a one-off turn that runs past its deadline", async () => {
   }
 });
 
-it("always offers attention tools and guidance, and says in each turn whether attention is on", async () => {
+it("always offers attention tools, on search, and says in each turn whether attention is on", async () => {
   const { runtime, claudes, deliver, attention } = setup();
   const agent = {
     pubkey: self,
@@ -1142,18 +1148,32 @@ it("always offers attention tools and guidance, and says in each turn whether at
     claudes().find((process) =>
       process.prompts[0]?.includes(`Content: @Claude ${id}`),
     );
-  const names = async (claude: FakeClaude | undefined, id: number) =>
+  const tools = async (claude: FakeClaude | undefined, id: number) =>
     (
       ((await mcp(claude, id, "tools/list")) as unknown as {
-        tools: { name: string }[];
+        tools: { name: string; _meta?: unknown }[];
       }) ?? { tools: [] }
-    ).tools.map((tool) => tool.name);
+    ).tools;
+  const names = async (claude: FakeClaude | undefined, id: number) =>
+    (await tools(claude, id)).map((tool) => tool.name);
   runtime.sync([agent as Agent]);
   await mention("6");
   await flush(10);
   const on = asked("6");
-  expect(await names(on, 1)).toContain("watch_add");
-  expect(systemPromptOf(on)).toContain("## Attention");
+  // Listed, but loaded only when the model searches for them, with their
+  // guidance in their descriptions rather than the system prompt.
+  const listed = await tools(on, 1);
+  const watchAdd = listed.find((tool) => tool.name === "watch_add");
+  expect(watchAdd).toBeDefined();
+  expect(watchAdd?._meta).toBe(undefined);
+  expect(listed.find((tool) => tool.name === "send")?._meta).toEqual({
+    "anthropic/alwaysLoad": true,
+  });
+  const initialized = (await mcp(on, 8, "initialize")) as unknown as {
+    instructions?: string;
+  };
+  expect(initialized?.instructions).toContain("your attention");
+  expect(systemPromptOf(on)).not.toContain("## Attention");
   expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
   // Turned off, the session keeps its tools and prompt: nothing restarts.
   attention.on = false;
@@ -1164,7 +1184,7 @@ it("always offers attention tools and guidance, and says in each turn whether at
   await flush(10);
   const off = asked("7");
   expect(await names(off, 2)).toContain("watch_add");
-  expect(systemPromptOf(off)).toContain("## Attention");
+  expect(systemPromptOf(off)).toBe(systemPromptOf(on));
   // Only the turn says that attention is off, and the tools refuse.
   expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
   expect(off?.prompts[0]).not.toContain("Handle the work");
@@ -1414,6 +1434,31 @@ it("continues an owner's Solo chat as one channel session posted at the top leve
       ["p", alice],
     ],
   ]);
+});
+
+it("starts a turn in a chat its owner is still creating without reading its history", async () => {
+  const first = message("2", "@Claude first", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, read } = setup([first], {
+    hold: true,
+    solo: new Set([channel]),
+    pending: new Set([channel]),
+  });
+  await deliver({ type: "mention", event: first });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("@Claude first");
+  expect(read).not.toHaveBeenCalledWith(
+    [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+    expect.anything(),
+  );
+  expect(prompt).not.toContain("<conversation-context");
 });
 
 it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {

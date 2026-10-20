@@ -573,6 +573,137 @@ it("rejects invalid names before any read and maps publish failure to reference 
   await expect(failedRead).rejects.toThrow("Failed to add emoji.");
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
+it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
+  const h = authoring();
+  const other = set(member, 1);
+  const own = set(viewer, 2, [["emoji", "party", "https://a.test/own.png"]]);
+  const ready = h.emoji.ensure();
+  h.wire.next().respond([other, own]);
+  await ready;
+  const removing = h.emoji.remove?.(":PARTY:");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  const read = h.ownRead();
+  expect(read.filters).toEqual([
+    { kinds: [30030], "#d": [EMOJI_SET], authors: [viewer.pubkey], limit: 1 },
+  ]);
+  // A newer own set has an entry absent from the initial catalog.
+  read.respond([
+    set(viewer, 3, [
+      ["emoji", "party", "https://a.test/own.png"],
+      ["emoji", "keep", "https://a.test/keep.png"],
+    ]),
+  ]);
+  await removing;
+  const event = h.publish.mock.calls[0]?.[0];
+  expect(event).toMatchObject({
+    kind: 30030,
+    pubkey: viewer.pubkey,
+    content: "",
+  });
+  expect(event?.tags).toEqual([
+    ["d", EMOJI_SET],
+    ["emoji", "keep", "https://a.test/keep.png"],
+  ]);
+  expect(h.emoji.snapshot().entries).toEqual([
+    { shortcode: "keep", url: "https://a.test/keep.png" },
+    { shortcode: "party", url },
+  ]);
+  const last = h.emoji.remove?.("keep");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond(event ? [event] : []);
+  await last;
+  const empty = h.publish.mock.calls[1]?.[0];
+  expect(empty?.tags).toEqual([["d", EMOJI_SET]]);
+  const reloaded = authoring();
+  const reread = reloaded.emoji.ensure();
+  reloaded.wire.next().respond(empty ? [other, empty, own] : []);
+  await reread;
+  expect(reloaded.emoji.snapshot().mine).toEqual([]);
+  expect(reloaded.emoji.snapshot().entries).toEqual([
+    { shortcode: "party", url },
+  ]);
+});
+it("does not republish invalid, absent, or other members' names", async () => {
+  const h = authoring();
+  await h.emoji.remove?.("bad name");
+  expect(h.wire.pending).toHaveLength(0);
+  const removing = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([set(member)]);
+  await removing;
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+it("serializes additions and removals despite a stale own-set read", async () => {
+  const h = authoring();
+  const add = h.emoji.add?.("party", url);
+  const remove = h.emoji.remove?.("party");
+  const keep = h.emoji.add?.("keep", "https://a.test/keep.png");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await add;
+  const stale = h.publish.mock.calls[0]?.[0];
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await remove;
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond(stale ? [stale] : []);
+  await keep;
+  expect(h.publish.mock.calls[2]?.[0].tags).toEqual([
+    ["d", EMOJI_SET],
+    ["emoji", "keep", "https://a.test/keep.png"],
+  ]);
+});
+it("keeps the own set after rejected removal and recovers on retry", async () => {
+  const h = authoring();
+  h.publish.mockRejectedValueOnce(new PublishRejected("blocked: no"));
+  const own = set(viewer);
+  const removing = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([own]);
+  await expect(removing).rejects.toThrow("Failed to remove emoji.");
+  expect(h.emoji.snapshot().mine).toEqual([{ shortcode: "party", url }]);
+  const retry = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([own]);
+  await retry;
+  expect(h.emoji.snapshot().mine).toEqual([]);
+});
+it("fails removal on read failure, timeout, signer mismatch and disposal", async () => {
+  const h = authoring();
+  const readFailure = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().fail(new Error("offline"));
+  await expect(readFailure).rejects.toThrow("Failed to remove emoji.");
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockReturnValue(deadline.signal);
+  try {
+    const removing = h.emoji.remove?.("party");
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    h.ownRead();
+    deadline.abort();
+    await expect(removing).rejects.toThrow("Timed out while removing emoji.");
+  } finally {
+    timeout.mockRestore();
+  }
+  h.sign.mockImplementationOnce(async (template) => signed(member, template));
+  const mismatch = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([set(viewer)]);
+  await expect(mismatch).rejects.toThrow("Failed to remove emoji.");
+  const running = h.emoji.remove?.("party");
+  const queued = h.emoji.remove?.("party");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.dispose();
+  await expect(running).rejects.toThrow("Failed to remove emoji.");
+  await expect(queued).rejects.toThrow("Failed to remove emoji.");
+  await expect(h.emoji.remove?.("party")).rejects.toThrow(
+    "Failed to remove emoji.",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+});
 it("maps an add that outlives its deadline to the reference timeout copy", async () => {
   const deadline = new AbortController();
   const timeout = vi
@@ -621,7 +752,7 @@ it("serializes concurrent adds so a stale own-set read cannot drop an earlier ad
     ["emoji", "two", "https://a.test/2.png"],
   ]);
 });
-it("exposes authoring only with upload and 30030 write capability", async () => {
+it("requires 30030 writing for removal and an uploader for additions", async () => {
   const h = authoring();
   const file = new File(["png"], "party.png", { type: "image/png" });
   await expect(
@@ -629,7 +760,9 @@ it("exposes authoring only with upload and 30030 write capability", async () => 
   ).resolves.toMatchObject({ url: "https://a.test/media/new.png" });
   expect(h.upload).toHaveBeenCalledWith(file, expect.any(AbortSignal));
   expect(authoring([7, 9]).emoji.add).toBeUndefined();
+  expect(authoring([7, 9]).emoji.remove).toBeUndefined();
   expect(authoring([30030]).emoji.add).toBeTypeOf("function");
+  expect(session().session.emoji.remove).toBeTypeOf("function");
   expect(session().session.emoji.add).toBeUndefined();
 });
 it("suggests Desktop's file-first shortcode and admits only canonical own sets", () => {

@@ -124,3 +124,41 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   await expect(side.getByRole("tab")).toHaveText(["Thread root 1"]);
   await expect(reply).toHaveText("Thread root 1 draft");
 });
+
+// Browser-only: the tab's menu takes its conversation to Channels, as the
+// former Inbox detail pane's Open in channel did.
+test("an Inbox tab's menu opens its thread in its channel", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page, app);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 1");
+  await inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem")
+    .filter({ hasText: "Unread reply 1" })
+    .getByRole("button", { name: /^Open / })
+    .click();
+  await inbox
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("tab", { name: "Thread root 1", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open in channel" }).click();
+  await expect(inbox).toHaveCount(0);
+  const target = await page.evaluate(
+    () => history.state.buzzNavigationV1.entry.target,
+  );
+  expect(target.threadRootId).toBe(root.id);
+  expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
+  await expect(
+    page
+      .getByRole("region", { name: "Thread messages", exact: true })
+      .getByText("Unread reply 1", { exact: true }),
+  ).toBeVisible();
+});

@@ -60,6 +60,7 @@ it("keeps native titlebar actions available throughout identity setup without dr
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return restored.promise;
     if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "identity_import") return imported.promise;
     if (command === "title_bar_double_click") return Promise.resolve();
     throw new Error("Unexpected command");
@@ -117,6 +118,7 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "identity_import") return imported.promise;
     throw new Error("Unexpected command");
   });
@@ -144,8 +146,42 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "nsec_backup_available",
+    "identity_legacy_available",
     "identity_import",
   ]);
+  identity.dispose();
+});
+
+it("brings over installed old Buzz's identity only after an explicit click", async () => {
+  const imported = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(true);
+    if (command === "identity_import_legacy") return imported.promise;
+    throw new Error("Unexpected command");
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <IdentitySetup identity={identity}>
+      <p>Signed in</p>
+    </IdentitySetup>,
+  );
+  const bringOver = await screen.findByRole("button", {
+    name: "Continue with your Buzz identity",
+  });
+  expect(invoke).not.toHaveBeenCalledWith("identity_import_legacy", {});
+  await user.click(bringOver);
+  expect(invoke).toHaveBeenCalledWith("identity_import_legacy", {});
+  expect(
+    screen.getByRole("button", { name: "Create a new identity" }),
+  ).toBeDisabled();
+  await act(async () => {
+    imported.resolve(viewer);
+  });
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   identity.dispose();
 });
 
@@ -159,6 +195,7 @@ function mountRecovery(
     if (overridden) return overridden as ReturnType<typeof invoke>;
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "nsec_backup_available") return Promise.resolve(true);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "nsec_restore_begin")
       return Promise.resolve({ attempt: "attempt" });
     if (command === "nsec_restore_wait") return Promise.resolve(result);

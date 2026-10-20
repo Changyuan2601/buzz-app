@@ -172,8 +172,30 @@ function SharedAgentList({
         onOpenChange={(open) => {
           if (!open) setSelected(undefined);
         }}
-        title={selected?.name ?? "Shared agent"}
-        description="Import makes it your own new agent, with this name, picture and instructions. The model is yours to choose after."
+        title={
+          selected ? (
+            <span className={styles.heading}>
+              <span className={styles.portrait} aria-hidden="true">
+                <AgentPortrait agent={selected} community={community} />
+              </span>
+              <span className="text-heading">{selected.name}</span>
+            </span>
+          ) : (
+            "Shared agent"
+          )
+        }
+        description={
+          selected && (
+            <span className={styles.byline}>
+              By{" "}
+              <Sharer
+                pubkey={selected.owner}
+                session={session}
+                community={community}
+              />
+            </span>
+          )
+        }
         size="wide"
         finalFocus={trigger}
         actions={
@@ -190,48 +212,22 @@ function SharedAgentList({
           )
         }
       >
-        {selected && (
-          <SharedAgentDetails
-            agent={selected}
-            session={session}
-            community={community}
-          />
-        )}
+        {selected && <SharedAgentDetails agent={selected} />}
       </Dialog>
     </div>
   );
 }
 
-function SharedAgentDetails({
-  agent,
-  session,
-  community,
-}: {
-  agent: SharedAgent;
-  session: RelaySession;
-  community: string | undefined;
-}) {
+function SharedAgentDetails({ agent }: { agent: SharedAgent }) {
   return (
     <div className={styles.details}>
-      <div className={styles.identity}>
-        <span className={styles.portrait} aria-hidden="true">
-          <AgentPortrait agent={agent} community={community} />
-        </span>
-        <dl className={styles.facts}>
-          <dt>Model</dt>
-          <dd className={styles.fact}>
-            <ModelIcon model={agent.model} />
-            {agent.model || "Not given"}
-          </dd>
-          <dt>Shared by</dt>
-          <dd>
-            <Sharer
-              pubkey={agent.owner}
-              session={session}
-              community={community}
-            />
-          </dd>
-        </dl>
+      <p className="text-body text-secondary">
+        Import creates your own agent with this name, picture and instructions.
+        You can choose its model afterward.
+      </p>
+      <div className={`${styles.fact} text-body-sm text-secondary`}>
+        <ModelIcon model={agent.model} />
+        <span>Model: {agent.model || "Not given"}</span>
       </div>
       <section className={styles.instructions} aria-label="Instructions">
         {agent.instructions || "No instructions included."}

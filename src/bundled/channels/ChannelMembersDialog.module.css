@@ -22,7 +22,7 @@
 .memberList > * {
   flex-shrink: 0;
 }
-/* Headings already provide their top inset; tighten only adjacent role groups. */
+/* Headings already provide their top inset; tighten only adjacent member groups. */
 .memberList > section + section:not(.memberGroup) {
   margin-block-start: calc(-1 * var(--space-2));
 }
@@ -38,7 +38,11 @@
   top: 0;
   z-index: 1;
   padding-block-start: var(--space-2);
+  padding-inline: var(--space-control-inset);
   background: var(--surface-popover);
+}
+.listNote {
+  padding-inline: var(--space-control-inset);
 }
 .memberGroup {
   border-top: 1px solid var(--border-standard);
@@ -55,13 +59,13 @@
 .member:is(:hover, :focus-within, [data-menu-open]) {
   background: var(--affordance-subtle);
 }
-/* Enter adds this person, so mark the row like a highlighted picker row,
-   with the surface's own selection recipe (floating inside the dialog). */
+/* Keep the keyboard target visible without implying persistent selection. */
 .member[data-highlighted] {
-  --text-subtle: var(--interaction-selected-text);
-  --text-metadata: var(--interaction-selected-metadata);
-  background: var(--interaction-selected);
-  color: var(--text-standard);
+  background: var(--affordance-subtle);
+}
+.memberList > .memberGroup:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 .addAction {
   flex-shrink: 0;
@@ -119,7 +123,9 @@
 }
 .identityName {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   max-width: 100%;
   vertical-align: bottom;
 }

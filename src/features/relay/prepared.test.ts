@@ -535,6 +535,48 @@ it("persists a ready head before optional profiles, enriching only after they ar
   }
 });
 
+it("reads and persists a Solo chat's head like any channel's, threads staying in their thread", async () => {
+  const disk = memoryDisk();
+  const { queries, next, store } = setup({ persistence: disk });
+  try {
+    queries.ensureList();
+    next().respond([
+      roster(relay, "work", [viewer.pubkey]),
+      metadata(relay, "work", "Work", undefined, [
+        ["t", "stream"],
+        ["private"],
+        ["t", "buzz.solo"],
+      ]),
+    ]);
+    await flush();
+    expect(queries.get?.("work")?.channelType).toBe("solo");
+    queries.ensure("work");
+    const read = next();
+    expect(read.filters).toEqual([
+      expect.objectContaining({
+        "#h": ["work"],
+        top_level: true,
+        include_aux: true,
+      }),
+    ]);
+    const prompt = message(viewer, "work", "Prompt", 20);
+    const answer = message(alice, "work", "Answer", 21);
+    const reply = message(alice, "work", "In a thread", 22, [
+      ["e", prompt.id, "", "reply"],
+    ]);
+    read.respond([answer, prompt, reply, ...empty("work")]);
+    await flush();
+    expect(queries.window("work").rows.map((row) => row.content)).toEqual([
+      "Prompt",
+      "Answer",
+    ]);
+    expect(disk.write).toHaveBeenCalledOnce();
+    expect(vi.mocked(disk.write).mock.calls[0]?.[0].channelId).toBe("work");
+  } finally {
+    store.dispose();
+  }
+});
+
 it.each(["empty", "failure"])(
   "does not rewrite persisted heads after %s profile enrichment",
   async (outcome) => {

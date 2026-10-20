@@ -46,7 +46,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
-import type { ServeMcp, Spawn, ToolServer } from "./goose";
+import type { ServeMcp, ToolServer } from "./goose";
 import {
   AgentSessions,
   localSessions,
@@ -125,7 +125,10 @@ export class GooseRuntime {
   private readonly pool = new ServerPool();
   /** The goose every agent's sessions open in. */
   private readonly goose = new SharedProcess(
-    (id, options) => this.spawn(id, options),
+    {
+      spawn: (id, options) => this.desktop.spawn(id, options),
+      resolveDirectory: (path) => this.desktop.resolveDirectory(path),
+    },
     (handler) => this.serve(handler),
   );
   private readonly reading = new Map<string, Promise<Memories>>();
@@ -146,10 +149,16 @@ export class GooseRuntime {
     private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
-  private get spawn(): Spawn {
-    const spawn = this.host.spawn?.bind(this.host);
-    if (!spawn) throw new Error("goose agents run only in the desktop app");
-    return spawn;
+  /** The desktop host's methods goose agents run with. */
+  private get desktop() {
+    const { host } = this;
+    if (!host.spawn || !host.resolveDirectory || !host.readFile)
+      throw new Error("goose agents run only in the desktop app");
+    return {
+      spawn: host.spawn.bind(host),
+      resolveDirectory: host.resolveDirectory.bind(host),
+      readFile: host.readFile.bind(host),
+    };
   }
   private get serve(): ServeMcp {
     const serve = this.host.serveMcp?.bind(this.host);
@@ -516,7 +525,13 @@ export class GooseRuntime {
     const reading = topLevel
       ? readProject(
           session && owner
-            ? () => ownerCanvas(session.canvas, owner, channelId)
+            ? () =>
+                ownerCanvas(
+                  session.canvas,
+                  owner,
+                  channelId,
+                  session.channelWrites.startingCanvas(channelId),
+                )
             : undefined,
         )
       : Promise.resolve(undefined);
@@ -604,8 +619,8 @@ export class GooseRuntime {
             this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
-          spawn: this.spawn,
-          cwd: entry.config.workspace,
+          read: async (path) =>
+            this.desktop.readFile(path, { cwd: entry.config.workspace }),
           memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
@@ -617,7 +632,7 @@ export class GooseRuntime {
       return respond(client, context, message, this.added());
     };
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawn(id, options),
+      resolveDirectory: (path) => this.desktop.resolveDirectory(path),
       tools,
       process: this.goose,
       pool: this.pool,

@@ -93,7 +93,7 @@ describe("the tool list", () => {
       ).map((tool) => tool.name),
     );
 
-  it("always offers the attention tools and guidance, and says each turn whether attention is on", async () => {
+  it("always offers the attention tools with their guidance, and says each turn whether attention is on", async () => {
     // One list whatever the setting, so turning attention on or off never
     // replaces a session or its cached prompt prefix.
     const names = await list();
@@ -106,8 +106,23 @@ describe("the tool list", () => {
           attention: agent({ enabled }).api,
         } as unknown as BuzzClient),
       ).toEqual(names);
-    expect(BUZZ_PROMPT).toContain("## Attention");
-    expect(turnNote({ attention: agent().api })).toMatch(
+    // How to use them is in their descriptions, loaded with the tools.
+    expect(BUZZ_PROMPT).not.toContain("## Attention");
+    expect(
+      ATTENTION_TOOLS.find((tool) => tool.name === "watch_add")?.description,
+    ).toContain("Jev tests relevance");
+    // With no Interests there is nothing to review, so the turn need not
+    // load the attention tools to find that out.
+    const { api, call } = agent();
+    expect(turnNote({ attention: api })).toMatch(
+      /^<attention>\nYou have no Interests/,
+    );
+    await call("interest_set", {
+      id: "triage",
+      instructions: "Triage asks.",
+      expected_state: ABSENT,
+    });
+    expect(turnNote({ attention: api })).toMatch(
       /^<attention>\nHandle the work/,
     );
     expect(turnNote({ attention: agent({ enabled: false }).api })).toMatch(

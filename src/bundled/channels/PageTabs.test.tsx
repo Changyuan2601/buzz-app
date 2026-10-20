@@ -8,6 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -119,6 +120,7 @@ function fixture(visits?: boolean) {
   );
   return {
     openers,
+    navigation: host.navigation,
     open(target: PageTabTarget, options?: PageTabOptions) {
       let opened = false;
       act(() => {
@@ -290,4 +292,47 @@ it("focuses the composer of each tab it opens, except at a message", () => {
   expect(thread()).toHaveAttribute("data-focus", "2");
   // Focus is not a Reply, which would retarget the reply box at the root.
   expect(thread()).not.toHaveAttribute("data-reply");
+});
+
+it("opens a tab's conversation in its channel from the tab's menu", async () => {
+  const user = userEvent.setup();
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  const scope = { viewer: "viewer", communityOrigin: "origin" };
+  // The menu has handed focus back to the tab, so the destination can take it.
+  let focused: Element | null = null;
+  vi.mocked(page.navigation.open).mockImplementation(async () => {
+    focused = document.activeElement;
+    return { status: "opened" };
+  });
+  const thread = screen.getByRole("tab", { name: /Root text/ });
+  await user.pointer({ keys: "[MouseRight]", target: thread });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in channel" }),
+  );
+  await vi.waitFor(() => expect(focused).toBe(thread));
+  expect(page.navigation.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+    messageId: "reply",
+    threadRootId: "root",
+  });
+  page.open({ channelId: "beta" });
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("tab", { name: /beta/ }),
+  });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in channel" }),
+  );
+  await vi.waitFor(() =>
+    expect(page.navigation.open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+    }),
+  );
 });

@@ -91,6 +91,31 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 }
               }
             }
+            // Packaged defaults are independent of dev relay/auto-open settings.
+            writeFileSync('.env.local', 'BUZZ_DEFAULT_COMMUNITY_URL=wss://Packaged.example.com/');
+            process.env.BUZZ_DEV_OPEN_RELAY = '0';
+            for (const [command, override, expected] of [
+              ['build', undefined, 'https://packaged.example.com'],
+              ['build', 'https://other.example:8443/', 'https://other.example:8443'],
+              ['build', '', ''],
+              ['serve', undefined, ''],
+            ]) {
+              if (override === undefined) delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+              else process.env.BUZZ_DEFAULT_COMMUNITY_URL = override;
+              const result = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], JSON.stringify(expected));
+            }
+            // Invalid packaged inputs fail the build without echoing credentials.
+            for (const invalid of ['http://insecure.example', 'wss://user:secret@relay.example', 'https://relay.example/path']) {
+              process.env.BUZZ_DEFAULT_COMMUNITY_URL = invalid;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+                error => !String(error).includes('secret') && /relay URL/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
             // Desktop shares .env.local/process inputs with the native build.
             // An explicit empty process value clears the frontend URL too.
             writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');

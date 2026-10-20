@@ -11,8 +11,8 @@ channel membership remains access authority.
   on the private channel's relay metadata, so every member and agent, including
   remote agents without the owner's encrypted state, reads the same answer.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
-  the flat treatment for everyone: a timeline that loads history on scroll and
-  top-level agent replies. The creator (the relay-written `P`) also gets the
+  the chat treatment for everyone: a timeline that loads history on scroll and
+  top-level agent replies. It reads, caches and threads like any channel. The creator (the relay-written `P`) also gets the
   owner's treatment: the agent-tagged composer, Share, the Workspace control, Chat
   settings and Chat actions. Both come from the channel, in the shared
   conversation scope (`features/conversation/Conversation.tsx`), so every view
@@ -101,6 +101,13 @@ behavior on the label, so a rename touches copy only.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Solo. Archived chats
   are restored from search and Channel Settings, as before.
+- The owner can add agents from **Channel members → Add agents** without sending
+  a message or starting a run. The chooser uses the same available agents as
+  the composer, excludes current members and archived agents, and confirms the
+  signed roster before reporting success. Additions grant access to the chat and
+  its history; people continue to use Share. Closing stops the dialog's continuation,
+  while an already-sent membership request may still complete; reopening reads the
+  roster, and retry uses the existing membership receipt.
 - Solo chats use the ordinary composer with explicit
   owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
   agent for this account/community. **Agents → right-click → Make default agent**
@@ -132,11 +139,12 @@ behavior on the label, so a rename touches copy only.
   row menus remain independent of Team's sections.
 - A Solo chat uses the Messages conversation page: the same secondary
   conversation/tool/panel tabs, pane geometry and tab persistence as any channel.
-  Its main timeline is flat and full width. A single working agent's Activity
+  Its main timeline is full width, with no main-pane tabs, so its threads open
+  in the side pane. A single working agent's Activity
   indicator opens its profile's Activity tab locally; multiple agents or an
   unavailable profile retain the chooser. Secondary conversations of the owner's
   Solo chat keep the same owner-scoped explicit recipients; nothing waits on the
-  encrypted workspace record to send. A guest in a shared Solo chat keeps the flat
+  encrypted workspace record to send. A guest in a shared Solo chat keeps the chat
   treatment with the ordinary composer. Routes and labels never grant access.
 
 ## Organization, settings and recovery

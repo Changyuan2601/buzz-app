@@ -30,8 +30,14 @@
 )::before {
   background: var(--affordance-panel-hover);
 }
+.row[data-selected] {
+  --text-row: var(--text-navigation-selected);
+  --text-subtle: var(--text-navigation-selected);
+  --text-metadata: var(--text-navigation-selected);
+  color: var(--text-navigation-selected);
+}
 .row[data-selected]::before {
-  background: var(--interaction-selected);
+  background: var(--surface-navigation-selected);
 }
 .row .select [data-buzz-ui][data-variant="row"] {
   background: transparent;

@@ -24,7 +24,7 @@ export type EmojiSnapshot = Readonly<{
 }>;
 export type EmojiAuthoring = Readonly<{
   writer: RelayWriter;
-  upload(file: File, signal: AbortSignal): Promise<UploadedAttachment>;
+  upload?(file: File, signal: AbortSignal): Promise<UploadedAttachment>;
 }>;
 const LIMIT = 500;
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -45,7 +45,7 @@ export function createEmojiDirectory(
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
   const lifetime = new AbortController();
-  let adding: Promise<unknown> = Promise.resolve();
+  let editing: Promise<unknown> = Promise.resolve();
   let snapshot: EmojiSnapshot = Object.freeze({
     status: "idle",
     entries: Object.freeze([]),
@@ -152,13 +152,15 @@ export function createEmojiDirectory(
     if (snapshot.status === "idle") return refresh();
     return pending ?? Promise.resolve();
   }
-  /** Read-modify-write of the viewer's own set, like Desktop's `setCustomEmoji`. */
-  async function publishAdd(
+  /** Read-modify-write of the viewer's own set; an absent URL removes the shortcode. */
+  async function publishEdit(
     writer: RelayWriter,
     shortcode: string,
-    url: string,
+    url?: string,
   ): Promise<string> {
-    if (!viewer) throw new Error("Failed to add emoji.");
+    const failure =
+      url === undefined ? "Failed to remove emoji." : "Failed to add emoji.";
+    if (!viewer) throw new Error(failure);
     const timeout = AbortSignal.timeout(12_000);
     const signal = AbortSignal.any([lifetime.signal, timeout]);
     try {
@@ -184,9 +186,13 @@ export function createEmojiDirectory(
           event.tags.find(([name]) => name === "d")?.[1] === EMOJI_SET
         )
           current = newer(current, event);
-      const entries = emojiTags(current ?? { tags: [] }).filter(
+      const ownEntries = emojiTags(current ?? { tags: [] });
+      const entries = ownEntries.filter(
         (entry) => entry.shortcode !== shortcode,
       );
+      if (url === undefined && entries.length === ownEntries.length)
+        return shortcode;
+      if (url !== undefined) entries.push({ shortcode, url });
       const template = {
         kind: EMOJI_SET_KIND,
         created_at: Math.max(
@@ -196,11 +202,7 @@ export function createEmojiDirectory(
         content: "",
         tags: [
           ["d", EMOJI_SET],
-          ...[...entries, { shortcode, url }].map((entry) => [
-            "emoji",
-            entry.shortcode,
-            entry.url,
-          ]),
+          ...entries.map((entry) => ["emoji", entry.shortcode, entry.url]),
         ],
       };
       const event = eventDto(await writer.sign(template, signal));
@@ -211,7 +213,7 @@ export function createEmojiDirectory(
         event.content !== template.content ||
         JSON.stringify(event.tags) !== JSON.stringify(template.tags)
       )
-        throw new Error("Failed to add emoji.");
+        throw new Error(failure);
       signal.throwIfAborted();
       await writer.publish(event, signal);
       signal.throwIfAborted();
@@ -220,8 +222,10 @@ export function createEmojiDirectory(
     } catch {
       throw new Error(
         timeout.aborted
-          ? "Timed out while adding emoji."
-          : "Failed to add emoji.",
+          ? url === undefined
+            ? "Timed out while removing emoji."
+            : "Timed out while adding emoji."
+          : failure,
       );
     }
   }
@@ -237,6 +241,22 @@ export function createEmojiDirectory(
     refresh,
     ...(authoring
       ? {
+          /** Removes only from the viewer's set; absent or invalid names are no-ops. */
+          remove(name: string): Promise<void> {
+            const shortcode = normalizeShortcode(name);
+            if (!shortcode) return Promise.resolve();
+            if (closed)
+              return Promise.reject(new Error("Failed to remove emoji."));
+            const run = editing.then(() =>
+              publishEdit(authoring.writer, shortcode),
+            );
+            editing = run.catch(() => undefined);
+            return run.then(() => undefined);
+          },
+        }
+      : {}),
+    ...(authoring?.upload
+      ? {
           upload: authoring.upload,
           /** Adds or replaces one shortcode; returns the normalized shortcode. */
           add(name: string, url: string): Promise<string> {
@@ -249,11 +269,11 @@ export function createEmojiDirectory(
               );
             if (closed)
               return Promise.reject(new Error("Failed to add emoji."));
-            // Serialize local writers so concurrent adds cannot drop each other.
-            const run = adding.then(() =>
-              publishAdd(authoring.writer, shortcode, url),
+            // Serialize edits so a stale relay read cannot undo an earlier edit.
+            const run = editing.then(() =>
+              publishEdit(authoring.writer, shortcode, url),
             );
-            adding = run.catch(() => undefined);
+            editing = run.catch(() => undefined);
             return run;
           },
         }

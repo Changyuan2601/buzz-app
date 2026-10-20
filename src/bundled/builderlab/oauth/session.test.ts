@@ -5,7 +5,11 @@ import { deferred } from "../test-helpers";
 
 const credential: Credential = {
   value: "private-token",
-  account: { subject: "user", email: "a@example.com" },
+  account: {
+    subject: "user",
+    email: "a@example.com",
+    canUseRemoteAgents: true,
+  },
 };
 it("keeps credentials outside UI snapshots and clears them on sign-out and disposal", async () => {
   const acquire = vi.fn(async () => credential);

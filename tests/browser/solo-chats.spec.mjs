@@ -402,7 +402,15 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
   const search = dialog.getByRole("combobox", { name: "People or channel" });
+  // Text entry starts after the menu-to-dialog transition and focus handoff.
+  await dialog.evaluate(async (element) => {
+    await Promise.all(
+      element.getAnimations().map((animation) => animation.finished),
+    );
+  });
+  await expect(search).toBeFocused();
   await search.fill("Aria");
+  await expect(search).toHaveValue("Aria");
   await page.getByRole("option", { name: /Aria/ }).click();
   await search.fill("Team");
   await page.getByRole("option", { name: "Team", exact: true }).click();

@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
+import type { RelayData } from "../../../features/relay/service";
 import { createOAuthSession } from "../oauth/session";
 import { builderlabType } from "./index";
 
 const pubkey = "ab".repeat(32);
+const relay = {
+  snapshot: () => ({ status: "disconnected", generation: 0 }),
+  subscribe: () => () => {},
+} as unknown as RelayData;
 const proof = ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const;
 const response = (value: unknown): HostResponse => ({
   status: 200,
@@ -28,18 +33,19 @@ afterEach(() => {
 async function fixture(subject = "account-a") {
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com" },
+    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>();
   const host: Host = { runCommand: vi.fn(), request };
   const client = createAgentClient(host, session);
-  const type = builderlabType(client, session);
+  const type = builderlabType(client, session, relay);
   if (!type.remote) throw new Error("Missing hosted adapter");
   return {
     request,
     session,
     client,
+    type,
     remote: type.remote,
     bodies: () =>
       request.mock.calls.map(([input]) => JSON.parse(input.body ?? "{}")),
@@ -129,7 +135,7 @@ it("looks up an agent from another device and retains its ID before a failed del
     )
     .mockRejectedValueOnce(new Error("connection lost"));
   await expect(h.remote.remove(removal)).rejects.toThrow("Could not reach");
-  const again = builderlabType(h.client, h.session).remote;
+  const again = builderlabType(h.client, h.session, relay).remote;
   if (!again) throw new Error("Missing hosted adapter");
   h.request.mockResolvedValueOnce(response({ status: 3 }));
   await again.remove(removal);
@@ -213,12 +219,16 @@ it("does not stop a turn for an agent outside the signed-in account", async () =
 it("rejects a stop at once when signed out, without signing in or reaching Builderlab", async () => {
   const acquire = vi.fn(async () => ({
     value: "credential",
-    account: { subject: "account-a", email: "a@example.com" },
+    account: {
+      subject: "account-a",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+    },
   }));
   const session = createOAuthSession(acquire);
   const request = vi.fn<Host["request"]>();
   const client = createAgentClient({ runCommand: vi.fn(), request }, session);
-  const remote = builderlabType(client, session).remote;
+  const remote = builderlabType(client, session, relay).remote;
   if (!remote?.interrupt) throw new Error("Missing hosted adapter");
   await expect(remote.interrupt(interruption)).rejects.toThrow(
     "Sign in to Builderlab first.",
@@ -226,4 +236,12 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
   expect(acquire).not.toHaveBeenCalled();
   expect(session.snapshot().status).toBe("signed-out");
   expect(request).not.toHaveBeenCalled();
+});
+
+it("supplies the Settings and Activity tabs", async () => {
+  const { type } = await fixture();
+  expect(type.tabs?.map(({ title, role }) => [title, role])).toEqual([
+    ["Settings", "settings"],
+    ["Activity", "activity"],
+  ]);
 });

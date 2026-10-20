@@ -101,6 +101,7 @@ export function PageTabs({
     // The page stays in view; a thread reaches the main pane only when moved.
     threadPane: "side",
     visits,
+    navigation: host.navigation,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;

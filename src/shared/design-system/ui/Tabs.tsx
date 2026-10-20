@@ -17,6 +17,9 @@ import {
   type ReactNode,
 } from "react";
 
+/** A host action in a tab's menu. */
+export type TabAction = { label: string; run(): void };
+
 export type TabItem<Value extends string> = {
   value: Value;
   label: string;
@@ -32,6 +35,8 @@ export type TabItem<Value extends string> = {
   onMove?: ((delta: -1 | 1) => void) | undefined;
   /** Double-click, F2 or the tab's menu edits its name; blank restores the default. */
   onRename?: ((name: string) => void) | undefined;
+  /** Listed first in the tab's menu. */
+  actions?: readonly TabAction[] | undefined;
 };
 
 /**
@@ -108,6 +113,7 @@ export function Tabs<Value extends string>({
           <TabMenu
             key={JSON.stringify([tabMenu?.key, item.value])}
             label={item.label}
+            actions={item.actions}
             closeAll={tabMenu?.closeAll}
             closeOthers={
               tabMenu?.closeOthers &&
@@ -252,9 +258,10 @@ export function Tabs<Value extends string>({
   );
 }
 
-/** One shared menu composes tab naming with the host's close actions. */
+/** One shared menu composes host actions and tab naming with close actions. */
 function TabMenu({
   label,
+  actions,
   onClose,
   onRename,
   closeAll,
@@ -262,6 +269,7 @@ function TabMenu({
   children,
 }: {
   label: string;
+  actions: readonly TabAction[] | undefined;
   onClose: (() => void) | undefined;
   onRename: (() => void) | undefined;
   closeAll: (() => boolean) | undefined;
@@ -273,6 +281,9 @@ function TabMenu({
   const trigger = useRef<HTMLElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
   const closingAll = useRef(false);
+  // A host action runs once the menu has closed, from its tab, so a
+  // destination it opens can take focus from there.
+  const afterClose = useRef<() => void>(undefined);
   // Middle-click closes a closable tab, without the browser's own default.
   const item = {
     className: "buzz-tabs-item",
@@ -286,13 +297,22 @@ function TabMenu({
       onClose();
     },
   };
-  if (!onRename && !closeAll) return <span {...item}>{children}</span>;
+  if (!actions?.length && !onRename && !closeAll)
+    return <span {...item}>{children}</span>;
   return (
     <ContextMenuRoot
       open={open}
       onOpenChange={(next) => {
         if (next) closingAll.current = false;
         setOpen(next);
+      }}
+      onOpenChangeComplete={(next) => {
+        if (next) return;
+        const action = afterClose.current;
+        afterClose.current = undefined;
+        if (!action) return;
+        trigger.current?.querySelector<HTMLElement>('[role="tab"]')?.focus();
+        action();
       }}
     >
       <ContextMenuTrigger
@@ -327,6 +347,16 @@ function TabMenu({
               false)
         }
       >
+        {actions?.map((action) => (
+          <MenuItem
+            key={action.label}
+            onClick={() => {
+              afterClose.current = action.run;
+            }}
+          >
+            {action.label}
+          </MenuItem>
+        ))}
         {onRename && <MenuItem onClick={onRename}>Rename tab</MenuItem>}
         {closeOthers && (
           <MenuItem onClick={closeOthers}>Close other tabs</MenuItem>

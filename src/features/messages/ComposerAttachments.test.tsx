@@ -289,6 +289,33 @@ it("removes immediately without playing a poof sound", () => {
   expect(document.querySelector("[data-attachment-poof]")).toBeNull();
 });
 
+it("shows a returning draft at once and animates only attachments picked later", async () => {
+  const props = {
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: () => undefined,
+  };
+  const item = (name: string): DraftAttachment => ({
+    id: name,
+    file: new File(["text"], name),
+    status: "queued",
+  });
+  const row = (name: string) =>
+    screen.getByText(name).closest("li") as HTMLElement;
+  const view = render(
+    <ComposerAttachments {...props} items={[item("restored.txt")]} />,
+  );
+  // The composer remounted with this draft (switching back to a channel).
+  expect(row("restored.txt").style.opacity).toBe("1");
+  view.rerender(<ComposerAttachments {...props} items={[]} />);
+  view.rerender(
+    <ComposerAttachments {...props} items={[item("picked.txt")]} />,
+  );
+  expect(row("picked.txt").style.opacity).toBe("0");
+  await waitFor(() => expect(row("picked.txt").style.opacity).toBe("1"));
+});
+
 it("dismisses draft preview while retaining the original file and preview URL", async () => {
   const revoke = vi.fn();
   vi.stubGlobal(

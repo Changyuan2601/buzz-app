@@ -417,6 +417,13 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  const recipientKey = JSON.stringify(
+    value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+  );
+  const recipients = useMemo(
+    () => JSON.parse(recipientKey) as readonly MentionRecipient[],
+    [recipientKey],
+  );
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
@@ -573,7 +580,7 @@ function Composer({
     (threadRootId
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
-    ).filter((row) => soloConversation || !row.threadRootId);
+    ).filter((row) => !row.threadRootId);
   const editDisabled =
     disabled ||
     !!list.channels.find((channel) => channel.id === channelId)?.archived ||
@@ -1514,7 +1521,7 @@ function Composer({
   }
   const host = fullSession(session);
   const readingOnly = !outbox?.supports(9) && !cached;
-  // The attachments section animates out over 180 ms; the form's gap and
+  // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
   const hasAttachments = attachments.items.length > 0;
@@ -1694,6 +1701,9 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
+        <ComposerReplyContext>
+          {!editing.target && replyContext}
+        </ComposerReplyContext>
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -1867,7 +1877,6 @@ function Composer({
             />
           </div>
         </div>
-        {!editing.target && replyContext}
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -1912,6 +1921,7 @@ function Composer({
                     threadRootId={threadRootId}
                     disabled={editingDisabled}
                     inviteAgents={agentChoices && !editing.target}
+                    recipients={recipients}
                     insertText={(text) => insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
@@ -2052,6 +2062,27 @@ function Composer({
         />
       )}
     </SelectedMentionContext.Provider>
+  );
+}
+
+/** Retain the last preview for collapse; reply semantics clear immediately. */
+function ComposerReplyContext({ children }: { children: ReactNode }) {
+  const open = !!children;
+  const [lastContext, setLastContext] = useState(children);
+  if (open && children !== lastContext) setLastContext(children);
+  return (
+    <div
+      className={styles.composerReplySlot}
+      data-open={open || undefined}
+      inert={!open}
+      aria-hidden={!open || undefined}
+    >
+      <div className={styles.composerReplyClip}>
+        <div className={styles.composerReplyContent}>
+          {open ? children : lastContext}
+        </div>
+      </div>
+    </div>
   );
 }
 

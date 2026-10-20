@@ -64,8 +64,9 @@ it("publishes a description-only edit to an existing community profile", async (
     }),
     joined: vi.fn(),
   } as unknown as Communities;
+  const close = vi.fn();
   render(
-    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+    <CommunityDialog communities={communities} mode="join" close={close} />,
   );
   expect(
     screen.getByRole("dialog", { name: "Add a community" }),
@@ -79,6 +80,14 @@ it("publishes a description-only edit to an existing community profile", async (
   );
   await user.clear(description);
   await user.type(description, "After");
+  // A stray outside click keeps the dialog and the typed profile.
+  const backdrop = document.querySelector(".buzz-dialog-backdrop") as Element;
+  fireEvent.pointerDown(backdrop);
+  fireEvent.mouseDown(backdrop);
+  fireEvent.click(backdrop);
+  await Promise.resolve();
+  expect(close).not.toHaveBeenCalled();
+  expect(description).toHaveValue("After");
   await user.click(
     screen.getByRole("button", { name: "Publish profile & open" }),
   );
