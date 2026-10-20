@@ -58,6 +58,14 @@ export type ToolServer = (
 export const TOOL_SERVER = "buzz";
 const DEVELOPER = { type: "platform", name: "developer" };
 
+/** A goose built-in extension entry for `session/new`; `available_tools`
+ * limits it to the listed tools. */
+export type PlatformExtension = Readonly<{
+  type: "platform";
+  name: string;
+  available_tools?: readonly string[];
+}>;
+
 /** What every `goose-acp` runs with: tools run without asking, sessions are
  * not named (one model call per turn, not two), and no Buzz identity reaches
  * it from the app's environment. Nor does a provider or model, which goose
@@ -202,6 +210,8 @@ export class GooseProcess {
       title?: string;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** goose built-ins beside the Buzz tools; developer when left out. */
+      platform?: readonly PlatformExtension[];
     }>,
   ): Promise<GooseSession> {
     const provider = launch.choice?.().provider ?? "";
@@ -245,7 +255,10 @@ export class GooseProcess {
             // the Buzz entry and holds the `mcpServers` copy in memory, so
             // the token stays out of sessions.db; older goose uses this one.
             enabledExtensions: buzz
-              ? [DEVELOPER, { type: "mcp", server: buzz }]
+              ? [
+                  ...(launch.platform ?? [DEVELOPER]),
+                  { type: "mcp", server: buzz },
+                ]
               : [],
             ...(launch.title ? { sessionTitle: launch.title } : {}),
             // On the provider's default model, whatever goose's config holds.

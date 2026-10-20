@@ -7,7 +7,12 @@
 import type { AgentHandle } from "../../features/agents/service";
 import { appClient } from "../../buzz-mcp/app-client";
 import { errorText, respond } from "../../buzz-mcp/rpc";
-import { GooseProcess, type ServeMcp, type ToolServer } from "../goose/goose";
+import {
+  GooseProcess,
+  type PlatformExtension,
+  type ServeMcp,
+  type ToolServer,
+} from "../goose/goose";
 import { absolute } from "../goose/sessions";
 import type { InlineTurn, MeshAgentDeps } from "./meshAgent";
 import {
@@ -26,6 +31,13 @@ type Saved = {
 /** Where goose keeps its config and sessions for Mesh turns, apart from the
  * owner's own goose. */
 const GOOSE_ROOT = ".buzz/.mesh-goose";
+
+/** goose's tools for Mesh turns beside the Buzz tools: a shell and skills.
+ * Small models do better with a short tool list. */
+const MESH_EXTENSIONS: readonly PlatformExtension[] = [
+  { type: "platform", name: "developer", available_tools: ["shell"] },
+  { type: "platform", name: "skills" },
+];
 
 /** goose's environment for one turn on `baseUrl`
  * (`http://127.0.0.1:<port>/<lease>/v1`). */
@@ -147,6 +159,7 @@ export class MeshGoose {
         cwd,
         systemPrompt: system,
         tools,
+        platform: MESH_EXTENSIONS,
         choice: () => ({ provider: "openai", model: inference.model }),
       });
       const stop = () => session.interrupt();
