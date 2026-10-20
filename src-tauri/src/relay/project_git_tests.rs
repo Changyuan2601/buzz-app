@@ -440,6 +440,69 @@ async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
     assert!(closes(stream));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn git_transport_attaches_only_required_fi_header_and_retirement_kills_helper() {
+    use crate::federated_identity::assertion::{test_authorization, Authorization};
+    for required in [true, false] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/git/{OWNER}/repo.git",
+            listener.local_addr().unwrap()
+        );
+        let (connections, accepted) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let _ = connections.send(stream);
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let (stop, stopped) = watch::channel(false);
+        let authorization: Authorization = test_authorization(required);
+        let headers = git_headers(
+            "Authorization: Nostr fixture-proof".into(),
+            Some(&authorization),
+        );
+        let git = Git::new(
+            directory.path(),
+            &headers,
+            &url,
+            Instant::now() + DEADLINE,
+            stopped,
+        );
+        let run = tokio::spawn(async move { git.run(&["ls-remote", "--", &url]).await });
+        let mut stream = tokio::task::spawn_blocking(move || {
+            accepted.recv_timeout(Duration::from_secs(5)).unwrap()
+        })
+        .await
+        .unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 4096];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut chunk).unwrap();
+            assert_ne!(read, 0, "Git helper closed before sending its request");
+            request.extend_from_slice(&chunk[..read]);
+        }
+        let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+        assert!(request.contains("authorization: nostr fixture-proof"));
+        assert_eq!(
+            request.matches("nostr-federated-identity:").count(),
+            usize::from(required)
+        );
+        if required {
+            assert!(request.contains("nostr-federated-identity: bearer fixture-assertion"));
+        }
+        stop.send(true).unwrap();
+        assert_eq!(run.await.unwrap(), Err(CANCELLED));
+        assert!(
+            closes(stream),
+            "retired Git helper left its connection open"
+        );
+    }
+}
+
 /// Windows job termination is asynchronous: a killed descendant can still hold a handle in
 /// the read's repository when the direct child has been reaped.
 #[cfg(windows)]

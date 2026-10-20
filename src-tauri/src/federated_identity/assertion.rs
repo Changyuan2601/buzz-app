@@ -43,6 +43,32 @@ impl Authorization {
             .as_ref()
             .map(|assertion| assertion.header.as_str())
     }
+    pub(crate) fn remaining(&self) -> Option<std::time::Duration> {
+        self.assertion.as_ref().map(Assertion::remaining)
+    }
+}
+#[cfg(test)]
+pub(crate) fn test_authorization(required: bool) -> Authorization {
+    let relay = "https://relay.example".to_owned();
+    let discovery = Arc::new(Discovery {
+        result: OnceCell::new(),
+        stop: CancellationToken::new(),
+        owner: None,
+    });
+    let _ = discovery.result.set(Ok(required));
+    Authorization {
+        assertion: required.then(|| Assertion {
+            header: Zeroizing::new("Bearer fixture-assertion".into()),
+            expires_at: protocol::now().unwrap() as u64 + 120,
+            revision: "fixture-revision".into(),
+            viewer: "fixture-viewer".into(),
+            relay: relay.clone(),
+            refresh_at: 0,
+        }),
+        relay,
+        discovery,
+        socket: false,
+    }
 }
 impl Assertion {
     pub(crate) fn remaining(&self) -> std::time::Duration {

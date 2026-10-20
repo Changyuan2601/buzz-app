@@ -393,7 +393,7 @@ async fn run(
             publish(host, fi, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
         }
         check_cancelled(&stop, &touched)?;
-        let (socket, peers) = tokio::select! {
+        let (socket, peers, assertion_remaining) = tokio::select! {
             _ = stop.changed() => return Err("Huddle cancelled".into()),
             result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, fi, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
         };
@@ -415,7 +415,7 @@ async fn run(
         }
         check_cancelled(&stop, &touched)?;
         updates.send(Update::Connected { room: room.clone(), participants: peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
-        audio::run(socket, peers, pcm, stop.clone(), updates, &touched).await
+        audio::run(socket, peers, assertion_remaining, pcm, stop.clone(), updates, &touched).await
     }.await;
     // Only unadvertised creation can be rolled back without ending someone else's
     // call. Otherwise socket/TTL cleanup belongs to the existing relay.

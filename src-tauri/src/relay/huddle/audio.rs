@@ -74,7 +74,7 @@ pub(super) async fn connect(
     fi: &FederatedIdentity,
     call: &Call,
     room: &str,
-) -> Result<(Socket, Peers)> {
+) -> Result<(Socket, Peers, Option<Duration>)> {
     let mut url = super::origin(&call.community)?;
     url.set_scheme("wss").map_err(|_| "Invalid Huddle relay")?;
     // Use the same origin string as the existing desktop v2 client for NIP-42.
@@ -151,6 +151,7 @@ pub(super) async fn connect(
     if !fi.authorization_session_current(&authorization) {
         return Err("Federated authorization changed".into());
     }
+    let remaining = authorization.remaining();
     Ok((
         joined.socket,
         joined
@@ -158,6 +159,7 @@ pub(super) async fn connect(
             .into_iter()
             .map(|p| (p.index, p.pubkey))
             .collect(),
+        remaining,
     ))
 }
 
@@ -266,6 +268,7 @@ impl Codec {
 pub(super) async fn run(
     mut socket: Socket,
     mut peers: Peers,
+    assertion_remaining: Option<Duration>,
     mut pcm: mpsc::Receiver<Vec<f32>>,
     mut stop: watch::Receiver<bool>,
     updates: &Channel<Update>,
@@ -277,6 +280,13 @@ pub(super) async fn run(
     let mut playout = tokio::time::interval(Duration::from_millis(10));
     playout.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_received = tokio::time::Instant::now();
+    let expires = async {
+        match assertion_remaining {
+            Some(remaining) => tokio::time::sleep(remaining).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(expires);
     loop {
         if *stop.borrow() {
             break;
@@ -284,6 +294,9 @@ pub(super) async fn run(
         tokio::select! {
             biased;
             _ = stop.changed() => break,
+            _ = &mut expires => {
+                return Err("Huddle authorization expired. Join again to reconnect.".into());
+            }
             // Cleanup must not be starved by a continuously ready audio stream.
             _ = heartbeat.tick() => {
                 super::check_cancelled(&stop, touched)?;

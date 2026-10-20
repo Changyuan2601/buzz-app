@@ -130,15 +130,9 @@ pub(crate) async fn relay_project_git(
             .as_ref()
             .map(|authorization| (fi.inner().clone(), authorization.clone()));
         let proof = async {
-            let mut header = sign(host.inner(), &url).await?;
+            let header = sign(host.inner(), &url).await?;
             super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
-            if let Some(header_value) = assertion
-                .as_ref()
-                .and_then(|authorization| authorization.header())
-            {
-                header.push_str(&format!("\n{}: {}", super::HEADER, header_value));
-            }
-            Ok(header)
+            Ok(git_headers(header, assertion.as_ref()))
         };
         let response = serve(&url, &read, cancelled, proof, lease).await;
         response
@@ -146,6 +140,13 @@ pub(crate) async fn relay_project_git(
     .await;
     cancels().finish(id);
     operation
+}
+
+fn git_headers(mut proof: String, authorization: Option<&Authorization>) -> String {
+    if let Some(header) = authorization.and_then(Authorization::header) {
+        proof.push_str(&format!("\n{}: {}", super::HEADER, header));
+    }
+    proof
 }
 
 #[tauri::command]

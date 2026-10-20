@@ -792,6 +792,11 @@ async fn evidence(
         None => Ok(None),
     }
 }
+#[derive(Clone, Copy)]
+struct AuthorizationContext<'a> {
+    fi: Option<&'a FederatedIdentity>,
+    assertion: Option<&'a Authorization>,
+}
 async fn admit(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
@@ -817,6 +822,30 @@ async fn send(
     } else {
         None
     };
+    send_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        method,
+        body,
+        authenticated,
+        response_limit,
+    )
+    .await
+}
+
+async fn send_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<RelayResponse> {
     let mut request = client()?.request(
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
         url.clone(),
@@ -864,8 +893,8 @@ async fn send(
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
-    admit(host, fi, assertion.as_ref()).await?;
-    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+    admit(host, authorization.fi, authorization.assertion).await?;
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
         request = request.header(HEADER, header);
     }
     // Never replay a write after a transport error: it may already have reached the relay.
@@ -875,16 +904,16 @@ async fn send(
         .map_err(|_| "Relay request could not be confirmed")?;
     if response.status() == 401 {
         if let (Some(fi), Some(assertion)) = (
-            fi,
-            assertion
-                .as_ref()
+            authorization.fi,
+            authorization
+                .assertion
                 .and_then(|authorization| authorization.assertion.as_ref()),
         ) {
             fi.reject_assertion(assertion).await;
         }
     }
     let response = read_response(response, response_limit).await?;
-    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
         let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
         fi.admit_response(host, assertion, mutation).await?;
     }
@@ -1276,6 +1305,30 @@ async fn upload_file(
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
     let assertion = evidence(host, fi, &url).await?;
+    upload_file_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        kind,
+        path,
+        (size, hash),
+        progress,
+    )
+    .await
+}
+
+async fn upload_file_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
+    url: Url,
+    kind: Option<&str>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
+    progress: Option<UploadProgress>,
+) -> Result<RelayResponse> {
     validate_upload_size(size)?;
     let kind = kind
         .filter(|kind| valid_type(kind))
@@ -1290,9 +1343,9 @@ async fn upload_file(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    admit(host, fi, assertion.as_ref()).await?;
+    admit(host, authorization.fi, authorization.assertion).await?;
     let mut request = client()?.put(url);
-    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
         request = request.header(HEADER, header);
     }
     let response = request
@@ -1315,16 +1368,16 @@ async fn upload_file(
         .map_err(|_| "Upload did not finish")?;
     if response.status() == 401 {
         if let (Some(fi), Some(assertion)) = (
-            fi,
-            assertion
-                .as_ref()
+            authorization.fi,
+            authorization
+                .assertion
                 .and_then(|authorization| authorization.assertion.as_ref()),
         ) {
             fi.reject_assertion(assertion).await;
         }
     }
     let response = read_response(response, 8192).await?;
-    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
         fi.admit_response(host, assertion, true).await?;
     }
     Ok(response)

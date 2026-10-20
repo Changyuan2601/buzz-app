@@ -245,6 +245,48 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
 }
 
 #[tokio::test]
+async fn relay_send_attaches_federated_header_only_for_required_discovery() {
+    use crate::federated_identity::assertion::test_authorization;
+    for required in [true, false] {
+        let (url, task) = fixture_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+        );
+        let authorization = test_authorization(required);
+        send_authorized(
+            &IdentityHost::fixture(),
+            AuthorizationContext {
+                fi: None,
+                assertion: Some(&authorization),
+            },
+            url,
+            "POST",
+            Some("[]".into()),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+        .unwrap();
+        let (headers, _) = task.join().unwrap();
+        let fi_headers: Vec<_> = headers
+            .lines()
+            .filter(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with("nostr-federated-identity:")
+            })
+            .collect();
+        if required {
+            assert_eq!(
+                fi_headers,
+                ["nostr-federated-identity: Bearer fixture-assertion"]
+            );
+        } else {
+            assert!(fi_headers.is_empty(), "{headers}");
+        }
+        assert!(!headers.contains("fixture-session-token"));
+    }
+}
+
+#[tokio::test]
 async fn memory_response_limit_rejects_before_generic_transport_budget() {
     // The advertised size alone must be rejected. A multi-megabyte server write
     // blocks the fixture thread after the client closes on this header.
@@ -2074,6 +2116,43 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     assert_strict(&blossom_event(&headers), "get", server);
 }
 
+#[tokio::test]
+async fn media_request_attaches_federated_header_only_for_required_discovery() {
+    use crate::federated_identity::assertion::test_authorization;
+    for required in [true, false] {
+        let (base, task) = fixture_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+        );
+        let authorization = test_authorization(required);
+        send_media(
+            &IdentityHost::fixture(),
+            None,
+            Some(&authorization),
+            base.join("/media/abc").unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        let (headers, _) = task.join().unwrap();
+        let fi_headers: Vec<_> = headers
+            .lines()
+            .filter(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with("nostr-federated-identity:")
+            })
+            .collect();
+        if required {
+            assert_eq!(
+                fi_headers,
+                ["nostr-federated-identity: Bearer fixture-assertion"]
+            );
+        } else {
+            assert!(fi_headers.is_empty(), "{headers}");
+        }
+        assert!(!headers.contains("fixture-session-token"));
+    }
+}
+
 /// Serves `blob` by `Range`, failing the first `failures` requests with 503,
 /// and records every upstream `Range` header.
 pub(super) fn ranged_media_server(
@@ -2876,6 +2955,53 @@ async fn upload_signs_the_exact_bytes_it_sends() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn upload_attaches_federated_header_only_for_required_discovery() {
+    use crate::federated_identity::assertion::test_authorization;
+    for required in [true, false] {
+        let (base, task) = fixture_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+        );
+        let bytes = b"upload fixture".to_vec();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source");
+        std::fs::write(&path, &bytes).unwrap();
+        let (_, hash) = upload_spool::hash_file(&path).unwrap();
+        let authorization = test_authorization(required);
+        upload_file_authorized(
+            &IdentityHost::fixture(),
+            AuthorizationContext {
+                fi: None,
+                assertion: Some(&authorization),
+            },
+            base.join("/upload").unwrap(),
+            Some("image/png"),
+            path,
+            (bytes.len(), hash),
+            None,
+        )
+        .await
+        .unwrap();
+        let (headers, _) = task.join().unwrap();
+        let fi_headers: Vec<_> = headers
+            .lines()
+            .filter(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with("nostr-federated-identity:")
+            })
+            .collect();
+        if required {
+            assert_eq!(
+                fi_headers,
+                ["nostr-federated-identity: Bearer fixture-assertion"]
+            );
+        } else {
+            assert!(fi_headers.is_empty(), "{headers}");
+        }
+        assert!(!headers.contains("fixture-session-token"));
+    }
 }
 
 #[tokio::test]
