@@ -1,9 +1,7 @@
-# Agents “Mesh” type: local inline GDK trial
+# Agents “Mesh” type
 
 Agents → New agent → **Mesh** uses this community’s shared compute, with no
-alternate provider. Agent mode calls the inline Rust/GDK runtime through Tauri;
-there is no ACP helper, process-backed session store or MCP bridge. See the
-[trial implementation and limits](native/README.md).
+alternate provider. Agent mode runs on the Goose plugin’s bundled `goose-acp`.
 
 ## Source ownership
 
@@ -11,7 +9,9 @@ The plugin registers the Mesh agent type through the shared Agents extension poi
 Agent mode runs on the app's bundled `goose-acp` through the Goose plugin's
 `GooseProcess` and Buzz tool servers; `meshGoose.ts` points it at the mesh route.
 Chat mode, native identity/community admission and the Mesh node live in
-`src-tauri/src/mesh_compute/` and `compute/`, compiled into every build.
+`compute/` (including its Tauri commands), compiled into every build.
+`src-tauri/src/mesh_compute.rs` only lends it the signed-in identity
+(Mesh-status signing) and the authenticated relay client.
 
 ## Modes and admission
 
@@ -19,10 +19,10 @@ Chat mode, native identity/community admission and the Mesh node live in
   delivery applies, without a sibling-watch exception. Matched Interest
   instructions apply only to the owner's watched turn; direct mentions do not
   inherit watch instructions.
-- **Agent (default):** the inline runtime provides local shell and
-  skill-loading tools in the configured workspace (default `~/.buzz`). Local
-  tools have the user’s filesystem authority, not a sandbox. This trial does not
-  provide tree/image tools, extension installation or delegation.
+- **Agent (default):** goose runs with its `developer` extension limited to
+  `shell`, plus `skills`, in the configured workspace (default `~/.buzz`). Local
+  tools have the user’s filesystem authority, not a sandbox. No other goose
+  extensions load; the user’s own goose config is not used.
 - **Buzz tools:** Agent mode always offers the full shared Buzz catalog
   with `buzz_` names: send, edit-message, react, read, channels, members,
   users, dm, mem_get, mem_set, canvas and media_get. Calls use the
@@ -63,29 +63,26 @@ the send schema omits `final`. No final text produces a visible failure rather
 than substituting tool narration. DMs have no thread tags; channel responses
 reference the triggering message and retain its thread root.
 
-Cancellation is passed to the inline adapter/native runtime. Disposal cancels
-inline work and prevents queued deliveries from starting. Cancelled, retired or
+Cancellation is passed to the goose session. Disposal cancels
+in-flight work and prevents queued deliveries from starting. Cancelled, retired or
 stale-lease results are not posted. Already-published sends and completed local
 tool effects are not rolled back or automatically replayed.
 
 ## History and host boundary
 
-The transcript view shows up to 50 in-memory trial runs, including partial tool
-evidence. Reload/quit discards them. It is not a persisted Goose session database
-or cross-turn tool replay. Chat has no tool transcript.
+The transcript view shows up to 50 in-memory runs, including partial tool
+evidence. Reload/quit discards them. Chat has no tool transcript.
 
-The plugin manifest retains only the `workspace` (`pwd`) and `read` (`base64`)
-process capabilities used by workspace resolution and existing adapters. Agent
-inference/tool sequencing lives in Rust; Buzz handlers remain TypeScript
-callbacks. Native identity, lease and cancellation checks are independent of
+The plugin manifest declares the bundled `goose` (`goose-acp`) process plus the
+`workspace` (`pwd`) and `read` (`base64`) processes. Agent inference/tool
+sequencing runs in goose; Buzz tools are the Goose plugin’s tool servers. Native identity, lease and cancellation checks are independent of
 frontend delivery checks. This is the existing trusted-main-WebView model, not a
 hostile-plugin security boundary.
 
 ## Validation boundary
 
 `meshAgent.test.ts` exercises delivery policy, Chat watches, conversation history,
-queued follow-ups, final posting and cancellation using a stub inline adapter.
-`inlineAgent.test.ts` exercises the Tauri callback adapter and shared Buzz handlers;
-Rust tests cover the inference/tool loop. These are complementary boundaries,
-not packaged GUI/live Mesh/real-relay acceptance. See the trial README for current
-native/build evidence and remaining limitations.
+queued follow-ups, final posting and cancellation using a stub adapter.
+`meshGoose.test.ts` covers the goose session setup and mesh route. Rust tests in
+`compute/` cover the node lifecycle, sharing, publication and inference gateway.
+These are not packaged GUI/live Mesh/real-relay acceptance.
