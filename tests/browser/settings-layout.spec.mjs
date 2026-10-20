@@ -61,6 +61,7 @@ test("settings share a centered, bounded column and keep controls contained acro
       for (const name of [
         "Profile",
         "Identity",
+        "Local archive",
         "Appearance",
         "Notifications",
         "Shortcuts",

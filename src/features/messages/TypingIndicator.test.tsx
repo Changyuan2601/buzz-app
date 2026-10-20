@@ -32,6 +32,12 @@ function fixture() {
     records: [],
     turns: [],
     trimmed: 0,
+    history: "ready",
+    hasOlder: false,
+    historyOlder: false,
+    historySkipped: 0,
+    historyAgents: [],
+    capture: "off",
   };
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -150,6 +156,7 @@ it.each([
           agent,
           createdAt: now / 1000,
           receivedAt: now,
+          historical: false,
           kind: "acp_read",
           channelIds: ["channel"],
           plaintext: JSON.stringify({

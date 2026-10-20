@@ -63,6 +63,7 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
+import { ArchiveSettings } from "./ArchiveSettings";
 import { AgentSettings } from "./AgentSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
@@ -1194,6 +1195,16 @@ export function Settings({
                 viewer={client.viewer}
                 identity={identity}
               />
+            )}
+            {selectedCommunity && selected === "local-archive" && (
+              <section aria-labelledby="archive-settings-title">
+                <Header id="archive-settings-title" title="Local archive" />
+                <ArchiveSettings
+                  relay={communities.relay}
+                  community={selectedCommunity.name}
+                  active
+                />
+              </section>
             )}
             {developerMode && (
               <div hidden={selected !== "developer"}>

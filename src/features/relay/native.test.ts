@@ -1263,6 +1263,177 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
   }
 });
 
+it.each([
+  { changed: false, kind: 24200, expected: "error" },
+  { changed: true, kind: 24200, expected: "off" },
+  { changed: false, kind: 44200, expected: "error" },
+])(
+  "archive capture without a plugin reports $kind failure as $expected (revision changed: $changed)",
+  async ({ changed, kind, expected }) => {
+    const sockets: Socket[] = [];
+    class Socket {
+      readyState = 1;
+      onmessage?: (event: { data: string }) => Promise<void>;
+      onclose?: () => void;
+      sent: unknown[][] = [];
+      constructor() {
+        sockets.push(this);
+      }
+      send(raw: string) {
+        this.sent.push(JSON.parse(raw));
+      }
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
+      async receive(value: unknown) {
+        await this.onmessage?.({ data: JSON.stringify(value) });
+      }
+    }
+    vi.stubGlobal("WebSocket", Socket);
+    const dispatch = vi.mocked(invoke),
+      original = dispatch.getMockImplementation();
+    let reads = 0;
+    dispatch.mockImplementation(async (command, args) => {
+      if (command === "relay_archive") {
+        const { request } = args as { request: { action: string } };
+        if (request.action === "settings")
+          return {
+            observer: ++reads === 1 || !changed,
+            metrics: true,
+            observerDays: 30,
+            revision: changed ? reads - 1 : 0,
+            location: "device",
+            path: "/fixture.sqlite3",
+            bytes: 0,
+          };
+        throw new Error("Archive revision changed");
+      }
+      return original?.(command, args);
+    });
+    const transport = await connectNativeTransport(community),
+      captureState = vi.fn();
+    const traffic = transport.subscribe?.({
+      receive: vi.fn(),
+      state: vi.fn(),
+      established: vi.fn(),
+      denied: vi.fn(),
+      captureState,
+    });
+    assert.exists(traffic);
+    try {
+      await vi.waitFor(() =>
+        expect(captureState).toHaveBeenLastCalledWith("saving"),
+      );
+      const socket = sockets[0];
+      assert.exists(socket);
+      await socket.receive(["AUTH", "nonce"]);
+      const proof = socket.sent.find(
+        ([kind]) => kind === "AUTH",
+      )?.[1] as VerifiedEvent;
+      await socket.receive(["OK", proof.id, true]);
+      const route = socket.sent.find(
+        ([kind, , filter]) =>
+          kind === "REQ" &&
+          (filter as { kinds?: number[] }).kinds?.includes(24200),
+      );
+      assert.exists(route);
+      await socket.receive(["EOSE", route[1]]);
+      await socket.receive([
+        "EVENT",
+        route[1],
+        signed(keypair(), {
+          kind,
+          created_at: 1700000010,
+          tags: [["p", viewer.pubkey]],
+          content: "cipher",
+        }),
+      ]);
+      await vi.waitFor(() => expect(reads).toBe(2));
+      // Explicit settings read is also a barrier: readable settings alone must
+      // not hide a persistent write failure on a full/locked disk.
+      await transport.activityArchive?.settings(new AbortController().signal);
+      expect(captureState).toHaveBeenLastCalledWith(expected);
+      expect(captureState).toHaveBeenCalledWith("error");
+      expect(
+        dispatch.mock.calls.some(
+          ([command]) => command === "relay_agent_observer",
+        ),
+      ).toBe(false);
+    } finally {
+      traffic.dispose();
+    }
+  },
+);
+
+it.each(["recovers", "exhausts", "disposed", "late response"])(
+  "initial archive settings retry %s without plugin demand",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const dispatch = vi.mocked(invoke),
+      original = dispatch.getMockImplementation();
+    const settings = {
+      observer: true,
+      metrics: true,
+      observerDays: 30,
+      revision: 0,
+      location: "device",
+      path: "/fixture.sqlite3",
+      bytes: 0,
+    };
+    const pending = deferred<typeof settings>();
+    let reads = 0;
+    dispatch.mockImplementation(async (command, args) => {
+      if (command === "relay_archive") {
+        reads++;
+        if (outcome === "late response") return pending.promise;
+        if (outcome !== "recovers" || reads === 1)
+          throw new Error("disk temporarily locked");
+        return settings;
+      }
+      return original?.(command, args);
+    });
+    const transport = await connectNativeTransport(community),
+      captureState = vi.fn();
+    const traffic = transport.subscribe?.({
+      receive: vi.fn(),
+      state: vi.fn(),
+      established: vi.fn(),
+      denied: vi.fn(),
+      captureState,
+    });
+    assert.exists(traffic);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads).toBe(1);
+      if (outcome === "disposed" || outcome === "late response") {
+        traffic.dispose();
+        const states = captureState.mock.calls.slice();
+        pending.resolve(settings);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(1);
+        expect(captureState.mock.calls).toEqual(states);
+        expect(transport.activityArchive).toBeDefined();
+      } else {
+        expect(captureState).toHaveBeenLastCalledWith("error");
+        await vi.advanceTimersByTimeAsync(999);
+        expect(reads).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reads).toBe(2);
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(reads).toBe(outcome === "recovers" ? 2 : 4);
+        expect(captureState).toHaveBeenLastCalledWith(
+          outcome === "recovers" ? "saving" : "error",
+        );
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(outcome === "recovers" ? 2 : 4);
+      }
+    } finally {
+      traffic.dispose();
+    }
+  },
+);
+
 it("sorts host memory projections with the same locale collation as the broker", async () => {
   const transport = await connectNativeTransport(community);
   const agent = keypair();

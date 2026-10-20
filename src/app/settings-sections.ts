@@ -1,6 +1,7 @@
 // One Settings section policy for the standalone and shell presentations and
 // route classification. Visibility and authorization stay with settingsCards.
 import {
+  ArchiveIcon,
   BellIcon,
   ShieldIcon,
   ChatCircleIcon,
@@ -68,16 +69,23 @@ const identity: SettingsSection = {
   label: "Identity",
   icon: ShieldIcon,
 };
+const archive: SettingsSection = {
+  id: "local-archive",
+  label: "Local archive",
+  icon: ArchiveIcon,
+};
 // Keep frequent destinations first, regardless of plugin activation order.
-// Other community contributions stay together before pairing.
+// Other community contributions stay together before archive and pairing.
 const communityOrder: Readonly<Record<string, number>> = {
   "buzz.emoji/custom-emoji": 1,
+  "local-archive": 3,
   "buzz.pairing/mobile": 4,
 };
 const builtIn = new Set(
   [
     profile,
     identity,
+    archive,
     departure,
     plugins,
     ...app,
@@ -120,6 +128,7 @@ export function settingsSections(
                 ...cards
                   .filter((card) => !card.group && !card.section)
                   .map((card) => section(card, ChatCircleIcon)),
+                archive,
               ].sort(
                 (a, b) =>
                   (communityOrder[a.id] ?? 2) - (communityOrder[b.id] ?? 2),

@@ -1,4 +1,6 @@
 import { pluginAction } from "./plugin-settings.mjs";
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
@@ -266,11 +268,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   );
   await toggle.click();
   await disabled;
-  // Disabling the activity UI withdraws the only observer demand without
-  // replacing the socket or chat globals.
-  await expect
-    .poll(() => app.relay.hasRoute("primary", "observer"))
-    .toBe(false);
+  // Archive capture retains independent demand.
+  // Disabling the activity UI clears only its display evidence.
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   expect(app.relay.sockets).toHaveLength(sockets);
   await page
     .getByRole("complementary", { name: "Settings sidebar" })
@@ -287,7 +287,8 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await page
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  // Wait for the new display generation to reach the host before publishing.
+  // Capture keeps this wire alive while the display is disabled. Its existence
+  // no longer proves that the plugin's new display generation reached the host.
   const enabled = page.waitForResponse(
     (response) =>
       response.url().endsWith("/stream-observer") &&
@@ -310,7 +311,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
 
   // One terminal turn must not hide another active turn for the same agent,
   // and stale evidence is not working. The other agent's frames, observed in
-  // order, are the barrier for each transition. The route survives closing the profile.
+  // order, are the barrier for each transition. Capture survives closing the profile.
   await page
     .locator(
       '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
@@ -936,5 +937,116 @@ test.describe("thread activity", () => {
     await expect(
       page.locator("[data-agent-working-status]:not(:empty)"),
     ).toHaveCount(0);
+  });
+});
+
+// Browser-only: production broker SQLite survives document reload and the real
+// Settings confirmation clears the mounted plugin. Native process restart is tested in Rust.
+test.describe("host archive durability", () => {
+  test.use({ archiveOnDisk: true });
+  test("encrypted host history survives reload without working evidence and can be cleared", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    const key = generateSecretKey();
+    const agent = getPublicKey(key);
+    app.serveProfile(key, { name: "History agent", is_agent: true });
+    const record = app.observer(
+      activity("turn_liveness", "alpha", "saved", {
+        text: "secret-history-marker",
+      }),
+      key,
+    );
+    const composer = channelComposer(page);
+    const popup = await openWorkingNow(page, composer);
+    // The served profile may name this row; there is exactly one agent.
+    await popup
+      .getByRole("button", { name: /^Open conversation for / })
+      .hover();
+    await popup.getByRole("button", { name: /^View .+ activity$/ }).click();
+    await expectProfile(page, agent);
+    const disk = async () =>
+      Buffer.concat(
+        await Promise.all(
+          [app.archiveFile, `${app.archiveFile}-wal`].map(async (path) => {
+            try {
+              return await readFile(path);
+            } catch (error) {
+              if (error.code === "ENOENT") return Buffer.alloc(0);
+              throw error;
+            }
+          }),
+        ),
+      ).toString("utf8");
+    await expect.poll(disk).toContain(record.event.id);
+    expect(await disk()).not.toContain("secret-history-marker");
+    await open(page, app); // new document and session, same device/account/community
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    // Open through a profile: restored history must not create a working launcher.
+    const message = finalizeEvent(
+      {
+        kind: 9,
+        tags: [["h", "alpha"]],
+        content: "History profile entry",
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      key,
+    );
+    app.relay.publish("primary", message);
+    await page
+      .locator(`[data-message-id="${message.id}"]`)
+      .getByRole("button", { name: /profile/ })
+      .click();
+    await expectProfile(page, agent);
+    await expect(activityTrigger(composer)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Local archive", exact: true })
+      .click();
+    const archive = page.getByRole("region", { name: /Saved agent activity/ });
+    await expect(archive.getByText(/not in this browser/)).toBeVisible();
+    await archive
+      .getByRole("button", { name: "Clear activity history", exact: true })
+      .click();
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Clear activity history?",
+    });
+    await expect(confirmation).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("archive-clear-confirmation.png"),
+    });
+    await confirmation
+      .getByRole("button", { name: "Clear saved records" })
+      .click();
+    await expect(confirmation).toHaveCount(0);
+    const count = () => {
+      const database = new DatabaseSync(app.archiveFile, { readOnly: true });
+      try {
+        return database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM archive_events WHERE kind=24200",
+          )
+          .get().count;
+      } finally {
+        database.close();
+      }
+    };
+    expect(count()).toBe(0);
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await page.screenshot({
+      path: test.info().outputPath("archive-cleared.png"),
+    });
   });
 });

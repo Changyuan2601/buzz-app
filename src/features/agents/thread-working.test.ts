@@ -31,6 +31,7 @@ function fixture() {
     },
     () => true,
     undefined,
+    undefined,
     (id) => messages.get(id),
   );
   activity.queries.activate();

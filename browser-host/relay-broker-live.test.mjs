@@ -108,9 +108,32 @@ async function harness(
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
+  // These existing transport matrices exercise plugin-only observer demand.
+  // Capture-owned demand has its own cases below; configure it through the real API.
+  const archive = async (input) => {
+    const response = await fetch(`${base}/api/relay/archive`, {
+      method: "POST",
+      headers: { Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({ viewer: getPublicKey(key), ...input }),
+    });
+    if (!response.ok)
+      throw new Error(`Archive fixture request failed: ${response.status}`);
+    return response.json();
+  };
+  if (!options.archive) {
+    const settings = await archive({ action: "settings" });
+    await archive({
+      action: "configure",
+      observer: false,
+      metrics: false,
+      observerDays: 30,
+      revision: settings.revision,
+    });
+  }
   const controllers = [];
   return {
     key,
+    archive,
     sockets,
     requests,
     publications,
@@ -1919,8 +1942,8 @@ test("publication diagnostics separate local unsent duplicates from lost socket 
   }
 });
 
-test("live streams request no agent telemetry without plugin demand", async () => {
-  const h = await harness();
+test("host capture persists both kinds without plugin demand, toggles independently, and rejects HTTP envelope injection", async () => {
+  const h = await harness(0, undefined, { archive: true });
   // The transport uses browser Origin headers in production; Node's fetch needs them supplied.
   const original = globalThis.fetch;
   vi.stubGlobal("fetch", (input, init) =>
@@ -1935,29 +1958,81 @@ test("live streams request no agent telemetry without plugin demand", async () =
   let traffic;
   try {
     const transport = await connectBrokerTransport(h.base);
-    let snapshot;
+    const observer = vi.fn();
     traffic = transport.subscribe({
       receive() {},
-      observer() {},
-      state(value) {
-        snapshot = value;
-      },
+      observer,
+      state() {},
       established() {},
     });
-    // Routes are registered before dispatch, so a live global set is complete.
-    await until(
-      () =>
-        snapshot?.status === "connected" &&
-        ["profiles", "membership"].every((id) =>
-          snapshot.routes.some((r) => r.id === id && r.status === "live"),
-        ),
-    );
-    expect(snapshot.routes.map((r) => r.id)).not.toContain("observer");
+    await until(() => h.requests.some((r) => r.filter.kinds.includes(44200)));
+    let route = h.requests.findLast((r) => r.filter.kinds.includes(44200));
+    const agent = generateSecretKey(),
+      viewer = getPublicKey(h.key),
+      sender = getPublicKey(agent);
+    const frame = (kind, serial) =>
+      finalizeEvent(
+        {
+          kind,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ["p", viewer],
+            ["agent", sender],
+            ["frame", "telemetry"],
+          ],
+          content: nip44.v2.encrypt(
+            JSON.stringify({ kind: "turn_started", serial }),
+            nip44.v2.utils.getConversationKey(agent, viewer),
+          ),
+        },
+        agent,
+      );
+    const saved = frame(24200, 1);
+    await route.socket.receive(["EVENT", route.id, saved]);
+    await route.socket.receive(["EVENT", route.id, frame(44200, 2)]);
     expect(
-      h.requests.some((r) =>
-        r.filter.kinds.some((kind) => [24200, 44200].includes(kind)),
+      (await h.archive({ action: "read", kind: 24200 })).records.map(
+        (r) => r.id,
       ),
-    ).toBe(false);
+    ).toEqual([saved.id]);
+    expect(
+      (await h.archive({ action: "read", kind: 44200 })).records,
+    ).toHaveLength(1);
+    expect(observer).not.toHaveBeenCalled();
+    const settings = await h.archive({ action: "settings" });
+    await h.archive({
+      action: "configure",
+      observer: false,
+      metrics: true,
+      observerDays: 30,
+      revision: settings.revision,
+    });
+    await until(() =>
+      h.requests.some(
+        (r) => r.filter.kinds.length === 1 && r.filter.kinds[0] === 44200,
+      ),
+    );
+    route = h.requests.findLast((r) => r.filter.kinds.includes(44200));
+    await route.socket.receive(["EVENT", route.id, frame(24200, 3)]);
+    await route.socket.receive(["EVENT", route.id, frame(44200, 4)]);
+    expect(
+      (await h.archive({ action: "read", kind: 24200 })).records,
+    ).toHaveLength(1);
+    expect(
+      (await h.archive({ action: "read", kind: 44200 })).records,
+    ).toHaveLength(2);
+    for (const body of [
+      { action: "ingest", event: saved },
+      { action: "read", kind: 24200, events: [saved] },
+      { action: "read", kind: 24200, viewer: "f".repeat(64) },
+    ]) {
+      const response = await original(`${h.base}/api/relay/archive`, {
+        method: "POST",
+        headers: { Origin: h.base, "Content-Type": "application/json" },
+        body: JSON.stringify({ viewer, ...body }),
+      });
+      expect(response.status).toBe(400);
+    }
   } finally {
     traffic?.dispose();
     vi.unstubAllGlobals();

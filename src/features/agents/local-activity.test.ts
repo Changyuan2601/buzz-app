@@ -24,6 +24,7 @@ it("projects one local source into channel, exact thread and message without nee
     (channel) => allowed && channel === "channel",
     undefined,
     undefined,
+    undefined,
     { source: local.reader, scope },
   );
   const snapshot = activity.queries.snapshot;
@@ -343,6 +344,7 @@ it("offers Stop through the session only for this scope and accessible channels,
     (channel) => allowed && channel === "channel",
     undefined,
     undefined,
+    undefined,
     { source: local.reader, scope },
   );
   const snapshot = activity.queries.snapshot;
@@ -388,6 +390,7 @@ it("cannot stop work from a source that has no way to interrupt", async () => {
     false,
     () => {},
     () => true,
+    undefined,
     undefined,
     undefined,
     { source: reader, scope },

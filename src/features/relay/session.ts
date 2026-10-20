@@ -800,6 +800,12 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
+    transport?.activityArchive
+      ? {
+          host: transport.activityArchive,
+          canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
+        }
+      : undefined,
     (id) => recent.peek(id)?.event ?? retainedEvent(id),
     options.localAgents && transport
       ? { source: options.localAgents, scope: transportPartition(transport) }
@@ -2617,6 +2623,7 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
+    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       reminders?.receive(events);
@@ -2887,9 +2894,10 @@ export function createRelaySession(
       if (activityRosterKey === key) activityRosterKey = undefined;
     });
   };
-  const stopActivityRoster = channels.queries.subscribeList(
-    refreshChannelActivity,
-  );
+  const stopActivityRoster = channels.queries.subscribeList(() => {
+    refreshChannelActivity();
+    activity.restoreHistory();
+  });
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
   );
@@ -2910,7 +2918,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        activity.clear();
+        const activityCleared = activity.queries.clearHistory();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -2937,7 +2945,10 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        const results = await Promise.allSettled([channels.clearCache()]);
+        const results = await Promise.allSettled([
+          channels.clearCache(),
+          activityCleared,
+        ]);
         updateInterests();
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;

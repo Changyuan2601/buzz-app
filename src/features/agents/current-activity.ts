@@ -107,9 +107,9 @@ export function currentActivity(
     )
       add(entry.pubkey, entry.threadRootId ?? null);
   }
-  const records = snapshot?.records ?? [];
+  const live = snapshot?.records.filter((record) => !record.historical) ?? [];
   for (const agent of new Set(working.map((turn) => turn.agent))) {
-    const transcript = activityTranscript(records, { agent, channelId }).turns;
+    const transcript = activityTranscript(live, { agent, channelId }).turns;
     const tools: ToolItem[] = [];
     for (const evidence of working.filter((turn) => turn.agent === agent)) {
       const turn = transcript.find((turn) => turn.turnId === evidence.turnId);

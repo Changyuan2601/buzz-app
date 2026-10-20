@@ -26,7 +26,7 @@ export function requestWork(
   channelId: string,
   messageId: string | readonly string[],
 ) {
-  const { records } = snapshot;
+  const records = snapshot.records.filter((record) => !record.historical);
   const ids = new Set(typeof messageId === "string" ? [messageId] : messageId);
   const requests = (snapshot.local ?? []).filter(
     (request) => request.channelId === channelId && ids.has(request.messageId),
