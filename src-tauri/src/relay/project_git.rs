@@ -141,7 +141,6 @@ pub(crate) async fn relay_project_git(
             Ok(header)
         };
         let response = serve(&url, &read, cancelled, proof, lease).await;
-        super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
         response
     }
     .await;
@@ -187,10 +186,9 @@ async fn serve(
     auth: impl Future<Output = Result<String>>,
     lease: Option<(FederatedIdentity, Authorization)>,
 ) -> Result<RelayResponse> {
-    let deadline = Instant::now()
-        + lease.as_ref().map_or(DEADLINE, |(_, authorization)| {
-            DEADLINE.min(authorization.remaining())
-        });
+    // The assertion gates admission of this read. It must not become an
+    // operation timeout: a Git read dispatched before expiry may finish after it.
+    let deadline = Instant::now() + DEADLINE;
     let retirement = lease
         .as_ref()
         .map(|(fi, authorization)| fi.authorization_cancellation(authorization))
@@ -207,11 +205,7 @@ async fn serve(
             .prefix("buzz-project-read-")
             .tempdir()
             .map_err(|_| "Repository read failed")?;
-        let mut git = Git::new(directory.path(), &header, url, deadline, stop);
-        git.admission = lease.map(|(fi, authorization)| {
-            Box::new(move || fi.authorization_current(&authorization))
-                as Box<dyn Fn() -> bool + Send + Sync>
-        });
+        let git = Git::new(directory.path(), &header, url, deadline, stop);
         let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
@@ -279,7 +273,6 @@ struct Git {
     deadline: Instant,
     stop: watch::Receiver<bool>,
     store_bytes: u64,
-    admission: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 
 /// Only the Git read has this macOS availability rule. The Apple shim is an
@@ -376,7 +369,6 @@ impl Git {
             deadline,
             stop,
             store_bytes: STORE_BYTES,
-            admission: None,
         }
     }
 
@@ -455,7 +447,7 @@ impl Git {
     }
 
     fn retired(&self) -> bool {
-        *self.stop.borrow() || self.admission.as_ref().is_some_and(|current| !current())
+        *self.stop.borrow()
     }
     async fn over_budget(&self) -> u16 {
         loop {

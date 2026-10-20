@@ -8,6 +8,7 @@ import { SettingsCardsService } from "../settings/service";
 import { ShortcutsService } from "../shortcuts/service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
+import { FederatedIdentityService } from "../federated-identity/service";
 import * as channelsPlugin from "../../bundled/channels";
 import * as githubPlugin from "../../bundled/github";
 import { flush } from "../relay/testing";
@@ -31,6 +32,7 @@ it("independently unloads panels without removing the page or shared data", asyn
     panels = new PanelsService(root);
   new ConversationService(root);
   new SettingsCardsService(root);
+  new FederatedIdentityService(root);
   // Channels owns the New conversation and Archive chat shortcuts.
   new ShortcutsService(root);
   // Channels adds teams of agents from the members dialog.

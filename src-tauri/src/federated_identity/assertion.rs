@@ -43,11 +43,6 @@ impl Authorization {
             .as_ref()
             .map(|assertion| assertion.header.as_str())
     }
-    pub(crate) fn remaining(&self) -> std::time::Duration {
-        self.assertion
-            .as_ref()
-            .map_or(std::time::Duration::MAX, Assertion::remaining)
-    }
 }
 impl Assertion {
     pub(crate) fn remaining(&self) -> std::time::Duration {
@@ -61,6 +56,7 @@ impl Assertion {
 pub(super) struct Acquisition {
     completed: AtomicU64,
     result: Mutex<Option<Result<Assertion, Failure>>>,
+    retry_at: Mutex<Option<tokio::time::Instant>>,
 }
 pub(super) type AssertionCache = std::collections::HashMap<String, Arc<Acquisition>>;
 
@@ -301,12 +297,32 @@ impl FederatedIdentity {
             self.admit_authorization(identity, &authorization).await?;
             return Ok(authorization);
         }
+        if let Some(Err(failure)) = cached.as_ref() {
+            // Refusals and malformed responses are sticky for this session,
+            // viewer and relay. Transport failures may retry after a short
+            // cooldown; protocol::json already bounds retries within a call.
+            if !matches!(failure.code, "network-unavailable" | "network-timeout") {
+                return Err(failure.code.into());
+            }
+            let mut retry_at = entry.retry_at.lock().await;
+            if retry_at.is_some_and(|retry_at| tokio::time::Instant::now() < retry_at) {
+                return Err(failure.code.into());
+            }
+            *retry_at = None;
+        }
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err("Federated session changed".into()),
             result = self.issue(identity, &relay, &viewer, &revision, &session.record.session_token, expiry(&session.record.expires_at).map_err(str::to_owned)? as u64) => result,
         };
         *cached = Some(result.clone());
         entry.completed.fetch_add(1, Ordering::Release);
+        if result
+            .as_ref()
+            .is_err_and(|failure| matches!(failure.code, "network-unavailable" | "network-timeout"))
+        {
+            *entry.retry_at.lock().await =
+                Some(tokio::time::Instant::now() + std::time::Duration::from_secs(2));
+        }
         match result {
             Ok(assertion) => {
                 authorization.assertion = Some(assertion);
@@ -356,17 +372,16 @@ impl FederatedIdentity {
         }
         Ok(())
     }
-    pub(crate) fn authorization_current(&self, authorization: &Authorization) -> bool {
-        self.discovery_current(authorization)
-            && authorization.assertion.as_ref().is_none_or(|assertion| {
-                self.current(&assertion.revision)
-                    && now().is_ok_and(|time| (time as u64) < assertion.expires_at)
-            })
-    }
     fn discovery_current(&self, authorization: &Authorization) -> bool {
         !authorization.discovery.stop.is_cancelled()
             && (authorization.socket
                 || self.current_discovery(&authorization.relay, &authorization.discovery))
+    }
+    pub(crate) fn authorization_session_current(&self, authorization: &Authorization) -> bool {
+        authorization
+            .assertion
+            .as_ref()
+            .is_none_or(|assertion| self.current(&assertion.revision))
     }
     pub(crate) fn authorization_cancellation(
         &self,
@@ -374,7 +389,9 @@ impl FederatedIdentity {
     ) -> Result<CancellationToken, String> {
         match &authorization.assertion {
             Some(assertion) => self.cancellation_for(&assertion.revision),
-            None => Ok(authorization.discovery.stop.clone()),
+            // Discovery owns admission of a new operation. Once dispatched, a
+            // socket reconnect must not cancel the operation already in flight.
+            None => Ok(CancellationToken::new()),
         }
     }
     pub(crate) async fn admit_authorization(
@@ -401,19 +418,13 @@ impl FederatedIdentity {
         operation: impl std::future::Future<Output = T>,
     ) -> Result<T, String> {
         self.admit_authorization(identity, authorization).await?;
-        let guarded = async {
-            if let Some(assertion) = &authorization.assertion {
-                self.during(identity, assertion, operation).await
-            } else {
-                Ok(operation.await)
-            }
-        };
-        let result = tokio::select! {
-            _ = authorization.discovery.stop.cancelled() => return Err("Federated community discovery changed".into()),
-            result = guarded => result?,
-        };
-        self.admit_authorization(identity, authorization).await?;
-        Ok(result)
+        if let Some(assertion) = &authorization.assertion {
+            self.during(identity, assertion, operation).await
+        } else {
+            // A socket closing retires its connection generation, not an ordinary
+            // request already admitted against that relay's public decision.
+            Ok(operation.await)
+        }
     }
     pub(crate) async fn admit_response(
         &self,
@@ -421,13 +432,22 @@ impl FederatedIdentity {
         authorization: &Authorization,
         mutation: bool,
     ) -> Result<(), String> {
-        self.admit_authorization(identity, authorization).await.map_err(|error| {
-            if mutation {
-                "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.".into()
-            } else {
-                error
-            }
-        })
+        let Some(assertion) = &authorization.assertion else {
+            return Ok(());
+        };
+        let current = self.current(&assertion.revision)
+            && identity
+                .viewer()
+                .await
+                .is_ok_and(|viewer| viewer == assertion.viewer);
+        if current {
+            return Ok(());
+        }
+        if mutation {
+            Err("Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.".into())
+        } else {
+            Err("Federated authorization changed".into())
+        }
     }
     pub(crate) async fn reject_assertion(&self, assertion: &Assertion) {
         let key = format!(
@@ -460,13 +480,13 @@ impl FederatedIdentity {
     ) -> Result<T, String> {
         self.admit_assertion(identity, assertion).await?;
         let cancel = self.cancellation_for(&assertion.revision)?;
-        let remaining = assertion.remaining();
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err("Federated authorization changed".into()),
-            _ = tokio::time::sleep(remaining) => return Err("Federated authorization expired".into()),
             result = operation => result,
         };
-        self.admit_assertion(identity, assertion).await?;
+        if !self.current(&assertion.revision) || identity.viewer().await? != assertion.viewer {
+            return Err("Federated authorization changed".into());
+        }
         Ok(result)
     }
     async fn issue(
@@ -701,15 +721,16 @@ mod tests {
                 .as_deref(),
             Some("Federated community discovery changed")
         );
-        assert_eq!(
-            host.admit_response(&identity, &authorization, false)
-                .await
-                .err()
-                .as_deref(),
-            Some("Federated community discovery changed")
-        );
-        assert_eq!(host.admit_response(&identity, &authorization, true).await.err().as_deref(),
-            Some("Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying."));
+        // A completed public operation keeps its result even after the
+        // discovery generation changes; only new work is fenced.
+        assert!(host
+            .admit_response(&identity, &authorization, false)
+            .await
+            .is_ok());
+        assert!(host
+            .admit_response(&identity, &authorization, true)
+            .await
+            .is_ok());
     }
     #[tokio::test]
     async fn ordinary_operations_reuse_the_connection_discovery_without_a_network_round_trip() {
@@ -1076,6 +1097,76 @@ mod tests {
         );
     }
     #[tokio::test(start_paused = true)]
+    async fn assertion_expiry_during_an_admitted_operation_does_not_discard_its_result() {
+        use super::super::tests::{host, record, Memory};
+        let host = host(Arc::new(Memory::default()));
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        {
+            let mut state = host.state();
+            state.session = Some(record());
+            state.snapshot.status = Status::SignedIn;
+            state.restored = true;
+        }
+        let assertion = Assertion {
+            header: Zeroizing::new("Bearer fixture".into()),
+            expires_at: now().unwrap() as u64 + 1,
+            revision: host.snapshot().revision,
+            viewer,
+            relay: "wss://relay.example".into(),
+            refresh_at: 0,
+        };
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let worker = host.clone();
+        let task = tokio::spawn(async move {
+            worker
+                .during(&identity, &assertion, async {
+                    let _ = started.send(());
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    42
+                })
+                .await
+        });
+        observed.await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        assert_eq!(task.await.unwrap().unwrap(), 42);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn closing_a_socket_does_not_cancel_an_admitted_public_request() {
+        use super::super::tests::{host, Memory};
+        let host = host(Arc::new(Memory::default()));
+        let identity = IdentityHost::fixture();
+        let connection_stop = CancellationToken::new();
+        let discovery = host
+            .discovery_generation(
+                "wss://relay.example",
+                Some(("socket-1".into(), connection_stop)),
+            )
+            .unwrap();
+        discovery.result.set(Ok(false)).unwrap();
+        let authorization = Authorization {
+            assertion: None,
+            relay: "wss://relay.example".into(),
+            discovery,
+            socket: false,
+        };
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let worker = host.clone();
+        let task = tokio::spawn(async move {
+            worker
+                .during_authorization(&identity, &authorization, async {
+                    let _ = started.send(());
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    42
+                })
+                .await
+        });
+        observed.await.unwrap();
+        host.close_discovery("socket-1");
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        assert_eq!(task.await.unwrap().unwrap(), 42);
+    }
+    #[tokio::test(start_paused = true)]
     async fn retirement_interrupts_a_pending_protected_operation_before_its_late_result() {
         use super::super::tests::{host, record, Memory};
         let host = host(Arc::new(Memory::default()));
@@ -1120,5 +1211,32 @@ mod tests {
             late.send(()).is_err(),
             "the retired operation must be dropped"
         );
+    }
+    #[tokio::test]
+    async fn malformed_assertion_response_is_cached_without_reissuing_on_each_operation() {
+        use super::super::tests::{adapter, at_adapter, record, Memory};
+        let (base, server) = adapter(vec![serde_json::json!({"unexpected": true})]).await;
+        let host = at_adapter(Arc::new(Memory::default()), base);
+        let identity = IdentityHost::fixture();
+        {
+            let mut state = host.state();
+            state.session = Some(record());
+            state.snapshot.status = Status::SignedIn;
+            state.restored = true;
+        }
+        let relay = "wss://relay.example";
+        let discovery = host.discovery_generation(relay, None).unwrap();
+        discovery.result.set(Ok(true)).unwrap();
+        let url = Url::parse(relay).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                host.assertion_for_relay(&identity, &url)
+                    .await
+                    .err()
+                    .as_deref(),
+                Some("invalid-response")
+            );
+        }
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 }

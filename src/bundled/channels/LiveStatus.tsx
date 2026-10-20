@@ -1,5 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
+import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import {
   RECOVERY_TITLE,
   RetryNowButton,
@@ -16,6 +18,7 @@ export function LiveStatus({
   diagnostics = false,
   recovery,
   onRecovered,
+  federatedIdentity,
 }: {
   live: RelaySession["live"];
   channelId: string | undefined;
@@ -26,6 +29,7 @@ export function LiveStatus({
   recovery?: RelaySession["recovery"];
   /** A recovery or retry control that had focus went away; move focus on. */
   onRecovered?: (() => void) | undefined;
+  federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const { recovering: retrying, shown } = useInlineRecovery(
     diagnostics ? undefined : recovery,
@@ -153,6 +157,11 @@ export function LiveStatus({
         <p className="text-body-sm text-subtle">
           {reason} Only currently accessible messages remain readable.
         </p>
+        <CommunitySignIn
+          identity={federatedIdentity}
+          error={error}
+          retry={() => live.retry()}
+        />
       </div>
       {manual && (
         <Button

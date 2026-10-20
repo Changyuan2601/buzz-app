@@ -82,6 +82,7 @@ pub(crate) struct Paths {
     /// Agent ownership locks; an erase waits until none is held.
     ownership: PathBuf,
     app_data: PathBuf,
+    backups: PathBuf,
     /// Other app-owned folders: local data and WebView storage, caches.
     others: Vec<PathBuf>,
 }
@@ -125,6 +126,7 @@ impl Paths {
             key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_SERVICE)),
             ownership: data.join(AGENT_OWNERSHIP),
             app_data,
+            backups: crate::nsec_backup_choice::root()?,
             others,
         })
     }
@@ -133,6 +135,7 @@ impl Paths {
         let kept = if choices.remove_agents { &[] } else { KEPT };
         std::iter::once((self.app_data.as_path(), kept))
             .chain(self.others.iter().map(|path| (path.as_path(), &[] as Kept)))
+            .chain(std::iter::once((self.backups.as_path(), &[] as Kept)))
             .collect()
     }
     /// The wipe never deletes through a link: every folder it moves, opens or
@@ -145,6 +148,10 @@ impl Paths {
         }
         if !choices.wipe {
             return Ok(());
+        }
+        // This target is outside app data; refuse links in its shared parents too.
+        for parent in self.backups.ancestors().take(3) {
+            real_dir(parent)?;
         }
         for (path, kept) in self.targets(choices) {
             for path in [path.to_owned(), trash(path)] {

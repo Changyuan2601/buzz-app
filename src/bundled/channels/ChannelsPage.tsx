@@ -87,6 +87,7 @@ import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
 export type ArchiveShortcut = {
@@ -102,6 +103,7 @@ export function ChannelsPage({
   navigator,
   agents,
   archive,
+  federatedIdentity,
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
@@ -113,6 +115,7 @@ export function ChannelsPage({
   /** The open Solo conversation's Archive, for the Archive chat shortcut. */
   archive?: ArchiveShortcut | undefined;
   companion?: ReactNode;
+  federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const session = useRelayConnection(relay);
   const sessionNavigation = navigation?.forSession(relay, session);
@@ -154,6 +157,7 @@ export function ChannelsPage({
           archive={archive}
           companion={companion}
           agents={agents}
+          federatedIdentity={federatedIdentity}
         />
       )}
     </section>
@@ -173,6 +177,7 @@ function ChannelWorkspace({
   viewer,
   agents,
   archive,
+  federatedIdentity,
 }: {
   extensions?: ConversationExtensions | undefined;
   agents?: Agents | undefined;
@@ -186,6 +191,7 @@ function ChannelWorkspace({
   relay: RelayData;
   panels: Panels;
   archive?: ArchiveShortcut | undefined;
+  federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const composingMessage =
     navigation?.target.kind === "page" &&
@@ -1287,6 +1293,7 @@ function ChannelWorkspace({
         channelId={current?.id}
         partialRoster={list.coverage === "partial"}
         diagnostics
+        federatedIdentity={federatedIdentity}
       />
       <p>
         {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
@@ -1406,6 +1413,7 @@ function ChannelWorkspace({
           recovery={queries.recovery}
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
+          federatedIdentity={federatedIdentity}
           // Recovery removes the focused retry control. Hand focus on
           // explicitly; previews have no composer, so use their history.
           onRecovered={

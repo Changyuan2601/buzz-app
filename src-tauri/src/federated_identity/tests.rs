@@ -143,6 +143,61 @@ async fn failed_sign_out_refuses_the_record_on_restart_until_deletion_succeeds()
 }
 
 #[tokio::test]
+async fn expired_record_deletion_failure_blocks_login_until_cleanup_retries() {
+    let store = Arc::new(Memory::default());
+    let expired_record = Record {
+        version: 1,
+        fingerprint: "fingerprint".into(),
+        revision: uuid::Uuid::new_v4().to_string(),
+        session_token: "expired-session-token".into(),
+        expires_at: "2000-01-01T00:00:00Z".into(),
+        email: None,
+    };
+    let raw = Zeroizing::new(serde_json::to_vec(&expired_record).unwrap());
+    let expired = Arc::new(Session {
+        record: expired_record,
+        raw,
+    });
+    *store.raw.lock().unwrap() = Some(expired.raw.clone());
+    let owner = host(store.clone());
+    {
+        let mut state = owner.state();
+        state.session = Some(expired);
+        state.snapshot.status = Status::SignedIn;
+        state.restored = true;
+    }
+
+    store.denied.store(true, Ordering::SeqCst);
+    let blocked = owner.restore().await;
+    assert!(blocked.status == Status::Unavailable);
+    assert!(!owner.state().restored);
+    assert!(store.raw.lock().unwrap().is_some());
+    assert!(store.refusal.lock().unwrap().is_some());
+
+    store.denied.store(false, Ordering::SeqCst);
+    assert!(owner.restore().await.status == Status::SignedOut);
+    assert!(store.raw.lock().unwrap().is_none());
+    assert!(store.refusal.lock().unwrap().is_none());
+}
+
+#[test]
+fn windows_record_limit_includes_serialized_fields_and_stays_under_the_native_blob_cap() {
+    assert!(fits_windows_credential_record(&vec![b'a'; 1280]));
+    assert!(!fits_windows_credential_record(&vec![b'a'; 1281]));
+    let mut record = Record {
+        version: 1,
+        fingerprint: "fingerprint".into(),
+        revision: uuid::Uuid::new_v4().to_string(),
+        session_token: "t".repeat(1200),
+        expires_at: "2030-01-01T00:00:00Z".into(),
+        email: Some("a@example.com".into()),
+    };
+    let raw = Zeroizing::new(serde_json::to_vec(&record).unwrap());
+    assert!(!fits_windows_credential_record(&raw));
+    record.session_token.zeroize();
+}
+
+#[tokio::test]
 async fn stale_cleanup_cannot_delete_a_replacement_session() {
     let store = Arc::new(Memory::default());
     let old = record();

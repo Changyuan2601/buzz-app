@@ -7,6 +7,7 @@ afterEach(() => {
 });
 import { renderToStaticMarkup } from "react-dom/server";
 import type { RelaySession } from "../../features/relay/session";
+import { federatedFixture } from "../../features/federated-identity/testing";
 import { LiveStatus } from "./LiveStatus";
 
 type Snapshot = ReturnType<RelaySession["live"]["snapshot"]>;
@@ -42,6 +43,7 @@ function render(
   partialRoster = false,
   diagnostics = false,
   recovery: "idle" | "shown" = "idle",
+  federatedIdentity?: ReturnType<typeof federatedFixture>["service"],
 ) {
   const snapshot: Snapshot = { ...base, ...patch };
   const live = {
@@ -56,6 +58,7 @@ function render(
       partialRoster={partialRoster}
       diagnostics={diagnostics}
       recovery={recoveryIn(recovery)}
+      federatedIdentity={federatedIdentity}
     />
   );
   if (diagnostics) return renderToStaticMarkup(component);
@@ -63,6 +66,34 @@ function render(
   mount(component);
   return screen.queryByRole("status")?.textContent ?? "";
 }
+it("offers explicit federated sign-in for a protected relay refusal", async () => {
+  const identity = federatedFixture();
+  const retry = vi.fn();
+  const snapshot = {
+    status: "error" as const,
+    routes: [],
+    roster: { state: "pending" as const },
+    heads: [],
+    error: "Federated sign-in is required",
+  };
+  const live = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry,
+  };
+  mount(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      federatedIdentity={identity.service}
+    />,
+  );
+  await screen
+    .findByRole("button", { name: "Sign in" })
+    .then((button) => button.click());
+  await vi.waitFor(() => expect(retry).toHaveBeenCalledOnce());
+});
 it.each<Partial<Snapshot>>([
   {},
   { status: "connecting", routes: [] },

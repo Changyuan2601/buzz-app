@@ -16,7 +16,7 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
 export const inject = ["host", "federatedIdentity", "settingsCards", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -97,7 +97,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
         !active ||
         providerRegistered ||
         unavailable ||
-        ctx.federatedIdentity.snapshot().status !== "unconfigured"
+        (nativeIdentityEnabled() &&
+          ctx.federatedIdentity.snapshot().status !== "unconfigured")
       )
         return;
       providerRegistered = true;
@@ -128,7 +129,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.effect(() =>
     session.subscribe(() => {
       if (
-        ctx.federatedIdentity.snapshot().status !== "unconfigured" ||
+        (nativeIdentityEnabled() &&
+          ctx.federatedIdentity.snapshot().status !== "unconfigured") ||
         session.snapshot().status !== "signed-in"
       )
         return;
@@ -141,18 +143,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   ctx.settingsCards.register({
     id: "login",
-    title: "Builderlab",
-    group: "Integrations",
+    title: "Builderlab agents",
+    group: "Plugins",
     component: ({ active }) => (
-      <BuilderlabSettings
-        identity={ctx.federatedIdentity}
-        federatedSession={federatedSession}
-        legacySession={session}
-        legacyAgents={agents}
-        legacyUnavailable={unavailable}
-        loginAvailable={loginAvailable}
-        active={active}
-      />
+      <section aria-labelledby="builderlab-agents-title">
+        <Header id="builderlab-agents-title" title="Builderlab agents" />
+        <BuilderlabSettings
+          identity={ctx.federatedIdentity}
+          federatedSession={federatedSession}
+          legacySession={session}
+          legacyAgents={agents}
+          legacyUnavailable={unavailable}
+          loginAvailable={loginAvailable}
+          active={active}
+        />
+      </section>
     ),
   });
 };
@@ -179,7 +184,7 @@ function BuilderlabSettings({
     identity.snapshot,
     identity.snapshot,
   );
-  if (state.status === "unconfigured")
+  if (!nativeIdentityEnabled() || state.status === "unconfigured")
     return (
       <>
         <LegacyLogin

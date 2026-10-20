@@ -67,6 +67,16 @@ struct Session {
     record: Record,
     raw: Zeroizing<Vec<u8>>,
 }
+// keyring 3.6.3 maps Windows passwords to CRED_MAX_CREDENTIAL_BLOB_SIZE
+// (2560 bytes) and checks UTF-16 storage. This conservative byte bound includes
+// the serialized FI record, not only the adapter token.
+#[cfg(any(windows, test))]
+const WINDOWS_CREDENTIAL_RECORD_LIMIT: usize = 1280;
+#[cfg(any(windows, test))]
+fn fits_windows_credential_record(raw: &[u8]) -> bool {
+    std::str::from_utf8(raw)
+        .is_ok_and(|value| value.encode_utf16().count() <= WINDOWS_CREDENTIAL_RECORD_LIMIT)
+}
 #[derive(Clone)]
 struct CallbackGuard(crate::oauth_callback::OAuthCallbackHost, String);
 impl Drop for CallbackGuard {
@@ -319,6 +329,14 @@ impl FederatedIdentity {
         if let Some((session, revision)) = expired {
             if let Err(failure) = self.remove(session).await {
                 self.change_current(&revision, Status::Unavailable, Some(failure.code));
+                let mut state = self.state();
+                if !state.closed && state.snapshot.revision == revision {
+                    // Do not open another browser while the old secure record
+                    // still occupies the compare-and-swap slot. A later
+                    // restore/sign-in retries the durable refusal and delete.
+                    state.restored = false;
+                }
+                return revision;
             }
         }
         if self.0.config.is_none() || self.state().restored || self.state().closed {
@@ -550,6 +568,10 @@ impl FederatedIdentity {
             return Err("session-changed".into());
         }
         let raw = Zeroizing::new(serde_json::to_vec(&record).map_err(|_| "storage-corrupt")?);
+        #[cfg(windows)]
+        if !fits_windows_credential_record(&raw) {
+            return Err("session-too-large".into());
+        }
         let session = Arc::new(Session { record, raw });
         let saved = session.clone();
         self.storage(move |store| store.compare(None, Some(&saved.raw)))

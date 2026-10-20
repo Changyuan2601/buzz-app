@@ -395,7 +395,7 @@ async fn run(
         check_cancelled(&stop, &touched)?;
         let (socket, peers) = tokio::select! {
             _ = stop.changed() => return Err("Huddle cancelled".into()),
-            result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
+            result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, fi, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
         };
         check_cancelled(&stop, &touched)?;
         if !creating && !room_membership_confirmed {

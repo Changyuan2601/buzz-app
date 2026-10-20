@@ -109,7 +109,10 @@ pub(crate) async fn relay_socket_connect(
             result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async_with_config(request, Some(config), false)) => match result.map_err(|_| "Native socket timed out")? {
                 Ok(connection) => connection,
                 Err(error) => {
-                    if matches!(error, tokio_tungstenite::tungstenite::Error::Http(ref response) if response.status() == 401) { fi.reject_assertion(&assertion).await; }
+                    if matches!(error, tokio_tungstenite::tungstenite::Error::Http(ref response) if response.status() == 401) {
+                        fi.reject_assertion(&assertion).await;
+                        return Err("authorization-denied".into());
+                    }
                     return Err("Native socket upgrade refused".into());
                 }
             },

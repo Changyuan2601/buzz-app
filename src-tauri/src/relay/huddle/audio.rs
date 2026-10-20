@@ -1,4 +1,5 @@
 use super::{now, template, Call, Channel, IdentityHost, Result, Update};
+use crate::federated_identity::{assertion::HEADER, FederatedIdentity};
 use buzz_audio_client::{
     connection::{self, AudioSocket as Socket},
     encoder::AudioEncoder,
@@ -11,9 +12,32 @@ use serde_json::json;
 use serde_json::Value;
 use std::{collections::BTreeMap, time::Duration};
 use tokio::sync::{mpsc, watch};
-use tokio_tungstenite::{tungstenite::Message, Connector};
+use tokio_tungstenite::{
+    connect_async_tls_with_config,
+    tungstenite::{client::IntoClientRequest, protocol::WebSocketConfig, Message},
+    Connector,
+};
 
 type Peers = BTreeMap<u8, String>;
+
+fn websocket_request(
+    url: &url::Url,
+    assertion: Option<&str>,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| "Invalid Huddle WebSocket request")?;
+    if let Some(assertion) = assertion {
+        request.headers_mut().insert(
+            HEADER,
+            assertion
+                .parse()
+                .map_err(|_| "Invalid federated authorization")?,
+        );
+    }
+    Ok(request)
+}
 
 fn tls_config() -> Result<std::sync::Arc<rustls::ClientConfig>> {
     static CONFIG: std::sync::OnceLock<Result<std::sync::Arc<rustls::ClientConfig>>> =
@@ -47,6 +71,7 @@ fn roster(value: &Value) -> Result<Peers> {
 }
 pub(super) async fn connect(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     call: &Call,
     room: &str,
 ) -> Result<(Socket, Peers)> {
@@ -55,12 +80,34 @@ pub(super) async fn connect(
     // Use the same origin string as the existing desktop v2 client for NIP-42.
     let relay = url.as_str().trim_end_matches('/').to_owned();
     url.set_path(&format!("/huddle/{room}/audio"));
-    let joined = connection::connect(
-        url.as_str(),
-        Some(&call.parent),
-        Some(Connector::Rustls(tls_config()?)),
-        |challenge| async move {
-            host.sign(template(
+    let authorization = fi.assertion_for_relay(host, &url).await?;
+    fi.admit_authorization(host, &authorization).await?;
+    let joined = tokio::time::timeout(Duration::from_secs(15), async {
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(65_536))
+            .max_frame_size(Some(65_536));
+        let request = websocket_request(&url, authorization.header())?;
+        let (mut socket, _) = connect_async_tls_with_config(
+            request,
+            Some(config),
+            false,
+            Some(Connector::Rustls(tls_config()?)),
+        )
+        .await
+        .map_err(|_| "Huddle WebSocket connection failed")?;
+        let challenge = tokio::time::timeout(Duration::from_secs(5), control(&mut socket))
+            .await
+            .map_err(|_| "Huddle challenge timed out")??;
+        if challenge["type"] != "challenge" {
+            return Err("Invalid Huddle handshake".into());
+        }
+        let challenge = challenge["challenge"]
+            .as_str()
+            .filter(|value| !value.is_empty() && value.len() <= 4096)
+            .ok_or("Invalid Huddle challenge")?
+            .to_owned();
+        let event = host
+            .sign(template(
                 22242,
                 vec![
                     vec!["relay".into(), relay],
@@ -68,10 +115,42 @@ pub(super) async fn connect(
                 ],
                 String::new(),
             ))
+            .await?;
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "auth",
+                    "event": event,
+                    "parent_channel_id": call.parent,
+                    "protocol_version": buzz_audio_client::wire::PROTOCOL_VERSION,
+                })
+                .to_string()
+                .into(),
+            ))
             .await
-        },
-    )
-    .await?;
+            .map_err(|_| "Huddle authentication failed")?;
+        let admission = tokio::time::timeout(Duration::from_secs(5), control(&mut socket))
+            .await
+            .map_err(|_| "Huddle admission timed out")??;
+        if admission["type"] != "joined" {
+            return Err("Huddle admission was not confirmed".into());
+        }
+        let index = admission["peer_index"]
+            .as_u64()
+            .and_then(|value| u8::try_from(value).ok())
+            .ok_or("Invalid Huddle publisher index")?;
+        let peers = connection::parse_peers(&admission)?;
+        Ok::<_, String>(buzz_audio_client::connection::Joined {
+            socket,
+            index,
+            peers,
+        })
+    })
+    .await
+    .map_err(|_| "Huddle connection timed out")??;
+    if !fi.authorization_session_current(&authorization) {
+        return Err("Federated authorization changed".into());
+    }
     Ok((
         joined.socket,
         joined
@@ -80,6 +159,32 @@ pub(super) async fn connect(
             .map(|p| (p.index, p.pubkey))
             .collect(),
     ))
+}
+
+async fn control(socket: &mut buzz_audio_client::connection::AudioSocket) -> Result<Value> {
+    loop {
+        match socket.next().await {
+            Some(Ok(Message::Text(text))) => {
+                let value: Value =
+                    serde_json::from_str(&text).map_err(|_| "Invalid Huddle response")?;
+                if value["type"] == "error" {
+                    return Err(value["message"]
+                        .as_str()
+                        .unwrap_or("Huddle rejected by relay")
+                        .chars()
+                        .take(240)
+                        .collect());
+                }
+                return Ok(value);
+            }
+            Some(Ok(Message::Ping(data))) => socket
+                .send(Message::Pong(data))
+                .await
+                .map_err(|_| "Huddle disconnected")?,
+            Some(Ok(Message::Pong(_))) => {}
+            _ => return Err("Huddle disconnected during admission".into()),
+        }
+    }
 }
 
 struct Receiver {
@@ -242,6 +347,21 @@ mod tests {
     #[test]
     fn tls_uses_an_explicit_provider_with_system_trust() {
         assert!(tls_config().is_ok());
+    }
+
+    #[test]
+    fn websocket_upgrade_attaches_only_the_scoped_assertion() {
+        let url = url::Url::parse("wss://community.example/huddle/room/audio").unwrap();
+        let protected = websocket_request(&url, Some("Bearer scoped-assertion")).unwrap();
+        assert_eq!(
+            protected.headers().get(HEADER).unwrap(),
+            "Bearer scoped-assertion"
+        );
+        assert_eq!(protected.headers().get_all(HEADER).iter().count(), 1);
+        assert!(protected.headers().get("Authorization").is_none());
+
+        let public = websocket_request(&url, None).unwrap();
+        assert!(public.headers().get(HEADER).is_none());
     }
 
     #[test]

@@ -19,6 +19,7 @@ export const inject = [
   "settingsCards",
   "agents",
   "shortcuts",
+  "federatedIdentity",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerSharedSessions(ctx);
@@ -93,6 +94,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         companion={companion}
         agents={agents}
+        federatedIdentity={ctx.federatedIdentity}
       />
     ),
   });

@@ -1,4 +1,5 @@
 import { nativeSocket } from "./native-socket";
+import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -335,6 +336,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const searchSort =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-search-sort");
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -391,6 +395,10 @@ export async function connectNativeTransport(
   });
   return {
     ...transport,
+    // Capabilities describe implemented host operations, not everything this key can sign.
+    audienceAuthorityCommunity: audienceAuthorityCommunity(
+      info.audience_authority,
+    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -770,6 +778,7 @@ export async function connectNativeTransport(
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
+    ...(searchSort ? { searchSort: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
