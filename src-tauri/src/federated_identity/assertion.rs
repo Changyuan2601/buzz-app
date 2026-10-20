@@ -318,6 +318,7 @@ impl FederatedIdentity {
                     let mut state = self.state();
                     if !state.closed && state.snapshot.revision == revision {
                         if failure.session_denied {
+                            self.signal(super::SessionChange::Expired);
                             self.retire_state(
                                 &mut state,
                                 Status::ReauthenticationRequired,

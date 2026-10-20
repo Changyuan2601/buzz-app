@@ -47,7 +47,7 @@ impl Store for Memory {
 }
 pub(super) fn host(store: Arc<Memory>) -> FederatedIdentity {
     let config = Config::parse(r#"{"version":1,"id":"test","identityOrigin":"https://identity.example","adapterBase":"https://identity.example","apiBasePath":"/api/","communityHosts":["relay.example"]}"#).unwrap();
-    FederatedIdentity::with_store(Some(config), "fingerprint".into(), store)
+    FederatedIdentity::with_store(Some(config), "fingerprint".into(), "account".into(), store)
 }
 pub(super) fn record() -> Arc<Session> {
     let record = Record {
@@ -204,6 +204,54 @@ async fn local_expiry_retires_a_cached_session_without_sending_it_upstream() {
     assert!(!host.current(&revision));
     assert!(host.state().session.is_none());
     assert!(store.raw.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn account_changes_tell_expiry_and_refresh_from_sign_out_and_a_new_account() {
+    let store = Arc::new(Memory::default());
+    let host = host(store.clone());
+    let changes = host.account_changes();
+    let sign_in = |email: &str| {
+        let mut state = host.state();
+        host.signed_in(&mut state, Some(email.into()));
+        changes.borrow().clone()
+    };
+    assert_eq!(sign_in("a@example.com"), Some(SessionChange::Refreshed));
+    assert_eq!(sign_in("a@example.com"), Some(SessionChange::Refreshed));
+    assert_eq!(
+        sign_in("b@example.com"),
+        Some(SessionChange::AccountChanged)
+    );
+    host.sign_out().await;
+    assert_eq!(*changes.borrow(), Some(SessionChange::SignedOut));
+    assert_eq!(sign_in("b@example.com"), Some(SessionChange::Refreshed));
+
+    let mut expired = record();
+    let session = Arc::get_mut(&mut expired).unwrap();
+    session.record.expires_at = "2000-01-01T00:00:00Z".into();
+    {
+        let mut state = host.state();
+        state.session = Some(expired);
+        state.snapshot.status = Status::SignedIn;
+        state.restored = true;
+    }
+    host.restore().await;
+    assert_eq!(*changes.borrow(), Some(SessionChange::Expired));
+    assert_eq!(host.state().account, Some(Some("b@example.com".into())));
+}
+
+#[test]
+fn with_session_lends_the_token_only_while_signed_in() {
+    let host = host(Arc::new(Memory::default()));
+    assert!(host.with_session(|_, _, _| ()).is_none());
+    host.state().session = Some(record());
+    let revision = host.snapshot().revision;
+    let lent = host.with_session(|token, current, _| (token.to_string(), current.to_owned()));
+    assert_eq!(lent, Some(("fixture-session-token".into(), revision)));
+    assert_ne!(
+        host.agent_grant_key("owner", "a"),
+        host.agent_grant_key("owner", "b")
+    );
 }
 
 pub(super) struct Wire {

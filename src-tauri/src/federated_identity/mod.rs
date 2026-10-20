@@ -37,6 +37,16 @@ pub(crate) enum Status {
     ReauthenticationRequired,
     Unavailable,
 }
+/// Why the signed-in account changed, for owners of state derived from it
+/// (agent grants). Expiry and refresh keep the same account; only an explicit
+/// sign-out or a different account mean derived state must go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionChange {
+    SignedOut,
+    AccountChanged,
+    Expired,
+    Refreshed,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Snapshot {
@@ -81,14 +91,18 @@ struct State {
     closed: bool,
     cancellation: CancellationToken,
     callback: Option<CallbackGuard>,
+    /// Last account seen signed in this run; tells a refresh from a new account.
+    account: Option<Option<String>>,
 }
 struct Inner {
     config: Option<Config>,
     fingerprint: String,
+    account: String,
     store: Arc<dyn Store>,
     state: Mutex<State>,
     operation: AsyncMutex<()>,
     changes: watch::Sender<Snapshot>,
+    account_changes: watch::Sender<Option<SessionChange>>,
     assertions: Mutex<assertion::AssertionCache>,
     discoveries: Mutex<assertion::DiscoveryCache>,
 }
@@ -114,12 +128,17 @@ impl FederatedIdentity {
         );
         let account = format!("{:x}", Sha256::digest(format!("{profile}\0{fingerprint}")));
         let store = Arc::new(store::SecureStore {
-            account,
+            account: account.clone(),
             root: store::root()?,
         });
-        Ok(Self::with_store(config, fingerprint, store))
+        Ok(Self::with_store(config, fingerprint, account, store))
     }
-    fn with_store(config: Option<Config>, fingerprint: String, store: Arc<dyn Store>) -> Self {
+    fn with_store(
+        config: Option<Config>,
+        fingerprint: String,
+        account: String,
+        store: Arc<dyn Store>,
+    ) -> Self {
         let snapshot = Snapshot {
             status: if config.is_some() {
                 Status::Restoring
@@ -136,9 +155,11 @@ impl FederatedIdentity {
             failure: None,
         };
         let (changes, _) = watch::channel(snapshot.clone());
+        let (account_changes, _) = watch::channel(None);
         Self(Arc::new(Inner {
             config,
             fingerprint,
+            account,
             store,
             state: Mutex::new(State {
                 snapshot,
@@ -147,9 +168,11 @@ impl FederatedIdentity {
                 closed: false,
                 cancellation: CancellationToken::new(),
                 callback: None,
+                account: None,
             }),
             operation: AsyncMutex::new(()),
             changes,
+            account_changes,
             assertions: Mutex::new(Default::default()),
             discoveries: Mutex::new(Default::default()),
         }))
@@ -182,7 +205,42 @@ impl FederatedIdentity {
         }
         Ok(state.cancellation.clone())
     }
-    fn current(&self, revision: &str) -> bool {
+    pub(crate) fn account_changes(&self) -> watch::Receiver<Option<SessionChange>> {
+        self.0.account_changes.subscribe()
+    }
+    fn signal(&self, change: SessionChange) {
+        self.0.account_changes.send_replace(Some(change));
+    }
+    /// Record a newly installed session's account and report refresh vs change.
+    fn signed_in(&self, state: &mut State, email: Option<String>) {
+        let change = match &state.account {
+            Some(previous) if *previous != email => SessionChange::AccountChanged,
+            _ => SessionChange::Refreshed,
+        };
+        state.account = Some(email);
+        self.signal(change);
+    }
+    /// Lend the current session token to `use_session` without letting it escape.
+    pub(crate) fn with_session<T>(
+        &self,
+        use_session: impl FnOnce(&Zeroizing<String>, &str, &Config) -> T,
+    ) -> Option<T> {
+        let config = self.0.config.as_ref()?;
+        let (token, revision) = {
+            let state = self.state();
+            let session = state.session.as_ref().filter(|_| !state.closed)?;
+            (
+                Zeroizing::new(session.record.session_token.clone()),
+                state.snapshot.revision.clone(),
+            )
+        };
+        Some(use_session(&token, &revision, config))
+    }
+    /// Secure-store account for an agent grant in this profile and deployment.
+    pub(crate) fn agent_grant_key(&self, owner: &str, agent: &str) -> String {
+        store::agent_grant_key(&self.0.account, owner, agent)
+    }
+    pub(crate) fn current(&self, revision: &str) -> bool {
         let state = self.state();
         !state.closed && state.snapshot.revision == revision
     }
@@ -305,6 +363,7 @@ impl FederatedIdentity {
                 matches!((expiry(&session.record.expires_at), now()), (Ok(expiry), Ok(now)) if expiry <= now)
             });
             let session = if expired {
+                self.signal(SessionChange::Expired);
                 self.retire_state(
                     &mut state,
                     Status::ReauthenticationRequired,
@@ -379,10 +438,14 @@ impl FederatedIdentity {
                 state.snapshot.status = Status::SignedIn;
                 state.snapshot.revision = session.record.revision.clone();
                 state.snapshot.email = session.record.email.clone();
+                self.signed_in(&mut state, session.record.email.clone());
                 state.session = Some(session);
             }
             Ok(None) => state.snapshot.status = Status::SignedOut,
             Err(failure) => {
+                if failure.session_denied {
+                    self.signal(SessionChange::Expired);
+                }
                 state.snapshot.status = if failure.session_denied {
                     Status::ReauthenticationRequired
                 } else {
@@ -564,6 +627,7 @@ impl FederatedIdentity {
                 state.snapshot.status = Status::SignedIn;
                 state.snapshot.revision = session.record.revision.clone();
                 state.snapshot.email = session.record.email.clone();
+                self.signed_in(&mut state, session.record.email.clone());
                 state.session = Some(session.clone());
                 self.publish(&state);
                 true
@@ -585,6 +649,8 @@ impl FederatedIdentity {
     }
     pub(crate) async fn sign_out(&self) -> Snapshot {
         let (session, revision) = self.retire(Status::SignedOut, None);
+        self.state().account = None;
+        self.signal(SessionChange::SignedOut);
         let _operation = self.0.operation.lock().await;
         let result = if let Some(session) = session {
             self.remove(session).await

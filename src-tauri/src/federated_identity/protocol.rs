@@ -11,12 +11,12 @@ pub(crate) fn now() -> Result<i64, &'static str> {
         .map(|value| value.as_secs() as i64)
         .map_err(|_| "clock-unavailable")
 }
-pub(super) fn expiry(value: &str) -> Result<i64, &'static str> {
+pub(crate) fn expiry(value: &str) -> Result<i64, &'static str> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|value| value.timestamp())
         .map_err(|_| "invalid-expiry")
 }
-pub(super) fn client() -> Result<Client, &'static str> {
+pub(crate) fn client() -> Result<Client, &'static str> {
     Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(DEADLINE)
@@ -26,9 +26,9 @@ pub(super) fn client() -> Result<Client, &'static str> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Failure {
-    pub(super) code: &'static str,
-    pub(super) session_denied: bool,
+pub(crate) struct Failure {
+    pub(crate) code: &'static str,
+    pub(crate) session_denied: bool,
 }
 impl From<&'static str> for Failure {
     fn from(code: &'static str) -> Self {
@@ -67,7 +67,7 @@ async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, Fai
     Ok(body)
 }
 
-pub(super) async fn json<T: DeserializeOwned>(
+pub(crate) async fn json<T: DeserializeOwned>(
     request: impl Fn() -> RequestBuilder,
 ) -> Result<T, Failure> {
     // One total deadline includes bounded retry and Retry-After. Refusals and

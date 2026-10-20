@@ -8,9 +8,9 @@ pub(crate) const SERVICE: &str = if cfg!(debug_assertions) {
     "dev.local.buzz.foundation.federated-session"
 };
 
-pub(super) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);
+pub(crate) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);
 
-pub(super) trait Store: Send + Sync {
+pub(crate) trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str>;
     fn compare(
         &self,
@@ -21,7 +21,7 @@ pub(super) trait Store: Send + Sync {
     fn remove(&self, expected: &[u8], revision: &str) -> Result<(), &'static str>;
 }
 
-pub(super) struct SecureStore {
+pub(crate) struct SecureStore {
     pub(super) account: String,
     pub(super) root: PathBuf,
 }
@@ -171,6 +171,16 @@ impl Store for SecureStore {
         #[cfg(not(test))]
         self.clear_refusal(revision)
     }
+}
+
+/// Secure-store account for one agent's grant, beside (never inside) the
+/// owner's session record: same profile and deployment scoping, its own key.
+pub(crate) fn agent_grant_key(account: &str, owner: &str, agent: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(format!("agent-grant\0{account}\0{owner}\0{agent}"))
+    )
 }
 
 pub(crate) fn root() -> Result<PathBuf, &'static str> {
