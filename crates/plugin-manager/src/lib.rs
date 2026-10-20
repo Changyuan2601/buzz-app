@@ -52,6 +52,8 @@ pub struct Discovery {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostGrants {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub federated_identity: Option<FederatedIdentityGrant>,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -69,6 +71,19 @@ pub struct HostGrants {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub files: bool,
 }
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FederatedIdentityGrant {
+    pub authority: String,
+    pub operations: Vec<AuthenticatedOperation>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticatedOperation {
+    pub method: String,
+    pub path: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HostCommand {
@@ -158,6 +173,33 @@ impl Manifest {
                 || host.processes.len() > 16
             {
                 return Err("Too many host declarations".into());
+            }
+            if let Some(grant) = &host.federated_identity {
+                if grant.authority.is_empty()
+                    || grant.authority.len() > 64
+                    || !grant
+                        .authority
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                {
+                    return Err("Invalid authenticated authority".into());
+                }
+                if grant.operations.is_empty()
+                    || grant.operations.len() > 64
+                    || grant.operations.iter().any(|op| {
+                        !matches!(
+                            op.method.as_str(),
+                            "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE"
+                        ) || op.path.len() > 2048
+                            || !op.path.starts_with('/')
+                            || op.path.contains(['%', '\\', '?', '#'])
+                            || op.path.contains("//")
+                            || op.path.chars().any(char::is_whitespace)
+                            || op.path.split('/').any(|part| matches!(part, "." | ".."))
+                    })
+                {
+                    return Err("Invalid authenticated authority operations".into());
+                }
             }
             let mut command_ids = std::collections::HashSet::new();
             for command in &host.commands {

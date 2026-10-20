@@ -1,4 +1,7 @@
 mod archive;
+// Wired into commands and transports by the following commits on this branch.
+#[allow(dead_code)]
+mod federated_identity;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
