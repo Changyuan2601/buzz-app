@@ -3,23 +3,26 @@
 # `powershell.exe -EncodedCommand` (see `withPowerShell` in powershell.ts),
 # each time with one of these steps:
 #
+#   platform                         prints `Windows <architecture>`, as
+#                                    `uname -sm` would
 #   install VERSION PLATFORM SHA256  downloads a release, checks it, and
 #                                    points `next` at it for its test
 #   use VERSION                      points `current` at a downloaded release
 #
 # There is no `run` step. The host starts `current\claude.exe`, or
-# `next\claude.exe` for a test, itself: Windows PowerShell 5.1 drops empty
-# arguments and does not escape quotes when it starts a program, and sessions
-# pass both (`--tools ""`, `--mcp-config {...}`). `current` and `next` are
-# junctions, which need no administrator or Developer Mode.
+# `next\claude.exe` for a test, itself, as the manifest's data programs:
+# Windows PowerShell 5.1 drops empty arguments and does not escape quotes when
+# it starts a program, and sessions pass both (`--tools ""`,
+# `--mcp-config {...}`). `current` and `next` are junctions, which need no
+# administrator or Developer Mode.
 #
 # Windows PowerShell 5.1 only: no `??`, ternaries or pwsh-only parameters.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-# Shared by every Buzz build on this computer, so there is one download. The
-# host expands the manifest's `~` the same way, from the user's profile.
-$dir = Join-Path $env:USERPROFILE 'AppData\Local\Buzz\claude-code'
+# The plugin's data folder, which the host names and starts the data programs
+# from; every Buzz build on this computer shares it, so there is one download.
+$dir = $env:BUZZ_PLUGIN_DATA
 # pwsh off Windows, only to test this script: no junctions or curl.exe there.
 $windows = [Environment]::OSVersion.Platform -eq 'Win32NT'
 
@@ -184,10 +187,18 @@ function Use-Release([string] $version) {
 }
 
 try {
+  if (-not $dir) { Fail 'BUZZ_PLUGIN_DATA is not set' 2 }
   if ($args.Count -lt 1) { Fail 'Unknown command: ' 2 }
   $command = $args[0]
   $rest = @($args | Select-Object -Skip 1)
   switch ($command) {
+    'platform' {
+      # The machine, not this process: a 32-bit PowerShell sees x86 in
+      # PROCESSOR_ARCHITECTURE and the machine's in PROCESSOR_ARCHITEW6432.
+      $architecture = $env:PROCESSOR_ARCHITEW6432
+      if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
+      [Console]::Out.WriteLine("Windows $architecture")
+    }
     'install' {
       if ($rest.Count -ne 3) { Fail 'install needs VERSION PLATFORM SHA256' 2 }
       Install-Release $rest[0] $rest[1] $rest[2]

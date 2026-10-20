@@ -745,7 +745,13 @@ environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
 are never inherited. The program is found on the same search path as commands,
 which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
-never searches PATH; the Goose plugin runs `goose-acp` this way.
+never searches PATH; the Goose plugin runs `goose-acp` this way. A process
+declared with `"data": true` runs a program the plugin downloaded into its own
+data folder, `<local data>/Buzz/plugins/<plugin id>` (shared by every Buzz build
+on the computer), and never searches PATH. Its `program` is a `/`-separated path
+in that folder, such as `current/claude.exe`, with no `.` or `..`; until the file
+exists, starting it fails with "… is not installed". Every process a plugin starts
+finds the folder in `BUZZ_PLUGIN_DATA`.
 
 `agent` names an agent whose type the calling plugin registered. The
 process then runs as that agent, as harness agents do: native puts its key in

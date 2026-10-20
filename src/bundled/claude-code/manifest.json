@@ -30,7 +30,20 @@
         "id": "find",
         "program": "grep",
         "args": ["-rlF", "--include=*.jsonl", "-e"]
-      }
+      },
+      {
+        "id": "claude-ps",
+        "program": "powershell.exe",
+        "args": [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-EncodedCommand"
+        ]
+      },
+      { "id": "claude-exe", "program": "current/claude.exe", "data": true },
+      { "id": "claude-next", "program": "next/claude.exe", "data": true }
     ]
   }
 }

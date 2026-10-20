@@ -1,6 +1,7 @@
 // Runs a step of claude.ps1 on Windows, the counterpart of `withScript`'s
 // `bash -c` elsewhere.
 import type { Spawn } from "./claude";
+import script from "./claude.ps1?raw";
 
 /** Windows' limit on a whole command line, in UTF-16 units. */
 const COMMAND_LINE_LIMIT = 32_767;
@@ -32,21 +33,30 @@ export function encodeCommand(script: string, args: readonly string[]) {
   return encoded;
 }
 
-/** Starts `install` and `use` as steps of claude.ps1, which the manifest
- * grants as `powershell.exe … -EncodedCommand`; other processes start as
- * declared. */
+/** The claude.ps1 step behind each process the plugin starts by name. */
+const STEPS: Readonly<Record<string, string>> = {
+  install: "install",
+  platform: "platform",
+  use: "use",
+};
+/** Windows' counterpart of `withScript`: starts `install`, `use` and
+ * `platform` as steps of claude.ps1, which the manifest grants as
+ * `powershell.exe … -EncodedCommand`. `claude` is Buzz's copy itself, the
+ * data program `current\claude.exe`, or `next\claude.exe` when a release is
+ * named to test it before it is in use; other processes start as declared. */
 export const withPowerShell =
-  (
-    spawn: Spawn,
-    script: string,
-    steps: Readonly<Record<string, string>>,
-  ): Spawn =>
+  (spawn: Spawn): Spawn =>
   (id, options) => {
-    const step = steps[id];
-    return step
-      ? spawn("claude-ps", {
-          ...options,
-          args: [encodeCommand(script, [step, ...(options?.args ?? [])])],
-        })
-      : spawn(id, options);
+    const step = STEPS[id];
+    if (step)
+      return spawn("claude-ps", {
+        ...options,
+        args: [encodeCommand(script, [step, ...(options?.args ?? [])])],
+      });
+    if (id === "claude")
+      return spawn(
+        options?.env?.BUZZ_CLAUDE_VERSION ? "claude-next" : "claude-exe",
+        options,
+      );
+    return spawn(id, options);
   };

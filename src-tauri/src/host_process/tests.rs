@@ -292,16 +292,55 @@ fn a_bundled_program_runs_from_the_app_bin_never_path() {
         .unwrap()
     };
     let path = path.path().as_os_str();
+    let data = std::path::Path::new("/data");
     assert_eq!(
         program_path(
             &process(true),
             || Some(PathBuf::from("/app/resources")),
+            data,
             path
         )
         .unwrap(),
         PathBuf::from("/app/resources/bin/goose-acp")
     );
-    assert!(program_path(&process(true), || None, path).is_err());
+    assert!(program_path(&process(true), || None, data, path).is_err());
     // Only a bundled program asks for the resources.
-    assert!(program_path(&process(false), || unreachable!(), path).is_ok());
+    assert!(program_path(&process(false), || unreachable!(), data, path).is_ok());
+}
+
+#[test]
+fn a_data_program_runs_from_the_plugin_data_folder_never_path() {
+    // A claude on PATH, which a data declaration must not pick.
+    let path = tempfile::tempdir().unwrap();
+    std::fs::write(path.path().join("claude"), "").unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let process: HostProcess = serde_json::from_value(serde_json::json!({
+        "id": "claude",
+        "program": "current/claude",
+        "data": true,
+    }))
+    .unwrap();
+    let path = path.path().as_os_str();
+    let missing = program_path(&process, || unreachable!(), data.path(), path);
+    assert_eq!(missing.unwrap_err(), "current/claude is not installed");
+    std::fs::create_dir(data.path().join("current")).unwrap();
+    std::fs::write(data.path().join("current").join("claude"), "").unwrap();
+    assert_eq!(
+        program_path(&process, || unreachable!(), data.path(), path).unwrap(),
+        data.path().join("current").join("claude")
+    );
+}
+
+#[test]
+fn a_plugin_data_folder_is_its_own_under_local_data() {
+    let folder = plugin_data_dir("buzz.claude-code").unwrap();
+    assert!(folder.ends_with(
+        std::path::Path::new("Buzz")
+            .join("plugins")
+            .join("buzz.claude-code")
+    ));
+    assert_eq!(
+        Some(folder.parent().unwrap().parent().unwrap().parent().unwrap()),
+        dirs::data_local_dir().as_deref()
+    );
 }

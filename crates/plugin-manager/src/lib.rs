@@ -95,6 +95,18 @@ pub struct HostProcess {
     /// Run the copy the app ships in its `bin` resources, never one on PATH.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bundled: bool,
+    /// Run the program at `program`, a `/`-separated path inside the plugin's
+    /// own data folder, never one on PATH: one the plugin downloaded there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub data: bool,
+}
+/// A data program's path: names `valid_program` allows, joined by `/`, with
+/// no `.` or `..` to leave the folder.
+fn valid_data_program(program: &str, args: &[String]) -> bool {
+    program.len() <= 200
+        && program
+            .split('/')
+            .all(|segment| segment != "." && segment != ".." && valid_program(segment, args))
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -173,9 +185,12 @@ impl Manifest {
             let mut process_ids = std::collections::HashSet::new();
             for process in &host.processes {
                 valid_id(&process.id)?;
-                if !process_ids.insert(&process.id)
-                    || !valid_program(&process.program, &process.args)
-                {
+                let program = if process.data {
+                    !process.bundled && valid_data_program(&process.program, &process.args)
+                } else {
+                    valid_program(&process.program, &process.args)
+                };
+                if !process_ids.insert(&process.id) || !program {
                     return Err("Invalid host process declaration".into());
                 }
             }
@@ -1783,6 +1798,33 @@ mod tests {
         bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
         let parsed: Manifest = serde_json::from_value(bundled).unwrap();
         assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
+        let mut data = processes.clone();
+        data["host"]["processes"][0]["program"] = serde_json::json!("current/claude.exe");
+        data["host"]["processes"][0]["data"] = serde_json::json!(true);
+        assert!(artifact_from_text(&data.to_string(), "export const x = 1".into()).is_ok());
+        for program in [
+            "../claude.exe",
+            "current/../../x",
+            "./claude",
+            "/abs/claude",
+            "current//claude",
+            "current\\claude.exe",
+            "~/claude",
+        ] {
+            let mut invalid = data.clone();
+            invalid["host"]["processes"][0]["program"] = serde_json::json!(program);
+            assert!(
+                artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err(),
+                "{program}"
+            );
+        }
+        let mut both = data.clone();
+        both["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        assert!(artifact_from_text(&both.to_string(), "export const x = 1".into()).is_err());
+        // A path is only a data program's.
+        let mut path = processes.clone();
+        path["host"]["processes"][0]["program"] = serde_json::json!("current/claude");
+        assert!(artifact_from_text(&path.to_string(), "export const x = 1".into()).is_err());
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),

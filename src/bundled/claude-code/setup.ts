@@ -26,12 +26,15 @@ export type Request = (input: HostRequest) => Promise<HostResponse>;
 const RELEASES = "https://downloads.claude.ai/claude-code-releases";
 /** Model discovery disables customizations with --safe-mode (2.1.169+). */
 export const MIN_VERSION = "2.1.169";
-/** `uname -sm` to the release's platform name. */
+/** `uname -sm`, or claude.ps1's `platform` step, to the release's platform
+ * name. */
 const PLATFORMS: Readonly<Record<string, string>> = {
   "Darwin arm64": "darwin-arm64",
   "Darwin x86_64": "darwin-x64",
   "Linux aarch64": "linux-arm64",
   "Linux x86_64": "linux-x64",
+  "Windows AMD64": "win32-x64",
+  "Windows ARM64": "win32-arm64",
 };
 
 /** The `claude.sh` step behind each process the plugin starts by name. */
@@ -128,7 +131,14 @@ const message = (error: unknown) =>
 export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
   let version: string;
   try {
-    const result = await collect(spawn, "claude", ["--version"]);
+    const result = await collect(spawn, "claude", ["--version"]).catch(
+      (error: unknown) => {
+        // Windows starts Buzz's copy itself, and has none to start yet.
+        if (/ is not installed$/.test(message(error)))
+          return { code: 127, stdout: "", stderr: "" };
+        throw error;
+      },
+    );
     // The launcher's answer when Buzz has no copy yet.
     if (result.code === 127) return { state: "missing" };
     if (result.code !== 0)

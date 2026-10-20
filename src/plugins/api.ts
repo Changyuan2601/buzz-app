@@ -35,6 +35,10 @@ export type PluginManifest = Readonly<{
       args?: readonly string[];
       /** Run the copy the app ships, never one on PATH. */
       bundled?: boolean;
+      /** `program` is a `/`-separated path in the plugin's own data folder,
+       * never one on PATH: a program the plugin downloaded there. The
+       * plugin's processes find that folder in `BUZZ_PLUGIN_DATA`. */
+      data?: boolean;
     }>[];
     /** The plugin may serve MCP servers to its agents with `host.serveMcp`. */
     mcp?: boolean;

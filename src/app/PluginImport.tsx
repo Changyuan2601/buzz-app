@@ -95,7 +95,7 @@ function hostDeclarations(manifest: PluginManifest) {
       details: <code className="break-words">{origin}</code>,
     })),
     ...(manifest.host?.processes ?? []).map((process) => ({
-      signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,
+      signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""}${process.data ? " (from its data folder)" : ""} and any further arguments · stdin, full user access`,
       title: `Process ${process.id}:`,
       label: `Start ${process.program}`,
       hint: "Can start a background process with additional arguments, using your account’s full access.",
@@ -104,6 +104,11 @@ function hostDeclarations(manifest: PluginManifest) {
         <>
           <ProgramDetails program={process.program} args={process.args ?? []} />
           {process.bundled && <p className="mb-0 mt-2">Bundled with Buzz.</p>}
+          {process.data && (
+            <p className="mb-0 mt-2">
+              A program the plugin puts in its own data folder.
+            </p>
+          )}
           <p className="mb-0 mt-2">
             Allows further arguments and standard input, with your account’s
             full access.

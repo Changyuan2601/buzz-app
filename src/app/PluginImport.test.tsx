@@ -171,7 +171,10 @@ it("shows exact declared access and changes before an enabled update", async () 
               "https://api.example.com",
               "https://second.example.com",
             ],
-            processes: [{ id: "worker", program: "example-worker" }],
+            processes: [
+              { id: "worker", program: "example-worker" },
+              { id: "agent", program: "current/agent.exe", data: true },
+            ],
             mcp: true,
           },
         },
@@ -245,7 +248,7 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByRole("region", { name: "Declared scopes" }),
   );
   expect(scopes.getByText("Run a program on your computer.")).toBeVisible();
-  expect(scopes.getByText(/account’s full access/)).toBeVisible();
+  expect(scopes.getAllByText(/account’s full access/)).toHaveLength(2);
   expect(scopes.getAllByText(/HTTPS requests to this address/)).toHaveLength(2);
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
   expect(screen.getByText(/beyond these declarations/)).toBeVisible();
@@ -292,6 +295,14 @@ it("shows exact declared access and changes before an enabled update", async () 
       name: "Removed HTTPS origin https://old.example.com details",
     }),
   ).toHaveTextContent("https://old.example.com");
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Start current\/agent.exe/ }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByText("A program the plugin puts in its own data folder."),
+    ).toBeVisible(),
+  );
   expect(
     screen.getByRole("region", { name: "Removed declarations" }),
   ).toHaveTextContent(/--brief.*https:\/\/old.example.com/);

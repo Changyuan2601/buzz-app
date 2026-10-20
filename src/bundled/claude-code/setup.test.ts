@@ -44,6 +44,20 @@ it("finds Claude missing when Buzz has no copy", async () => {
   });
 });
 
+it("finds Claude missing on Windows before Buzz downloads its copy", async () => {
+  const { spawn } = scripted({
+    "claude --version": new Error("current/claude.exe is not installed"),
+  });
+  await expect(checkClaude(spawn)).resolves.toEqual({ state: "missing" });
+  const broken = scripted({
+    "claude --version": new Error("Access is denied"),
+  });
+  await expect(checkClaude(broken.spawn)).resolves.toEqual({
+    state: "error",
+    message: "Access is denied",
+  });
+});
+
 it("finds a copy older than Buzz needs outdated", async () => {
   const { spawn } = scripted({
     "claude --version": { stdout: "2.1.168 (Claude Code)\n" },

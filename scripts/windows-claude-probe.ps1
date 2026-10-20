@@ -19,10 +19,11 @@ function Record([string] $name, [bool] $ok, [string] $detail) {
 $script = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\bundled\claude-code\claude.ps1'))
 $profileDir = Join-Path $env:TEMP ("buzz-probe-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $profileDir | Out-Null
-$dir = Join-Path $profileDir 'AppData\Local\Buzz\claude-code'
+# The host's BUZZ_PLUGIN_DATA would be %LOCALAPPDATA%\Buzz\plugins\buzz.claude-code.
+$dir = Join-Path $profileDir 'AppData\Local\Buzz\plugins\buzz.claude-code'
 
 # Starts claude.ps1 the way Buzz will: powershell.exe -EncodedCommand, stdin
-# piped and left open, a different USERPROFILE.
+# piped and left open, BUZZ_PLUGIN_DATA naming the data folder.
 function Invoke-Step([string[]] $stepArgs, [int] $timeoutMs = 600000) {
   $quoted = ($stepArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
   $body = ($script -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
@@ -35,7 +36,7 @@ function Invoke-Step([string[]] $stepArgs, [int] $timeoutMs = 600000) {
   $info.RedirectStandardInput = $true
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
-  $info.EnvironmentVariables['USERPROFILE'] = $profileDir
+  $info.EnvironmentVariables['BUZZ_PLUGIN_DATA'] = $dir
   $p = [Diagnostics.Process]::Start($info)
   $out = $p.StandardOutput.ReadToEndAsync()
   $err = $p.StandardError.ReadToEndAsync()
@@ -73,8 +74,10 @@ try {
 
   # 3. Real install and switch through -EncodedCommand.
   $version = (Invoke-RestMethod 'https://downloads.claude.ai/claude-code-releases/latest').Trim()
+  $r = Invoke-Step @('platform')
+  Record 'platform step' ($r.Out -eq 'Windows AMD64' -or $r.Out -eq 'Windows ARM64') "'$($r.Out)' code=$($r.Code) $($r.Err)"
   $platform = 'win32-x64'
-  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $platform = 'win32-arm64' }
+  if ($r.Out -eq 'Windows ARM64') { $platform = 'win32-arm64' }
   $manifest = Invoke-RestMethod "https://downloads.claude.ai/claude-code-releases/$version/manifest.json"
   $sum = $manifest.platforms.$platform.checksum
   $watch = [Diagnostics.Stopwatch]::StartNew()

@@ -8,6 +8,7 @@ import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
+import { withPowerShell } from "./powershell";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
 import { readUsage } from "./usage";
@@ -18,12 +19,16 @@ const UPDATE_MS = 6 * 60 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start `claude`, and setup and file uploads run
-  // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
+  // Only the desktop app can start `claude`, and file uploads and history
+  // still run `base64`, `grep` and `pwd`, which stock Windows lacks; no
+  // unusable type elsewhere. Windows setup already runs claude.ps1.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
-  const spawn = host.spawn && withScript(host.spawn.bind(host));
+  const withSetup = /Win/i.test(navigator.platform)
+    ? withPowerShell
+    : withScript;
+  const spawn = host.spawn && withSetup(host.spawn.bind(host));
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   const providerDefaults = new ClaudeDefaults();
   const runtime = new ClaudeRuntime(
