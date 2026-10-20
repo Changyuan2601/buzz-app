@@ -71,6 +71,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   current = { ...current, invalidAddress: addressed === null };
   host.history.replaceState({ ...host.history.state, [KEY]: current }, "");
   let stamp: Stamp = current;
+  let returning: string | undefined;
+  const visits = new Map([
+    [stamp.entry.id, { chain: stamp.chain, index: stamp.index }],
+  ]);
   const endKey = () => `buzz-navigation-end:${stamp.chain}`;
   let end = stamp.index;
   try {
@@ -89,6 +93,9 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   let snapshot = snapshotOf();
   function publish() {
     snapshot = snapshotOf();
+    visits.set(stamp.entry.id, { chain: stamp.chain, index: stamp.index });
+    while (visits.size > 100)
+      visits.delete(visits.keys().next().value as string);
     controller?.();
   }
   function write(target: OpenTarget, replace: boolean, resolve = false) {
@@ -113,6 +120,15 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       "",
       url,
     );
+    if (!resolve) {
+      for (const [id, visit] of visits) {
+        if (
+          visit.chain === stamp.chain &&
+          (replace ? visit.index === next.index : visit.index >= next.index)
+        )
+          visits.delete(id);
+      }
+    }
     stamp = next;
     if (!replace) end = stamp.index;
     try {
@@ -124,6 +140,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   }
   const pop = () => {
     if (disposed) return;
+    returning = undefined;
     let next = decode(host.history.state?.[KEY]);
     const addressed = urlTarget();
     if (!next) {
@@ -198,6 +215,16 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     },
     forward() {
       if (!disposed && snapshot.canGoForward) host.history.forward();
+    },
+    returnTo(entryId) {
+      if (returning) return returning === entryId;
+      const visit = visits.get(entryId);
+      if (disposed || !visit || visit.chain !== stamp.chain) return false;
+      const delta = visit.index - stamp.index;
+      if (delta === 0) return stamp.entry.id === entryId;
+      returning = entryId;
+      host.history.go(delta);
+      return true;
     },
     dispose() {
       disposed = true;

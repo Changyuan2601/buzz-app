@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventWatch } from "./attention";
 import { migrateWatchFilters, upgradeWatch } from "./migrate-filter";
-import { STORAGE_KEY, readRecords } from "./store";
+import { RECORD_PREFIX, STORAGE_KEY, readRecords } from "./store";
 import { memoryStorage } from "./test-fakes";
 
 const agent = "a".repeat(64);
@@ -98,7 +98,7 @@ describe("upgradeWatch", () => {
 });
 
 describe("migrateWatchFilters", () => {
-  it("converts stored filters once; one it cannot convert stays for repair", () => {
+  it("converts stored filters once; one it cannot convert stays for repair", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const owner = "c".repeat(64);
     const stored = (slug: string, filter: string) => ({
@@ -126,7 +126,7 @@ describe("migrateWatchFilters", () => {
         },
       }),
     );
-    migrateWatchFilters(storage);
+    await migrateWatchFilters(storage);
     const once = storage.getItem(STORAGE_KEY);
     const upgraded = { ...watch, exclude_authors: [owner], is_reply: false };
     const read = readRecords(storage)[agent];
@@ -142,10 +142,10 @@ describe("migrateWatchFilters", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringMatching(/watch\/word: filter cannot be converted/),
     );
-    migrateWatchFilters(storage);
+    await migrateWatchFilters(storage);
     expect(storage.getItem(STORAGE_KEY)).toBe(once);
   });
-  it("keeps a filter whose conversion the reader would skip", () => {
+  it("keeps a filter whose conversion the reader would skip", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const keys = Array.from({ length: 101 }, (_, i) =>
       i.toString(16).padStart(64, "0"),
@@ -168,7 +168,7 @@ describe("migrateWatchFilters", () => {
       },
     });
     storage.setItem(STORAGE_KEY, before);
-    migrateWatchFilters(storage);
+    await migrateWatchFilters(storage);
     expect(storage.getItem(STORAGE_KEY)).toBe(before);
     expect(readRecords(storage)[agent]?.skipped?.["watch/many"]).toMatchObject({
       value,
@@ -178,12 +178,39 @@ describe("migrateWatchFilters", () => {
       expect.stringMatching(/watch\/many: the converted watch is invalid/),
     );
   });
-  it("leaves missing or malformed storage alone", () => {
+  it("leaves missing or malformed storage alone", async () => {
     const storage = memoryStorage();
-    migrateWatchFilters(storage);
+    await migrateWatchFilters(storage);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
     storage.setItem(STORAGE_KEY, "{");
-    migrateWatchFilters(storage);
+    await migrateWatchFilters(storage);
     expect(storage.getItem(STORAGE_KEY)).toBe("{");
+  });
+  it("converts the filters in each agent's own record", async () => {
+    const owner = "c".repeat(64);
+    const storage = memoryStorage();
+    const key = `${RECORD_PREFIX}${agent}`;
+    storage.setItem(
+      key,
+      JSON.stringify({
+        pubkey: agent,
+        config: null,
+        attention: {
+          "watch/top": {
+            slug: "watch/top",
+            value: { ...watch, filter: `!(author == "${owner}")` },
+            modifiedAt: 3,
+          },
+        },
+      }),
+    );
+    await migrateWatchFilters(storage);
+    expect(readRecords(storage)[agent]?.attention["watch/top"]?.value).toEqual({
+      ...watch,
+      exclude_authors: [owner],
+    });
+    const once = storage.getItem(key);
+    await migrateWatchFilters(storage);
+    expect(storage.getItem(key)).toBe(once);
   });
 });

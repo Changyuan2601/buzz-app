@@ -1,3 +1,5 @@
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
+import type { RelaySession } from "../features/relay/session";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { profileDefault } from "../features/communities/profile-default";
@@ -27,6 +29,45 @@ import type { Membership } from "../features/communities/service";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
+function selectedProfileSession(
+  communities: Communities,
+  communityId: string | undefined,
+) {
+  const client = communities.snapshot();
+  const connection = communities.relay.snapshot();
+  return communityId &&
+    client.selected === communityId &&
+    connection.viewer === client.viewer &&
+    connection.status === "ready"
+    ? connection.session
+    : undefined;
+}
+function cachedProfile(session: RelaySession | undefined) {
+  const event = session?.viewer
+    ? session.profiles.event?.(session.viewer)
+    : undefined;
+  if (!event) return null;
+  try {
+    return communityApi.profileFromEvent(event);
+  } catch {
+    return null;
+  }
+}
+function mergeRefreshedDraft(
+  draft: PersonalProfile,
+  before: PersonalProfile,
+  after: PersonalProfile,
+): PersonalProfile {
+  return {
+    name: draft.name === before.name ? after.name : draft.name,
+    picture: draft.picture === before.picture ? after.picture : draft.picture,
+    about:
+      (draft.about ?? "") === (before.about ?? "")
+        ? (after.about ?? "")
+        : (draft.about ?? ""),
+  };
+}
+
 const profileSaveGenerations = new WeakMap<Communities, number>();
 function beginProfileSave(communities: Communities) {
   const generation = (profileSaveGenerations.get(communities) ?? 0) + 1;
@@ -40,9 +81,11 @@ function isCurrentProfileSave(communities: Communities, generation: number) {
 export function ProfileSettings({
   communities,
   community,
+  onUnsavedChange,
 }: {
   communities: Communities;
   community?: Membership | undefined;
+  onUnsavedChange?: ((unsaved: boolean) => void) | undefined;
 }) {
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -66,15 +109,21 @@ export function ProfileSettings({
     pendingFocus.current = null;
     if (target?.isConnected) target.focus();
   });
-  const [loaded, setLoaded] = useState<LoadedProfile | null>(null);
+  const communityId = community?.id;
+  const [loaded, setLoaded] = useState<LoadedProfile | null>(() =>
+    cachedProfile(selectedProfileSession(communities, communityId)),
+  );
   const [loadStatus, setLoadStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >(community ? "idle" : "ready");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
+  const latestPersisted = useRef<PersonalProfile>(client.profile);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Publication has been sent, so the save finishes even if Settings closes.
+  const [dispatched, setDispatched] = useState(false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(false);
   useEffect(() => {
@@ -84,24 +133,47 @@ export function ProfileSettings({
     };
   }, []);
   const [error, setError] = useState("");
-  // loadAttempt is an explicit recovery trigger.
-  useEffect(() => {
-    void loadAttempt;
+  // A scope change discards drafts; Retry keeps the same scope's useful content.
+  const profileScope = `${client.viewer ?? ""}:${communityId ?? "local"}`;
+  const previousScope = useRef(profileScope);
+  useLayoutEffect(() => {
+    if (previousScope.current === profileScope) return;
+    previousScope.current = profileScope;
     setDraft(null);
-    setLoaded(null);
+    setLoaded(cachedProfile(selectedProfileSession(communities, communityId)));
+    setLoadStatus(communityId ? "idle" : "ready");
     setSaved(false);
     setLoadError("");
     setError("");
-    if (!community) {
+  }, [communities, communityId, profileScope]);
+  useEffect(() => {
+    void loadAttempt;
+    if (!communityId) {
       setLoadStatus("ready");
       return;
     }
-    if (!client.relayAvailable) return;
+    if (!client.relayAvailable || !client.viewer) return;
     let current = true;
+    const session = selectedProfileSession(communities, communityId);
+    const seed = cachedProfile(session);
+    if (seed) setLoaded(seed);
     setLoadStatus("loading");
-    void communityApi.inspectProfile(community.id).then(
+    setLoadError("");
+    const read = session
+      ? communityApi.inspectProfile(communityId, session)
+      : communityApi.inspectProfile(communityId);
+    void read.then(
       (result) => {
         if (!current) return;
+        // An avatar upload may finish before React commits this fresh read.
+        const fresh = result.exists
+          ? result.profile
+          : communities.snapshot().profile;
+        latestPersisted.current = fresh;
+        if (seed)
+          setDraft((draft) =>
+            draft ? mergeRefreshedDraft(draft, seed.profile, fresh) : null,
+          );
         setLoaded(result);
         setLoadStatus("ready");
       },
@@ -114,11 +186,37 @@ export function ProfileSettings({
     return () => {
       current = false;
     };
-  }, [community, loadAttempt, client.relayAvailable]);
+  }, [
+    communities,
+    communityId,
+    loadAttempt,
+    client.relayAvailable,
+    client.viewer,
+  ]);
+  const profilePending =
+    client.status === "loading" ||
+    (!!community && loadStatus !== "ready" && loadStatus !== "error");
+  const previewReady =
+    client.status === "ready" && (!community || loaded !== null);
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
-  const profile = draft ?? persisted;
+  latestPersisted.current = persisted;
+  const profile = previewReady
+    ? (draft ?? persisted)
+    : { name: "", picture: "", about: "" };
   const hasChanges = draft !== null && !profilesEqual(draft, persisted);
+  // A dispatched save continues after Settings closes, so it is not
+  // discardable. Before then (the fresh read), closing would drop the edit.
+  const discardable = hasChanges && !dispatched;
+  useEffect(() => {
+    if (!discardable) return;
+    onUnsavedChange?.(true);
+    return () => onUnsavedChange?.(false);
+  }, [discardable, onUnsavedChange]);
+  const thumbnailMedia = selectedProfileSession(
+    communities,
+    communityId,
+  )?.media;
   return (
     <section aria-labelledby="profile-settings-title">
       <Header
@@ -131,193 +229,217 @@ export function ProfileSettings({
         }
       />
       <div>
-        {client.status !== "ready" ? (
+        {client.status === "unavailable" ? (
           <p role="status">
-            {client.status === "loading"
-              ? "Opening your local identity…"
-              : "Your local identity is unavailable. Connect your identity to edit your profile."}
+            Your local identity is unavailable. Connect your identity to edit
+            your profile.
           </p>
         ) : community && !client.relayAvailable ? (
           <p role="status">
             Community profiles are not available in this build yet.
           </p>
-        ) : community && loadStatus !== "ready" ? (
-          <div>
-            {loadStatus === "error" ? (
-              <>
-                <p role="alert" className="error">
-                  Your profile in {community.name} couldn’t be loaded.{" "}
-                  {loadError}
-                </p>
-                <Button
-                  type="button"
-                  onClick={() => setLoadAttempt((value) => value + 1)}
-                >
-                  Retry loading profile
-                </Button>
-              </>
-            ) : (
-              <p role="status">Loading your profile in {community.name}…</p>
-            )}
-          </div>
         ) : (
-          <SettingsGroup layout="form">
-            <section aria-label="Profile preview" className={styles.preview}>
-              <div>
-                <AvatarEditor
-                  size="compact"
-                  value={profile.picture}
-                  name={profile.name}
-                  community={community?.id}
-                  disabled={saving}
-                  onBusyChange={setUploading}
-                  onChange={(picture) => {
-                    setDraft({ ...profile, picture });
-                    setSaved(false);
-                    setError("");
-                  }}
-                />
-              </div>
-              <div className={styles.previewCopy}>
-                <h3 className="text-label-sm">
-                  {profile.name.trim() || "Your profile"}
-                </h3>
-                {profile.about?.trim() ? (
-                  <p className={`${styles.about} text-body-sm text-muted`}>
-                    {profile.about.trim()}
+          <LoadingRegion
+            pending={profilePending}
+            label={
+              client.status === "loading"
+                ? "Opening your local identity…"
+                : `Loading your profile in ${community?.name ?? "this community"}…`
+            }
+            feedback={
+              loadStatus === "error" && community ? (
+                <div>
+                  <p role="alert" className="error">
+                    Your profile in {community.name} couldn’t be loaded.{" "}
+                    {loadError}
                   </p>
-                ) : null}
-              </div>
-            </section>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (
-                  saving ||
-                  uploading ||
-                  !hasChanges ||
-                  !canSaveProfile(profile) ||
-                  (community && !loaded)
-                )
-                  return;
-                const next = {
-                  ...profile,
-                  name: profile.name.trim(),
-                  about: profile.about?.trim() ?? "",
-                };
-                // Capture once before async work: selection may change during Save.
-                const connection = communities.relay.snapshot();
-                const session =
-                  community &&
-                  communities.snapshot().selected === community.id &&
-                  connection.viewer === client.viewer &&
-                  connection.status === "ready"
-                    ? connection.session
-                    : undefined;
-                const inspect = (id: string) =>
-                  session
-                    ? communityApi.inspectProfile(id, session)
-                    : communityApi.inspectProfile(id);
-                const saveGeneration = beginProfileSave(communities);
-                setSaving(true);
-                setSaved(false);
-                setError("");
-                void (async () => {
-                  try {
-                    if (community && loaded) {
-                      // Preserve fields outside this editor even if another client edited them.
-                      const latest = await inspect(community.id);
-                      if (!mounted.current) return;
-                      await communityApi.publishProfile(
-                        community.id,
-                        next,
-                        latest.existing,
-                      );
-                      // Once dispatched, finish on this session even if Settings closes.
-                      const confirmed = await inspect(community.id);
-                      if (
-                        !confirmed.exists ||
-                        !profilesEqual(confirmed.profile, next)
-                      )
-                        throw new Error(
-                          "Your profile change is not current. Your edits are retained; save again to retry.",
-                        );
-                      setLoaded(confirmed);
-                    }
-                    if (isCurrentProfileSave(communities, saveGeneration))
-                      communities.saveProfile(
-                        profileDefault(
-                          next,
-                          communities.snapshot().profile,
-                          community?.id,
-                        ),
-                      );
-                    setDraft(null);
-                    setSaved(true);
-                  } catch (reason) {
-                    if (mounted.current)
-                      setError(
-                        reason instanceof Error
-                          ? reason.message
-                          : String(reason),
-                      );
-                  } finally {
-                    if (mounted.current) setSaving(false);
-                  }
-                })();
-              }}
-            >
-              <ProfileFields
-                profile={profile}
-                showAvatar={false}
-                disabled={saving}
-                onChange={(next) => {
-                  setDraft(next);
-                  setSaved(false);
-                  setError("");
-                }}
-              />
-              {error && (
-                <p role="alert" className="error">
-                  {error}
-                </p>
-              )}
-              {hasChanges && (
-                <div
-                  ref={actionsRef}
-                  className="mt-6 flex flex-wrap items-center justify-end gap-3"
-                >
                   <Button
                     type="button"
-                    disabled={saving || uploading}
-                    onClick={() => {
-                      setDraft(null);
+                    onClick={() => setLoadAttempt((value) => value + 1)}
+                  >
+                    Retry loading profile
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          >
+            <div
+              className={styles.editor}
+              data-placeholder={!previewReady || undefined}
+              inert={!previewReady}
+              aria-hidden={!previewReady || undefined}
+            >
+              <SettingsGroup layout="form">
+                <section
+                  aria-label="Profile preview"
+                  className={styles.preview}
+                >
+                  <div>
+                    <AvatarEditor
+                      size="compact"
+                      value={profile.picture}
+                      name={profile.name}
+                      community={community?.id}
+                      {...(thumbnailMedia ? { thumbnailMedia } : {})}
+                      disabled={saving || !previewReady}
+                      onBusyChange={setUploading}
+                      onChange={(picture) => {
+                        // Apply only the completed picture, never the upload's old name/bio.
+                        setDraft((current) => ({
+                          ...(current ?? latestPersisted.current),
+                          picture,
+                        }));
+                        setSaved(false);
+                        setError("");
+                      }}
+                    />
+                  </div>
+                  <div className={styles.previewCopy}>
+                    <h3 className="text-label-sm">
+                      {profile.name.trim() || "Your profile"}
+                    </h3>
+                    {profile.about?.trim() ? (
+                      <p className={`${styles.about} text-body-sm text-muted`}>
+                        {profile.about.trim()}
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (
+                      saving ||
+                      uploading ||
+                      !hasChanges ||
+                      !canSaveProfile(profile) ||
+                      (community && (!loaded || loadStatus !== "ready"))
+                    )
+                      return;
+                    const next = {
+                      ...profile,
+                      name: profile.name.trim(),
+                      about: profile.about?.trim() ?? "",
+                    };
+                    // Capture once before async work: selection may change during Save.
+                    const session = selectedProfileSession(
+                      communities,
+                      community?.id,
+                    );
+                    const inspect = (id: string) =>
+                      session
+                        ? communityApi.inspectProfile(id, session)
+                        : communityApi.inspectProfile(id);
+                    const saveGeneration = beginProfileSave(communities);
+                    setSaving(true);
+                    setSaved(false);
+                    setError("");
+                    void (async () => {
+                      try {
+                        if (community && loaded) {
+                          // Preserve fields outside this editor even if another client edited them.
+                          const latest = await inspect(community.id);
+                          if (!mounted.current) return;
+                          setDispatched(true);
+                          await communityApi.publishProfile(
+                            community.id,
+                            next,
+                            latest.existing,
+                          );
+                          // Once dispatched, finish on this session even if Settings closes.
+                          const confirmed = await inspect(community.id);
+                          if (
+                            !confirmed.exists ||
+                            !profilesEqual(confirmed.profile, next)
+                          )
+                            throw new Error(
+                              "Your profile change is not current. Your edits are retained; save again to retry.",
+                            );
+                          setLoaded(confirmed);
+                        }
+                        if (isCurrentProfileSave(communities, saveGeneration))
+                          communities.saveProfile(
+                            profileDefault(
+                              next,
+                              communities.snapshot().profile,
+                              community?.id,
+                            ),
+                          );
+                        setDraft(null);
+                        setSaved(true);
+                      } catch (reason) {
+                        if (mounted.current)
+                          setError(
+                            reason instanceof Error
+                              ? reason.message
+                              : String(reason),
+                          );
+                      } finally {
+                        if (mounted.current) {
+                          setSaving(false);
+                          setDispatched(false);
+                        }
+                      }
+                    })();
+                  }}
+                >
+                  <ProfileFields
+                    profile={profile}
+                    showAvatar={false}
+                    disabled={saving || !previewReady}
+                    onChange={(next) => {
+                      setDraft(next);
                       setSaved(false);
                       setError("");
                     }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    loading={saving}
-                    disabled={uploading || !canSaveProfile(profile)}
-                    variant="primary"
-                  >
-                    Save
-                  </Button>
-                </div>
-              )}
-              {saved && (
-                <ToastNotice
-                  title="Profile updated"
-                  tone="success"
-                  timeout={5000}
-                  onDismiss={() => setSaved(false)}
-                />
-              )}
-            </form>
-          </SettingsGroup>
+                  />
+                  {error && (
+                    <p role="alert" className="error">
+                      {error}
+                    </p>
+                  )}
+                  {hasChanges && (
+                    <div
+                      ref={actionsRef}
+                      className="mt-6 flex flex-wrap items-center justify-end gap-3"
+                    >
+                      <Button
+                        type="button"
+                        disabled={saving || uploading}
+                        onClick={() => {
+                          setDraft(null);
+                          setSaved(false);
+                          setError("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        loading={saving}
+                        disabled={
+                          uploading ||
+                          !canSaveProfile(profile) ||
+                          (!!community && loadStatus !== "ready")
+                        }
+                        variant="primary"
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  )}
+                  {saved && (
+                    <ToastNotice
+                      title="Profile updated"
+                      tone="success"
+                      timeout={5000}
+                      onDismiss={() => setSaved(false)}
+                    />
+                  )}
+                </form>
+              </SettingsGroup>
+            </div>
+          </LoadingRegion>
         )}
       </div>
     </section>

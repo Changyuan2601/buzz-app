@@ -39,16 +39,33 @@ behavior for its agents. The host appends the shared Attention tab.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
-attention tools. Their guidance is part of `BUZZ_PROMPT`. Every session gets the
+attention tools. How to use the attention tools is in their own descriptions,
+not `BUZZ_PROMPT`. Every session gets the
 same list and prompt, whether attention is on or off, so turning attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
-to add at the end of each turn: the attention review when attention is on, and a
-note that it is off when it is off. `callSessionTool` dispatches each call and
-refuses attention calls while attention is off. A new shared tool needs no
-harness change.
+to add at the end of each turn: the attention review when attention is on and
+the agent has Interests, a line that it has none when it has none, and a note
+that it is off when it is off.
 
-Plugins add tools with `ctx.agents.addTool`, listed after the Buzz
-tools under the same `buzz` server; the standalone server in
+`sessionTools` lists every tool under one `buzz` server, each with a `load`
+of `always` or `search`. The Buzz tools load up front and the attention tools on
+search. Only the Buzz tools choose: tools plugins add always load on search, so
+installing plugins never grows what every turn carries. `sessionHint` says what
+the searchable tools are. `respond` stays harness-neutral: a harness passes a
+`Listing` to shape it. Claude's marks each tool that loads up front with
+`_meta["anthropic/alwaysLoad"]`, so Claude lists the rest by name until the
+model searches for them, and makes the hint the server's `instructions`. Codex gets
+`deferLoading` on each searched tool and the hint as the namespace description.
+Every model in Codex's catalog supports tool search; one that did not would not
+see the deferred tools. goose cannot load tools on demand, so it gets every tool
+up front and no hint. A tool's name is the same whenever it loads.
+`callSessionTool` dispatches each call and refuses attention calls while
+attention is off. A new shared tool needs no harness change.
+
+Plugins add tools with `ctx.agents.addTool`, listed after the Buzz tools under
+the same `buzz` server. Names are shared by every plugin, so a plugin's tools
+should start with its name (`notes_get`); `addTool` refuses one that a Buzz tool
+or another plugin has. The standalone server in
 `src/buzz-mcp/main.ts` stays without them. A harness reads `agents.tools()`
 and passes it to `respond` or `callSessionTool`. A session keeps the list it
 started with, so `addedKey` goes in what decides when one is replaced: the
@@ -57,6 +74,8 @@ binding, since `thread/resume` keeps a thread's tools. Claude and goose resume
 their sessions when replaced, but a Codex agent starts a new thread and loses its
 context. That happens once when a plugin with tools ships, and again whenever a
 tool's name, description or schema changes, so edit those deliberately.
+`addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
+tools, and their `load`, that it started with.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need

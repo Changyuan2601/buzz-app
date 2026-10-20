@@ -532,38 +532,42 @@ it("hands focus back when my emoji is removed while another person's remains", a
     await flush();
   });
 });
-it("offers the first reaction inline for coordination messages and respects disabled state", () => {
-  const pickerTools = registry<ComposerTool>([
-    {
-      key: "picker",
-      pluginId: "picker",
-      revision: "one",
-      id: "picker",
-      title: "Picker",
-      component: () => null,
-      reactionComponent: ({ select }: ReactionToolProps) => (
-        <button type="button" onClick={() => select("👍")}>
-          Choose reaction
-        </button>
-      ),
-    },
-  ]);
-  const h = harness([], undefined, pickerTools);
-  const view = render(<h.Controls audience="agents" />);
-  expect(
-    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
-      name: "Choose reaction",
-    }),
-  ).toBeTruthy();
-  view.rerender(<h.Controls audience="agents" disabled />);
-  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
-  view.rerender(<h.Controls />);
-  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
-  view.rerender(<h.Controls audience="agents" />);
-  fireEvent.click(
-    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
-      name: "Choose reaction",
-    }),
-  );
-  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
-});
+it.each([false, true])(
+  "hides inline add on coordination while retaining existing reactions (%s)",
+  (populated) => {
+    const pickerTools = registry<ComposerTool>([
+      {
+        key: "picker",
+        pluginId: "picker",
+        revision: "one",
+        id: "picker",
+        title: "Picker",
+        component: () => null,
+        reactionComponent: ({ select }: ReactionToolProps) => (
+          <button type="button" onClick={() => select("👍")}>
+            Choose reaction
+          </button>
+        ),
+      },
+    ]);
+    const h = harness(populated ? [react(other)] : [], undefined, pickerTools);
+    const view = render(<h.Controls audience="agents" />);
+    expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+    if (populated)
+      expect(
+        screen.getByRole("button", {
+          name: `👍: ${other.pubkey.slice(0, 10)}`,
+        }),
+      ).toBeTruthy();
+    view.rerender(<h.Controls audience="agents" disabled />);
+    expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+    view.rerender(<h.Controls />);
+    if (populated)
+      expect(
+        within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+          name: "Choose reaction",
+        }),
+      ).toBeTruthy();
+    else expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  },
+);

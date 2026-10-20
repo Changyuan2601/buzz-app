@@ -120,6 +120,12 @@ export function testBodies(source, lang, lines) {
   return [...bodies.values()].sort((a, b) => a.start - b.start);
 }
 
+// Vitest `file:line` filters for the selected tests. Vitest lists an
+// `it.each([…])(` at its second parenthesis but filters by the call's first
+// line, so a listed line outside it finds no test.
+export const vitestLines = (lines, bodies) =>
+  lines.map((line) => bodies.find((body) => body.line === line).start);
+
 // The calls owning every line of a range, or undefined once a line lies
 // outside them all.
 function owners(calls, { start, end }) {
@@ -273,9 +279,14 @@ function select(base = "HEAD^1", head = "HEAD") {
           ? vitestStarts.get(file)
           : specs.map((spec) => spec.line);
       const lang = { ".ts": "ts", ".tsx": "tsx" }[extname(file)] ?? "js";
+      const bodies = testBodies(
+        readFileSync(`${root}${file}`, "utf8"),
+        lang,
+        starts,
+      );
       const selection = selectTests(
         hunkRanges(git("diff", "-U0", "--no-color", base, head, "--", file)),
-        testBodies(readFileSync(`${root}${file}`, "utf8"), lang, starts),
+        bodies,
         {
           added: added.has(file),
           previous: added.has(file)
@@ -288,7 +299,9 @@ function select(base = "HEAD^1", head = "HEAD") {
       if (runner === "vitest") {
         entries = selection.whole
           ? [file]
-          : selection.lines.map((line) => `${file}:${line}`);
+          : vitestLines(selection.lines, bodies).map(
+              (line) => `${file}:${line}`,
+            );
         note = selection.whole
           ? `whole file (${selection.reason})`
           : `${selection.lines.length} changed test(s)`;

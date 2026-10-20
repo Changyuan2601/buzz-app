@@ -162,7 +162,8 @@ test("An edited navigation hash opens its destination and survives reload and Ba
   await page.reload();
   await expect(appearance).toBeVisible();
   expect(await entry(page)).toEqual(settings);
-  await button(page, "Go back").click();
+  // The shell toolbar is inert behind the Settings modal; traverse history.
+  await page.goBack();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();

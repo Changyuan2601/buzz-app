@@ -6,6 +6,7 @@ import { Button } from "../shared/design-system/ui/Button";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Select } from "../shared/design-system/ui/Select";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
+import { usePermissionCheck } from "./usePermissionCheck";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
 import type { NotificationCategory } from "../features/notifications/preferences";
@@ -86,6 +87,9 @@ export function NotificationSettings({
     notifications.snapshot,
   );
   const { preferences, permission } = state;
+  const [checking, checkPermission] = usePermissionCheck(() =>
+    notifications.refreshPermission(),
+  );
   const preview = useRef<{
     category: NotificationCategory;
     name: SoundName;
@@ -232,7 +236,8 @@ export function NotificationSettings({
                         size="sm"
                         variant="link"
                         disabled={state.requesting}
-                        onClick={() => void notifications.refreshPermission()}
+                        loading={checking}
+                        onClick={checkPermission}
                       >
                         Check permission
                       </Button>

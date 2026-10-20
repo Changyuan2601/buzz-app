@@ -24,7 +24,10 @@ export function PanelDock({
 
   useLayoutEffect(() => {
     if (open || !retained) return;
-    const animations = element.current?.getAnimations?.() ?? [];
+    const animations = [
+      ...(element.current?.getAnimations?.() ?? []),
+      ...(element.current?.parentElement?.getAnimations?.() ?? []),
+    ];
     if (!animations.length) {
       setRetained(null);
       return;

@@ -1,4 +1,5 @@
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
+import { useModalWindowDrag } from "./ModalWindowDrag";
 import type { ComponentProps, ReactNode } from "react";
 
 /** Confirmations keep alert-dialog semantics and focus behavior owned by Base UI. */
@@ -19,6 +20,7 @@ export function AlertDialog({
   pending?: boolean;
   finalFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["finalFocus"];
 }) {
+  const windowDrag = useModalWindowDrag();
   return (
     <BaseAlertDialog.Root
       open
@@ -29,6 +31,12 @@ export function AlertDialog({
     >
       <BaseAlertDialog.Portal>
         <BaseAlertDialog.Backdrop
+          forceRender
+          onPointerDown={windowDrag.onPointerDown}
+          onPointerMove={windowDrag.onPointerMove}
+          onPointerUp={windowDrag.onPointerUp}
+          onPointerCancel={windowDrag.onPointerCancel}
+          onLostPointerCapture={windowDrag.onLostPointerCapture}
           data-buzz-ui=""
           className="buzz-dialog-backdrop"
         />

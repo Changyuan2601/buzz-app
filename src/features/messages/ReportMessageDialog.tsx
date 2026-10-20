@@ -69,6 +69,7 @@ export function ReportMessageDialog({
       onOpenChange={(open) => {
         if (!open) close(false);
       }}
+      dismissOnOutsideClick={false}
       preventClose={pending}
       finalFocus={finalFocus}
       title={

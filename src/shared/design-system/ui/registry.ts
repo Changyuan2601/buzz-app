@@ -112,6 +112,20 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "loading-region",
+    name: "LoadingRegion",
+    purpose:
+      "Keep read feedback quiet when fast and content stable while pending.",
+    behavior:
+      "One-second delayed status, immediate ready content and aria-busy. The caller owns stable child geometry, scope and errors.",
+    variants: ["initial read", "refresh"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/LoadingRegion.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "empty-state",
     name: "EmptyState",
     purpose:
@@ -181,7 +195,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Tooltip",
     purpose: "A short hint for an already labelled control.",
     behavior: "Base UI owns focus, positioning and dismissal.",
-    variants: ["default"],
+    variants: ["default", "follow pointer"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Tooltip.tsx",
@@ -194,7 +208,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Base UI owns focus, positioning, dismissal and transition presence; shared motion tokens animate entry and exit.",
+      "Base UI owns focus, positioning, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "default",
       "wide",
@@ -205,6 +219,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "stable-tall height",
       "padded chrome",
       "search presentation",
+      "integrated navigation",
+      "host container",
     ],
     status: "proposed",
     collection: "components",
@@ -430,6 +446,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "prominent",
       "subtle",
+      "subtle-muted",
       "ghost",
       "destructive",
       "outline",
@@ -437,7 +454,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",
-      "size: inline | xs | sm | md (default) | lg",
+      "size: caption (32px, caption text) | inline | xs | sm | md (default) | lg",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
       "loading",
@@ -458,9 +475,11 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "prominent",
       "subtle",
+      "subtle-muted",
       "ghost",
       "inverted",
       "destructive",
+      "destructive-quiet (muted at rest, danger on hover and press)",
       "outline",
       "attention (proposed): light dashed danger outline with slow marching ants",
       "link",
@@ -469,7 +488,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "avatar",
       "media",
       "bare (no background in any state; glyph-state toggles use 20px artwork at sm; row-revealed actions retain standard artwork sizing)",
-      "shape: control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
+      "shape: inset (container radius minus inset via --control-inset-radius) | control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
@@ -506,13 +525,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "avatar-stack",
     name: "AvatarStack",
     purpose:
-      "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
+      "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
       "Decorative artwork composed from Avatar; identity data stays with the caller.",
     variants: [
       "mini",
       "compact",
       "small",
+      "hero",
       "circle",
       "squircle",
       "overflow count",
@@ -702,11 +722,26 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["icon-button"],
   },
   {
+    slug: "sidebar-navigation",
+    name: "SidebarNavigation",
+    purpose:
+      "One compact sidebar composition shared by Solo, Multiplayer and Settings.",
+    behavior:
+      "Owns main's row appearance and static section rhythm without adding a landmark, surface, layout box or scrollport. Features retain data, selection, unread, disclosure and drag behavior.",
+    variants: ["named sections", "headingless reference", "wrapping sections"],
+    status: "core",
+    collection: "components",
+    source: "shared/design-system/ui/SidebarNavigation.tsx",
+    baseUi: [],
+    composes: ["navigation-section", "navigation-item"],
+  },
+  {
     slug: "navigation-section",
     name: "NavigationSection",
     purpose: "A named group of related rows in a dense workspace navigator.",
-    behavior: "Semantic native section.",
-    variants: ["default"],
+    behavior:
+      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm.",
+    variants: ["default", "headingless", "inside SidebarNavigation"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -720,7 +755,15 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button.",
-    variants: ["row", "pill", "option", "inset", "selected", "highlighted"],
+    variants: [
+      "row",
+      "pill",
+      "option",
+      "inset",
+      "selected",
+      "highlighted",
+      "inside SidebarNavigation",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

@@ -43,6 +43,10 @@ export class DiscoveryState {
   private rosters = new Map<string, RelayEvent>();
   private metadata = new Map<string, RelayEvent>();
   private creations = new Map<string, RelayEvent>();
+  /** Solo chats this device started whose signed metadata and roster have not
+   * both arrived. Local display and intent only: never saved, never proof.
+   * It stands in for access only until a signed roster decides it. */
+  private starting = new Map<string, ChannelSummary>();
   constructor(
     readonly viewer: string,
     readonly relayAuthor: string,
@@ -91,14 +95,36 @@ export class DiscoveryState {
       )
         this.denied.add(id);
       else if (hasTag(event, "p", this.viewer)) this.denied.delete(id);
+      // A signed roster without the viewer ends the start it stood in for.
+      if (!hasTag(event, "p", this.viewer)) this.starting.delete(id);
     } else if (previous && !this.rosters.has(id) && this.open(id))
       this.denied.delete(id);
     if (this.authorized(id) || (event.kind === 39000 && this.open(id)))
       this.suspended.delete(id);
+    if (this.metadata.has(id) && this.authorized(id)) this.starting.delete(id);
     if (accessible && !this.canAccess(id)) this.accessRevision++;
     return true;
   }
+  /** Lists a Solo chat this device is creating until the relay confirms it. */
+  start(channel: ChannelSummary) {
+    if (this.metadata.has(channel.id) || this.rosters.has(channel.id)) return;
+    this.starting.set(channel.id, Object.freeze({ ...channel, pending: true }));
+  }
+  /** Returns whether a started chat was still awaiting confirmation. */
+  abandon(id: string): boolean {
+    return this.starting.delete(id);
+  }
+  isPending(id: string): boolean {
+    return this.starting.has(id);
+  }
+  /** A started chat no signed roster has decided yet. */
+  private undecided(id: string) {
+    return this.starting.has(id) && !this.rosters.has(id);
+  }
   deny(id: string) {
+    // A read can race the chat's own creation; only abandon() or a signed
+    // roster ends a start.
+    if (this.undecided(id)) return;
     if (!this.canAccess(id) && !this.suspended.has(id)) return;
     // Never evict denial evidence back into "unknown". Bound adversarial IDs by
     // failing closed until fresh signed membership is available.
@@ -152,6 +178,7 @@ export class DiscoveryState {
   denyAll() {
     this.accessRevision++;
     this.complete = true;
+    this.starting.clear();
     for (const id of [...this.rosters.keys(), ...this.metadata.keys()])
       this.denied.add(id);
   }
@@ -165,6 +192,7 @@ export class DiscoveryState {
   }
   /** Unknown is not denied until a complete roster or local snapshot closes that boundary. */
   canAccess(id: string): boolean {
+    if (this.undecided(id)) return true;
     if (this.denied.has(id) || this.suspended.has(id)) return false;
     const roster = this.rosters.get(id);
     if (roster && hasTag(roster, "p", this.viewer)) return true;
@@ -178,6 +206,7 @@ export class DiscoveryState {
     return !!event && openMetadata(event);
   }
   canParticipate(id: string): boolean {
+    if (this.undecided(id)) return true;
     const roster = this.rosters.get(id);
     return (
       this.canAccess(id) &&
@@ -211,10 +240,13 @@ export class DiscoveryState {
     return !!event && event.tags.some(([name]) => name === "private");
   }
   isSolo(id: string): boolean {
+    if (this.starting.has(id)) return true;
     const event = this.metadata.get(id);
     return !!event && soloChannelMetadata(event);
   }
   get(id: string): ChannelSummary | undefined {
+    const starting = this.starting.get(id);
+    if (starting) return starting;
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
     const event = this.metadata.get(id);
     // The relay tags a system roster too, so a roster that arrives before its
@@ -322,12 +354,15 @@ export class DiscoveryState {
   /** Every roster channel get() serves, system channels included. Membership,
    * not listing, decides what the device may keep. */
   readable(): ChannelSummary[] {
-    return [...this.rosters.keys()]
-      .filter((id) => this.authorized(id))
-      .flatMap((id) => {
-        const channel = this.get(id);
-        return channel ? [channel] : [];
-      });
+    return [
+      ...new Set([
+        ...[...this.rosters.keys()].filter((id) => this.authorized(id)),
+        ...this.starting.keys(),
+      ]),
+    ].flatMap((id) => {
+      const channel = this.get(id);
+      return channel ? [channel] : [];
+    });
   }
   /** The channel list. System channels (NIP-CL) hold app data, not
    * conversation: they stay readable through get() but never list here. */

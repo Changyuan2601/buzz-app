@@ -324,7 +324,7 @@ pub(crate) async fn relay_direct_message(
 }
 
 pub(super) fn creation(event: &EventTemplate) -> bool {
-    if event.kind != 9007 || !event.content.is_empty() || !(4..=15).contains(&event.tags.len()) {
+    if event.kind != 9007 || !event.content.is_empty() || !(4..=47).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
@@ -386,6 +386,26 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         if index - first_label >= 8
             || !channel_label(label)
             || event.tags[first_label..index].iter().any(|t| t[1] == label)
+        {
+            return false;
+        }
+        index += 1;
+    }
+    // block/buzz#8421: up to 32 distinct `p` tags name the first members.
+    let first_member = index;
+    while event
+        .tags
+        .get(index)
+        .is_some_and(|t| t.first().is_some_and(|s| s == "p"))
+    {
+        let Some(member) = tag(event, index, "p") else {
+            return false;
+        };
+        if index - first_member >= 32
+            || !super::hex_key(member)
+            || event.tags[first_member..index]
+                .iter()
+                .any(|t| t[1] == member)
         {
             return false;
         }
@@ -694,6 +714,23 @@ mod boundary_tests {
         event.tags.push(vec!["p".into(), "attacker".into()]);
         assert!(!creation(&event));
         event.tags.pop();
+        let member = |n: usize| vec!["p".to_string(), format!("{n:064x}")];
+        event.tags.extend((1..=32).map(member));
+        assert!(creation(&event));
+        event.tags.push(member(33));
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event.tags.extend([member(1), member(1)]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event.tags.push(vec!["p".into(), "A".repeat(64)]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
+        event
+            .tags
+            .extend([member(1), vec!["t".into(), "buzz.solo".into()]]);
+        assert!(!creation(&event));
+        event.tags.truncate(4);
         event.tags[3][1] = "system".into();
         assert!(creation(&event));
         for other in ["dm", "forum", "session", "System", ""] {

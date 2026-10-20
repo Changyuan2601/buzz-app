@@ -13,6 +13,45 @@ import {
   type TimerWatch,
 } from "./attention";
 
+/** Agent state as every program that runs this machine's agents shares it.
+ * Reads are synchronous, from this program's copy. Each write changes the
+ * copy at once and returns a promise that settles once the write is saved.
+ * It rejects when the write was not saved, and the copy then holds the saved
+ * value again. A caller that must know a value is saved awaits the write. */
+export type AgentStore = Readonly<{
+  keys(): readonly string[];
+  get(key: string): string | null;
+  /** Saves `value` under `key`; null removes the key. */
+  set(key: string, value: string | null): Promise<void>;
+  /** Saves `value` only if no program saved a value under `key`. Resolves
+   * with the value then kept: `value`, or what another program saved first. */
+  add(key: string, value: string): Promise<string>;
+}>;
+
+/** `storage` as agent storage. Its writes save as they are made, so each
+ * settles at once, or rejects when `storage` refused it. */
+export function localStore(
+  storage: Storage = globalThis.localStorage,
+): AgentStore {
+  return Object.freeze({
+    keys: () =>
+      Array.from({ length: storage.length }, (_, index) =>
+        storage.key(index),
+      ).filter((key): key is string => key !== null),
+    get: (key: string) => storage.getItem(key),
+    set: async (key: string, value: string | null) => {
+      if (value === null) storage.removeItem(key);
+      else storage.setItem(key, value);
+    },
+    add: async (key: string, value: string) => {
+      const held = storage.getItem(key);
+      if (held !== null) return held;
+      storage.setItem(key, value);
+      return value;
+    },
+  });
+}
+
 /** An object a reader cannot apply, kept as it was stored so it can be fixed. */
 export type SkippedObject = Readonly<{
   slug: string;
@@ -40,20 +79,43 @@ export type AgentRecord = Readonly<{
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
+/** Where records were kept, all in one value, before each had its own key. */
 export const STORAGE_KEY = "buzz.agents.v1";
+/** Each agent's record has its own key, so programs that run different
+ * agents and share this storage never write over each other's records. */
+export const RECORD_PREFIX = "buzz.agent.v1:";
+export const recordKey = (pubkey: string) => `${RECORD_PREFIX}${pubkey}`;
 const PUBKEY = /^[0-9a-f]{64}$/;
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
 
 /** Reads every record. An attention object a reader would not apply is skipped
  * and reported, never dropped. */
-export function readRecords(storage: Storage): Record<string, AgentRecord> {
-  let stored: unknown;
-  try {
-    stored = JSON.parse(storage.getItem(STORAGE_KEY) ?? "null");
-  } catch {
-    return {};
+export function readRecords(storage: AgentStore): Record<string, AgentRecord> {
+  const stored: Record<string, AgentRecord> = { ...legacyRecords(storage) };
+  for (const key of storage.keys()) {
+    if (!key.startsWith(RECORD_PREFIX)) continue;
+    const record = parsed(storage.get(key));
+    if (record) stored[key.slice(RECORD_PREFIX.length)] = record as AgentRecord;
   }
+  const records: Record<string, AgentRecord> = {};
+  for (const [pubkey, record] of Object.entries(stored)) {
+    const read = readRecord(pubkey, record);
+    if (read) records[pubkey] = read;
+  }
+  return records;
+}
+
+function parsed(text: string | null): unknown {
+  try {
+    return JSON.parse(text ?? "null");
+  } catch {
+    return undefined;
+  }
+}
+
+function legacyRecords(storage: AgentStore): Record<string, AgentRecord> {
+  const stored = parsed(storage.get(STORAGE_KEY));
   if (
     !stored ||
     typeof stored !== "object" ||
@@ -61,80 +123,111 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
     typeof (stored as Stored).agents !== "object"
   )
     return {};
-  const records: Record<string, AgentRecord> = {};
-  for (const [pubkey, record] of Object.entries((stored as Stored).agents)) {
-    if (!PUBKEY.test(pubkey) || record?.pubkey !== pubkey) continue;
-    const attention: Record<string, AttentionObject> = {};
-    const skipped: Record<string, SkippedObject> = {};
-    const counts = { Interests: 0, "watches and timers": 0 };
-    const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
-    for (const [slug, object] of entries) {
-      const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
-        ? object.modifiedAt
-        : 0;
-      let problem =
-        object?.slug === slug
-          ? validateObject(slug, object.value)
-          : "Stored under another slug";
-      if (!problem) {
-        const kind = group(object.value);
-        if (++counts[kind] > OBJECT_LIMIT)
-          problem = `Over the limit of ${OBJECT_LIMIT} ${kind}`;
-      }
-      if (problem)
-        skipped[slug] = { slug, value: object?.value, modifiedAt, problem };
-      else attention[slug] = { slug, value: object.value, modifiedAt };
-    }
-    const timers: Record<string, TimerState> = {};
-    for (const [slug, state] of Object.entries(record.timers ?? {}))
-      if (
-        attention[slug]?.value.type === "timer" &&
-        [state?.armedAt, state?.nextDue, state?.used].every(
-          Number.isSafeInteger,
-        )
-      )
-        timers[slug] = state;
-    records[pubkey] = {
-      pubkey,
-      attention,
-      skipped,
-      config: record.config,
-      timers,
-      ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
-    };
-  }
-  return records;
+  return (stored as Stored).agents;
 }
 
-export function writeRecords(
-  storage: Storage,
+function readRecord(
+  pubkey: string,
+  record: AgentRecord | undefined,
+): AgentRecord | undefined {
+  if (!PUBKEY.test(pubkey) || record?.pubkey !== pubkey) return undefined;
+  const attention: Record<string, AttentionObject> = {};
+  const skipped: Record<string, SkippedObject> = {};
+  const counts = { Interests: 0, "watches and timers": 0 };
+  const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  for (const [slug, object] of entries) {
+    const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
+      ? object.modifiedAt
+      : 0;
+    let problem =
+      object?.slug === slug
+        ? validateObject(slug, object.value)
+        : "Stored under another slug";
+    if (!problem) {
+      const kind = group(object.value);
+      if (++counts[kind] > OBJECT_LIMIT)
+        problem = `Over the limit of ${OBJECT_LIMIT} ${kind}`;
+    }
+    if (problem)
+      skipped[slug] = { slug, value: object?.value, modifiedAt, problem };
+    else attention[slug] = { slug, value: object.value, modifiedAt };
+  }
+  const timers: Record<string, TimerState> = {};
+  for (const [slug, state] of Object.entries(record.timers ?? {}))
+    if (
+      attention[slug]?.value.type === "timer" &&
+      [state?.armedAt, state?.nextDue, state?.used].every(Number.isSafeInteger)
+    )
+      timers[slug] = state;
+  return {
+    pubkey,
+    attention,
+    skipped,
+    config: record.config,
+    timers,
+    ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
+  };
+}
+
+/** Moves records from the old value that held every agent into one key per
+ * agent, then removes it. Only that move writes many records at once: after
+ * it, each save writes only its own agent's key, so a program that runs
+ * other agents from the same storage keeps its changes. */
+export async function splitLegacyRecords(
+  storage: AgentStore,
   records: Readonly<Record<string, AgentRecord>>,
 ) {
+  if (storage.get(STORAGE_KEY) === null) return;
+  try {
+    // A key is only added where none is saved: a program that moves late
+    // never replaces what another saved since.
+    await Promise.all(
+      Object.values(records).map((record) =>
+        storage.add(recordKey(record.pubkey), recordText(record)),
+      ),
+    );
+    // The shared value goes only once every record is saved: until then it
+    // is the only saved copy, and a record of an agent's own wins when both
+    // are.
+    await storage.set(STORAGE_KEY, null);
+  } catch (error) {
+    // This must not stop startup: it runs before the app can show an error.
+    // The shared value stays, so the records are read from it and the move
+    // is tried again at the next start.
+    console.error("Agent records were not split", error);
+  }
+}
+
+/** Removes an agent's record. */
+export function removeRecord(storage: AgentStore, pubkey: string) {
+  return storage.set(recordKey(pubkey), null);
+}
+
+/** A record as it is saved. */
+function recordText({ skipped, ...record }: AgentRecord) {
   // Skipped objects go back where they were read from, so a later reader that
   // can apply them still finds them.
-  const agents = Object.fromEntries(
-    Object.entries(records).map(([pubkey, { skipped, ...record }]) => [
-      pubkey,
-      {
-        ...record,
-        attention: {
-          ...Object.fromEntries(
-            Object.values(skipped ?? {}).map(({ problem: _, ...object }) => [
-              object.slug,
-              object,
-            ]),
-          ),
-          ...record.attention,
-        },
-      },
-    ]),
-  );
-  storage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ version: 1, agents } as Stored),
-  );
+  return JSON.stringify({
+    ...record,
+    attention: {
+      ...Object.fromEntries(
+        Object.values(skipped ?? {}).map(({ problem: _, ...object }) => [
+          object.slug,
+          object,
+        ]),
+      ),
+      ...record.attention,
+    },
+  });
+}
+
+/** Saves one record, when it changed. */
+export async function writeRecord(storage: AgentStore, record: AgentRecord) {
+  const text = recordText(record);
+  const key = recordKey(record.pubkey);
+  if (storage.get(key) !== text) await storage.set(key, text);
 }
 
 /** Replaces or deletes (`value: null`) one attention object, after validating it
@@ -185,6 +278,44 @@ export function setAttention(
   };
 }
 
+/** What one timer pass saw and decided, by slug: `seen` is the run state it
+ * read, absent when the timer had none, and `next` the state it keeps. */
+export type TimerProgress = Readonly<
+  Record<string, Readonly<{ seen?: TimerState | undefined; next: TimerState }>>
+>;
+
+const sameState = (a: TimerState | undefined, b: TimerState | undefined) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.armedAt === b.armedAt &&
+    a.nextDue === b.nextDue &&
+    a.used === b.used);
+
+/** `record` with a timer pass's progress, or undefined when that changes
+ * nothing. A timer whose state is still what the pass saw takes the pass's
+ * state. One whose state changed since, as a rearm or restart changes it,
+ * keeps its new deadline, and the occurrences the pass used are added to it:
+ * they ran, so they count. A timer that is gone takes nothing. */
+export function withProgress(
+  record: AgentRecord,
+  progress: TimerProgress,
+): AgentRecord | undefined {
+  let timers = record.timers ?? {};
+  for (const [slug, { seen, next }] of Object.entries(progress)) {
+    if (record.attention[slug]?.value.type !== "timer") continue;
+    const state = timers[slug];
+    const kept =
+      !state || sameState(state, seen)
+        ? next
+        : seen
+          ? { ...state, used: state.used + next.used - seen.used }
+          : state;
+    if (!sameState(kept, state)) timers = { ...timers, [slug]: kept };
+  }
+  return timers === (record.timers ?? {}) ? undefined : { ...record, timers };
+}
+
 /** A group of the owner's agents and the text its members share. Membership
  * lives only here: an agent records nothing about its teams. */
 export type Team = Readonly<{
@@ -197,10 +328,10 @@ export type Team = Readonly<{
 export const TEAMS_KEY = "buzz.agents.teams.v1";
 
 /** Reads every team, skipping any that is not one. */
-export function readTeams(storage: Storage): readonly Team[] {
+export function readTeams(storage: AgentStore): readonly Team[] {
   let stored: unknown;
   try {
-    stored = JSON.parse(storage.getItem(TEAMS_KEY) ?? "null");
+    stored = JSON.parse(storage.get(TEAMS_KEY) ?? "null");
   } catch {
     return [];
   }
@@ -226,8 +357,8 @@ export function readTeams(storage: Storage): readonly Team[] {
   );
 }
 
-export function writeTeams(storage: Storage, teams: readonly Team[]) {
-  storage.setItem(TEAMS_KEY, JSON.stringify({ version: 1, teams }));
+export function writeTeams(storage: AgentStore, teams: readonly Team[]) {
+  return storage.set(TEAMS_KEY, JSON.stringify({ version: 1, teams }));
 }
 
 /** A hosted agent its provider made whose setup has not finished. Kept so
@@ -246,10 +377,10 @@ export type Unfinished = Readonly<{
 export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
 
 /** Reads every unfinished setup, skipping any that is not one. */
-export function readUnfinished(storage: Storage): readonly Unfinished[] {
+export function readUnfinished(storage: AgentStore): readonly Unfinished[] {
   let stored: unknown;
   try {
-    stored = JSON.parse(storage.getItem(UNFINISHED_KEY) ?? "null");
+    stored = JSON.parse(storage.get(UNFINISHED_KEY) ?? "null");
   } catch {
     return [];
   }
@@ -281,10 +412,10 @@ export function readUnfinished(storage: Storage): readonly Unfinished[] {
 }
 
 export function writeUnfinished(
-  storage: Storage,
+  storage: AgentStore,
   agents: readonly Unfinished[],
 ) {
-  storage.setItem(UNFINISHED_KEY, JSON.stringify({ version: 1, agents }));
+  return storage.set(UNFINISHED_KEY, JSON.stringify({ version: 1, agents }));
 }
 
 /** `state` for the edited `timer`: unchanged unless it was rearmed. */
@@ -305,10 +436,10 @@ function rearmed(
  * settings keep offering Retry across restarts until a check confirms it. */
 export const ARCHIVE_UNCHECKED_KEY = "buzz.agents.archive-unchecked.v1";
 
-export function readArchiveUnchecked(storage: Storage): Set<string> {
+export function readArchiveUnchecked(storage: AgentStore): Set<string> {
   let stored: unknown;
   try {
-    stored = JSON.parse(storage.getItem(ARCHIVE_UNCHECKED_KEY) ?? "null");
+    stored = JSON.parse(storage.get(ARCHIVE_UNCHECKED_KEY) ?? "null");
   } catch {
     return new Set();
   }
@@ -324,10 +455,10 @@ export function readArchiveUnchecked(storage: Storage): Set<string> {
 }
 
 export function writeArchiveUnchecked(
-  storage: Storage,
+  storage: AgentStore,
   agents: ReadonlySet<string>,
 ) {
-  storage.setItem(
+  return storage.set(
     ARCHIVE_UNCHECKED_KEY,
     JSON.stringify({ version: 1, agents: [...agents] }),
   );

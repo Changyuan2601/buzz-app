@@ -43,6 +43,7 @@ function fixture() {
   const outbox: Outbox = {
     snapshot: () => events,
     subscribe: () => () => {},
+    observeDismiss: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
     recover: async () => {},

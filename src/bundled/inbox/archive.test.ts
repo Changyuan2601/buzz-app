@@ -50,6 +50,24 @@ function fixture() {
   return { viewer, alice, events, item, scope, archived };
 }
 
+it("cuts off an archive at its evidence, not at a later displayed message", () => {
+  const h = fixture();
+  // A Solo chat row can show a newer, even future-dated, message that is not
+  // evidence.
+  const shown = { ...h.item, createdAt: 90 };
+  updateArchive(h.scope, shown, true);
+  expect(h.archived(shown)).toBe(true);
+  const mention = {
+    ...shown,
+    messageIds: [...shown.messageIds, "b".repeat(64)],
+    messages: [
+      ...shown.messages,
+      { id: "b".repeat(64), createdAt: 40, mentioned: true },
+    ],
+  };
+  expect(h.archived(mention)).toBe(false);
+});
+
 it("keeps non-participating replies and older mentions archived, but reopens for a same-second new tag", () => {
   const h = fixture();
   updateArchive(h.scope, h.item, true);

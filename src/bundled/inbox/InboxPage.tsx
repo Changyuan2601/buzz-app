@@ -1129,8 +1129,13 @@ function InboxList({
                                   id={`${previewId}-${item.id}`}
                                   className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
                                 >
-                                  {item.messageIds.some((id) =>
-                                    feed.incomplete.includes(id),
+                                  {[
+                                    item.previewMessageId,
+                                    ...item.messageIds,
+                                  ].some(
+                                    (id) =>
+                                      id !== undefined &&
+                                      feed.incomplete.includes(id),
                                   )
                                     ? feed.status === "error"
                                       ? "Preview unavailable. Retry inbox."

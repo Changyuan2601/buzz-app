@@ -301,6 +301,8 @@ import TablerShareIcon from "@tabler/icons-react/dist/esm/icons/IconShare2.mjs";
 export const ShareIcon = defineIcon("tabler", TablerShareIcon);
 import TablerUsersIcon from "@tabler/icons-react/dist/esm/icons/IconUsers.mjs";
 export const UsersIcon = defineIcon("tabler", TablerUsersIcon);
+import TablerUsersPlusIcon from "@tabler/icons-react/dist/esm/icons/IconUsersPlus.mjs";
+export const UsersPlusIcon = defineIcon("tabler", TablerUsersPlusIcon);
 import TablerVideoCameraIcon from "@tabler/icons-react/dist/esm/icons/IconVideo.mjs";
 export const VideoCameraIcon = defineIcon("tabler", TablerVideoCameraIcon);
 import TablerVideoConferenceIcon from "@tabler/icons-react/dist/esm/icons/IconVideoPlus.mjs";

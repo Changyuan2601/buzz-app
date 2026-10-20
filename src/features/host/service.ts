@@ -72,6 +72,18 @@ export interface Host {
   /** Starts a loopback MCP server whose messages `handler` answers, for a
    * plugin whose manifest declares `host.mcp`. Desktop only. */
   serveMcp?: (handler: McpHandler) => Promise<HostMcpServer>;
+  /** Reads a file of at most 50 MB, for a plugin whose manifest declares
+   * `host.files`. `path` is absolute, `~/…`, or relative to `cwd`, which is
+   * absolute or `~/…`. A missing file rejects with "No such file". Desktop
+   * only. */
+  readFile?: (
+    path: string,
+    options?: Readonly<{ cwd?: string }>,
+  ) => Promise<Uint8Array>;
+  /** `path`, absolute or `~/…`, as an absolute directory without symbolic
+   * links, created if missing, for a plugin whose manifest declares
+   * `host.files`. Desktop only. */
+  resolveDirectory?: (path: string) => Promise<string>;
   request(input: HostRequest): Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
@@ -318,6 +330,34 @@ export class HostService extends Service implements Host {
     });
   }
 
+  // Methods, not fields: `this.ctx` is then the calling plugin's scope.
+  async readFile(
+    path: string,
+    { cwd }: Readonly<{ cwd?: string }> = {},
+  ): Promise<Uint8Array> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Files require an installed desktop plugin");
+    const data = await invoke<ArrayBuffer>("plugin_host_read_file", {
+      id: owner.id,
+      revision: owner.revision,
+      path,
+      cwd: cwd ?? null,
+    }).catch(rethrow);
+    return new Uint8Array(data);
+  }
+
+  async resolveDirectory(path: string): Promise<string> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Files require an installed desktop plugin");
+    return invoke<string>("plugin_host_resolve_directory", {
+      id: owner.id,
+      revision: owner.revision,
+      path,
+    }).catch(rethrow);
+  }
+
   async request(input: HostRequest): Promise<HostResponse> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
@@ -328,6 +368,11 @@ export class HostService extends Service implements Host {
       request: input,
     });
   }
+}
+
+/** A native command's failure, which arrives as its message, as an Error. */
+function rethrow(error: unknown): never {
+  throw typeof error === "string" ? new Error(error) : error;
 }
 
 /** The reply to one HTTP body, which carries one message: MCP has no batches

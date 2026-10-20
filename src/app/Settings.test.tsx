@@ -1112,7 +1112,7 @@ it("shows administration only within a selected community", () => {
   const { cards } = registry([membership]);
   const view = render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).toHaveTextContent("Primary");
+  expect(nav).toHaveTextContent("primary.example");
   expect(nav).toHaveTextContent("Community admin");
   fireEvent.click(screen.getByRole("button", { name: "Membership" }));
   expect(screen.getByText("Membership body for Primary")).toBeVisible();
@@ -1153,7 +1153,7 @@ it("gives contributed cards their own community sections and retires removed car
     />,
   );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).toHaveTextContent("Primary");
+  expect(nav).toHaveTextContent("primary.example");
   expect(nav).toHaveTextContent("Communities");
   expect(await screen.findByText("Hosted communities body")).toBeVisible();
   expect(
@@ -1292,12 +1292,13 @@ it.each(["primary", null])(
     } as unknown as Parameters<typeof Settings>[0]["communities"];
     render(<Settings {...host} communities={communities} cards={cards} />);
     render(
-      <SettingsSidebar
-        cards={cards}
-        communities={communities}
-        onBack={() => {}}
-        onSection={() => {}}
-      />,
+      <nav aria-label="Settings sections">
+        <SettingsSidebar
+          cards={cards}
+          communities={communities}
+          onSection={() => {}}
+        />
+      </nav>,
     );
     const [standalone, shell] = screen.getAllByRole("navigation", {
       name: "Settings sections",
@@ -1316,7 +1317,9 @@ it.each(["primary", null])(
       outline(shell as HTMLElement),
     );
     expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
-      ...(selected ? ["Primary", "Community admin"] : ["Personal space"]),
+      ...(selected
+        ? [undefined, "Community", "Community admin"]
+        : ["Personal space"]),
       "Buzz",
       "Plugins",
       "Communities",

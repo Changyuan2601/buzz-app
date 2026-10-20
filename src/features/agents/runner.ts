@@ -36,7 +36,6 @@ import {
   type TimerWatch,
 } from "./attention";
 import {
-  AttentionError,
   checkedWrite,
   interestIds,
   show,
@@ -55,7 +54,7 @@ import {
 } from "./classifier";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
-import type { AgentRecord } from "./store";
+import type { AgentRecord, TimerProgress } from "./store";
 import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
@@ -296,12 +295,6 @@ type Pass = {
   failedAt?: number;
 };
 
-const EMPTY = Object.freeze({});
-const blank = (pubkey: string): AgentRecord => ({
-  pubkey,
-  attention: EMPTY,
-  config: undefined,
-});
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
@@ -317,6 +310,9 @@ export type RunnerHost = {
   member(agent: Agent, event: RelayEvent): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** While the owner is still starting this chat, settles once it can take
+   * the agent's events; undefined otherwise. */
+  starting?(agent: Agent, channelId: string): Promise<void> | undefined;
   /** Its community, while live. */
   community(agent: Agent): LiveCommunity | undefined;
   /** Every saved record, whose watches' catch-up progress is kept. */
@@ -333,8 +329,21 @@ export type RunnerHost = {
   saved(pubkey: string): AgentRecord | undefined;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(pubkey: string): AgentRecord;
-  /** Saves one record; throws when storage refuses it. */
-  write(record: AgentRecord): void;
+  /** Changes its record after the changes sent before it, from the newest
+   * saved record; settles with the saved record once it is saved, and
+   * rejects when `apply` throws or the save fails. */
+  change(
+    pubkey: string,
+    apply: (record: AgentRecord) => AgentRecord | Promise<AgentRecord>,
+  ): Promise<AgentRecord>;
+  /** Whether a change other than timer progress is waiting or saving. Its
+   * timers wait for it, since it may rearm, restart or remove one. */
+  changing(pubkey: string): boolean;
+  /** Its timers' run state, with progress still being saved. */
+  timers(pubkey: string): Readonly<Record<string, TimerState>>;
+  /** Saves a timer pass's progress. Its timers see it at once, and it stays
+   * in memory even if the save fails, so a timer does not run again at once. */
+  progress(pubkey: string, progress: TimerProgress): void;
   /** The team sections of its prompt; empty without a team. */
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
@@ -460,10 +469,15 @@ export class AgentRunners {
   }
   /** Wakes each runner, which starts any timer that is due. */
   tick() {
-    for (const runner of this.runners.values()) {
-      this.admit(runner);
-      void this.drain(runner);
-    }
+    for (const pubkey of this.runners.keys()) this.wake(pubkey);
+  }
+  /** Wakes the agent's runner, as when the changes its timers wait for are
+   * saved: one due meanwhile starts now, not at the next tick. */
+  wake(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    if (!runner) return;
+    this.admit(runner);
+    void this.drain(runner);
   }
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */
@@ -1557,10 +1571,12 @@ export class AgentRunners {
   ): Job | undefined {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
+    // A pending change may rearm, restart or remove a timer: a later tick
+    // runs from the record it saves.
+    if (this.host.changing(agent.pubkey)) return undefined;
     const now = seconds();
-    const record = this.host.saved(agent.pubkey) ?? blank(agent.pubkey);
-    const prior = record.timers ?? EMPTY;
-    let timers = prior;
+    const timers = this.host.timers(agent.pubkey);
+    let changed: TimerProgress = {};
     let next:
       | {
           slug: string;
@@ -1572,9 +1588,10 @@ export class AgentRunners {
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
       if (timer.type !== "timer" || !timer.enabled) continue;
-      const saved = agent.timers[object.slug];
+      const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
-      if (state !== saved) timers = { ...timers, [object.slug]: state };
+      if (state !== saved)
+        changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
@@ -1586,15 +1603,12 @@ export class AgentRunners {
       used: next.state.used + 1,
       nextDue: now + next.timer.interval_secs,
     };
-    if (next && ran) timers = { ...timers, [next.slug]: ran };
-    if (timers !== prior)
-      try {
-        this.host.write({ ...record, timers });
-      } catch (error) {
-        // Unsaved, it would run again at once; it waits for storage instead.
-        console.warn(`Agent ${agent.name} timer state was not saved`, error);
-        return undefined;
-      }
+    if (next && ran)
+      changed = {
+        ...changed,
+        [next.slug]: { seen: timers[next.slug], next: ran },
+      };
+    if (Object.keys(changed).length) this.host.progress(agent.pubkey, changed);
     if (!next || !ran) return undefined;
     const { slug, timer, object } = next;
     const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
@@ -2040,27 +2054,12 @@ export class AgentRunners {
         value: AttentionValue | null,
         options: WriteOptions,
       ) => {
-        // The token is checked against the record as it is when the write
-        // lands: a write that raced this one makes it check again, a few times.
-        for (let attempt = 0; ; attempt++) {
-          const before = record();
-          const after = await checkedWrite(
-            before,
-            slug,
-            value,
-            options,
-            seconds(),
-          );
-          if (record() !== before) {
-            if (attempt < 3) continue;
-            throw new AttentionError(
-              "conflict",
-              `${slug} is changing; show it again`,
-            );
-          }
-          this.host.write(after);
-          return show(after, slug, seconds());
-        }
+        // The token is checked against the newest saved record, in turn
+        // with the other changes to it, so no change lands between.
+        const after = await this.host.change(pubkey, (before) =>
+          checkedWrite(before, slug, value, options, seconds()),
+        );
+        return show(after, slug, seconds());
       },
     });
   }
@@ -2071,6 +2070,12 @@ export class AgentRunners {
     return this.host.custody;
   }
   private async publish(runner: Runner, event: AgentEventTemplate) {
+    const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
+    const agent = this.host.agent(runner.pubkey);
+    // The relay takes a reply in a starting chat only once it confirms it;
+    // a failed start leaves the relay to refuse it.
+    if (channel && agent)
+      await this.host.starting?.(agent, channel)?.catch(() => {});
     const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;

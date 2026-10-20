@@ -1,9 +1,13 @@
+import { SidebarNavigation } from "../../../../src/shared/design-system/ui/SidebarNavigation";
 import { ExamplePreview } from "./ExamplePreview";
 import { SectionHeading } from "./primitives";
 import { useId, useState, type ReactNode } from "react";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { Checkbox } from "../../../../src/shared/design-system/ui/Checkbox";
+import { NavigationItem } from "../../../../src/shared/design-system/ui/NavigationItem";
+import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
+import { Header } from "../../../../src/shared/design-system/ui/Header";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
@@ -152,10 +156,53 @@ function ScrollToEdgeExample() {
   );
 }
 
+function NavigationExample() {
+  const [open, setOpen] = useState(false);
+  const [section, setSection] = useState("General");
+  return (
+    <section className="component-specimen-group">
+      <SectionHeading
+        title="Integrated navigation"
+        description="One expanded modal surface with a flush sidebar and independently scrolling content. The surface and contents fade in together with a slight entry scale, settling without a transform; narrow navigation stacks above the content."
+      />
+      <Button onClick={() => setOpen(true)}>Open navigated modal</Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Preferences"
+        navigation={{
+          label: "Preference sections",
+          content: (
+            <SidebarNavigation wrapSections>
+              <NavigationSection label="Preferences">
+                {["General", "Notifications"].map((label) => (
+                  <NavigationItem
+                    key={label}
+                    label={label}
+                    selected={section === label}
+                    onClick={() => setSection(label)}
+                  />
+                ))}
+              </NavigationSection>
+            </SidebarNavigation>
+          ),
+        }}
+      >
+        <Header title={section} />
+        <p className="text-body text-secondary">
+          Existing controls keep their own save behavior. Closing returns to the
+          work underneath.
+        </p>
+      </Dialog>
+    </section>
+  );
+}
+
 export function DialogSpecimens() {
   return (
     <div className="component-specimen-stack">
       <ScrollToEdgeExample />
+      <NavigationExample />
       <Example
         label="Wide catalog"
         description="A bounded wide surface for a sidebar and setup details."

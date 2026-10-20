@@ -15,6 +15,11 @@ export type Spawn = (
   options?: HostProcessOptions,
 ) => Promise<HostProcess>;
 export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
+/** The desktop host's `spawn` and `resolveDirectory`, which goose starts with. */
+export type GooseHost = Readonly<{
+  spawn: Spawn;
+  resolveDirectory(path: string): Promise<string>;
+}>;
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
 const WRITTEN_LIMIT = 20_000;

@@ -16,9 +16,8 @@ export const TYPE_ID = "goose";
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start `goose-acp`, and file uploads run `base64`,
-  // which stock Windows lacks; no unusable type elsewhere.
-  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
+  // Only the desktop app can start `goose-acp`; no unusable type elsewhere.
+  if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(
@@ -28,9 +27,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     localStorage,
     () => agents.tools(),
   );
-  const spawn = host.spawn?.bind(host);
-  const setup = new GooseSetup(spawn, () => runtime.defaultsChanged());
-  const history = new GooseHistory(spawn);
+  const desktop =
+    host.spawn && host.resolveDirectory
+      ? {
+          spawn: host.spawn.bind(host),
+          resolveDirectory: host.resolveDirectory.bind(host),
+        }
+      : undefined;
+  const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
+  const history = new GooseHistory(desktop);
   const {
     Create,
     CreateModel,
@@ -116,7 +121,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       subscribe: (listener) => runtime.subscribe(listener),
     },
-    ...(spawn && {
+    ...(desktop && {
       usage: (agent, { since, signal }) =>
         readUsage(
           history,

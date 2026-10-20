@@ -7,8 +7,7 @@ import type {
   AgentProviderSnapshot,
   Models,
 } from "../../features/agents/service";
-import { GooseProcess, type Choice, type Spawn } from "./goose";
-import { absolute } from "./sessions";
+import { GooseProcess, type Choice, type GooseHost } from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -95,7 +94,7 @@ export class GooseSetup {
   private checking: Promise<void> | undefined;
 
   constructor(
-    private readonly spawn: Spawn | undefined,
+    private readonly host: GooseHost | undefined,
     private readonly defaultsChanged: () => void = () => {},
   ) {}
 
@@ -408,20 +407,20 @@ export class GooseSetup {
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},
   ): Promise<T> {
-    return briefly(this.spawn, run, env);
+    return briefly(this.host, run, env);
   }
 }
 
 /** Runs `run` against a `goose-acp` started for it in the home folder, and
  * stops it after. It serves no Buzz tools. */
 export async function briefly<T>(
-  spawn: Spawn | undefined,
+  host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
 ): Promise<T> {
-  if (!spawn) throw new Error("goose runs only in the desktop app");
-  const cwd = await absolute(spawn, "~");
-  const goose = await GooseProcess.start(spawn, {
+  if (!host) throw new Error("goose runs only in the desktop app");
+  const cwd = await host.resolveDirectory("~");
+  const goose = await GooseProcess.start(host.spawn, {
     cwd,
     env,
   });

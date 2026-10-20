@@ -248,18 +248,16 @@ async function setup(
   };
 }
 it.each([
-  ["member", "admin", ["Owner", "Morgan", "Carl"]],
-  ["admin", "member", ["Owner", "Carl", "Morgan"]],
-  ["owner", "owner", ["Carl", "Morgan", "Owner"]],
-  ["admin", "admin", ["Owner", "Carl", "Morgan"]],
-  ["member", "guest", ["Owner", "Carl", "Morgan"]],
+  ["member", "admin"],
+  ["admin", "member"],
+  ["owner", "owner"],
+  ["admin", "admin"],
+  ["member", "guest"],
 ] as const)(
-  "orders owners, admins, then everyone else alphabetically (viewer: %s, target: %s)",
-  async (actor, target, expected) => {
+  "lists people alphabetically with elevated role labels (viewer: %s, target: %s)",
+  async (actor, target) => {
     const t = await setup(actor, target);
-    expect(memberOrder()).toEqual(expected);
-    const groupFor = (role: string) =>
-      role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Members";
+    expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
     for (const [name, role] of [
       ["Carl", actor],
       ["Morgan", target],
@@ -268,27 +266,30 @@ it.each([
       const row = screen.getByRole("button", {
         name: new RegExp(`^Open profile for ${name}`),
       });
-      expect(row.closest("section")).toHaveAttribute(
-        "aria-label",
-        groupFor(required(role)),
-      );
-      expect(
-        within(required(row.closest("li"))).queryByText(required(role)),
-      ).not.toBeInTheDocument();
+      expect(row.closest("section")).toHaveAttribute("aria-label", "People");
+      const labels = within(required(row.closest("li")));
+      if (role === "owner" || role === "admin")
+        expect(
+          labels.getAllByText(role === "owner" ? "Owner" : "Admin").length,
+        ).toBeGreaterThan(0);
+      else {
+        expect(labels.queryByText("Admin")).not.toBeInTheDocument();
+        expect(labels.queryByText("Owner")).not.toBeInTheDocument();
+      }
     }
     await t.user.type(screen.getByRole("searchbox"), "o");
-    expect(memberOrder()).toEqual(expected.filter((name) => name !== "Carl"));
+    expect(memberOrder()).toEqual(["Morgan", "Owner"]);
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
 
 it.each([
-  [true, "owner", "Owners"],
-  [true, "admin", "Admins"],
+  [true, "owner", "Agents"],
+  [true, "admin", "Agents"],
   [true, "member", "Agents"],
-  [false, "bot", "Members"],
+  [false, "bot", "People"],
 ] as const)(
-  "groups agent identities below elevated roles (agent: %s, role: %s)",
+  "groups by identity regardless of role (agent: %s, role: %s)",
   async (agent, role, expected) => {
     const t = await setup("member", role, true, undefined, agent);
     const row = screen.getByRole("button", {
@@ -296,30 +297,21 @@ it.each([
     });
     expect(row.closest("section")).toHaveAttribute("aria-label", expected);
     expect(memberOrder()).toEqual(
-      role === "owner"
-        ? ["Morgan", "Owner", "Carl"]
-        : role === "admin"
-          ? ["Owner", "Morgan", "Carl"]
-          : ["Owner", "Carl", "Morgan"],
+      agent ? ["Carl", "Owner", "Morgan"] : ["Carl", "Morgan", "Owner"],
     );
-    const count = expected === "Owners" || expected === "Members" ? 2 : 1;
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     expect(memberOrder()).toEqual(["Morgan"]);
     expect(
-      screen.getByRole("heading", { name: `${expected} · ${count}` }),
+      screen.getByRole("heading", { name: `${expected} · 1` }),
     ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
 
-it("moves an agent between elevated roles and Agents after a verified refresh", async () => {
+it("updates an agent's role label after refresh while keeping it under Agents", async () => {
   const t = await setup("member", "member", true, undefined, true);
   const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  for (const [role, group] of [
-    ["admin", "Admins"],
-    ["owner", "Owners"],
-    ["member", "Agents"],
-  ]) {
+  for (const role of ["admin", "owner", "member"]) {
     await vi.waitFor(() =>
       expect(refresh).toHaveAttribute("aria-busy", "false"),
     );
@@ -327,11 +319,19 @@ it("moves an agent between elevated roles and Agents after a verified refresh", 
     await t.user.click(refresh);
     await vi.waitFor(() =>
       expect(
-        screen
-          .getByRole("button", { name: /Open profile for Morgan/ })
-          .closest("section"),
-      ).toHaveAttribute("aria-label", group),
+        screen.getByRole("button", { name: /Open profile for Morgan/ }),
+      ).toHaveAccessibleName(new RegExp(`, ${role}$`)),
     );
+    const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
+    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
+    const labels = within(required(row.closest("li")));
+    if (role === "member") {
+      expect(labels.queryByText("Admin")).not.toBeInTheDocument();
+      expect(labels.queryByText("Owner")).not.toBeInTheDocument();
+    } else
+      expect(
+        labels.getByText(role === "owner" ? "Owner" : "Admin"),
+      ).toBeVisible();
   }
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -354,21 +354,21 @@ it("withholds initial rows until roles settle, then preserves content through re
   }
   const refresh = screen.getByRole("button", { name: "Refresh member data" });
   await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(memberOrder()).toEqual(["Owner", "Carl", "Morgan"]);
+  expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   t.confirm("admin");
   await t.user.click(refresh);
   await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(memberOrder()).toEqual(["Owner", "Morgan", "Carl"]);
+  expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   const query = required(t.query.getMockImplementation());
   t.query.mockRejectedValue(new Error("Read failed"));
   await t.user.click(refresh);
   await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(memberOrder()).toEqual(["Owner", "Morgan", "Carl"]);
+  expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   t.query.mockImplementation(query);
   t.confirm("member");
   await t.user.click(refresh);
   await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(memberOrder()).toEqual(["Owner", "Carl", "Morgan"]);
+  expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   expect(t.publish).not.toHaveBeenCalled();
 });
 
@@ -479,7 +479,7 @@ it.each(["names", "roles", "roster"] as const)(
       expect(screen.getByRole("searchbox")).toBe(search);
       await act(async () => gates[last].resolve());
       await screen.findByText("Morgan");
-      expect(memberOrder()).toEqual(["Owner", "Carl", "Morgan"]);
+      expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
       expect(
         screen.queryByRole("status", { name: "Loading members" }),
       ).toBeNull();
@@ -536,7 +536,7 @@ it("keeps resolved rows and focus while refreshing, and reopens warm without a s
       expect(
         screen.queryByRole("status", { name: "Loading members" }),
       ).toBeNull();
-      expect(memberOrder()).toEqual(["Carl", "Owner", "Morgan"]);
+      expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
     } finally {
       await act(async () => reopen.resolve());
     }
@@ -550,7 +550,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   await expectProfileOnly(t.user, "Carl");
   await expectProfileOnly(t.user, "Owner");
   const row = required(screen.getByText("Morgan").closest("li"));
-  expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
+  expect(row.closest("section")).toHaveAttribute("aria-label", "People");
   let dialog = await t.choose("Make admin");
   await vi.waitFor(() =>
     expect(
@@ -582,7 +582,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "Admins");
+  ).toHaveAttribute("aria-label", "People");
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each(["cancel", "close", "escape", "outside"])(
@@ -727,7 +727,7 @@ it("changes an existing Guest to Member only after explicit confirmation", async
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "Members");
+  ).toHaveAttribute("aria-label", "People");
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each([false, true])(
@@ -749,7 +749,7 @@ it.each([false, true])(
       expect(
         within(required(row.closest("li"))).queryByText("Agent"),
       ).not.toBeInTheDocument();
-      expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
+      expect(row.closest("section")).toHaveAttribute("aria-label", "People");
       expect(row).toHaveAccessibleName(/, bot/);
     }
     expect(
@@ -842,7 +842,7 @@ it.each([false, true])(
   },
 );
 it.each(["admin", "owner", "guest"])(
-  "groups an Agent by verified %s role without role pills",
+  "keeps an Agent under Agents with its verified %s role",
   async (role) => {
     const t = await setup("owner", role, true, undefined, true);
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
@@ -852,10 +852,7 @@ it.each(["admin", "owner", "guest"])(
     expect(
       within(required(row.closest("li"))).queryByText(role),
     ).not.toBeInTheDocument();
-    expect(row.closest("section")).toHaveAttribute(
-      "aria-label",
-      role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Agents",
-    );
+    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
     expect(row).toHaveAccessibleName(new RegExp(`, ${role}$`));
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -879,7 +876,7 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "Members");
+  ).toHaveAttribute("aria-label", "People");
   await expectProfileOnly(t.user, "Morgan");
   await t.user.click(
     screen.getByRole("button", { name: "Close channel members" }),
@@ -1036,7 +1033,7 @@ it.each([true, false])(
   "refreshes roster and roles from the header without writes (writer: %s)",
   async (supported) => {
     const t = await setup("owner", "member", supported);
-    const section = screen.getByRole("region", { name: "Members" });
+    const section = screen.getByRole("region", { name: "People" });
     const dialog = screen.getByRole("dialog", { name: "Channel members" });
     const header = required(dialog.querySelector("header"));
     const refresh = within(header).getByRole("button", {
@@ -1059,10 +1056,8 @@ it.each([true, false])(
     await t.user.click(refresh);
     await vi.waitFor(() =>
       expect(
-        screen
-          .getByRole("button", { name: /Open profile for Morgan/ })
-          .closest("section"),
-      ).toHaveAttribute("aria-label", "Admins"),
+        screen.getByRole("button", { name: /Open profile for Morgan/ }),
+      ).toHaveAccessibleName(/, admin$/),
     );
     await vi.waitFor(() =>
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
@@ -1072,10 +1067,13 @@ it.each([true, false])(
     await vi.waitFor(() =>
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
     );
-    expect(within(section).getByRole("heading")).toHaveTextContent(
-      "Members · 0",
-    );
-    expect(within(section).queryByText("Morgan")).not.toBeInTheDocument();
+    expect(section).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "People" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Open profile for Morgan/ }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -1176,7 +1174,7 @@ it.each([false, true])(
     }
     expect(targetRow().closest("section")).toHaveAttribute(
       "aria-label",
-      "Members",
+      "People",
     );
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -1267,16 +1265,14 @@ it("holds duplicate refreshes, retains the roster on read failure, and recovers 
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "Members");
+  ).toHaveAttribute("aria-label", "People");
   t.query.mockImplementation(query);
   t.confirm("admin");
   await t.user.click(refresh);
   await vi.waitFor(() =>
     expect(
-      screen
-        .getByRole("button", { name: /Open profile for Morgan/ })
-        .closest("section"),
-    ).toHaveAttribute("aria-label", "Admins"),
+      screen.getByRole("button", { name: /Open profile for Morgan/ }),
+    ).toHaveAccessibleName(/, admin$/),
   );
   await vi.waitFor(() =>
     expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
@@ -1598,12 +1594,12 @@ it("filters by present groups and resets to All on any search input", async () =
   const t = await setup("admin", "member", true, undefined, true);
   const list = screen.getByRole("region", { name: "Member list" });
   const filter = () =>
-    screen.getByRole("combobox", { name: "Filter members by role" });
+    screen.getByRole("combobox", { name: "Filter people and agents" });
   expect(filter()).toHaveTextContent("All");
   await t.user.click(filter());
   await screen.findByRole("option", { name: /^All/ });
   expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(
-    ["All · 3", "Owners · 1", "Admins · 1", "Agents · 1"],
+    ["All · 3", "People · 2", "Agents · 1"],
   );
   expect(screen.getByRole("option", { name: "All · 3" })).toHaveAttribute(
     "aria-selected",
@@ -1632,36 +1628,48 @@ it("filters by present groups and resets to All on any search input", async () =
   await t.user.clear(screen.getByRole("searchbox"));
   expect(within(list).getByText("Carl (you)")).toBeVisible();
   expect(within(list).getByText("Morgan")).toBeVisible();
-  expect(within(list).getByText("Owner")).toBeVisible();
+  expect(
+    within(list).getByRole("button", { name: /^Open profile for Owner/ }),
+  ).toBeVisible();
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("hides the role filter for a single group, including agents who are owners", async () => {
-  await setup("owner", "owner", true, undefined, true);
+it("hides the identity filter when everyone is a person, including owners", async () => {
+  await setup("owner", "owner");
   expect(
-    screen.queryByRole("combobox", { name: "Filter members by role" }),
+    screen.queryByRole("combobox", { name: "Filter people and agents" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Owners · 3" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "People · 3" })).toBeVisible();
 });
 
-it("returns to All when a refreshed role group disappears and resets on reopen", async () => {
-  const t = await setup("admin", "member");
+it("keeps agent owners in the Agents filter", async () => {
+  const t = await setup("owner", "owner", true, undefined, true);
+  await t.user.click(
+    screen.getByRole("combobox", { name: "Filter people and agents" }),
+  );
+  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
+  expect(
+    screen.getByRole("button", { name: /^Open profile for Morgan/ }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /^Open profile for Carl/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("preserves the identity filter through role changes and resets on reopen", async () => {
+  const t = await setup("admin", "member", true, undefined, true);
   const filter = () =>
-    screen.getByRole("combobox", { name: "Filter members by role" });
+    screen.getByRole("combobox", { name: "Filter people and agents" });
   await t.user.click(filter());
-  await screen.findByRole("option", { name: /^All/ });
-  await t.user.click(screen.getByRole("option", { name: "Members · 1" }));
+  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
   t.confirm("admin");
   await act(async () => {
     await t.session.memberAdministration.refresh(id);
   });
-  expect(filter()).toHaveTextContent("All");
-  await t.user.click(filter());
-  await screen.findByRole("option", { name: /^All/ });
+  expect(filter()).toHaveTextContent("Agents");
   expect(
-    screen.queryByRole("option", { name: /Members/ }),
-  ).not.toBeInTheDocument();
-  await t.user.click(screen.getByRole("option", { name: "Admins · 2" }));
+    screen.getByRole("button", { name: /Open profile for Morgan/ }),
+  ).toHaveAccessibleName(/, admin$/);
   await t.user.click(
     screen.getByRole("button", { name: "Close channel members" }),
   );
@@ -1793,7 +1801,7 @@ it.each(["owner", "admin"])(
       screen.queryByText("Member change confirmed."),
     ).not.toBeInTheDocument();
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
-    expect(row.closest("section")).toHaveAttribute("aria-label", "Admins");
+    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
     expect(
       row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
     ).toBeInTheDocument();

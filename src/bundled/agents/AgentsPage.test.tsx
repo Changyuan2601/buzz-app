@@ -32,6 +32,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import { localStore } from "../../features/agents/state";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -138,6 +139,7 @@ function setup(
     status = "ready" as AgentsSnapshot["status"],
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
+    found = portable as readonly PortableAgent[],
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -277,7 +279,7 @@ function setup(
     finish: vi.fn(async (_: string) => created),
     portable: vi.fn(
       async (): Promise<FoundAgents> => ({
-        agents: portable,
+        agents: found,
         teams: [],
         warnings: [],
         here: [],
@@ -347,6 +349,7 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    storage: localStore(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -970,10 +973,145 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
     pubkey: "b".repeat(64),
     type: "test/echo",
   });
+  // The dialog stays open so another can be imported; closing it is the owner's.
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(
+    await within(dialog).findByRole("button", { name: "Bea imported" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    within(dialog).getByRole("button", { name: "Import Ada" }),
+  ).toBeEnabled();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+});
+
+it("queues several imports in a row and keeps the dialog open until they finish", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  let finish = () => {};
+  agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import Ada" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  // Bea waits for Ada; neither can be chosen twice, and the dialog stays open.
+  expect(agents.port).toHaveBeenCalledTimes(1);
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog", { name: "Import an agent" })).toBeVisible();
+  finish();
+  expect(
+    await within(dialog).findByRole("button", { name: "Bea imported" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    within(dialog).getByRole("button", { name: "Ada imported" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(agents.port).toHaveBeenCalledTimes(2);
+  expect(agents.port).toHaveBeenLastCalledWith({
+    source: "installed",
+    pubkey: "b".repeat(64),
+    type: "test/echo",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps keyboard focus on an import when it finishes", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  let finish = () => {};
+  agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const ada = await within(dialog).findByRole("button", { name: "Import Ada" });
+  ada.focus();
+  await user.keyboard("{Enter}");
+  finish();
+  const done = await within(dialog).findByRole("button", {
+    name: "Ada imported",
+  });
+  expect(done).toHaveFocus();
+  // The next import is one Tab away.
+  await user.tab();
+  await user.tab();
+  expect(
+    within(dialog).getByRole("button", { name: "Import Bea" }),
+  ).toHaveFocus();
+});
+
+it("drops imports still waiting their turn when the page goes away", async () => {
+  const user = userEvent.setup();
+  const view = setup([]);
+  let finish = () => {};
+  view.agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import Ada" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  view.unmount();
+  finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Bea would otherwise land in whatever community was selected by then.
+  expect(view.agents.port).toHaveBeenCalledTimes(1);
+});
+
+it("keeps importing the rest after one fails, and clears the failure on a retry", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import Ada" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  expect(
+    await within(dialog).findByRole("button", { name: "Bea imported" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Ada wasn't imported. Keychain access was denied.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Ada" }));
+  expect(
+    await within(dialog).findByRole("button", { name: "Ada imported" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
 });
 
 it("tells same-named agents to import apart by their keys", async () => {
@@ -988,9 +1126,8 @@ it("tells same-named agents to import apart by their keys", async () => {
     warnings: [],
     here: [],
   });
-  await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Import an agent" }),
+    await screen.findByRole("button", { name: /Import them now/ }),
   );
   const list = await screen.findByRole("region", { name: "Agents to import" });
   expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
@@ -1007,9 +1144,8 @@ it("imports agents only as a type that runs here", async () => {
     title: "Cloud",
     remote: {},
   } as unknown as RegisteredAgentType);
-  await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Import an agent" }),
+    await screen.findByRole("button", { name: /Import them now/ }),
   );
   const importAda = await screen.findByRole("button", { name: "Import Ada" });
   expect(screen.queryByLabelText("Import as")).not.toBeInTheDocument();
@@ -1023,13 +1159,12 @@ it("shows why importing an agent failed and keeps it listed", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
-  await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Import an agent" }),
+    await screen.findByRole("button", { name: /Import them now/ }),
   );
   await user.click(await screen.findByRole("button", { name: "Import Ada" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Keychain access was denied",
+    "Ada wasn't imported. Keychain access was denied.",
   );
   expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
 });
@@ -1092,9 +1227,8 @@ it("shows only teams in Import a team and only agents in Import an agent", async
   ).not.toBeInTheDocument();
   await user.click(within(teamDialog).getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("tab", { name: "Your agents" }));
-  await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Import an agent" }),
+    await screen.findByRole("button", { name: /Import them now/ }),
   );
   const agentDialog = screen.getByRole("dialog", { name: "Import an agent" });
   expect(
@@ -1523,18 +1657,14 @@ it("saves a card model through its type and keeps failures on the card", async (
   expect(agents.save).toHaveBeenCalledTimes(2);
 });
 
-it("opens marketplace in a modal and restores focus to New agent", async () => {
+it("opens marketplace in a modal and restores focus to its tile", async () => {
   const user = userEvent.setup();
   setup([]);
   expect(
     screen.queryByRole("button", { name: "Teams" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "New agent" }));
-  expect(
-    screen.queryByRole("dialog", { name: "Create agent" }),
-  ).not.toBeInTheDocument();
   await user.click(
-    await screen.findByRole("menuitem", { name: "Browse the marketplace" }),
+    screen.getByRole("button", { name: "Explore the marketplace" }),
   );
   expect(
     screen.getByRole("dialog", { name: "Marketplace" }),
@@ -1545,10 +1675,80 @@ it("opens marketplace in a modal and restores focus to New agent", async () => {
     "true",
   );
   expect(screen.getByRole("tab", { name: "Your teams" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "New agent" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Explore the marketplace" }),
+  ).toHaveFocus();
 });
 
-it.each(["loading", "error", "unavailable"] as const)(
+it("offers importing first agents only when there are some to import", async () => {
+  const user = userEvent.setup();
+  setup([]);
+  const tile = await screen.findByRole("button", { name: /Import them now/ });
+  // Agents show by picture alone; one without a picture shows its initial.
+  expect(tile).toHaveTextContent(
+    "You have agents in a previous version of Buzz.",
+  );
+  expect(tile).not.toHaveTextContent("Ada");
+  expect(
+    tile.querySelectorAll("[data-avatar-stack] > [data-avatar-shape]"),
+  ).toHaveLength(2);
+  await user.click(
+    screen.getByRole("button", { name: "Create your first agent" }),
+  );
+  expect(screen.getByRole("dialog", { name: "Create agent" })).toBeVisible();
+  cleanup();
+  setup([], { found: [] });
+  expect(
+    await screen.findByRole("button", { name: "Create your first agent" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Explore the marketplace" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Import them now/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("stacks five old agents, pictures first, and counts the rest", async () => {
+  setup([], {
+    found: ["Ada", "Bea", "Cy", "Di", "Ed", "Flo", "Gus"].map(
+      (name, index) => ({
+        source: "installed" as const,
+        pubkey: String(index).repeat(64),
+        name,
+        relay: "",
+        ...(name === "Gus"
+          ? { picture: "https://old.example/media/g.png" }
+          : {}),
+      }),
+    ),
+  });
+  const tile = await screen.findByRole("button", { name: /Import them now/ });
+  const stacked = tile.querySelectorAll(
+    "[data-avatar-stack] > [data-avatar-shape]",
+  );
+  // Five agents, then the count as one more stack item.
+  expect(stacked).toHaveLength(6);
+  expect(stacked[5]).toHaveTextContent("+2");
+  // Gus, the only one with a picture, leads; the rest show initials.
+  expect(stacked[1]).toHaveTextContent("A");
+  expect(stacked[0]?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://old.example/media/g.png",
+  );
+});
+
+it("offers creating and the marketplace while agents load", () => {
+  setup([], { status: "loading" });
+  expect(
+    screen.getByRole("button", { name: "Create your first agent" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Explore the marketplace" }),
+  ).toBeEnabled();
+});
+
+it.each(["error", "unavailable"] as const)(
   "keeps import and marketplace reachable while agents are %s",
   async (status) => {
     setup([], { status });

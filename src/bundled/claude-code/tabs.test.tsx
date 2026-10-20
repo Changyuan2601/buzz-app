@@ -18,6 +18,11 @@ import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent, AgentType } from "../../features/agents/service";
+import {
+  fileStore,
+  localStore,
+  type AgentStore,
+} from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { apply, inject } from "./index";
@@ -108,7 +113,10 @@ function applied({
   latest = version,
   files = {},
   catalog = { listed: true },
+  storage,
 }: {
+  /** Agent storage; this page's localStorage without it. */
+  storage?: AgentStore;
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
@@ -236,6 +244,7 @@ function applied({
       })),
     },
     agents: {
+      storage,
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
@@ -511,11 +520,48 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   expect(save).not.toHaveBeenCalled();
 });
 
-it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {
+it("keeps the saved default and shows the error while a default could not be saved", async () => {
+  let failing = true;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) throw new Error("disk full");
+  });
+  const Control = installed({ storage }).type.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  render(<Control onConfigure={vi.fn()} />);
+  const control = await screen.findByRole("button", {
+    name: /^Claude default model:/,
+  });
+  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  const pick = async () => {
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", { name: "Fable 5.1" }),
+    );
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await pick();
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  error.mockRestore();
+  expect(control).toHaveTextContent("Opus 5.5");
+  expect(storage.get("buzz.claude-code.provider-defaults.v1")).toBeNull();
+  // The same choice can be saved again.
+  failing = false;
+  await pick();
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(control).toHaveTextContent("Fable 5.1");
+  expect(storage.get("buzz.claude-code.provider-defaults.v1")).toContain(
+    "fable",
+  );
+});
+
+it("preserves native behavior for invalid defaults and keeps explicit agent models", async () => {
   localStorage.setItem("buzz.claude-code.provider-defaults.v1", "not json");
-  const defaults = new ClaudeDefaults(localStorage);
+  const defaults = new ClaudeDefaults(localStore());
   expect(defaults.resolve(DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
-  defaults.save({ model: "sonnet" });
+  await defaults.save({ model: "sonnet" });
   const inherited = { ...DEFAULT_CONFIG };
   expect(defaults.resolve(inherited).model).toBe("sonnet");
   expect(inherited).toEqual(DEFAULT_CONFIG);
@@ -1074,11 +1120,13 @@ it("saves model-specific default effort from the nested menu and inherits it", a
     await screen.findByRole("menuitemradio", { name: "Sonnet 5.5" }),
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
-  expect(control).toHaveAccessibleName(
-    "Claude default model: Sonnet 5.5, High",
+  await waitFor(() =>
+    expect(control).toHaveAccessibleName(
+      "Claude default model: Sonnet 5.5, High",
+    ),
   );
 
-  const reopened = new ClaudeDefaults(localStorage);
+  const reopened = new ClaudeDefaults(localStore());
   expect(reopened.resolve(DEFAULT_CONFIG)).toMatchObject({
     model: "sonnet",
     effort: "high",
@@ -1093,7 +1141,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Use Claude default" }),
   );
-  expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
+  expect(new ClaudeDefaults(localStore()).snapshot().model).toBe("");
 });
 
 it("retries failed model discovery from the defaults row", async () => {
@@ -1126,7 +1174,7 @@ it("keeps the model inherited when changing the default model's effort", async (
     await screen.findByRole("menuitemradio", { name: "Opus 5.5" }),
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
-  expect(new ClaudeDefaults(localStorage).snapshot()).toMatchObject({
+  expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
     model: "",
     effort: "high",
   });

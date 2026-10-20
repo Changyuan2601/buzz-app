@@ -1,3 +1,4 @@
+import { localStore, type AgentStore } from "../../features/agents/store";
 import { config, type Config } from "./runtime";
 
 export type ClaudeProviderDefaults = Readonly<{
@@ -13,7 +14,7 @@ export class ClaudeDefaults {
   private state: ClaudeProviderDefaults;
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly storage: Storage = localStorage) {
+  constructor(private readonly storage: AgentStore = localStore()) {
     this.state = this.read();
   }
 
@@ -34,9 +35,11 @@ export class ClaudeDefaults {
           : ""),
     };
   }
-  save(next: ClaudeProviderDefaults) {
+  /** Settles once the defaults are saved, and only then uses them; rejects,
+   * keeping the saved ones, when they could not be saved. */
+  async save(next: ClaudeProviderDefaults) {
     const { model, effort = "" } = next;
-    this.storage.setItem(
+    await this.storage.set(
       STORAGE_KEY,
       JSON.stringify({ version: 1, model, effort }),
     );
@@ -46,7 +49,7 @@ export class ClaudeDefaults {
   private read(): ClaudeProviderDefaults {
     try {
       const value: unknown = JSON.parse(
-        this.storage.getItem(STORAGE_KEY) ?? "null",
+        this.storage.get(STORAGE_KEY) ?? "null",
       );
       if (
         value &&

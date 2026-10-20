@@ -16,6 +16,10 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   app,
 }, testInfo) => {
   await page.goto(app.origin);
+  // Navigation load can finish before React mounts the shell shortcut owner.
+  const search = page.getByRole("button", { name: "Search Buzz", exact: true });
+  await search.focus();
+  await expect(search).toBeFocused();
   const modifier = await page.evaluate(() =>
     /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
   );

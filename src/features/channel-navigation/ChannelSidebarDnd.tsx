@@ -13,6 +13,7 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useState,
   useRef,
   type ComponentProps,
@@ -174,6 +175,27 @@ export function DroppableSidebarSection({
     disabled: !reorderable,
   });
   const suppressClick = useRef(false);
+  const handle = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!reorderable) return;
+    const document = handle.current?.ownerDocument;
+    if (!document) return;
+    const suppressDragClick = (event: MouseEvent) => {
+      if (
+        !suppressClick.current ||
+        event.detail === 0 ||
+        !(event.target instanceof Node) ||
+        !handle.current?.contains(event.target)
+      )
+        return;
+      // dnd-kit stops clicks at document capture before React can cancel the
+      // native summary toggle. Cancel there too, including its cleanup window.
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    document.addEventListener("click", suppressDragClick, true);
+    return () => document.removeEventListener("click", suppressDragClick, true);
+  }, [reorderable]);
   useDndMonitor({
     onDragStart: ({ active }) => {
       if (active.id === section.sectionKey) suppressClick.current = true;
@@ -200,19 +222,15 @@ export function DroppableSidebarSection({
       dragHandle={
         reorderable
           ? {
-              ref: drag.setNodeRef,
+              ref: (node) => {
+                handle.current = node;
+                drag.setNodeRef(node);
+              },
               listeners: {
                 ...drag.listeners,
                 onPointerDown: (event) => {
                   suppressClick.current = false;
                   drag.listeners?.onPointerDown?.(event);
-                },
-                onClickCapture: (event) => {
-                  // dnd-kit removes its document click guard after 50ms.
-                  // Keep late drag clicks inert until the next deliberate input.
-                  if (!suppressClick.current || event.detail === 0) return;
-                  event.preventDefault();
-                  event.stopPropagation();
                 },
               },
             }

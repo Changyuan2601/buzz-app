@@ -31,6 +31,8 @@ export type ChannelSummary = Readonly<{
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
+  /** A Solo chat this device is starting; the relay has not confirmed it yet. */
+  pending?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -260,6 +262,20 @@ export interface ChannelQueries {
     channelId: string,
     options?: ChannelReadOptions,
   ): Promise<boolean>;
+  /** Lists a Solo chat this device is creating, as `pending`, until the
+   * relay's signed metadata and roster for it arrive. It has no history to
+   * read meanwhile. Local display and intent only; never saved. */
+  start?(
+    channel: Readonly<{
+      id: string;
+      name: string;
+      members: readonly string[];
+      labels: readonly string[];
+      ttlSeconds?: number | undefined;
+    }>,
+  ): void;
+  /** Drops a started chat the relay did not confirm. */
+  abandon?(channelId: string): void;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

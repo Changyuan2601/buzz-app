@@ -235,8 +235,13 @@ export function ProfileButton({
           // the page. Other dismissals retain the shared menu's focus behavior.
           if (!open && handoff.current) {
             const main = document.getElementById("main-content");
-            // A user may already be editing Settings while the menu animates out.
-            if (!main?.contains(document.activeElement)) main?.focus();
+            // A user may already be editing Settings, or the profile panel may
+            // have focused itself, while the menu animates out.
+            if (
+              !document.querySelector('[aria-modal="true"]') &&
+              !main?.contains(document.activeElement)
+            )
+              main?.focus();
           }
         }}
       >

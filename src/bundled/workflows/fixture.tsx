@@ -74,6 +74,8 @@ function Fixture() {
             <>
               <WorkflowWebhookSecrets capability={fixture.capability} />
               <WorkflowLanding
+                onFilterChange={() => {}}
+                filter=""
                 capability={fixture.capability}
                 channels={channels}
                 detailTarget={null}

@@ -57,6 +57,7 @@ export function IdentitySetup({
       {(macDesktop || integratedWindowControls) && (
         <header
           className="-mx-8 -mt-8 mb-8 flex h-14 items-center justify-end px-3"
+          data-buzz-window-drag=""
           data-tauri-drag-region={integratedWindowControls || undefined}
           {...(macDesktop ? macTitleBarDragHandlers : {})}
         >

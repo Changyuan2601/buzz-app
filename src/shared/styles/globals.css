@@ -216,48 +216,14 @@
   .shell-capsule {
     flex: none;
   }
-  .shell-capsule > .panel {
-    display: flex;
-    align-items: center;
-    width: auto;
-    height: auto;
-    padding: var(--space-1);
-  }
-
   .shell-center-capsule {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
   }
-  .shell-center-capsule > .panel {
-    padding: 0;
-  }
-  .shell-create-action,
-  .shell-search-action {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-  }
-  .shell-create-action {
-    right: calc(100% + var(--space-2));
-  }
-  .shell-search-action {
-    left: calc(100% + var(--space-2));
-  }
   .shell-header[data-compact-pages] .shell-center-capsule {
     position: static;
     transform: none;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .shell-header[data-compact-pages]
-    :is(.shell-create-action, .shell-search-action) {
-    position: static;
-    transform: none;
-  }
-  .shell-header[data-compact-pages] .shell-center-capsule > .panel {
-    padding: var(--space-1);
   }
   .shell-community-switcher {
     display: flex;
@@ -356,6 +322,29 @@
     @apply relative flex min-h-0 min-w-0 flex-1;
     padding-inline: var(--space-panel-gap);
     padding-bottom: var(--space-panel-gap);
+  }
+  /* Keep the modal portal outside the query container so its fixed backdrop
+     still blocks the whole window, including the header. */
+  .shell-workspace {
+    @apply relative flex min-h-0 min-w-0 flex-1;
+  }
+  .shell-dialog-frame {
+    position: absolute;
+    inset: 0 var(--space-panel-gap) var(--space-panel-gap);
+    pointer-events: none;
+  }
+  .shell-dialog-frame > * {
+    pointer-events: auto;
+  }
+  /* A wrapped narrow header would leave Settings a sliver; cover all but the
+     titlebar row, which keeps window controls clear. */
+  @media (max-width: 650px) {
+    .shell-dialog-frame {
+      position: fixed;
+      /* Fixed positioning creates a stacking context; raise it with the dialog. */
+      z-index: var(--layer-dialog);
+      inset: var(--size-topbar) var(--space-panel-gap) var(--space-panel-gap);
+    }
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0 flex-1;

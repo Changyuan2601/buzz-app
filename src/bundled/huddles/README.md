@@ -1,6 +1,6 @@
 # Huddles
 
-Talk with people in your channels and direct messages using live audio on macOS desktop.
+Talk with people in your channels and direct messages using live audio on desktop.
 
 ## Getting started
 

@@ -88,10 +88,9 @@
   ) {
     opacity: 0;
   }
-  .buzz-dialog[data-motion="default"]:is(
-    [data-starting-style],
-    [data-ending-style]
-  ) {
+  .buzz-dialog[data-motion="default"]:where(
+    :not([data-contained], [data-navigation][data-placement="center"])
+  ):is([data-starting-style], [data-ending-style]) {
     transform: translate(-50%, -50%) scale(0.98);
   }
   .buzz-dialog[data-motion="default"][data-ending-style],
@@ -279,6 +278,116 @@
   > .buzz-dialog-body:last-child {
     padding-bottom: 0;
   }
+  /* A navigated modal has one surface. Its flush panes own scrolling, not Panels. */
+  .buzz-dialog[data-navigation] {
+    padding: 0;
+    container-type: inline-size;
+  }
+  /* Direct positioning leaves no centering transform behind after entry. */
+  .buzz-dialog[data-navigation][data-placement="center"] {
+    top: var(--space-6);
+    left: var(--space-6);
+    transform: none;
+  }
+  .buzz-dialog[data-navigation][data-placement="center"][data-motion="default"] {
+    transition-property: opacity, transform;
+  }
+  .buzz-dialog[data-contained][data-placement] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    transform: none;
+    transition-property: opacity;
+  }
+  /* Surface and content enter as one object, then settle at transform: none. */
+  .buzz-dialog[data-navigation]:where([data-motion="default"]):not(
+    [data-ending-style]
+  ) {
+    transition-property: opacity, transform;
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--easing-enter);
+  }
+  .buzz-dialog[data-navigation][data-motion="default"][data-starting-style] {
+    transform: scale(0.99);
+  }
+  /* A portal can first paint after Base UI removes its starting attribute. */
+  @starting-style {
+    .buzz-dialog[data-navigation][data-placement="center"][data-motion="default"]:not(
+        [data-ending-style]
+      ) {
+      opacity: 0;
+      transform: scale(0.99);
+    }
+  }
+  html[data-keyboard-navigation]
+    .buzz-dialog[data-navigation][data-motion="default"][data-starting-style] {
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-dialog[data-navigation][data-motion] {
+      transition: none;
+      transform: none;
+    }
+  }
+  .buzz-dialog[data-navigation] > .buzz-dialog-header {
+    min-height: var(--size-panel-header);
+    align-items: center;
+    padding-block: var(--space-2);
+    /* Text aligns with navigation; the trailing control keeps an even outer gutter. */
+    padding-inline: var(--dialog-padding) var(--space-2);
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border-standard);
+  }
+  .buzz-dialog[data-navigation] > .buzz-dialog-actions {
+    padding: var(--dialog-padding);
+  }
+  .buzz-dialog[data-navigation] > .buzz-dialog-body {
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    display: flex;
+  }
+  .buzz-dialog-navigation-layout {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: var(--size-navigator) minmax(0, 1fr);
+  }
+  .buzz-dialog-navigation,
+  .buzz-dialog-navigation-detail {
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--dialog-padding);
+  }
+  .buzz-dialog-navigation {
+    border-inline-end: 1px solid var(--border-standard);
+    padding: var(--space-2)
+      max(var(--space-2), calc(var(--dialog-padding) - var(--space-2)));
+  }
+  .buzz-dialog-navigation-detail {
+    padding: var(--dialog-padding);
+    overflow-wrap: anywhere;
+  }
+  @container (max-width: 36rem) {
+    .buzz-dialog-navigation-layout {
+      display: block;
+      overflow-y: auto;
+      scroll-padding-block: var(--dialog-padding);
+    }
+    .buzz-dialog-navigation,
+    .buzz-dialog-navigation-detail {
+      overflow-y: visible;
+    }
+    .buzz-dialog-navigation {
+      border-inline-end: 0;
+      border-bottom: 1px solid var(--border-standard);
+    }
+  }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
   }
@@ -300,10 +409,27 @@
       transform var(--duration-state) var(--easing-settle),
       filter var(--duration-state) var(--easing-state);
   }
+  /* A palette preview resolves its own accent instead of inheriting the app’s
+     already-resolved prominent fill through the portal. */
+  .buzz-tooltip[data-accent][data-color-mode] {
+    background: var(--affordance-accent-prominent);
+    color: var(--text-on-accent);
+  }
+
   .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
     opacity: 0;
     transform: translateY(2px) scale(0.97);
     filter: blur(2px);
+  }
+  /* Cursor hints move only through Base UI positioning, never a trailing spring. */
+  .buzz-tooltip[data-follow="pointer"] {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    pointer-events: none;
+    transform: none;
+    filter: none;
+    transition-property: opacity;
   }
   .buzz-tooltip[data-ending-style] {
     transition-duration: var(--duration-fast);
@@ -403,7 +529,7 @@
   overflow-y: auto;
   /* Leave room for floating-surface elevation inside the scroll boundary. */
   padding: var(--space-3);
-  z-index: calc(var(--layer-dialog-backdrop) - 1);
+  z-index: var(--layer-toast);
   font-family: inherit;
   pointer-events: none;
 }

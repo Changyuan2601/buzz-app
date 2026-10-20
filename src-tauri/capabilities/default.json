@@ -91,6 +91,8 @@
     "allow-plugin-host-mcp-serve",
     "allow-plugin-host-mcp-reply",
     "allow-plugin-host-mcp-close",
+    "allow-plugin-host-read-file",
+    "allow-plugin-host-resolve-directory",
     "allow-oauth-callback-begin",
     "allow-oauth-callback-wait",
     "allow-oauth-callback-cancel",
@@ -117,6 +119,8 @@
     "allow-jev-classifier-set-key",
     "allow-jev-classifier-clear-key",
     "allow-jev-classify",
+    "allow-app-agent-state-load",
+    "allow-app-agent-state-set",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

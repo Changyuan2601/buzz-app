@@ -100,7 +100,7 @@ function created(
     },
   });
   const { Create, CreateModel } = createTabs({
-    setup: options.spawn?.(fake) ?? new GooseSetup(fake.spawn),
+    setup: options.spawn?.(fake) ?? new GooseSetup(fake),
     ...unused,
   });
   if (!CreateModel) throw new Error("no model field");
@@ -233,7 +233,7 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
     saved,
   });
   const { SettingsTab } = createTabs({
-    setup: new GooseSetup(fake.spawn),
+    setup: new GooseSetup(fake),
     ...unused,
   });
   const save = vi.fn(async (_config: Config) => undefined);
@@ -299,7 +299,7 @@ it("saves a thinking level goose lists for the model, and marks one it does not"
     },
   });
   const { SettingsTab } = createTabs({
-    setup: new GooseSetup(fake.spawn),
+    setup: new GooseSetup(fake),
     ...unused,
   });
   const agent = (config: Config) =>
@@ -349,7 +349,7 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
     defaults: { providerId: "databricks", modelId: "goose-claude" },
   });
   const { SettingsTab } = createTabs({
-    setup: new GooseSetup(fake.spawn),
+    setup: new GooseSetup(fake),
     ...unused,
   });
   const agent = {
@@ -391,10 +391,13 @@ it("says in Settings when goose cannot list providers, and tries again", async (
     defaults: { providerId: "databricks", modelId: "goose-claude" },
   });
   const { SettingsTab } = createTabs({
-    setup: new GooseSetup(async (id, options) => {
-      if (id === "goose" && !installed)
-        throw new Error("No such file or directory (os error 2)");
-      return fake.spawn(id, options);
+    setup: new GooseSetup({
+      ...fake,
+      spawn: async (id, options) => {
+        if (id === "goose" && !installed)
+          throw new Error("No such file or directory (os error 2)");
+        return fake.spawn(id, options);
+      },
     }),
     ...unused,
   });
@@ -429,7 +432,7 @@ it("keeps the providers shown when reading them again fails", async () => {
   let setup!: GooseSetup;
   created({
     spawn: (fake) => {
-      setup = new GooseSetup(fake.spawn);
+      setup = new GooseSetup(fake);
       return setup;
     },
   });
@@ -461,7 +464,7 @@ it("shows no other provider's models when a provider's models fail to load", asy
     defaults: { providerId: "databricks", modelId: "goose-claude" },
     saved: new Map(),
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   vi.spyOn(setup, "models").mockImplementation(async (id) => {
     if (id === "databricks")
       return [{ id: "dbx-only-model", label: "dbx-only-model" }];
@@ -504,7 +507,7 @@ it("shows no other provider's models when a provider's models fail to load", asy
 
 it("reads a provider's models again after its fields are saved", async () => {
   const { fake } = created({
-    spawn: (fake) => new GooseSetup(fake.spawn),
+    spawn: (fake) => new GooseSetup(fake),
   });
   const user = userEvent.setup();
   const dialog = await openChoices();
@@ -528,10 +531,13 @@ it("says when the bundled goose-acp is missing, and tries again", async () => {
   let installed = false;
   created({
     spawn: (fake) =>
-      new GooseSetup(async (id, options) => {
-        if (id === "goose" && !installed)
-          throw new Error("No such file or directory (os error 2)");
-        return fake.spawn(id, options);
+      new GooseSetup({
+        ...fake,
+        spawn: async (id, options) => {
+          if (id === "goose" && !installed)
+            throw new Error("No such file or directory (os error 2)");
+          return fake.spawn(id, options);
+        },
       }),
   });
   const dialog = await openChoices();
@@ -607,9 +613,9 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
     sessions: () => none,
   } as unknown as GooseRuntime;
   const { ActivityTab } = createTabs({
-    setup: new GooseSetup(fake.spawn),
+    setup: new GooseSetup(fake),
     runtime,
-    history: new GooseHistory(fake.spawn),
+    history: new GooseHistory(fake),
   });
   render(
     <ActivityTab
@@ -640,7 +646,7 @@ it("edits Goose device defaults without creating an agent override", async () =>
     providers: PROVIDERS.map((entry) => ({ ...entry, configured: true })),
     defaults: { providerId: "databricks", modelId: "goose-model" },
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   const { ProviderDialogBody } = createTabs({ setup, ...unused });
   const onClose = vi.fn();
   render(<ProviderDialogBody onClose={onClose} />);
@@ -661,7 +667,7 @@ it("keeps Goose defaults open with the draft after a failed save", async () => {
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-model" },
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   vi.spyOn(setup, "saveDefaults").mockRejectedValue(
     new Error("Goose config is read-only"),
   );
@@ -695,7 +701,7 @@ it("shows and changes the device default from the compact control without stripp
     defaults: { providerId: "databricks_v2", modelId: "goose-gpt-6" },
     supported: ["goose-gpt-6", "databricks-kimi-k2"],
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   const { DefaultControl } = createTabs({ setup, ...unused });
   const configure = vi.fn();
   render(<DefaultControl onConfigure={configure} />);
@@ -726,7 +732,7 @@ it("saves provider fields with defaults and retains them when saving fails", asy
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-model" },
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   const saveKeys = vi
     .spyOn(setup, "save")
     .mockRejectedValueOnce(new Error("Could not save key"));
@@ -750,7 +756,7 @@ it("saves provider fields with defaults and retains them when saving fails", asy
 
 it("filters provider names with Search and selects a matching provider", async () => {
   const fake = fakeSpawn({ providers: PROVIDERS });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   const { ProviderDialogBody } = createTabs({ setup, ...unused });
   render(<ProviderDialogBody onClose={vi.fn()} />);
   const trigger = await screen.findByRole("combobox", { name: "Provider" });
@@ -782,7 +788,7 @@ it("keeps the creation menu open when its provider finishes loading", async () =
   });
   created({
     spawn: (fake) => {
-      const setup = new GooseSetup(fake.spawn);
+      const setup = new GooseSetup(fake);
       const providers = setup.providers.bind(setup);
       vi.spyOn(setup, "providers").mockImplementation(async () => {
         await ready;
@@ -807,7 +813,7 @@ it("retries Goose default model discovery", async () => {
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-claude" },
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   vi.spyOn(setup, "models")
     .mockRejectedValueOnce(new Error("offline"))
     .mockResolvedValue([{ id: "claude", label: "Claude" }]);
@@ -826,7 +832,7 @@ it("preserves Goose model inheritance when only thinking changes", async () => {
     thinking: { "goose-claude": { current: "low", levels: ["low", "high"] } },
   });
   const { CreateModel } = createTabs({
-    setup: new GooseSetup(fake.spawn),
+    setup: new GooseSetup(fake),
     ...unused,
   });
   const onChange = vi.fn();
@@ -857,7 +863,7 @@ it("refreshes the Settings model and thinking after saving provider credentials"
     saved,
     thinking: { "": { current: "low", levels: ["low", "high"] } },
   });
-  const setup = new GooseSetup(fake.spawn);
+  const setup = new GooseSetup(fake);
   const efforts = vi.spyOn(setup, "efforts");
   const { SettingsTab } = createTabs({ setup, ...unused });
   const agent = {
@@ -890,7 +896,7 @@ for (const host of ["defaults", "create"] as const) {
       providers: PROVIDERS,
       defaults: { providerId: "databricks", modelId: "goose-claude" },
     });
-    const setup = new GooseSetup(fake.spawn);
+    const setup = new GooseSetup(fake);
     let settle!: (value: { id: string; label: string }[]) => void;
     let fail!: (reason: Error) => void;
     vi.spyOn(setup, "models")
@@ -945,7 +951,7 @@ it.each([false, true])(
       defaults: { providerId: "databricks", modelId: "goose-claude" },
       supported,
     });
-    const setup = new GooseSetup(fake.spawn);
+    const setup = new GooseSetup(fake);
     const { DefaultControl, ProviderDialogBody } = createTabs({
       setup,
       ...unused,

@@ -218,9 +218,7 @@ describe("GooseHistory", () => {
     conversation: messages,
   });
   const history = (sessions: FakeSession[]) =>
-    new GooseHistory(
-      fakeSpawn({ history: sessions, home: "/home/test" }).spawn,
-    );
+    new GooseHistory(fakeSpawn({ history: sessions, home: "/home/test" }));
   const signal = new AbortController().signal;
 
   it("lists the sessions in its workspace that its first prompt names it in", async () => {

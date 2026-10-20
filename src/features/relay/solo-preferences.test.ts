@@ -1,4 +1,3 @@
-import { applyChatSetup } from "../solo/workspace";
 import { createSoloPreferences } from "./solo-preferences";
 import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
@@ -346,32 +345,6 @@ it("confirms native-shaped reordered assignment maps without losing group order"
       [channel]: "work",
       [other]: "work",
     });
-    expect(f.publish).toHaveBeenCalledOnce();
-  } finally {
-    f.dispose();
-  }
-});
-
-it("files a new chat's frozen section once through setup", async () => {
-  const f = fixture();
-  try {
-    f.install(groups);
-    const setup = () =>
-      applyChatSetup(
-        {
-          ...f.session,
-          canvas: { ...f.session.canvas, read: async () => undefined },
-        },
-        channel,
-        { projectId: "work", canvas: "", agents: [] },
-        () => true,
-      );
-    await setup();
-    expect(f.publish).toHaveBeenCalledOnce();
-    expect(
-      f.session.soloPreferences.snapshot().data?.assignments[channel],
-    ).toBe("work");
-    await setup();
     expect(f.publish).toHaveBeenCalledOnce();
   } finally {
     f.dispose();

@@ -81,6 +81,42 @@ const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
   {
+    id: "agent-coordination",
+    title: "Agent coordination",
+    description: "Every compact entry keeps its author's avatar visible.",
+    examples: [
+      {
+        id: "repeated-agent",
+        title: "Consecutive agent updates",
+        description:
+          "Author icons remain visible before and after expanding a row.",
+        rows: [
+          message("coordination-first", "Investigating the missing icons.", {
+            authorId: agent,
+            audience: "agents",
+          }),
+          message(
+            "coordination-next",
+            "Found the cause.\n\nThe fix is ready to try.",
+            {
+              authorId: agent,
+              audience: "agents",
+            },
+          ),
+          message(
+            "coordination-addressed",
+            "@Sam Rivera please review the fix.",
+            {
+              authorId: agent,
+              audience: "agents",
+              mentions: [teammate],
+            },
+          ),
+        ],
+      },
+    ],
+  },
+  {
     id: "session-links",
     title: "Session links",
     description:

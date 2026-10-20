@@ -60,6 +60,7 @@ export function RemindDialog({
   return (
     <Dialog
       open
+      dismissOnOutsideClick={false}
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
       title="Remind me"

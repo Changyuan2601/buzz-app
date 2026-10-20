@@ -84,9 +84,9 @@ export type FakeMcpServer = {
   stop(): void;
 };
 
-/** A spawn whose `goose` processes answer like `goose-acp`, and whose
- * `workspace` process prints `home` for a `~/…` directory; and a `serve` that
- * starts in-memory MCP servers those processes reach. */
+/** A spawn whose `goose` processes answer like `goose-acp`; a
+ * `resolveDirectory` that puts `home` for `~`; and a `serve` that starts
+ * in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
     /** Whether goose says it can reach HTTP MCP servers. */
@@ -154,21 +154,6 @@ export function fakeSpawn(
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
     });
-    if (id === "workspace") {
-      const cwd = process.cwd ?? "";
-      queueMicrotask(() => {
-        process.onStdout?.(
-          `${cwd.replace(/^~/, options.home ?? "/home/test")}\n`,
-        );
-        resolveExit(0);
-      });
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited,
-      };
-    }
     let alive = true;
     let sessions = 0;
     let requests = 0;
@@ -479,6 +464,8 @@ export function fakeSpawn(
   };
   return {
     spawn,
+    resolveDirectory: async (path: string) =>
+      path.replace(/^~/, options.home ?? "/home/test"),
     serve,
     processes,
     /** The MCP servers `serve` started, in order. */

@@ -1,5 +1,10 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  pageChoice,
+  pageChoices,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
@@ -241,6 +246,8 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
       .getByText("Required", { exact: true }),
   ).toBeVisible();
   await expect(pluginAction(page, "Channels")).toHaveCount(0);
+  // The workspace behind Settings is inert; close it before opening a page.
+  await closeSettings(page);
   await openPage(page, "Messages");
   await expect(messages(page)).toBeVisible();
 });

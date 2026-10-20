@@ -151,9 +151,21 @@ const events = [];
 const memories = [];
 const uploads = [];
 const storage = new Map();
+// Agent storage (features/agents/store.ts `AgentStore`): each write settles
+// once saved, as the app's file-backed store does.
 const store = {
-  getItem: (key) => storage.get(key) ?? null,
-  setItem: (key, value) => storage.set(key, value),
+  keys: () => [...storage.keys()],
+  get: (key) => storage.get(key) ?? null,
+  set: async (key, value) => {
+    if (value === null) storage.delete(key);
+    else storage.set(key, value);
+  },
+  add: async (key, value) => {
+    const held = storage.get(key);
+    if (held !== undefined) return held;
+    storage.set(key, value);
+    return value;
+  },
 };
 const scope = "local-acceptance";
 const relay = {
@@ -341,6 +353,7 @@ try {
     threadId: saved.threadId,
     includeTurns: true,
   });
+  // The title, then the conversation's tag (prompt.ts `sessionTag`).
   assert.match(
     result.thread.name,
     /^Buzz #codex-test · thread cccccccc · Codex · buzz:[0-9a-f]{16}$/,

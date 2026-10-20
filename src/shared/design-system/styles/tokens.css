@@ -301,7 +301,7 @@
      alpha. */
   --neutral-quiet-hover: #f1f1f2; /* hover between quiet fill and selection */
   --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
-  --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
+  --neutral-3: #e8e8e8; /* chrome track in light; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
   --neutral-5: #cccccc; /* unused in light; float + selected, dark */
   --neutral-6: #b3b3b3; /* border-primary in dark mode             */
@@ -385,11 +385,11 @@
   --space-8: 2rem;
   --space-16: 4rem;
 
-  /* --- Corner. Containers stop at 20px; pills/circles are separate shapes. */
-  --corner-row: 0.5rem;
-  --corner-control: 0.75rem;
-  --corner-container: 1rem;
-  --corner-panel: 1.25rem;
+  /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
+  --corner-row: 1rem;
+  --corner-control: 1.25rem;
+  --corner-container: 1.5rem;
+  --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 
   /* --- Time. State is quick; geometry settles deliberately. - */
@@ -554,6 +554,7 @@
   --text-standard: var(--neutral-standard-text);
   --text-subtle: var(--neutral-10);
   --text-metadata: var(--neutral-9);
+  --text-quiet-control: var(--neutral-8);
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
@@ -609,16 +610,20 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
-  --text-row-selected: var(--text-row);
-  --text-row-selected-subtle: var(--text-row-subtle);
-  --text-row-selected-metadata: var(--text-row-metadata);
-  --affordance-navigation-selected: var(--affordance-selected);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
+  --surface-navigation-selected: var(--affordance-selected);
+  --text-navigation-selected: var(--text-standard);
+  --text-row-selected: var(--text-navigation-selected);
+  --text-row-selected-subtle: var(--text-navigation-selected);
+  --text-row-selected-metadata: var(--text-navigation-selected);
+  --affordance-navigation-selected: var(--surface-navigation-selected);
   /* Small badges on a selected row stay distinct without another strong fill. */
   --surface-row-selected-detail: var(--neutral-2);
-  --text-row-selected-detail: var(--neutral-standard-text);
+  --text-row-selected-detail: var(--neutral-12);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
-  --affordance-chrome: var(--affordance-subtle);
+  --affordance-chrome: var(--neutral-3);
   --affordance-chrome-hover: var(--affordance-subtle-hover);
   --text-chrome-subtle: var(--text-subtle);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
@@ -677,6 +682,7 @@
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-11);
   --text-metadata: var(--neutral-10);
+  --text-quiet-control: var(--neutral-9);
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
@@ -729,12 +735,16 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
-  --text-row-selected: var(--text-row);
-  --text-row-selected-subtle: var(--text-row-subtle);
-  --text-row-selected-metadata: var(--text-row-metadata);
-  --affordance-navigation-selected: var(--affordance-selected);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
+  --surface-navigation-selected: var(--affordance-selected);
+  --text-navigation-selected: var(--text-standard);
+  --text-row-selected: var(--text-navigation-selected);
+  --text-row-selected-subtle: var(--text-navigation-selected);
+  --text-row-selected-metadata: var(--text-navigation-selected);
+  --affordance-navigation-selected: var(--surface-navigation-selected);
   --surface-row-selected-detail: var(--neutral-6);
-  --text-row-selected-detail: var(--text-row-selected);
+  --text-row-selected-detail: var(--neutral-12);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -844,6 +854,8 @@
   --space-chip-gap: var(--space-1);
   --layer-dialog-backdrop: 1000;
   --layer-dialog: 1001;
+  /* Feedback raised from a dialog must stay visible above it. */
+  --layer-toast: 1050;
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
@@ -863,13 +875,13 @@
   --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
   /* Independent icon controls use an even contour on all four corners. */
-  --radius-icon-button: 0.625rem;
-  /* Half the large (52px) action height; smaller controls clamp naturally. */
-  --radius-capsule: 1.625rem;
+  --radius-icon-button: 1.125rem;
+  /* Capsule actions stay rounded through 68px; smaller controls clamp naturally. */
+  --radius-capsule: 2.125rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */
-  --radius-chip: 0.25rem;
+  --radius-chip: 0.75rem;
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
@@ -959,274 +971,8 @@
    then stack on those steps. Swatches that preview a family carry
    data-color-mode, never borrow an already-resolved role.
 
-   Chartreuse is Buzz's brand color and the default. Its strong fill
-   is the brand value (#d7d72e) in both modes and takes black ink; text
-   on chartreuse surfaces and messages uses the darkest olive step.
-   Its light-mode text steps down to olive, because the brand value
-   cannot be read on white.
+   Citrus is the default accent and uses black ink on its strong fills.
    ============================================================ */
-
-[data-accent="chartreuse"],
-:root {
-  --accent-1-light: #fefdf4;
-  --accent-2-light: #fbfbeb;
-  --accent-3-light: #f5f4da;
-  --accent-4-light: #efeec8;
-  --accent-5-light: #e8e6b4;
-  --accent-6-light: #e0dd9f;
-  --accent-7-light: #d4d086;
-  --accent-8-light: #c4bf68;
-  --accent-9-light: #d7d72e;
-  --accent-10-light: #cccc1e;
-  --accent-11-light: #575602;
-  --accent-12-light: #303005;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #303005;
-  --accent-pressed-light: #c3c315;
-  /* Darkened chartreuse turns olive, so light-mode links stay Blue 11 with
-     Blue 3 hover. Dark mode keeps bright chartreuse links. */
-  --accent-link-light: #0b5fa8;
-  --accent-link-hover-light: #e6f4fe;
-  --accent-1-dark: #10100a;
-  --accent-2-dark: #17170c;
-  --accent-3-dark: #23230b;
-  --accent-4-dark: #2d2d08;
-  --accent-5-dark: #383802;
-  --accent-6-dark: #464601;
-  --accent-7-dark: #575602;
-  --accent-8-dark: #6e6e01;
-  --accent-9-dark: #d7d72e;
-  --accent-10-dark: #cccc1e;
-  --accent-11-dark: #e6e76a;
-  --accent-12-dark: #f4f7c0;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #303005;
-  --accent-pressed-dark: #c3c315;
-  --accent-link-dark: #e6e76a;
-  --accent-link-hover-dark: #23230b;
-}
-:root[data-accent="gray"],
-[data-accent="gray"] {
-  --accent-1-light: #ffffff;
-  --accent-2-light: #fafafa;
-  --accent-3-light: #f0f0f0;
-  --accent-4-light: #e8e8e8;
-  --accent-5-light: #dedede;
-  --accent-6-light: #d4d4d4;
-  --accent-7-light: #bfbfbf;
-  --accent-8-light: #a0a0a0;
-  --accent-9-light: #525252;
-  --accent-10-light: #404040;
-  --accent-11-light: #525252;
-  --accent-12-light: #171717;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #303030;
-  --accent-link-light: #404040;
-  --accent-link-hover-light: #f0f0f0;
-  --accent-1-dark: #111111;
-  --accent-2-dark: #191919;
-  --accent-3-dark: #232323;
-  --accent-4-dark: #2a2a2a;
-  --accent-5-dark: #313131;
-  --accent-6-dark: #3a3a3a;
-  --accent-7-dark: #484848;
-  --accent-8-dark: #606060;
-  --accent-9-dark: #c7c7c7;
-  --accent-10-dark: #dedede;
-  --accent-11-dark: #c7c7c7;
-  --accent-12-dark: #eeeeee;
-  --accent-contrast-dark: #111111;
-  --accent-ink-dark: #111111;
-  --accent-pressed-dark: #b8b8b8;
-  --accent-link-dark: #c7c7c7;
-  --accent-link-hover-dark: #232323;
-}
-:root[data-accent="flame"],
-[data-accent="flame"] {
-  --accent-1-light: #fefcfc;
-  --accent-2-light: #fff8f6;
-  --accent-3-light: #ffeeea;
-  --accent-4-light: #ffe4de;
-  --accent-5-light: #fedad0;
-  --accent-6-light: #ffccbf;
-  --accent-7-light: #feb9a7;
-  --accent-8-light: #fe9d85;
-  --accent-9-light: #d93a0c;
-  --accent-10-light: #c93202;
-  --accent-11-light: #a4351a;
-  --accent-12-light: #4f1b0f;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #b92d01;
-  --accent-link-light: #a4351a;
-  --accent-link-hover-light: #ffeeea;
-  --accent-1-dark: #140e0c;
-  --accent-2-dark: #1d1311;
-  --accent-3-dark: #301c16;
-  --accent-4-dark: #40221b;
-  --accent-5-dark: #502920;
-  --accent-6-dark: #633327;
-  --accent-7-dark: #7c3f30;
-  --accent-8-dark: #9f4e3a;
-  --accent-9-dark: #d93a0c;
-  --accent-10-dark: #c93202;
-  --accent-11-dark: #ffaf9a;
-  --accent-12-dark: #ffebe6;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #b92d01;
-  --accent-link-dark: #ffaf9a;
-  --accent-link-hover-dark: #301c16;
-}
-:root[data-accent="magenta"],
-[data-accent="magenta"] {
-  --accent-1-light: #fefcfd;
-  --accent-2-light: #fef7fa;
-  --accent-3-light: #feedf3;
-  --accent-4-light: #ffe3ec;
-  --accent-5-light: #ffd6e4;
-  --accent-6-light: #ffc7db;
-  --accent-7-light: #ffb2cf;
-  --accent-8-light: #fe94be;
-  --accent-9-light: #cc1f7a;
-  --accent-10-light: #bf0570;
-  --accent-11-light: #a32e65;
-  --accent-12-light: #4d172f;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #af0465;
-  --accent-link-light: #a32e65;
-  --accent-link-hover-light: #feedf3;
-  --accent-1-dark: #130e10;
-  --accent-2-dark: #1d1316;
-  --accent-3-dark: #301a22;
-  --accent-4-dark: #3f202c;
-  --accent-5-dark: #4f2637;
-  --accent-6-dark: #622f44;
-  --accent-7-dark: #7a3a55;
-  --accent-8-dark: #9d486c;
-  --accent-9-dark: #cc1f7a;
-  --accent-10-dark: #bf0570;
-  --accent-11-dark: #ffaaca;
-  --accent-12-dark: #feeaf1;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #af0465;
-  --accent-link-dark: #ffaaca;
-  --accent-link-hover-dark: #301a22;
-}
-:root[data-accent="iris"],
-[data-accent="iris"] {
-  --accent-1-light: #fcfdfe;
-  --accent-2-light: #f9f9ff;
-  --accent-3-light: #f1f1fe;
-  --accent-4-light: #e8e9fe;
-  --accent-5-light: #dfe0ff;
-  --accent-6-light: #d4d5fe;
-  --accent-7-light: #c6c6ff;
-  --accent-8-light: #b2b1ff;
-  --accent-9-light: #6c4ef0;
-  --accent-10-light: #6342e4;
-  --accent-11-light: #5b4bbe;
-  --accent-12-light: #2a2459;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #5a34d7;
-  --accent-link-light: #5b4bbe;
-  --accent-link-hover-light: #f1f1fe;
-  --accent-1-dark: #0f0f14;
-  --accent-2-dark: #15151e;
-  --accent-3-dark: #1f1f34;
-  --accent-4-dark: #282746;
-  --accent-5-dark: #323057;
-  --accent-6-dark: #3e3b6c;
-  --accent-7-dark: #4d4988;
-  --accent-8-dark: #625caf;
-  --accent-9-dark: #6c4ef0;
-  --accent-10-dark: #6342e4;
-  --accent-11-dark: #bdbcff;
-  --accent-12-dark: #eeeffe;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #5a34d7;
-  --accent-link-dark: #bdbcff;
-  --accent-link-hover-dark: #1f1f34;
-}
-:root[data-accent="cobalt"],
-[data-accent="cobalt"] {
-  --accent-1-light: #fcfdfe;
-  --accent-2-light: #f7f9fe;
-  --accent-3-light: #edf2ff;
-  --accent-4-light: #e2ebff;
-  --accent-5-light: #d7e3ff;
-  --accent-6-light: #c9d9fe;
-  --accent-7-light: #b6ccfe;
-  --accent-8-light: #9cb9fe;
-  --accent-9-light: #2b4fe0;
-  --accent-10-light: #2343d4;
-  --accent-11-light: #3556be;
-  --accent-12-light: #192a5a;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #1c36c8;
-  --accent-link-light: #3556be;
-  --accent-link-hover-light: #edf2ff;
-  --accent-1-dark: #0d0f14;
-  --accent-2-dark: #12161e;
-  --accent-3-dark: #192134;
-  --accent-4-dark: #1f2a46;
-  --accent-5-dark: #263458;
-  --accent-6-dark: #2f406d;
-  --accent-7-dark: #3a4f89;
-  --accent-8-dark: #4864b0;
-  --accent-9-dark: #2b4fe0;
-  --accent-10-dark: #2343d4;
-  --accent-11-dark: #aac3fe;
-  --accent-12-dark: #eaf0ff;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #1c36c8;
-  --accent-link-dark: #aac3fe;
-  --accent-link-hover-dark: #192134;
-}
-:root[data-accent="jade"],
-[data-accent="jade"] {
-  --accent-1-light: #f9fefc;
-  --accent-2-light: #f2fcf8;
-  --accent-3-light: #e2f9f0;
-  --accent-4-light: #d3f4e7;
-  --accent-5-light: #c4eede;
-  --accent-6-light: #b4e6d3;
-  --accent-7-light: #9edbc5;
-  --accent-8-light: #81cdb2;
-  --accent-9-light: #0b8467;
-  --accent-10-light: #06795e;
-  --accent-11-light: #226a55;
-  --accent-12-light: #15352a;
-  --accent-contrast-light: #ffffff;
-  --accent-ink-light: #ffffff;
-  --accent-pressed-light: #026d54;
-  --accent-link-light: #226a55;
-  --accent-link-hover-light: #e2f9f0;
-  --accent-1-dark: #0d100f;
-  --accent-2-dark: #121715;
-  --accent-3-dark: #192520;
-  --accent-4-dark: #1e3029;
-  --accent-5-dark: #243b33;
-  --accent-6-dark: #2d493f;
-  --accent-7-dark: #375b4f;
-  --accent-8-dark: #447464;
-  --accent-9-dark: #0b8467;
-  --accent-10-dark: #06795e;
-  --accent-11-dark: #90d1ba;
-  --accent-12-dark: #e2f6ee;
-  --accent-contrast-dark: #ffffff;
-  --accent-ink-dark: #ffffff;
-  --accent-pressed-dark: #026d54;
-  --accent-link-dark: #90d1ba;
-  --accent-link-hover-dark: #192520;
-}
 
 /* Mode owners bind the ramp, then the accent roles every level uses. */
 [data-accent][data-color-mode="light"],
@@ -1290,20 +1036,239 @@
   --text-on-accent: var(--accent-contrast);
 }
 
-/* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
-   neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’ adds your
-   own messages. Buzzin’ also colors the shell (background, dots and chrome on
-   it), quiet controls, lines, surfaces and text. Shared groups are
-   declared once; level-only blocks contain intentional differences. */
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
+:root[data-accent="magenta"],
+[data-accent="magenta"] {
+  --accent-1-light: #fffbfc;
+  --accent-2-light: #fff7fa;
+  --accent-3-light: #ffeef3;
+  --accent-4-light: #fee2ec;
+  --accent-5-light: #fed8e4;
+  --accent-6-light: #f9cbdb;
+  --accent-7-light: #f1bbce;
+  --accent-8-light: #e7a4bd;
+  --accent-9-light: #df1e85;
+  --accent-10-light: #db2984;
+  --accent-11-light: #6c3149;
+  --accent-12-light: #42242f;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #d12c7f;
+  --accent-link-light: #84034b;
+  --accent-link-hover-light: #ffeef3;
+  --accent-1-dark: #120e10;
+  --accent-2-dark: #191415;
+  --accent-3-dark: #2b1f23;
+  --accent-4-dark: #38252c;
+  --accent-5-dark: #452d36;
+  --accent-6-dark: #553843;
+  --accent-7-dark: #6b4754;
+  --accent-8-dark: #865a6a;
+  --accent-9-dark: #df1e85;
+  --accent-10-dark: #db2984;
+  --accent-11-dark: #f4bccf;
+  --accent-12-dark: #feeaf1;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #d12c7f;
+  --accent-link-dark: #fdb6d0;
+  --accent-link-hover-dark: #2b1f23;
+}
+:root[data-accent="iris"],
+[data-accent="iris"] {
+  --accent-1-light: #fbfcff;
+  --accent-2-light: #f8f9ff;
+  --accent-3-light: #f0f2ff;
+  --accent-4-light: #e6eafe;
+  --accent-5-light: #dde1fe;
+  --accent-6-light: #d2d7fd;
+  --accent-7-light: #c2c8f8;
+  --accent-8-light: #aeb6f0;
+  --accent-9-light: #5f55fa;
+  --accent-10-light: #5a4ef2;
+  --accent-11-light: #3d407a;
+  --accent-12-light: #282b48;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #5648ea;
+  --accent-link-light: #3c04c3;
+  --accent-link-hover-light: #f0f2ff;
+  --accent-1-dark: #0f0f13;
+  --accent-2-dark: #14151a;
+  --accent-3-dark: #20212e;
+  --accent-4-dark: #272a3c;
+  --accent-5-dark: #31344a;
+  --accent-6-dark: #3c405b;
+  --accent-7-dark: #4c4f72;
+  --accent-8-dark: #60658f;
+  --accent-9-dark: #5f55fa;
+  --accent-10-dark: #5a4ef2;
+  --accent-11-dark: #c3cafb;
+  --accent-12-dark: #edf0fe;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #5648ea;
+  --accent-link-dark: #c2cafd;
+  --accent-link-hover-dark: #20212e;
+}
+:root[data-accent="cobalt"],
+[data-accent="cobalt"] {
+  --accent-1-light: #fafcff;
+  --accent-2-light: #f6faff;
+  --accent-3-light: #ecf4ff;
+  --accent-4-light: #dfecfe;
+  --accent-5-light: #d3e5fe;
+  --accent-6-light: #c3dcfc;
+  --accent-7-light: #b0cff8;
+  --accent-8-light: #97bdf0;
+  --accent-9-light: #1475e1;
+  --accent-10-light: #2176d9;
+  --accent-11-light: #264975;
+  --accent-12-light: #1e2f45;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #2271cf;
+  --accent-link-light: #02468e;
+  --accent-link-hover-light: #ecf4ff;
+  --accent-1-dark: #0e1012;
+  --accent-2-dark: #131519;
+  --accent-3-dark: #1c232c;
+  --accent-4-dark: #212c3a;
+  --accent-5-dark: #293748;
+  --accent-6-dark: #334358;
+  --accent-7-dark: #40546f;
+  --accent-8-dark: #516b8c;
+  --accent-9-dark: #1475e1;
+  --accent-10-dark: #2176d9;
+  --accent-11-dark: #b1d1fa;
+  --accent-12-dark: #e8f2fe;
+  --accent-contrast-dark: #ffffff;
+  --accent-ink-dark: #ffffff;
+  --accent-pressed-dark: #2271cf;
+  --accent-link-dark: #afd1fe;
+  --accent-link-hover-dark: #1c232c;
+}
+:root[data-accent="bee"],
+[data-accent="bee"] {
+  --accent-1-light: #fdfcf8;
+  --accent-2-light: #fcf9f1;
+  --accent-3-light: #faf3df;
+  --accent-4-light: #f5eace;
+  --accent-5-light: #f1e3be;
+  --accent-6-light: #e8d9af;
+  --accent-7-light: #ddcb98;
+  --accent-8-light: #d0b979;
+  --accent-9-light: #f5c518;
+  --accent-10-light: #fdcd2a;
+  --accent-11-light: #584504;
+  --accent-12-light: #362d13;
+  --accent-contrast-light: #000000;
+  --accent-ink-light: #000000;
+  --accent-pressed-light: #ffd763;
+  --accent-link-light: #594501;
+  --accent-link-hover-light: #faf3df;
+  --accent-1-dark: #100f0c;
+  --accent-2-dark: #171511;
+  --accent-3-dark: #252118;
+  --accent-4-dark: #312b1c;
+  --accent-5-dark: #3d3521;
+  --accent-6-dark: #4a412a;
+  --accent-7-dark: #5c5234;
+  --accent-8-dark: #766842;
+  --accent-9-dark: #f5c518;
+  --accent-10-dark: #fdcd2a;
+  --accent-11-dark: #e0cd97;
+  --accent-12-dark: #f6f0df;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #000000;
+  --accent-pressed-dark: #ffd763;
+  --accent-link-dark: #f2c94e;
+  --accent-link-hover-dark: #252118;
+}
+:root[data-accent="citrus"],
+[data-accent="citrus"],
+:root {
+  --accent-1-light: #fcfdf7;
+  --accent-2-light: #f8fbef;
+  --accent-3-light: #f1f6de;
+  --accent-4-light: #e8f0cd;
+  --accent-5-light: #e0e9bc;
+  --accent-6-light: #d5e1aa;
+  --accent-7-light: #c8d495;
+  --accent-8-light: #b6c378;
+  --accent-9-light: #beda36;
+  --accent-10-light: #bdd836;
+  --accent-11-light: #485311;
+  --accent-12-light: #2b3110;
+  --accent-contrast-light: #000000;
+  --accent-ink-light: #000000;
+  --accent-pressed-light: #bcd83a;
+  --accent-link-light: #485400;
+  --accent-link-hover-light: #f1f6de;
+  --accent-1-dark: #0f100c;
+  --accent-2-dark: #15170f;
+  --accent-3-dark: #202413;
+  --accent-4-dark: #292e16;
+  --accent-5-dark: #333a18;
+  --accent-6-dark: #3e471f;
+  --accent-7-dark: #4f5827;
+  --accent-8-dark: #637033;
+  --accent-9-dark: #beda36;
+  --accent-10-dark: #bdd836;
+  --accent-11-dark: #cee28b;
+  --accent-12-dark: #edf7d2;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #000000;
+  --accent-pressed-dark: #bcd83a;
+  --accent-link-dark: #cbe648;
+  --accent-link-hover-dark: #202413;
+}
+:root[data-accent="mono"],
+[data-accent="mono"] {
+  --accent-1-light: #fcfcfc;
+  --accent-2-light: #f9f9f9;
+  --accent-3-light: #f3f3f3;
+  --accent-4-light: #ebebeb;
+  --accent-5-light: #e3e3e3;
+  --accent-6-light: #d9d9d9;
+  --accent-7-light: #cccccc;
+  --accent-8-light: #bababa;
+  --accent-9-light: #1a1a1a;
+  --accent-10-light: #141414;
+  --accent-11-light: #484848;
+  --accent-12-light: #2e2e2e;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #0f0f0f;
+  --accent-link-light: #484848;
+  --accent-link-hover-light: #f3f3f3;
+  --accent-1-dark: #0f0f0f;
+  --accent-2-dark: #151515;
+  --accent-3-dark: #222222;
+  --accent-4-dark: #2b2b2b;
+  --accent-5-dark: #363636;
+  --accent-6-dark: #424242;
+  --accent-7-dark: #535353;
+  --accent-8-dark: #696969;
+  --accent-9-dark: #e6e6e6;
+  --accent-10-dark: #eeeeee;
+  --accent-11-dark: #cecece;
+  --accent-12-dark: #f0f0f0;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #000000;
+  --accent-pressed-dark: #f7f7f7;
+  --accent-link-dark: #cecece;
+  --accent-link-hover-dark: #222222;
+}
+
+/* All three vibe levels keep app surfaces neutral. Hummin’ adds soft personal
+   and selected states; Buzzin’ makes those fills solid. */
+
+:root[data-color-level="quiet"],
+[data-color-level="quiet"] .light,
 :root[data-color-level="touch"],
 [data-color-level="touch"] .light,
-:root[data-color-level="more"],
-[data-color-level="more"] .light,
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  /* Each family names its link partner: a color that stays readable as
-     text on light grounds. Chartreuse can only glow on dark grounds. */
+:root[data-color-level="high"],
+[data-color-level="high"] .light {
   --text-link: var(--accent-link);
   --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
@@ -1311,89 +1276,24 @@
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
+  --affordance-navigation-quiet: var(--accent-2);
+  --affordance-selected: var(--accent-5);
   --affordance-floating-hover: var(--accent-3);
   --affordance-popover-selected: var(--accent-3);
   --affordance-floating-selected: var(--accent-4);
-  /* Only one destination is selected at a time, so it can take the brand fill
-     with its ink. Pale tints of chartreuse read as khaki, so other selection
-     and hover stay neutral until Buzzin’ tints every surface. */
-  --affordance-navigation-selected: var(--accent-9);
-  --surface-row-selected-detail: var(--accent-3);
-  --text-row-selected: var(--accent-contrast);
-  --text-row-selected-subtle: var(--accent-contrast);
-  --text-row-selected-metadata: var(--accent-contrast);
-}
-
-/* Buzzin’: quiet controls, shell, lines and supporting text. Light. */
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  --bg-app: var(--accent-4);
-  --texture-dots-color: var(--accent-6);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
-  --bg-chrome-selected: var(--accent-1);
-  --border-prominent: var(--accent-11);
-  --border-floating-control: var(--accent-11);
-  --border-message-thread: var(--accent-6);
-  --scrollbar-thumb: var(--accent-8);
-  --text-subtle: var(--accent-11);
-  --text-metadata: var(--accent-11);
-}
-
-/* Swarmin’ and Buzzin’: your own messages take the brand fill. Pale and
-   dark tints of chartreuse read khaki or olive; it only works bright. Light. */
-:root[data-color-level="more"],
-[data-color-level="more"] .light,
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
-     its fill with the bubble's ink, deepening again on hover. */
-  --affordance-mention-own: var(--accent-10);
-  --affordance-mention-own-hover: var(--accent-pressed);
-  --text-mention-own: var(--text-message-own);
-  --surface-message-own: var(--accent-9);
-  --text-message-own: var(--accent-ink);
-  --text-message-link-own: var(--accent-ink);
-}
-
-/* Full-only changes. Light. */
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  --affordance-row-hover: var(--accent-3);
-  --affordance-panel-hover: var(--accent-3);
-  --affordance-navigation-quiet: var(--accent-2);
-  --affordance-selected: var(--accent-5);
   --text-row-subtle: var(--accent-11);
   --text-row-metadata: var(--accent-11);
   --text-row: var(--accent-12);
-  --affordance-subtle: var(--accent-3);
-  --affordance-subtle-hover: var(--accent-4);
-  --affordance-subtle-pressed: var(--accent-6);
-  --affordance-floating-control: var(--accent-3);
-  --affordance-floating-control-hover: var(--accent-4);
-  --affordance-floating-control-pressed: var(--accent-6);
-  --border-standard: var(--accent-6);
-  --surface-base: var(--accent-2);
-  --surface-panel: var(--accent-1);
-  --surface-popover: var(--accent-1);
-  --surface-inset: var(--accent-2);
-  --surface-message: var(--accent-3);
-  --text-standard: var(--accent-12);
-  --text-navigation: var(--accent-11);
-  --text-navigation-unread: var(--accent-12);
-  --text-unavailable: var(--accent-8);
+  --affordance-row-hover: var(--accent-2);
+  --affordance-panel-hover: var(--accent-2);
 }
 
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Dark. */
+:root[data-color-level="quiet"][data-color-mode="dark"],
+[data-color-level="quiet"] .dark,
 :root[data-color-level="touch"][data-color-mode="dark"],
 [data-color-level="touch"] .dark,
-:root[data-color-level="more"][data-color-mode="dark"],
-[data-color-level="more"] .dark,
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  /* Each family names its link partner: a color that stays readable as
-     text on light grounds. Chartreuse can only glow on dark grounds. */
+:root[data-color-level="high"][data-color-mode="dark"],
+[data-color-level="high"] .dark {
   --text-link: var(--accent-link);
   --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
@@ -1401,12 +1301,36 @@
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
-  /* Dark chartreuse has no vivid form, so dark rows keep neutral fills and
-     let the selected label carry the accent at its glowing step. The level
-     blocks above also match a dark root, so restate the neutral row group
-     by step: Buzzin’ tints quiet controls, but its rows stay neutral too. */
-  --affordance-row-hover: var(--neutral-4);
-  --affordance-panel-hover: var(--neutral-4);
+  --affordance-row-hover: var(--accent-3);
+  --affordance-navigation-quiet: var(--accent-3);
+  --affordance-panel-hover: var(--accent-3);
+  --affordance-selected: var(--accent-4);
+  --affordance-floating-hover: var(--accent-4);
+  --affordance-popover-selected: var(--accent-4);
+  --affordance-floating-selected: var(--accent-5);
+  --text-row-subtle: var(--accent-11);
+  --text-row-metadata: var(--accent-11);
+  --text-row: var(--accent-12);
+}
+
+:root[data-color-level="quiet"],
+[data-color-level="quiet"] .light {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-selected: var(--neutral-3);
+  --affordance-floating-hover: var(--neutral-2);
+  --affordance-popover-selected: var(--neutral-3);
+  --affordance-floating-selected: var(--neutral-3);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  --text-row: var(--text-navigation);
+}
+
+:root[data-color-level="quiet"][data-color-mode="dark"],
+[data-color-level="quiet"] .dark {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-selected: var(--neutral-5);
   --affordance-floating-hover: var(--neutral-5);
@@ -1415,66 +1339,62 @@
   --text-row-subtle: var(--text-subtle);
   --text-row-metadata: var(--text-metadata);
   --text-row: var(--text-navigation);
-  --affordance-navigation-selected: var(--neutral-5);
-  /* Rebind after the light level rules, which also match a dark root. */
-  --surface-row-selected-detail: var(--neutral-6);
-  --text-row-selected-detail: var(--text-row-selected);
-  --text-row-selected: var(--accent-11);
-  --text-row-selected-subtle: var(--text-subtle);
-  --text-row-selected-metadata: var(--text-metadata);
 }
 
-/* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  --bg-app: var(--accent-2);
-  --texture-dots-color: var(--accent-4);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
+/* Low contrast carries the accent through personal and selected states,
+   while the surrounding app surfaces retain their neutral roles. */
+:root[data-color-level="touch"],
+[data-color-level="touch"] .light {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
+  --surface-navigation-selected: var(--accent-4);
+  --text-navigation-selected: var(--accent-11);
   --bg-chrome-selected: var(--accent-4);
-  --affordance-subtle: var(--accent-3);
-  --affordance-subtle-hover: var(--accent-4);
-  --affordance-subtle-pressed: var(--accent-5);
-  --affordance-floating-control: var(--accent-4);
-  --affordance-floating-control-hover: var(--accent-5);
-  --affordance-floating-control-pressed: var(--accent-6);
-  --border-prominent: var(--accent-8);
-  --border-floating-control: var(--accent-11);
-  --border-standard: var(--accent-5);
-  --border-message-thread: var(--accent-6);
-  --scrollbar-thumb: var(--accent-8);
-  --text-subtle: var(--accent-11);
-  --text-metadata: var(--accent-11);
 }
 
-/* Swarmin’ and Buzzin’: your own messages take the brand fill. Dark. */
-:root[data-color-level="more"][data-color-mode="dark"],
-[data-color-level="more"] .dark,
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
-     its fill with the bubble's ink, deepening again on hover. */
+:root[data-color-level="touch"][data-color-mode="dark"],
+[data-color-level="touch"] .dark {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
+  --surface-navigation-selected: var(--accent-4);
+  --text-navigation-selected: var(--accent-11);
+  --bg-chrome-selected: var(--accent-4);
+}
+
+:root[data-color-level="high"],
+[data-color-level="high"] .light {
   --affordance-mention-own: var(--accent-10);
   --affordance-mention-own-hover: var(--accent-pressed);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
+  --surface-navigation-selected: var(--accent-9);
+  --text-navigation-selected: var(--accent-contrast);
+  --bg-chrome-selected: var(--accent-9);
 }
 
-/* Full-only changes. Dark. */
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  --surface-base: var(--accent-1);
-  --surface-panel: var(--accent-2);
-  --surface-popover: var(--accent-3);
-  --surface-inset: var(--accent-1);
-  --surface-message: var(--accent-3);
-  --text-standard: var(--neutral-12);
-  --text-navigation: var(--accent-11);
-  --text-navigation-unread: var(--neutral-12);
-  --text-unavailable: var(--accent-8);
+:root[data-color-level="high"][data-color-mode="dark"],
+[data-color-level="high"] .dark {
+  --affordance-mention-own: var(--accent-10);
+  --affordance-mention-own-hover: var(--accent-pressed);
+  --text-mention-own: var(--text-message-own);
+  --surface-message-own: var(--accent-9);
+  --text-message-own: var(--accent-ink);
+  --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
+  --surface-navigation-selected: var(--accent-9);
+  --text-navigation-selected: var(--accent-contrast);
+  --bg-chrome-selected: var(--accent-9);
 }
 
 /* ============================================================
@@ -1487,6 +1407,9 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --color-surface-control-selected: var(--surface-control-selected);
+  --text-color-control-selected: var(--text-control-selected);
+  --text-color-navigation-selected: var(--text-navigation-selected);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
   --text-color-mention: var(--text-mention);

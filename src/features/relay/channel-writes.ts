@@ -2,12 +2,29 @@ import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
+import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A Solo start that made no chat: the relay refused its create, or the
+ * relay has no record of it once its delivery attempts ran out. */
+export class ChatNotStarted extends Error {}
+
+function pause(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
 
 /** Channel write commands use the same durable outbox and connection lifetime. */
 export function createChannelWrites(
@@ -236,6 +253,7 @@ export function createChannelWrites(
       );
       const matches = (channel: ChannelSummary) =>
         channel.id === id &&
+        !channel.pending &&
         (!soloOnly || channel.channelType === "solo") &&
         (!expected.member || channel.members?.includes(expected.member)) &&
         (!expected.members ||
@@ -265,7 +283,8 @@ export function createChannelWrites(
       // member addition re-reads that one roster through `refreshRoster`; a
       // channel the list lacks (just created) is admitted by `resolve`'s exact
       // metadata-and-roster read.
-      const listed = found((channel) => channel.id === id);
+      // A chat still pending is listed but unconfirmed: `resolve` admits it.
+      const listed = found((channel) => channel.id === id && !channel.pending);
       await Promise.race([
         gate,
         (async () => {
@@ -290,6 +309,8 @@ export function createChannelWrites(
     if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    // A chat this device is starting has no roster until its create lands.
+    await starts.get(id);
     const events = await reader.read(
       [
         {
@@ -473,7 +494,64 @@ export function createChannelWrites(
     if (original?.channelType === "solo")
       await refresh(id, { members: unique });
   }
-  return Object.freeze({
+  /** Solo chats this device is starting, until they can take events. */
+  const starts = new Map<string, Promise<void>>();
+  /** The Canvas of each chat this device is starting ("" for none), until
+   * its save lands; see `startingCanvas`. */
+  const canvases = new Map<string, string>();
+  /** Settles once the relay has the create, or rejects with ChatNotStarted
+   * once it is known to have none. A lost acknowledgment resends the same
+   * create, which the relay confirms; when the attempts run out, the relay is
+   * asked for the create until it answers. */
+  async function created(create: string) {
+    for (let tries = 1; tries <= 3; tries++) {
+      try {
+        return await delivered(create);
+      } catch (error) {
+        // Only the relay's refusal ends the start; a failure on this device,
+        // before the create was sent, retries it.
+        if (
+          (receipts ?? outbox)
+            ?.snapshot()
+            .some((item) => item.event.id === create && item.refused)
+        )
+          throw new ChatNotStarted(
+            String(error instanceof Error ? error.message : error),
+            { cause: error },
+          );
+        if (signal.aborted) throw error;
+      }
+      // A failed check is not an answer; give the connection time to recover.
+      await pause(500 * 2 ** tries, signal);
+    }
+    for (let wait = 1_000; ; wait = Math.min(wait * 2, 30_000)) {
+      if (signal.aborted) throw new Error("The community connection changed.");
+      try {
+        const events = await reader.read(
+          [{ ids: [create], limit: 1, consistency: "strong" }],
+          { signal },
+        );
+        if (events.some((event) => event.id === create)) return;
+      } catch {
+        await pause(wait, signal);
+        continue;
+      }
+      // An attempt still under way may yet land; ask again after it.
+      if (
+        outbox
+          ?.snapshot()
+          .some(
+            (item) => item.event.id === create && item.delivery === "sending",
+          )
+      ) {
+        await pause(wait, signal);
+        continue;
+      }
+      // The relay has no such create; `start` withdraws it.
+      throw new ChatNotStarted("The relay has no record of it.");
+    }
+  }
+  const api = Object.freeze({
     available,
     addAgents,
     refreshMembership,
@@ -528,7 +606,13 @@ export function createChannelWrites(
         active,
       );
     },
-    create(id: string, title: string, ttlSeconds?: number, named = false) {
+    create(
+      id: string,
+      title: string,
+      ttlSeconds?: number,
+      named = false,
+      members: readonly string[] = [],
+    ) {
       writer();
       identifier(id);
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
@@ -554,8 +638,76 @@ export function createChannelWrites(
           ...channelLabelTags(
             named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
           ),
+          ...[...new Set(members)].map((key) => ["p", key]),
         ],
       });
+    },
+    /** Starts a Solo chat whose create names its `members`. It lists at once
+     * as pending; `ready` settles once the relay OKs the create, which adds the
+     * members (block/buzz#8421), and a background read then confirms the chat.
+     * The chat's own events publish after `ready` (see `starting`). A refused
+     * create (see `failed`) drops the pending chat. */
+    start(
+      id: string,
+      title: string,
+      members: readonly string[],
+      ttlSeconds?: number,
+      named = false,
+      /** The chat's Canvas, and the work that saves it once the chat
+       * exists; nothing waits for it, and a failure leaves a working chat. */
+      setup?: { canvas: string; apply(): Promise<unknown> },
+    ) {
+      const create = api.create(id, title, ttlSeconds, named, members);
+      channels.start?.({
+        id,
+        name: title,
+        members,
+        labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
+        ttlSeconds,
+      });
+      // The relay adds the members in the create, so the chat takes events
+      // once the create is OK.
+      const ready = created(create);
+      starts.set(id, ready);
+      canvases.set(id, setup?.canvas ?? "");
+      const settled = setup
+        ? ready.then(() =>
+            setup.apply().catch((reason) => {
+              console.warn("Solo chat setup did not finish", reason);
+            }),
+          )
+        : ready;
+      void ready.then(
+        // Confirming the chat only ends its pending listing.
+        () => refresh(id).catch(() => {}),
+        (error) => {
+          if (!(error instanceof ChatNotStarted)) return;
+          // A chat that was never made is gone, with everything sent in it.
+          channels.abandon?.(id);
+          for (const item of outbox?.snapshot() ?? [])
+            if (
+              outbox &&
+              item.event.tags.some(
+                ([name, value]) => name === "h" && value === id,
+              )
+            )
+              void withdraw(outbox, item.event.id).catch(() => {});
+        },
+      );
+      void ready.catch(() => {}).finally(() => starts.delete(id));
+      void settled.catch(() => {}).finally(() => canvases.delete(id));
+      return { create, ready };
+    },
+    /** Settles when a chat this device is starting exists on the relay, so it
+     * can be read and take events. */
+    starting(id: string): Promise<void> | undefined {
+      return starts.get(id);
+    },
+    /** The Canvas a chat this device is starting will have ("" for none),
+     * until its save lands: what a local agent's first turn reads, without
+     * waiting for the relay. */
+    startingCanvas(id: string): string | undefined {
+      return canvases.get(id);
     },
     failed(id: string) {
       return (
@@ -580,4 +732,5 @@ export function createChannelWrites(
     delivered,
     refresh,
   });
+  return api;
 }

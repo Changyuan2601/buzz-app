@@ -37,6 +37,9 @@ failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
+Activity shows the turns the agent published to its owner while Buzz has been
+open, for the conversation it was opened from or all of them. It needs the Agent
+Activity plugin, which owns the feed.
 Profile updates remain TODO and report an unsupported-operation error.
 
 The adapter retains the provider agent ID, server, verified account subject and
@@ -81,3 +84,7 @@ SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
 posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
 verifies the returned session credential with `/v1/auth/me` using the
 `X-BB-Session-Credential` header. These requests use the shared host transport.
+The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
+`true` enables remote agents. Otherwise, Settings and the Agents provider show
+“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
+this capability.

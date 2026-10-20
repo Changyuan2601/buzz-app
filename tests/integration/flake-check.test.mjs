@@ -14,6 +14,7 @@ import {
   selectTests,
   testBodies,
   testCalls,
+  vitestLines,
 } from "../../scripts/flake-check.mjs";
 
 // A hunk writing new-side lines start..end; by default it removed nothing.
@@ -123,6 +124,9 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
   assert.deepEqual(select([hunk(7, 7)]), { lines: [6] });
   assert.deepEqual(select([hunk(21, 21)]), { lines: [19] });
   assert.deepEqual(select([hunk(23, 24)]), { lines: [22] });
+  // Vitest filters the `it.each` cases by the call's first line, not the
+  // line it lists.
+  assert.deepEqual(vitestLines([6, 19, 22], bodies), [6, 16, 22]);
   // A helper between tests, a hook inside the group, and a hook after the
   // last test are shared code.
   for (const range of [hunk(10, 10), hunk(14, 14), hunk(27, 27), hunk(2, 2)])

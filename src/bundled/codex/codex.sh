@@ -29,6 +29,18 @@ newer() {
   }'
 }
 
+# Holds an exclusive lock on file $1 through descriptor 9 until it closes. The
+# kernel releases it when the process ends, however it ends.
+lock() {
+  exec 9>>"$1"
+  if command -v flock >/dev/null; then
+    flock 9
+  else # macOS has no flock(1)
+    perl -MFcntl=:flock -e 'open(my $lock, ">&=9") or die "$!\n";
+      flock($lock, LOCK_EX) or die "$!\n"'
+  fi
+}
+
 command="$1"
 shift
 # Buzz keeps its own Codex home, beside the releases, so its conversations stay
@@ -45,6 +57,30 @@ if [ "$command" = run ] || [ "$command" = adopt ]; then
   home=$(cd "$dir-home" && pwd -P)
   [ "$home" != "$shared" ] ||
     { echo "Buzz's Codex home must differ from the shared one" >&2; exit 1; }
+  # `codex login` signs out first, removing the link, so signing in from Buzz
+  # leaves a file here. The shared sign-in, which that revoked, takes it as it would
+  # have through the link, unless the shared one is newer. Under a lock, so runs
+  # starting at once hand it over once. An empty file is one Codex is still writing.
+  if [ -s "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
+    lock "$dir-home.lock"
+    if [ -s "$home/auth.json" ] && [ ! -L "$home/auth.json" ]; then
+      # Through any links the user made, bounded in case they loop.
+      auth="$shared/auth.json" hops=0
+      while [ -L "$auth" ] && [ $((hops += 1)) -le 40 ]; do
+        link=$(readlink "$auth")
+        case "$link" in /*) auth=$link ;; *) auth=${auth%/*}/$link ;; esac
+      done
+      # Replaced whole, so never left partial, and private.
+      [ "$shared/auth.json" -nt "$home/auth.json" ] ||
+        (umask 077 && cat "$home/auth.json" >"$auth.buzz" && mv -f "$auth.buzz" "$auth") || {
+        rm -f "$auth.buzz"
+        echo "Buzz couldn't save the Codex sign-in to $shared/auth.json" >&2
+        exit 1
+      }
+      rm -f "$home/auth.json"
+    fi
+    exec 9>&-
+  fi
   for name in config.toml auth.json AGENTS.md rules skills; do
     [ -e "$home/$name" ] || [ -L "$home/$name" ] ||
       ln -sn "$shared/$name" "$home/$name" 2>/dev/null || true
@@ -105,15 +141,8 @@ use)
   version="$1"
   valid "$version" || { echo "Invalid version" >&2; exit 2; }
   # One switch at a time across Buzz builds, so none prunes the release
-  # another just switched to. The kernel holds the lock for this process and
-  # releases it when the process ends, however it ends.
-  exec 9>>"$dir/.lock"
-  if command -v flock >/dev/null; then
-    flock 9
-  else # macOS has no flock(1)
-    perl -MFcntl=:flock -e 'open(my $lock, ">&=9") or die "$!\n";
-      flock($lock, LOCK_EX) or die "$!\n"'
-  fi
+  # another just switched to.
+  lock "$dir/.lock"
   # Checked under the lock: another build may have pruned it meanwhile.
   test -x "$dir/$version/bin/codex" ||
     { echo "Codex $version is no longer downloaded" >&2; exit 1; }

@@ -1226,6 +1226,40 @@ it("retains an older build's pending pointer as confirmation-only recovery", asy
   ).toBeDisabled();
 });
 
+it("retires a confirmed legacy message when the page stays mounted", async () => {
+  const t = setup();
+  const person = people[0];
+  assert.exists(person);
+  const storageKey = (key: string) =>
+    `buzz-view.v1:${JSON.stringify([scope, key])}`;
+  localStorage.setItem(
+    storageKey("direct-message:recipients"),
+    JSON.stringify([person]),
+  );
+  localStorage.setItem(
+    storageKey("direct-message:pending"),
+    JSON.stringify({
+      id: "d".repeat(64),
+      channelId: channel,
+      recipients: person.pubkey,
+      draft: { text: "Already sent legacy message", recipients: [] },
+    }),
+  );
+  // No journal entry backs the legacy record, so delivery is never recorded.
+  t.directMessages.delivery.mockReturnValue(undefined);
+  t.mount();
+  await t.user.click(await screen.findByRole("button", { name: "Retry send" }));
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 1" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox")).not.toHaveTextContent(
+    "Already sent legacy message",
+  );
+  expect(send()).toBeDisabled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+});
+
 it("can retry legacy confirmation after partial saved-view cleanup fails", async () => {
   const t = setup();
   const person = people[0];

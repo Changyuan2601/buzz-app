@@ -22,7 +22,7 @@
 }
 .count {
   position: relative;
-  z-index: 4;
+  z-index: 100;
   margin-inline-start: var(--space-2);
   color: var(--text-subtle);
 }
@@ -51,20 +51,29 @@
   height: var(--space-4);
 }
 
+/* A hero row, such as the agents an empty page offers to import. */
+.root[data-size="hero"] .item {
+  padding: 3px;
+  width: 4rem;
+  height: 4rem;
+  margin-inline-end: calc(-1 * var(--space-3));
+}
+.root[data-size="hero"] .item:last-child {
+  margin-inline-end: 0;
+}
+.countFill {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-secondary);
+  background: var(--interaction-fill);
+}
+
 .miniInitial {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
   transform: scale(0.75);
-}
-
-.item:nth-child(1) {
-  z-index: 1;
-}
-.item:nth-child(2) {
-  z-index: 2;
-}
-.item:nth-child(3) {
-  z-index: 3;
 }
