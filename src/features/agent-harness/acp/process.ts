@@ -126,7 +126,7 @@ export class AcpProcess {
       },
     }).catch((error: unknown) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
-        ? new HintedError(hooks.missing, hooks.missing)
+        ? missingError(hooks)
         : error;
     });
     // A cancel while the host starts it rejects at once; the harness that
@@ -180,7 +180,7 @@ export class AcpProcess {
       await acp.stop(STOP_TIMEOUT_MS);
       // A program `env` cannot find or run exits before it answers.
       if (hooks.diagnoseStartup && MISSING_CODES.has(acp.code ?? 0))
-        throw new HintedError(hooks.missing, hooks.missing);
+        throw missingError(hooks);
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -485,3 +485,7 @@ export class AcpProcess {
     return response;
   }
 }
+
+/** The missing program's error, with its hint when the hooks give one. */
+const missingError = ({ missing, missingHint }: AcpHooks) =>
+  missingHint ? new HintedError(missing, missingHint) : new Error(missing);

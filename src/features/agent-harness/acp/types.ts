@@ -79,6 +79,9 @@ export type AcpHooks = Readonly<{
   program: string;
   /** The error when that program cannot be found, or cannot run. */
   missing: string;
+  /** What to do about it, posted where others can read it: fixed text, never
+   * the launch's own values. Without it, no hint is given. */
+  missingHint?: string;
   /** Keeps stderr written before the host reports the spawn, and reads exit
    * 126 or 127 before `initialize` answers as `missing`: for a program the
    * owner launches through `env`. */

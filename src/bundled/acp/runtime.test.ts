@@ -362,8 +362,29 @@ describe("AcpRuntime", () => {
     await deliver(message("1", "@Opal hello"), config).run;
     await vi.waitFor(() => expect(published).toHaveLength(1));
     expect(published[0]?.content).toBe(
-      `${FAILED} ${missing(config.preset, config.command)}`,
+      `${FAILED} Install OpenCode: https://opencode.ai`,
     );
+  });
+
+  it("names no custom command in a missing program's hint", async () => {
+    const config = await confirmed({
+      preset: "custom",
+      command: "/private/CLIENT_SECRET_SYNTHETIC/agent",
+      args: [],
+    });
+    const { runtime, deliver, sync, published, workingUntil } = setup({
+      exitCode: 127,
+    });
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await reported(runtime, workingUntil);
+    expect(await workingUntil.mock.calls[0]?.[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("CLIENT_SECRET_SYNTHETIC"),
+    });
+    expect(published.map((event) => event.content)).toEqual([
+      `${FAILED} Check the harness is installed and on your PATH.`,
+    ]);
   });
 
   it("keeps a stored config's validation error local, secret and all", async () => {
