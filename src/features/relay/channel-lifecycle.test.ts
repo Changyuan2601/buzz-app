@@ -23,13 +23,21 @@ const other = getPublicKey(agentKey);
 const viewer = getPublicKey(key);
 const relayAuthor = getPublicKey(relayKey);
 const id = "11111111-1111-4111-8111-111111111111";
+const otherIds = [
+  "22222222-2222-4222-8222-222222222222",
+  "33333333-3333-4333-8333-333333333333",
+] as const;
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
+/** How the shared reader rejects a job it retired or whose consumer aborted. */
+const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 function harness(role = "owner", type = "stream", owners = 1) {
   let timestamp = 100;
   const record = (kind: number, tags: string[][], content = "") =>
@@ -449,6 +457,89 @@ it.each(["clear", "dispose", "cancel"] as const)(
     h.owner.dispose();
   },
 );
+it("two revocations elsewhere during one permission read reread instead of failing", async () => {
+  const h = harness();
+  const gates = [deferred<RelayEvent[]>(), deferred<RelayEvent[]>()];
+  const started = [deferred<void>(), deferred<void>()];
+  for (const [index, gate] of gates.entries())
+    h.read.mockImplementationOnce(() => {
+      started[index]?.resolve();
+      return gate.promise;
+    });
+  const result = h.owner.capability.load(id);
+  for (const [index, revoked] of otherIds.entries()) {
+    await started[index]?.promise;
+    // The session's fan-out for another channel: a scoped cancel, then the
+    // shared reader retires every pending job.
+    h.owner.cancel([revoked]);
+    gates[index]?.reject(cancelled());
+  }
+  expect(await result).toMatchObject({ canArchive: true, canDelete: true });
+  expect(h.read).toHaveBeenCalledTimes(3);
+  for (const [filters, options] of h.read.mock.calls) {
+    for (const filter of filters) expect(filter["#d"]).toEqual([id]);
+    expect(options?.signal?.aborted).toBe(false);
+  }
+  h.owner.dispose();
+});
+it.each(["scoped cancel", "cancel", "clear", "dispose", "caller"] as const)(
+  "%s during a permission read is final; nothing rereads",
+  async (action) => {
+    const h = harness();
+    const gate = deferred<RelayEvent[]>();
+    const started = deferred<void>();
+    const caller = new AbortController();
+    h.read.mockImplementationOnce((_filters, options) => {
+      started.resolve();
+      options?.signal?.addEventListener(
+        "abort",
+        () => gate.reject(cancelled()),
+        {
+          once: true,
+        },
+      );
+      return gate.promise;
+    });
+    const result = h.owner.capability.load(id, caller.signal);
+    await started.promise;
+    if (action === "caller") caller.abort();
+    else if (action === "scoped cancel") h.owner.cancel([id]);
+    else h.owner[action]();
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(h.read).toHaveBeenCalledOnce();
+    h.owner.dispose();
+  },
+);
+it("deleting one channel leaves another channel's permission read in flight", async () => {
+  const h = harness();
+  const [other] = otherIds;
+  const currentRead = h.read.getMockImplementation();
+  assert(currentRead);
+  const gate = deferred<RelayEvent[]>();
+  const started = deferred<void>();
+  h.read.mockImplementation((filters, options) => {
+    if (!filters.some((filter) => filter["#d"]?.includes(other)))
+      return currentRead(filters, options);
+    started.resolve();
+    return gate.promise;
+  });
+  // As the session's denyChannel does for the channel that was removed.
+  h.removed.mockImplementation(() => h.owner.cancel([id]));
+  const pending = h.owner.capability.load(other);
+  await started.promise;
+  await h.owner.capability.run("delete", id);
+  expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+  const [, options] =
+    h.read.mock.calls.find(([filters]) =>
+      filters.some((filter) => filter["#d"]?.includes(other)),
+    ) ?? [];
+  expect(options?.signal?.aborted).toBe(false);
+  gate.resolve([]);
+  await expect(pending).rejects.toThrow(
+    "Current channel permissions could not be verified",
+  );
+  h.owner.dispose();
+});
 it("does not infer deletion from a failed confirmation read; retry can recover", async () => {
   const h = harness();
   h.publish.mockImplementationOnce(async () => {
@@ -1009,6 +1100,18 @@ describe("channel owner-agent Archive and Delete eligibility", () => {
       h.owner.dispose();
     }
   });
+  it("a retired owner-profile read rereads rather than removing Delete", async () => {
+    const h = ownedAgent();
+    h.read.mockResolvedValueOnce(
+      h.getEvents().filter((event) => event.kind !== 0),
+    );
+    h.read.mockRejectedValueOnce(cancelled());
+    const settings = await h.owner.capability.load(id);
+    expect(settings).toMatchObject({ canArchive: true, canDelete: true });
+    expect(settings).not.toHaveProperty("deleteUnavailable");
+    expect(h.read).toHaveBeenCalledTimes(4);
+    h.owner.dispose();
+  });
   it("profile provenance does not override a conflicting relay ownership decision", async () => {
     const h = ownedAgent();
     expect((await h.owner.capability.load(id)).canDelete).toBe(true);
@@ -1435,24 +1538,6 @@ describe("join from a public preview", () => {
     });
     return { ...h, metadata, roster };
   }
-
-  it("publishes kind 9021 and applies the confirmed roster", async () => {
-    const h = preview();
-    try {
-      await h.owner.capability.run("join", id);
-      expect(h.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 9021, content: "", tags: [["h", id]] }),
-        expect.anything(),
-      );
-      expect(h.publish).toHaveBeenCalledOnce();
-      const [accepted] = h.acceptDiscovery.mock.lastCall ?? [];
-      expect(accepted).toHaveLength(1);
-      expect(accepted?.[0]).toMatchObject({ kind: 39002 });
-      expect(accepted?.[0]?.tags).toContainEqual(["p", viewer]);
-    } finally {
-      h.owner.dispose();
-    }
-  });
 
   it("applies an existing membership without signing", async () => {
     const h = preview();

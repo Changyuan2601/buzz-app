@@ -5,6 +5,7 @@ import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
+import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import {
@@ -252,8 +253,13 @@ export function foldMessages(
   events: readonly EventData[],
   {
     includeReplies = false,
+    collapseHuddles = true,
     signingAuthority,
-  }: { includeReplies?: boolean; signingAuthority?: string | undefined } = {},
+  }: {
+    includeReplies?: boolean;
+    collapseHuddles?: boolean;
+    signingAuthority?: string | undefined;
+  } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
@@ -295,6 +301,31 @@ export function foldMessages(
       continue;
     const aux = overlays.get(event.id) ?? [];
     if (deleted(event)) continue;
+    if (event.kind === 48100 || event.kind === 48103) {
+      const room = huddleRoom(event);
+      if (!room || room === channelId) continue;
+      // End authority is checked with matching starts when cards are collapsed.
+      rows.push(
+        Object.freeze({
+          id: event.id,
+          channelId,
+          authorId: event.pubkey,
+          createdAt: event.created_at,
+          content: event.kind === 48100 ? "Huddle started" : "Huddle ended",
+          huddle: {
+            room,
+            state:
+              event.kind === 48100 ? ("started" as const) : ("ended" as const),
+          },
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          participants: [],
+        }),
+      );
+      continue;
+    }
     if (event.kind === 40099) {
       const membership = membershipChange(event, relayAuthor);
       if (membership)
@@ -428,7 +459,9 @@ export function foldMessages(
       }),
     );
   }
-  return rows.sort(compareMessages);
+  return (collapseHuddles ? collapseHuddleCards(rows, relayAuthor) : rows).sort(
+    compareMessages,
+  );
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
@@ -486,4 +519,46 @@ export function groupReactions(
         }),
       ),
   );
+}
+
+/** Keep the start ID stable without discarding its retained authoritative end. */
+export function collapseHuddleCards(
+  rows: ChannelMessage[],
+  relayAuthor: string,
+): ChannelMessage[] {
+  const key = (row: ChannelMessage) => `${row.channelId}:${row.huddle?.room}`;
+  const starts = new Map<string, ChannelMessage>();
+  for (const row of rows) {
+    if (row.huddle?.state !== "started") continue;
+    const previous = starts.get(key(row));
+    if (
+      !previous ||
+      row.createdAt < previous.createdAt ||
+      (row.createdAt === previous.createdAt && row.id < previous.id)
+    )
+      starts.set(key(row), row);
+  }
+  const authorized = rows.filter((row) => {
+    if (row.huddle?.state !== "ended" || row.authorId === relayAuthor)
+      return true;
+    const start = starts.get(key(row));
+    return start?.authorId === row.authorId && start.createdAt <= row.createdAt;
+  });
+  if (!starts.size) return authorized;
+  const ends = new Map<string, number>();
+  for (const row of authorized) {
+    if (row.huddle?.state === "ended")
+      ends.set(key(row), Math.max(ends.get(key(row)) ?? 0, row.createdAt));
+  }
+  return authorized.flatMap((row) => {
+    if (row.huddle?.state === "ended" && starts.has(key(row))) return [];
+    if (row.huddle?.state === "started" && starts.get(key(row)) !== row)
+      return [];
+    const endedAt = ends.get(key(row));
+    return row.huddle?.state === "started" &&
+      endedAt !== undefined &&
+      endedAt >= row.createdAt
+      ? [Object.freeze({ ...row, huddle: { ...row.huddle, endedAt } })]
+      : [row];
+  });
 }

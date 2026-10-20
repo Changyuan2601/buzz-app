@@ -52,6 +52,7 @@ it("withholds a body-bearing preview and does not reopen its exact reader on rec
   const profiles = new Map();
   const list = { channels: [{ id: "channel", name: "General" }] };
   const session = {
+    unread: undefined,
     thread,
     profiles: {
       snapshot: () => profiles,

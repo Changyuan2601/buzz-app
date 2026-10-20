@@ -46,15 +46,37 @@ function Profile({ authorized }: { authorized: boolean }) {
 function Fixture({
   authorized = true,
   focusOnMount = true,
+  menuScope,
+  initial = ["Thread", "Profile"],
 }: {
   authorized?: boolean;
   focusOnMount?: boolean;
+  menuScope?: string;
+  initial?: string[];
 }) {
-  const [ids, setIds] = useState(["Thread", "Profile"]);
-  const [value, select] = useState("Thread");
+  const [ids, setIds] = useState(initial);
+  const [value, select] = useState(initial[0] ?? "");
   return ids.length ? (
     <PanelWorkspace
       focusOnMount={focusOnMount}
+      tabMenu={
+        menuScope
+          ? {
+              key: menuScope,
+              closeAll: () => {
+                setIds([]);
+                return true;
+              },
+              // Like the channel store, which knows nothing of local details.
+              closeOthers: (id: string) => {
+                if (!ids.some((item) => item !== id)) return false;
+                setIds([id]);
+                select(id);
+                return true;
+              },
+            }
+          : undefined
+      }
       value={value}
       select={select}
       items={ids.map((id) => ({
@@ -333,13 +355,15 @@ test("Escape cancelling IME composition does not close the tab", () => {
 
 // Exercise the exact script evaluated by the native menu, not a second shortcut
 // implementation. Geometry is the only browser-only boundary stubbed in jsdom.
-const requestClose = () =>
-  new Function("window", "document", "Event", "script", "return eval(script)")(
-    window,
-    document,
-    Event,
-    closeRequest,
-  ) as "handled" | "unhandled";
+const requestClose = (tabEvent = "buzz:close-active-tab") =>
+  new Function(
+    "window",
+    "document",
+    "Event",
+    "tabEvent",
+    "script",
+    "return eval(script)",
+  )(window, document, Event, tabEvent, closeRequest) as "handled" | "unhandled";
 const visibleWorkspace = () =>
   vi
     .spyOn(HTMLElement.prototype, "getClientRects")
@@ -571,6 +595,7 @@ test("a tab is renamed in place by double-click, F2 or its menu", async () => {
     const [name, setName] = useState<string>();
     return (
       <PanelWorkspace
+        tabMenu={{ key: "channel", closeAll: () => false }}
         value="thread"
         select={() => {}}
         items={[
@@ -606,6 +631,10 @@ test("a tab is renamed in place by double-click, F2 or its menu", async () => {
   expect(renamed).toHaveBeenCalledTimes(1);
   // The menu opens the same field; leaving it saves, and blank restores.
   await user.pointer({ keys: "[MouseRight]", target: tab("Launch plan") });
+  expect(screen.getAllByRole("menu")).toHaveLength(1);
+  expect(
+    screen.getByRole("menuitem", { name: "Close all tabs" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("menuitem", { name: "Rename tab" }));
   await user.clear(field());
   await user.click(screen.getByRole("textbox", { name: "Thread draft" }));
@@ -667,3 +696,145 @@ test("the tab name field keeps its keys, ignores IME commits and newer titles, a
   expect(field()).toBeNull();
   expect(renamed).not.toHaveBeenCalled();
 });
+
+test("a tab context menu dismisses without closing a tab and supports keyboard cleanup", async () => {
+  const user = userEvent.setup();
+  render(<Fixture menuScope="alpha" />);
+  const thread = tab("Thread");
+  await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
+  await screen.findByRole("menuitem", { name: "Close all tabs" });
+  await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Escape}");
+  expect(await screen.findByRole("tab", { name: "Ada" })).toHaveFocus();
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  const action = await screen.findByRole("menuitem", {
+    name: "Close all tabs",
+  });
+  action.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test.each(["Harness log", "Ada"])(
+  "Close other tabs on %s keeps the profile alone, selected and focused, even with nothing else in the store",
+  async (chosen) => {
+    for (const initial of [["Profile"], ["Thread", "Profile"]]) {
+      const user = userEvent.setup();
+      const view = render(<Fixture menuScope="alpha" initial={initial} />);
+      await user.click(tab("Ada"));
+      await user.click(screen.getByRole("button", { name: "Open log" }));
+      expect(tab("Harness log")).toHaveAttribute("aria-selected", "true");
+      await user.pointer({ target: tab(chosen), keys: "[MouseRight]" });
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Close other tabs" }),
+      );
+      expect(
+        within(tabs())
+          .getAllByRole("tab")
+          .map((t) => t.textContent),
+      ).toEqual(["Ada"]);
+      expect(tab("Ada")).toHaveAttribute("aria-selected", "true");
+      await vi.waitFor(() => expect(tab("Ada")).toHaveFocus());
+      expect(screen.queryByRole("textbox", { name: "Log filter" })).toBeNull();
+      view.unmount();
+    }
+  },
+);
+
+test("a menu opened in the previous channel cannot close the new channel's tabs", async () => {
+  const view = render(<Fixture menuScope="alpha" />);
+  fireEvent.contextMenu(tab("Thread"));
+  const oldAction = await screen.findByRole("menuitem", {
+    name: "Close all tabs",
+  });
+  view.rerender(<Fixture menuScope="beta" />);
+  expect(
+    screen.queryByRole("menuitem", { name: "Close all tabs" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(oldAction);
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+});
+
+// Close uses focus first, then the visible side pane when the main selection
+// is the permanent conversation. Listener registration order must not decide.
+test.each([false, true])(
+  "native Close falls back from the main conversation but prefers its closable selection (side first=%s)",
+  (sideFirst) => {
+    visibleWorkspace();
+    const closeMain = vi.fn();
+    const closeSide = vi.fn();
+    function Harness({
+      mainSelected = "conversation",
+      hideSide = false,
+    }: {
+      mainSelected?: string;
+      hideSide?: boolean;
+    }) {
+      const main = (
+        <PanelWorkspace
+          main
+          label="Main tabs"
+          value={mainSelected}
+          select={() => {}}
+          items={[
+            {
+              id: "conversation",
+              label: "Channel",
+              content: <input aria-label="Channel composer" />,
+            },
+            {
+              id: "main-thread",
+              label: "Main thread",
+              content: <input aria-label="Main reply" />,
+              close: closeMain,
+            },
+          ]}
+        />
+      );
+      const side = (
+        <div hidden={hideSide}>
+          <PanelWorkspace
+            label="Side tabs"
+            value="side-thread"
+            select={() => {}}
+            items={[
+              {
+                id: "side-thread",
+                label: "Side thread",
+                content: <input aria-label="Side reply" />,
+                close: closeSide,
+              },
+            ]}
+          />
+        </div>
+      );
+      return sideFirst ? (
+        <>
+          {side}
+          {main}
+        </>
+      ) : (
+        <>
+          {main}
+          {side}
+        </>
+      );
+    }
+    const view = render(<Harness />);
+    screen.getByRole("textbox", { name: "Channel composer" }).focus();
+    act(() => expect(requestClose()).toBe("handled"));
+    expect(closeSide).toHaveBeenCalledTimes(1);
+    expect(closeMain).not.toHaveBeenCalled();
+    view.rerender(<Harness mainSelected="main-thread" />);
+    screen.getByRole("textbox", { name: "Main reply" }).focus();
+    act(() => expect(requestClose()).toBe("handled"));
+    expect(closeMain).toHaveBeenCalledTimes(1);
+    expect(closeSide).toHaveBeenCalledTimes(1);
+    view.rerender(<Harness hideSide />);
+    screen.getByRole("textbox", { name: "Channel composer" }).focus();
+    act(() => expect(requestClose()).toBe("unhandled"));
+    expect(closeSide).toHaveBeenCalledTimes(1);
+  },
+);

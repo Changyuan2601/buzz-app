@@ -95,7 +95,14 @@ rows show only ready, checking, attention, or a neutral unavailable state. The
 Agents host owns the submenu, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
-dialog can close. Disabled or unloaded types remain in Settings → Plugins.
+dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
+
+Goose's Settings → AI defaults contribution reads and writes Goose's own
+configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
+Buzz keeps no separate Goose defaults store. Readiness requires a working
+`goose-acp` and a configured default provider. The per-agent provider/model
+fields remain overrides. Types without a provider contribution have no AI
+defaults row; a failed contribution retains the unavailable fallback.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -152,7 +159,7 @@ process status, so a stopped agent is as selectable as a running one.
 ## Shared agent selection
 
 `session.agentChoices` is the canonical read-only selection projection. Mention
-pickers, New message, the session agent chooser, channel member invitations and
+pickers, New message, Solo chat agent tagging, channel member invitations and
 their admission checks use it, not `agentLibrary` directly. It combines two
 sources, deduplicated by public key:
 
@@ -176,7 +183,7 @@ on demand. Ordinary mentions subscribe without loading the library
 adds no runner, polling, directory scan or signing authority, and session
 retirement revokes its candidates.
 
-`templates` serves saved channel-kit templates and section defaults (session setup
+`templates` serves saved channel-kit templates and project defaults (Solo chat setup
 resolves lineups through it with `templateAgentChoices`). Its identities are the
 local agents once Agents is bound, and the library only while the local source is
 `unavailable`. It never falls back to the library after a local error.
@@ -188,13 +195,13 @@ Archive visibility has one owner. The projection reads `session.archives` and
 exposes `identities` (every known agent, including archived ones, for facts about
 existing content) and `selectable` (known-archived agents removed; unknown state
 fails open; the viewer is never hidden). Every forward-looking agent chooser uses
-`selectable`, including the session agent picker. Session admission in
-`workSessions.addAgents` rejects every known-archived key, including parent-channel
-members; unknown archive state keeps the library and parent-member rules. Selectors
+`selectable`, including Solo chat agent tagging. Admission in
+`channelWrites.addAgents` rejects every known-archived key it would add; unknown archive
+state keeps the library rule. Selectors
 demand the lazy archive read through `useAgentChoices(session, includeLegacy, true)`,
-and the session picker shows an archive read failure with Retry. The same base rule,
+and the agent picker shows an archive read failure with Retry. The same base rule,
 `archiveHides` (`features/relay/identity-archives.ts`), filters mention recipients,
-channel member invitations and member addition, session sharing and search. Do not
+channel member invitations and member addition, Solo chat sharing and search. Do not
 reimplement the rule per surface.
 
 Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
@@ -208,12 +215,12 @@ In streams and forums, nonmember mentions also offer people from the selected
 community directory and, when the viewer can add members, the viewer's own agents
 (`managed` or not) that are not in the channel. Send asks before adding them; selection grants
 no access. A pasted mention of a known profile is offered the same way. A DM can
-name outsiders but never notifies them. Session invitations keep their existing
+name outsiders but never notifies them. Solo chat invitations keep their existing
 rules, including library choices. Shared choice visibility is not permission to
 grant access.
 
 Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
-and session-admission tests. They exercise shared selection and session admission,
+and Solo chat admission tests. They exercise shared selection and Solo chat admission,
 not native execution.
 
 ## Exact channel-member mentions
@@ -250,7 +257,7 @@ The composer accepts these people:
 | --- | --- |
 | Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
 | DM | Anyone. People outside the DM are named but not notified. |
-| Session | Session members, plus your agents when the session invites agents. |
+| Solo chat | Chat members, plus your agents (a send adds the tagged ones). |
 | New DM, before it is created | Only the people you chose for the DM. |
 | Archived or read-only channel | Nobody. |
 
@@ -320,9 +327,9 @@ or the shared agent-choice projection (library and local agents), not a new look
 permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
-**Settings → Agents → Messages → Remember mentioned agents** defaults on and is saved on this
+**Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
-turning it back on does not restore old recipients. Session auto-recipient rules are
+turning it back on does not restore old recipients. Solo chat auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
@@ -339,7 +346,7 @@ with up to four cached avatar thumbnails and a remainder count. Empty, oversized
 is no partial expansion. Reopen or change the query to refresh changed team
 choices. The resulting draft must fit the existing 32-mention and message-length
 limits. Selection never adds members: ordinary channels retain invite-on-send
-consent, DMs retain reference-only outsiders, and session admission remains
+consent, DMs retain reference-only outsiders, and Solo chat admission remains
 unchanged.
 
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
@@ -352,7 +359,7 @@ anyway** without add permission) sends those identities as separate `mention`
 reference tags, without adding or notifying them. Close or Escape keeps the draft. Existing member mentions still notify in a
 mixed send. Reference keys are validated and bounded to 32. Selection itself never
 invites or starts anyone; whether an agent answers a notification is up to its
-own runtime. DM and session admission paths remain separate. Current notification-recipient membership is checked at
+own runtime. DM and Solo chat admission paths remain separate. Current notification-recipient membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this
@@ -458,9 +465,8 @@ HTTP broker/verified transport, including corrupted signature rejection.
 
 ## Agent Activity plugin
 
-**Agent Activity** owns live capture demand and an avatar-and-dots bubble beneath
-the exact message that triggered current work; host-owned saved history remains
-independent of plugin enablement. It registers no panel. Multiple turns group by
+**Agent Activity** owns live observer demand and an avatar-and-dots bubble beneath
+the exact message that triggered current work. It registers no panel. Multiple turns group by
 agent; completing one turn does not hide another. Hover, click, tap or keyboard
 opens a compact avatar-and-latest-tool popup. Its row, like the composer's working
 indicator and the channel popover's **View activity**, opens that exact agent's
@@ -477,9 +483,9 @@ full paths; the transcript retains the detail.
 
 While an agent this app runs works on a mention, the app publishes kind-20002
 typing signed by the agent every three seconds through its HTTP event route, in
-the mention's thread (in the channel itself for a chat in the owner's Me), so
+the mention's thread (in the channel itself for the owner's Solo chat), so
 the owner's other devices and everyone else in the channel see it working. It
-waits for the same Me-chat read as the turn, and shows nothing if the turn
+waits for the same Solo chat read as the turn, and shows nothing if the turn
 cannot tell where to answer. It stops with the turn, after three refused pulses
 in a row, or after 30 minutes; clients drop it when the agent replies or eight
 seconds after the last pulse. On the device running the agent, activity replaces that typing.
@@ -488,7 +494,7 @@ Thread indicators consume the existing kind-20002 typing signal with the resolve
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
 carries it; typing bypasses ordinary history, unread and persistent caches.
 Only identities observed on the current live owner-visible feed are
-recognized; restored history never establishes typing ownership. Typing before that first frame, or without telemetry publication,
+recognized. Typing before that first frame, or without telemetry publication,
 is deliberately omitted; public typing alone does not establish ownership.
 
 Typing expires eight seconds after its signed timestamp (future clock skew is
@@ -538,106 +544,29 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-The plugin's activation leases `session.agentActivity` for the live display.
-Disabling the plugin clears its
-live evidence, but **does not control archive capture**. The shared live connection
-carries one dedicated owner (`#p=viewer`) route for demanded observer/metrics kinds,
-with no `#h` or history limit. Live activity starts at actual dispatch/retry.
-When a kind-demand change replaces a metrics capture route, stored 44200 replay
-bridges the admission delay with a 60-second in-flight overlap, capped at four
-minutes at dispatch to leave headroom inside the five-minute ingest window. This
-replay floor clears at EOSE; later retries are live-only. Ephemeral 24200 cannot
-be recovered this way. Settings changes and plugin demand replace that route only
-when its combined kind demand changes. While capture is enabled, display-generation
-changes keep the wire and capture floor but advance a separate display freshness
-floor. Without capture, display resets still renew the live-only route. Neither
-lifecycle replaces the socket or chat globals. An uncertain control failure can
-reconnect the shared stream through its existing bounded recovery path.
+The plugin's activation leases `session.agentActivity` for the live display;
+disabling the plugin clears its live evidence. While demanded, the shared live
+connection carries one dedicated owner (`#p=viewer`) route for kind 24200, with no
+`#h` or history limit. Live activity starts at actual dispatch/retry. Display
+resets renew that live-only route without replacing the socket or chat globals.
+An uncertain control failure can reconnect the shared stream through its existing
+bounded recovery path.
 
 The native identity host and development broker validate signatures, exact tags,
-recipient/key, freshness and size before ingest and host-only NIP-44 decryption.
-The renderer receives purpose-bound DTOs, not keys or a general decrypt API.
-Historical decoding accepts only rows owned by the host archive, not arbitrary
-renderer-supplied old envelopes. Native ingestion is **renderer-delivered,
-host-validated**, not host-captured: the main renderer owns the relay socket and
-supplies fresh envelopes through IPC. The native host does **not** independently
-prove relay delivery or that the signer belongs to the viewer. Buggy or malicious
-trusted renderer/plugin code can plant plausible history and evict genuine rows
-by filling the quota. This deliberately retains the existing
-[trusted main-WebView model](identity.md), not a hostile-plugin boundary; moving
-the relay connection or isolating plugins is outside this change. The development
-broker instead captures only from its own stream and rejects browser ingestion.
-Relay admission, not a name, local library entry or successful decryption, is the
-ownership authority on the normal delivery path. Saved rows are not ownership proof. These records
-never enter ordinary message history, unread reconciliation or channel caches.
+recipient/key, freshness and size before host-only NIP-44 decryption. The renderer
+receives purpose-bound DTOs, not keys or a general decrypt API. Relay admission,
+not a name, local library entry or successful decryption, is the ownership
+authority on the normal delivery path. These records never enter ordinary message
+history, unread reconciliation or channel caches.
 
 Live RAM is limited to 200 envelopes / 2 MiB plaintext and 512 turn states, with
-visible trimming. Historical pages do not consume the live-record allowance.
-Disable, cache/access reset and session replacement clear live evidence. A batch
-with a recognized denied channel is hidden as a whole.
+visible trimming. Disable, cache/access reset and session replacement clear live
+evidence. A batch with a recognized denied channel is hidden as a whole.
 
-### Host-owned saved activity
-
-SQLite stores original signed, owner-encrypted envelopes, partitioned by normalized
-community endpoint and viewer public key. It stores no plaintext, decoded channel
-metadata, turn state or private keys; signed metadata (agent/recipient keys and
-event timestamps) remains visible on disk. The native database lives under the
-app-data directory in `archive/events.sqlite3` (`archive-debug` for debug builds).
-The development broker uses `~/.buzz-foundation/dev-archive/events.sqlite3` on the
-**broker's machine**, not browser-local storage. Settings show the actual path.
-
-The store implements exactly two owner-scoped policies, both enabled. Unused
-`scope`/`value`/`kinds` columns are removed by a transactional v1→v2 migration that
-preserves settings, revisions and ciphertext. General subscription matching and
-management wait for a caller beyond these two policies; the schema does not claim
-that capability:
-
-- **Activity (24200):** 30-day maximum age by default, configurable from 1–90 days
-  (Settings offers 1, 7, 30 and 90); 512 MiB of serialized envelopes per
-  viewer/community, with a 128 MiB per-agent limit.
-- **Turn metrics (44200):** independent capture, 90-day maximum age, 64 MiB per
-  viewer/community and 16 MiB per agent. Metrics remain encrypted, unlike classic's
-  plaintext metrics archive. No usage dashboard or arbitrary-subscription UI is added.
-
-Quota totals choose the overflow; indexed oldest-first scans stop after enough
-bytes are found, rather than rescanning retained history. Oldest records are evicted when byte limits are reached, so retention is a maximum
-age, not a promise of a complete 30-day transcript. Budgets are separate for each
-account/community and kind, not a physical device-wide disk cap. SQLite indexes,
-WAL and other overhead use additional space. Expiry across inactive partitions is
-operation-driven and throttled to once a minute, not an OS background purge;
-reads also exclude expired rows. Pruning reclaims free pages incrementally and
-explicit clear attempts full free-page reclamation after the delete commits.
-Newer schema versions are rejected without downgrade.
-
-Reopening/reloading reads 100-row keyset pages through the key-owning host.
-Historical decode revalidates signatures, exact tags, recipient and retention age,
-without weakening the live five-minute freshness gate. Bad rows are counted and
-skipped without trapping pagination. Live records win event-ID deduplication.
-Restored rows are display-only: they never create working turns or typing evidence.
-Channel-scoped rows need positively known local channel access, including every
-recognized batch child. Access changes immediately re-filter retained rows without
-rewinding pagination. Unknown/capped/suspended membership hides history rather than
-erasing it; positive access can reveal it again. Agent removal and sign-out do not
-erase ciphertext; another account cannot open that partition.
-
-**Settings → Agents → Saved agent activity** has independent capture switches,
-activity retention and confirmed **Clear activity history** / **Clear turn metrics**
-actions for this account/community. Shortening retention requires confirmation.
-Turning capture off preserves saved rows. Clear advances a durable revision to
-fence stale writes and pending hydration; new traffic can be captured afterward.
-Another window's already-decoded display is not synchronously reconciled; reload
-it after clearing elsewhere. Developer cache clear also deletes this community's
-activity partition and reports deletion failure rather than claiming success.
-Storage/decoding errors, including metrics-save failures, are visible and do not
-stop live telemetry. An initial native settings-read failure retries at 1/2/4
-seconds while settings remain unknown; disposal cancels retries and fences late
-responses. After exhaustion, open Settings or reconnect to retry. SQLite waits,
-maintenance and paging run off the async thread under only the archive mutex;
-the identity lock covers envelope validation/decryption, never storage. Viewer
-checks surround storage/decryption. The identity is immutable once ready today;
-a future in-process account switch needs a generation fence for admitted writes.
-Settings values and their CAS revision are read from one SQLite snapshot. No
-old-app import, general relay backfill, export or transcript redesign is included.
+Activity frames (24200) and turn metrics (44200) are no longer saved locally or
+restored after reload; plugin harnesses show history from their own session files.
+The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
+any existing `archive/events.sqlite3` remain until a follow-up removes them.
 
 Working is fresh per-turn evidence, not process status. Batch children fold
 individually; `session_resolved` is activity, while `turn_completed`, `turn_error`
@@ -656,30 +585,16 @@ start agents. No records may mean publishing is off, no new traffic, or an
 interrupted feed, not that an agent is idle.
 
 Select an active agent above the channel or thread composer, or its bubble under
-the triggering message: it opens the agent's profile on its Activity tab. In
-**Settings → Agents → Saved agent activity**, verify both capture switches and the
-host path. Disable the **Agent Activity** plugin in **Settings → Plugins**, give the
-agent work, then re-enable: archive capture should continue independently, and
-restored rows must not claim the agent is working. Saved rows have no viewer in
-the app; inspect the archive file to confirm they remain.
-
-Turn **Save agent activity** off, give the agent work and verify the bubble and
-working indicator still work. Turn it back on. Cancel a retention-shortening
-confirmation and verify the original value remains. Confirm **Clear activity
-history** in Settings while metrics remain independently retained. For native acceptance, quit/relaunch
-the desktop app as well as reloading its view.
+the triggering message: it opens the agent's profile on its Activity tab. Disable
+the **Agent Activity** plugin in **Settings → Plugins → Manage plugins**, give the
+agent work, then re-enable: the bubble and working indicator should return for new
+work only.
 
 The feed is best-effort telemetry: producers coalesce/batch and may elide oversized
-content, and storage budgets can evict rows early. It is not a complete ACP
-transcript. Both the development broker and packaged native identity host implement
-the archive; no runtime controller, recording export or old transcript renderer is
-included.
+content. It is not a complete ACP transcript.
 
 ### Coverage
 
-Archive coverage lives in `browser-host/archive.test.mjs`,
-`src-tauri/src/archive/tests.rs`, `src/features/archive/client.test.ts`, the
-activity/session/native transport tests, and `src/app/ArchiveSettings.test.tsx`.
 `browser-host/agent-observer.test.mjs`, `browser-host/relay-broker-live.test.mjs`,
 and the activity/live service tests cover signed/encrypted WS to host decode to SSE
 to the actual session, route generations, terminal retention and stale controls.
@@ -734,35 +649,92 @@ or relay-directory startup scan.
 Discovery is not global coverage, verified membership, credentials, or execution
 status. No keys, config, memory, membership, or runtime state are changed by it.
 
-## Channel session usage
+### Model-menu design exception
 
-The Usage tab reads saved kind-44200 metrics from the current account/community's
-host archive. Its strip and detail are **channel-associated session**
-usage, not thread attribution or context-window capacity. Each signed agent key
-and reported harness session remains separate; missing session IDs are individual
-unidentified records. The latest cumulative snapshot is selected by turn sequence;
-turn deltas are shown only when reliable. Unknown counters are not zero and cache
-counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
+The AI defaults and Goose creation controls intentionally use the shared Menu
+for family → model → effort navigation, as explicitly requested in product
+review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
+guidance. Keep the selected model and effort accessible, preserve compact chip
+appearance and truncation, and offer a trailing action to restore inheritance
+without duplicating the current model as the first option. Provider selection
+continues to use a searchable Combobox.
 
-The Usage tab's agent dropdown shows each agent's latest total or session count;
-selecting an agent reveals an aggregate of the latest trustworthy cumulative
-snapshot from each of its sessions. Counters missing in any session remain unknown
-rather than silently understating the total. The outlined Session dropdown then
-selects one session for provenance and turn detail without filling the pane with
-session buttons. The aggregate may cover other threads and is limited to loaded
-archive history.
+Provider dropdowns are intentionally text-only. The model control shows the
+selected model family icon, not the Goose runtime or Databricks/provider mark,
+as explicitly confirmed by the product owner. Goose device defaults have no
+reset action: omitting a model in Goose retains its stored provider model.
 
-The channel's **Channel actions → View channel usage** item opens a dedicated
-**Usage** tab in the channel's side pane. It is available only while this
-account has positive access to the current channel and the default-on Channel Usage
-plugin is enabled under Settings → Plugins. Closing the tab unmounts its
-archive reader; disabling the plugin removes the tab and stops reads. It
-does not change metric capture or retention. Opening the Usage tab reads archive
-pages automatically until exhaustion or the 2,000-record limit; an early page
-without channel matches does not prove the archive has none. **Refresh** starts
-a new scan from the newest page; neither action fetches relay history. The client
-retains at most 2,000 decoded records while this tab lives and fences late reads
-on channel/access changes. Saved metrics remain
-subject to the independent 90-day/byte eviction policy above, so loaded history
-is never a completeness guarantee. Restored usage is display-only and cannot
-establish working, typing, or online status.
+## Usage
+
+Usage is a default-off page summarising what the selected community's agents
+on this computer spent: estimated cost against the previous period, tokens, cache
+hit rate (cache reads over all prompt tokens: uncached input, cache reads and
+cache writes), daily cost by agent
+type, and the costliest sessions, each opening its thread.
+
+It reads nothing itself. An agent type that can report usage implements the
+optional, read-only `AgentType.usage(agent, { since, signal })`, returning a
+snapshot of each session the agent ran from Buzz on this device with activity
+since `since`. A snapshot carries the harness's session id, where in Buzz it
+started, and one observation per model request: the harness's request id when it
+records one, the time, the model, the token counts, and the cost only when the
+harness recorded one, with the harness's word for how it got it. An absent count
+is unknown, not zero; `input` excludes cache counts, and `cacheWrite1h` is the
+subset of `cacheWrite` cached for an hour. Usage groups the observations into
+days itself. Reading never starts, stops or changes a session.
+
+A snapshot covers the session's descendants too, such as Claude Code and Codex
+subagents, so a consumer never adds a child session again. It also carries:
+
+- `revision`, an opaque digest that is equal for two reads that saw the same
+  usage. It says whether a snapshot changed, not which is newer.
+- `gaps`, what the read could not see, such as a subagent file that has since
+  vanished or a finished line that is not JSON. A partial last line is still
+  being written and is not a gap.
+
+A consumer that keeps snapshots follows these rules:
+
+- A snapshot without gaps replaces whatever it kept for that session.
+- An incomplete snapshot leaves the previous one in place and reports the gap.
+- A session missing from a later read is not deleted: its source may be gone,
+  not its usage.
+- `since` only bounds activity time. It is not a checkpoint, so it cannot find
+  a correction a harness made to a session last active before it.
+
+Until collected usage is persisted, Usage applies these rules to what it holds
+while the page is open. An agent whose read fails keeps what earlier reads found.
+
+Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
+again only on Refresh or when the agents change. Thirty days is what Claude Code
+keeps by default, and older history would undercount. Only the 7-day period is
+compared with the one before it, because a 30-day comparison would need days
+that were not read. The page says that costs are estimated from the session
+files on this computer, not a bill.
+
+Claude implements it from the transcripts Claude Code keeps for the agent's
+workspace: sessions whose first prompt names the agent, plus those this app saved
+for it (prompts from before agents were named), with their subagents' requests.
+Streamed responses repeat their usage on each line, so each request is counted
+once.
+
+Codex finds the agent's threads through app-server by the agent's name in their
+thread names, keeps those whose rollout's developer instructions name the agent's
+pubkey, and reads each rollout's per-response `token_usage_record` entries, adding
+the subagent threads each one spawned. Codex records no cost.
+
+Goose lists the agent's sessions in its workspace through `goose-acp`, as its
+Activity tab does, and reads the usage goose saves on each reply, with goose's
+own cost estimate where it has one. Both count a request's cached tokens in its
+input, which the readers subtract.
+
+All three read only the harness's own session history; none reads Buzz's saved
+agent activity or turn metrics.
+
+Where a harness recorded no cost, Usage estimates it at Anthropic's published
+first-party API rates, including for a Claude model a provider prefixes, such as
+`databricks-claude-sonnet-5-5`. That may differ from what a subscription or
+provider bills. Totals add only known values. A total is marked partial when an
+unknown count, a model without known rates (such as Codex's OpenAI models) or an
+incomplete snapshot left something out, and unavailable when nothing was known.
+It is never priced at zero. Sessions count by activity time, whether or not they
+recorded usage. Usage does not read or publish kind-44200 metrics.

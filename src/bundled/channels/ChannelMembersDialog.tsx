@@ -439,6 +439,8 @@ export function ChannelMembersDialog({
   channelId,
   close,
   trigger,
+  title = "Channel members",
+  description,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
@@ -448,6 +450,8 @@ export function ChannelMembersDialog({
   channelId: string;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  title?: string;
+  description?: string;
   agents?: Agents;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
@@ -1083,7 +1087,7 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from channel`
             : "Change member role?"
-          : "Channel members"
+          : title
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1112,7 +1116,7 @@ export function ChannelMembersDialog({
             </span>
           </span>
         ) : (
-          channel?.name
+          (description ?? channel?.name)
         )
       }
       closeLabel={

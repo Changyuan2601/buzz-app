@@ -1,7 +1,13 @@
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { npubEncode } from "nostr-tools/nip19";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
@@ -11,10 +17,19 @@ import { useMentionArchives } from "../../features/messages/use-mention-archives
 import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
+  ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { matchName, matchRank } from "../../features/search/match";
@@ -25,8 +40,16 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
-import { useSearchMessages } from "./useSearchMessages";
+import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
+import {
+  personKey,
+  rankPeople,
+  type PersonCandidate,
+} from "../../features/search/people-rank";
+import { peopleRelationships } from "../../features/profiles/relationships";
+import { knownAgentPubkeys } from "../../features/agents/known";
+import { usePersonDirectory } from "./usePersonDirectory";
 import {
   isChannelUuid,
   isHexPubkey,
@@ -55,8 +78,12 @@ function conversationName(
   );
 }
 
+/** The most rows the People and Agents groups each show. */
+const PERSON_ROWS = 6;
+
 export function SearchResults({
   session,
+  inlineSettings,
   query,
   onQueryChange,
   input,
@@ -65,6 +92,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  openAgentSession,
   usageScope,
 }: {
   session: RelaySession;
@@ -73,6 +101,9 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
+  /** Open a new Solo chat with one of the viewer's agents. Without it,
+   * choosing one of their agents opens a direct message, as for anyone else. */
+  openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
   usageScope?: string | undefined;
 } & SearchInputProps) {
@@ -89,11 +120,13 @@ export function SearchResults({
     () =>
       list.channels.filter(
         (channel) =>
+          !channel.huddle &&
+          !channel.metadataPending &&
           (!channel.archived ||
             (!channel.readOnly &&
               (channel.channelType === "stream" ||
                 channel.channelType === "forum" ||
-                channel.channelType === "session"))) &&
+                channel.channelType === "solo"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),
@@ -218,6 +251,7 @@ export function SearchResults({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
+  const [sort, setSort] = useState<SearchSort>("relevance");
   const search = useSearchMessages(
     session,
     query,
@@ -231,7 +265,10 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
+    // Only scoped search offers the choice, so global search keeps relevance.
+    scopedChannelId ? sort : "relevance",
   );
+  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -244,7 +281,38 @@ export function SearchResults({
     .toLowerCase();
   const showAuthorPicker = pickerPrompt || showAmbiguousPicker;
   const agents = useAgentChoices(session, showAuthorPicker);
-  useMentionArchives(session, showAuthorPicker);
+  // People and agents are destinations for plain typed text outside a
+  // conversation scope; an operator asks for messages. `@` asks for a person
+  // and `#` for a channel.
+  const peopleText = parsed.text.trim();
+  const peopleNeedle = peopleText.replace(/^@/, "");
+  const peopleActive =
+    !scopedChannelId &&
+    parsed.from === null &&
+    parsed.in === null &&
+    parsed.since === null &&
+    parsed.until === null &&
+    !showAuthorPicker &&
+    !showDateChoices &&
+    !!peopleNeedle &&
+    !peopleText.startsWith("#");
+  const personDirectory = usePersonDirectory(
+    session,
+    peopleNeedle,
+    peopleActive,
+  );
+  useMentionArchives(session, showAuthorPicker || peopleActive);
+  // The viewer's own agents open a new chat, not a direct message: the
+  // same agents the new-chat composer accepts. Their earlier chats
+  // still show as conversations.
+  const sessionSearch = !!openAgentSession && peopleActive;
+  const ownAgents = useAgentChoices(session, sessionSearch, sessionSearch);
+  const sessionAgents = new Map(
+    (sessionSearch ? ownAgents.selectable : []).map((agent) => [
+      agent.pubkey,
+      agent,
+    ]),
+  );
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   useEffect(() => {
     if (!showAuthorPicker) return;
@@ -430,6 +498,92 @@ export function SearchResults({
     if (usageScope) recordChoice(usageScope, needle, key);
     run();
   };
+  const managedAgents = new Map(
+    agents.identities
+      .filter((agent) => agent.managed)
+      .map((agent) => [agent.pubkey, agent]),
+  );
+  const people: (PersonCandidate & { picture?: string | undefined })[] = [];
+  if (peopleActive) {
+    const relationships = peopleRelationships(
+      list.channels,
+      new Set(managedAgents.keys()),
+    );
+    const knownAgents = knownAgentPubkeys(profiles, {
+      definitions: [],
+      identities: agents.identities,
+    });
+    const sources = new Map<
+      string,
+      {
+        name: string;
+        username?: string | undefined;
+        picture?: string | undefined;
+        isAgent?: boolean | undefined;
+      }
+    >();
+    // Ties keep this order, as in New message: the directory's rows first, in
+    // the relay's order, then cached profiles, then agents. A cached profile
+    // still supplies a directory row's facts.
+    const cached = (pubkey: string) => {
+      const profile = profiles.get(pubkey);
+      return profile && (!profile.nameIsFallback || profile.username)
+        ? profile
+        : undefined;
+    };
+    for (const person of personDirectory.people)
+      sources.set(person.pubkey, cached(person.pubkey) ?? person);
+    for (const [pubkey, profile] of profiles)
+      if (!sources.has(pubkey) && cached(pubkey)) sources.set(pubkey, profile);
+    for (const agent of [...managedAgents.values(), ...sessionAgents.values()])
+      if (!sources.has(agent.pubkey))
+        sources.set(agent.pubkey, {
+          name: agent.name,
+          picture: agent.avatar,
+          isAgent: true,
+        });
+    const eligible = [...sources].flatMap(([pubkey, source]) => {
+      const agent =
+        !!source.isAgent ||
+        knownAgents.has(pubkey) ||
+        sessionAgents.has(pubkey);
+      // As in New message, an agent is a destination only when this
+      // community's native control manages it.
+      return pubkey === session.viewer ||
+        (agent && !managedAgents.has(pubkey) && !sessionAgents.has(pubkey)) ||
+        archiveHides(session.archives, pubkey, session.viewer)
+        ? []
+        : [{ pubkey, source, agent }];
+    });
+    // Namesakes are told apart within these destinations. Directory rows are
+    // not in the shared profile cache, so they supply their own names.
+    const candidates = eligible.map(({ pubkey }) => pubkey);
+    const displayFacts = personDirectory.people
+      .filter((person) => sources.get(person.pubkey) === person)
+      .map((person) => ({
+        pubkey: person.pubkey,
+        name: person.name,
+        ...(person.isAgent ? { isAgent: true } : {}),
+      }));
+    for (const { pubkey, source, agent } of eligible) {
+      const dm = relationships.dm(pubkey);
+      const agentName =
+        managedAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
+      people.push({
+        pubkey,
+        label: resolveName(pubkey, source.name, candidates, displayFacts),
+        username: source.username,
+        agentName: agentName !== source.name ? agentName : undefined,
+        agent,
+        relationship: relationships.rank(pubkey),
+        usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
+        picture:
+          source.picture ??
+          managedAgents.get(pubkey)?.avatar ??
+          sessionAgents.get(pubkey)?.avatar,
+      });
+    }
+  }
   // What the viewer chose before for this typed text. Only candidates that
   // match count, so a stale choice cannot add a row.
   const picked = usage.pick(
@@ -443,6 +597,7 @@ export function SearchResults({
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
       ...pages.map(({ key }) => key),
+      ...people.map(({ pubkey }) => personKey(pubkey)),
     ]),
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
@@ -472,7 +627,46 @@ export function SearchResults({
     ),
     channelRank,
   );
-  const matchingChannels = matchingAll.slice(0, 8);
+  // A DM with one of the viewer's own agents gives way to its "New chat"
+  // row, but only when that row shows; the DM stays in the sidebar. Removing
+  // DM-listed people below only lifts the rest, so a row shown here still
+  // shows in the Agents group.
+  const shownSessionAgents = new Set(
+    rankPeople(
+      people.filter(({ agent }) => agent),
+      peopleNeedle,
+      usage,
+      picked,
+    )
+      .slice(0, PERSON_ROWS)
+      .map(({ person }) => person.pubkey)
+      .filter((pubkey) => sessionAgents.has(pubkey)),
+  );
+  const matchingChannels = matchingAll
+    .filter(
+      (channel) =>
+        !(
+          channel.channelType === "dm" &&
+          channel.participants?.length === 1 &&
+          shownSessionAgents.has(channel.participants[0] ?? "")
+        ),
+    )
+    .slice(0, 8);
+  const directMessageResults = matchingChannels.filter(
+    (channel) => channel.channelType === "dm",
+  );
+  // A person whose DM row already shows needs no second row to the same place.
+  const listedDms = new Set(
+    directMessageResults.flatMap((channel) =>
+      channel.participants?.length === 1 ? channel.participants : [],
+    ),
+  );
+  const rankedPeople = rankPeople(
+    people.filter(({ pubkey }) => !listedDms.has(pubkey)),
+    peopleNeedle,
+    usage,
+    picked,
+  );
   const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",
   );
@@ -499,18 +693,128 @@ export function SearchResults({
       label,
       ...(matches ? { matches } : {}),
       detail: channel.archived
-        ? "Archived channel"
+        ? channel.channelType === "solo"
+          ? "Archived chat"
+          : "Archived channel"
         : channel.readOnly && !channel.cached
           ? "Public channel · not joined"
           : channel.channelType === "dm"
             ? "Direct message"
-            : channel.channelType === "session"
-              ? "Session"
+            : channel.channelType === "solo"
+              ? "Chat"
               : "Conversation",
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
     };
   };
+  // Choosing a person opens your DM with them, starting it when needed.
+  const [personOpen, setPersonOpen] = useState<{
+    name: string;
+    error?: string;
+  }>();
+  const personAttempt = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => personAttempt.current?.abort(), []);
+  const openPerson = async (pubkey: string, name: string, agent: boolean) => {
+    if (personAttempt.current) return;
+    const existing = session.channels
+      .list()
+      .channels.find(
+        (channel) =>
+          channel.channelType === "dm" &&
+          !channel.archived &&
+          !channel.hidden &&
+          channel.participants?.length === 1 &&
+          channel.participants[0] === pubkey,
+      );
+    if (existing) return openConversation(existing.id);
+    if (
+      agent &&
+      !session.agentChoices
+        .snapshot()
+        .identities.some((item) => item.managed && item.pubkey === pubkey)
+    ) {
+      setPersonOpen({
+        name,
+        error: "This agent is not ready to message in this community.",
+      });
+      return;
+    }
+    const controller = new AbortController();
+    personAttempt.current = controller;
+    setPersonOpen({ name });
+    try {
+      const channelId = await session.directMessages.open(
+        [pubkey],
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      setPersonOpen(undefined);
+      openConversation(channelId);
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setPersonOpen({
+          name,
+          error:
+            reason instanceof Error
+              ? reason.message
+              : "Could not open the conversation. Try again.",
+        });
+    } finally {
+      if (personAttempt.current === controller)
+        personAttempt.current = undefined;
+    }
+  };
+  const personDestination = ({
+    person,
+    order,
+  }: (typeof rankedPeople)[number]): SearchDestination & {
+    order: number;
+  } => {
+    const matches = matchPerson(person.label, peopleNeedle)?.positions;
+    const key = personKey(person.pubkey);
+    const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
+    const dm = list.channels.some(
+      (channel) =>
+        channel.channelType === "dm" &&
+        !channel.archived &&
+        channel.participants?.length === 1 &&
+        channel.participants[0] === person.pubkey,
+    );
+    return {
+      key,
+      label: person.label,
+      ...(matches?.length ? { matches } : {}),
+      detail: [
+        person.username && `@${person.username}`,
+        newSession
+          ? "New chat"
+          : dm
+            ? "Direct message"
+            : "Start a direct message",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      icon: ChatCircleIcon,
+      avatar: {
+        src: avatarMedia(person.picture, session.media),
+        shape: person.agent ? "squircle" : "circle",
+      },
+      order,
+      run: choose(key, () =>
+        newSession
+          ? openAgentSession(person.pubkey)
+          : void openPerson(person.pubkey, person.label, person.agent),
+      ),
+    };
+  };
+  const personResults = rankedPeople
+    .filter(({ person }) => !person.agent)
+    .slice(0, PERSON_ROWS)
+    .map(personDestination);
+  const agentResults = rankedPeople
+    .filter(({ person }) => person.agent)
+    .slice(0, PERSON_ROWS)
+    .map(personDestination);
   const recent: SearchDestination[] = channels
     .filter((channel) => !channel.readOnly && !channel.archived)
     .sort(
@@ -602,8 +906,21 @@ export function SearchResults({
         : scopedChannelId
           ? [
               {
-                label: "Most relevant",
-                destinations: messages,
+                label: messageOrder,
+                rank: Infinity,
+                destinations: search.hasMore
+                  ? [
+                      ...messages,
+                      {
+                        key: "more-messages",
+                        label: search.loadingMore
+                          ? "Loading more messages…"
+                          : "Show more messages",
+                        icon: ChatCircleIcon,
+                        run: search.loadMore,
+                      },
+                    ]
+                  : messages,
                 empty: messageEmpty,
               },
             ]
@@ -620,13 +937,6 @@ export function SearchResults({
                       ? "Loading recent conversations…"
                       : "No recent activity yet.",
                 },
-                {
-                  label: "Actions",
-                  destinations: pages.map((page) => ({
-                    ...page,
-                    run: choose(page.key, page.run),
-                  })),
-                },
               ]
             : [
                 // Named destinations lead, so typed text selects one first.
@@ -640,14 +950,20 @@ export function SearchResults({
                   },
                   {
                     label: "Direct messages",
-                    destinations: matchingChannels
-                      .filter((channel) => channel.channelType === "dm")
-                      .map(conversationDestination),
-                    best: Math.min(
-                      ...matchingChannels
-                        .filter((channel) => channel.channelType === "dm")
-                        .map(channelRank),
+                    destinations: directMessageResults.map(
+                      conversationDestination,
                     ),
+                    best: Math.min(...directMessageResults.map(channelRank)),
+                  },
+                  {
+                    label: "People",
+                    destinations: personResults,
+                    best: Math.min(...personResults.map(({ order }) => order)),
+                  },
+                  {
+                    label: "Agents",
+                    destinations: agentResults,
+                    best: Math.min(...agentResults.map(({ order }) => order)),
                   },
                   {
                     label: "Pages",
@@ -665,16 +981,18 @@ export function SearchResults({
                   },
                 ]
                   .sort((a, b) => a.best - b.best)
-                  .map(({ best: _, ...group }) => group),
+                  .map(({ best, ...group }) => ({ ...group, rank: best })),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
                 {
-                  label: "Most relevant",
+                  label: messageOrder,
+                  rank: Infinity,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
                     channelResults.length ||
+                    rankedPeople.length ||
                     pages.length
                       ? undefined
                       : messageEmpty,
@@ -682,6 +1000,7 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}
       authorChip={
@@ -697,10 +1016,42 @@ export function SearchResults({
       onDisplayQueryChange={updateDisplayQuery}
       input={input}
       label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-      placeholder={
-        scopedChannelId
-          ? "Search messages…"
-          : "Search pages, conversations and messages…"
+      scopeAction={
+        scopedChannelId && session.searchSort && parsed.text ? (
+          <MenuRoot>
+            <MenuTrigger
+              render={(props) => (
+                <IconButton
+                  {...props}
+                  variant="ghost"
+                  aria-label="Sort messages"
+                  title="Sort messages"
+                  icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+                />
+              )}
+            />
+            <MenuPopup
+              align="end"
+              size="compact"
+              aria-label="Sort messages"
+              finalFocus={input}
+            >
+              <MenuRadioGroup
+                value={sort}
+                onValueChange={(value) =>
+                  setSort(value === "newest" ? "newest" : "relevance")
+                }
+              >
+                <MenuRadioItem value="relevance" closeOnClick>
+                  Most relevant
+                </MenuRadioItem>
+                <MenuRadioItem value="newest" closeOnClick>
+                  Most recent
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
+        ) : undefined
       }
       scope={
         scopedChannelId && onScopeChange
@@ -770,6 +1121,25 @@ export function SearchResults({
             </Button>
           </div>
         )}
+        {personOpen && (
+          <p role={personOpen.error ? "alert" : undefined}>
+            {personOpen.error ??
+              `Opening your conversation with ${personOpen.name}…`}
+          </p>
+        )}
+        {peopleActive && personDirectory.error && (
+          <div>
+            <p>Couldn’t search community people.</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(personDirectory.retry)}
+            >
+              Retry people
+            </Button>
+          </div>
+        )}
+        {search.moreError && <p>{search.moreError}</p>}
         {search.error && (
           <div>
             <p>{search.error}</p>

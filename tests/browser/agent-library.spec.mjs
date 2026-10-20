@@ -22,7 +22,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
     .getByRole("menuitem", { name: "Create a new agent", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
-  const name = dialog.getByPlaceholder("Agent name");
+  const name = dialog.getByPlaceholder("Name your agent");
   await expect(name).toBeFocused();
   await expect
     .poll(() =>
@@ -63,7 +63,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
         )
         .toBeLessThan(1.5);
       const instructions = dialog.getByRole("textbox", {
-        name: "Instructions",
+        name: "Instructions Optional",
         exact: true,
       });
       await expect(instructions).toHaveCSS(

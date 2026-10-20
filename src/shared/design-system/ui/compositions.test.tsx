@@ -298,25 +298,6 @@ test("tooltip preserves existing descriptions while open and after dismissal", a
   expect(button).toHaveAccessibleName("Described action");
 });
 
-test("stable dialog height is opt-in and can return to content sizing", () => {
-  const renderDialog = (height?: "content" | "stable") => (
-    <Dialog
-      open
-      onOpenChange={() => {}}
-      title="Search"
-      {...(height ? { height } : {})}
-    >
-      Results
-    </Dialog>
-  );
-  const { rerender } = render(renderDialog());
-  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
-  rerender(renderDialog("stable"));
-  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "stable");
-  rerender(renderDialog());
-  expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
-});
-
 test("dialog composition keeps actions accessible and lets an inner layer consume Escape", async () => {
   const user = userEvent.setup();
   const change = vi.fn();
@@ -370,33 +351,6 @@ test("a nested right dialog renders its own dismissal backdrop", () => {
   expect(
     document.querySelector('.buzz-dialog-backdrop[data-placement="right"]'),
   ).not.toBeNull();
-});
-
-test("dialog content-owned layout is opt-in and retains the shared body", () => {
-  const props = {
-    open: true,
-    onOpenChange: () => {},
-    title: "Browse",
-    children: <p>Results</p>,
-  };
-  const { rerender } = render(<Dialog {...props} />);
-  expect(screen.getByRole("dialog")).toHaveAttribute(
-    "data-body-layout",
-    "flow",
-  );
-  rerender(<Dialog {...props} height="stable" bodyLayout="flex" />);
-  expect(screen.getByRole("dialog")).toHaveAttribute(
-    "data-body-layout",
-    "flex",
-  );
-  expect(screen.getByText("Results").parentElement).toHaveClass(
-    "buzz-dialog-body",
-  );
-  rerender(<Dialog {...props} />);
-  expect(screen.getByRole("dialog")).toHaveAttribute(
-    "data-body-layout",
-    "flow",
-  );
 });
 
 test("navigation tabs retain keyboard selection and separate close buttons", async () => {
@@ -576,64 +530,6 @@ test("dialog steps keep one labelled modal and make outgoing controls inert", as
   expect(
     screen.queryByRole("button", { name: "Continue" }),
   ).not.toBeInTheDocument();
-});
-
-test("compact header spacing is opt-in and follows stepped content", () => {
-  const view = (compact: boolean, step = "form") => (
-    <Dialog
-      open
-      title="Channel"
-      onOpenChange={() => {}}
-      headerGap={compact ? "compact" : "default"}
-      step={{ key: step, scale: 0.95 }}
-    >
-      <p>{step}</p>
-    </Dialog>
-  );
-  const { rerender } = render(view(false));
-  expect(screen.getByText("form").parentElement).toHaveAttribute(
-    "data-header-gap",
-    "default",
-  );
-  rerender(view(true));
-  expect(screen.getByText("form").parentElement).toHaveAttribute(
-    "data-header-gap",
-    "compact",
-  );
-  rerender(view(true, "confirmation"));
-  expect(screen.getByText("confirmation").parentElement).toHaveAttribute(
-    "data-header-gap",
-    "compact",
-  );
-});
-
-test("compact footer spacing is opt-in and resets when leaving confirmation", () => {
-  const view = (confirm = false) => (
-    <Dialog
-      open
-      title="Channel"
-      onOpenChange={() => {}}
-      {...(confirm ? { footerGap: "compact" as const } : {})}
-      step={{ key: confirm ? "confirmation" : "form", scale: 0.95 }}
-    >
-      <p>{confirm ? "confirmation" : "form"}</p>
-    </Dialog>
-  );
-  const { rerender } = render(view());
-  expect(screen.getByText("form").parentElement).toHaveAttribute(
-    "data-footer-gap",
-    "default",
-  );
-  rerender(view(true));
-  expect(screen.getByText("confirmation").parentElement).toHaveAttribute(
-    "data-footer-gap",
-    "compact",
-  );
-  rerender(view());
-  expect(screen.getByText("form").parentElement).toHaveAttribute(
-    "data-footer-gap",
-    "default",
-  );
 });
 
 test("selected tab reactivation is opt-in and distinct from value changes", async () => {

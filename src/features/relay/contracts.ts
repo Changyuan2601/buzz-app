@@ -18,11 +18,15 @@ export type ChannelSummary = Readonly<{
   name: string;
   /** Ordinary channel prose; session machine metadata is not a description. */
   description?: string | undefined;
+  /** Initial classification is unresolved until the metadata read completes. */
+  metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
+  /** Activity has been observed or read successfully, including an empty result. */
+  activityKnown?: true;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
@@ -30,14 +34,20 @@ export type ChannelSummary = Readonly<{
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
-  channelType?: "stream" | "forum" | "dm" | "session";
+  /** `system` (NIP-CL): access control for app data; never in list().
+   * `session`: a private stream with the Solo label (`SOLO_LABEL`). */
+  channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
+  /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
+  huddle?: true;
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
+  /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */
+  ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */
@@ -53,6 +63,8 @@ export type Profile = Readonly<{
   name: string;
   /** The name is an identity fragment, not a name supplied by kind-0 content. */
   nameIsFallback?: true;
+  /** The kind-0 `name` (handle), when `name` above is a different display name. */
+  username?: string;
   picture?: string;
   about?: string;
   /** Self-declared NIP-05 identifier; not proof of DNS verification. */
@@ -116,6 +128,11 @@ export type ChannelMessage = Readonly<{
     truncated: boolean;
   }>;
   membership?: MembershipChange;
+  huddle?: Readonly<{
+    room: string;
+    state: "started" | "ended";
+    endedAt?: number;
+  }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
   /** Offsets in `content` where attachment removal joined once-separate text; a
@@ -168,6 +185,8 @@ export type ChannelWindow = Readonly<{
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
+  /** A head read is in flight for these rows; older pages wait for it. */
+  refreshing?: boolean | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;

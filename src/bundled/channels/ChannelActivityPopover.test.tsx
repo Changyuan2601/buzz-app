@@ -13,7 +13,7 @@ import type {
 
 afterEach(cleanup);
 
-test("mouse presses do not pin the hover preview open", async () => {
+test("mouse presses do not pin the hover preview open, and only hover marks it a preview", async () => {
   const user = userEvent.setup();
   const snapshot: ThreadActivitySnapshot = {
     channelId: "studio",
@@ -54,12 +54,18 @@ test("mouse presses do not pin the hover preview open", async () => {
   const preview = await screen.findByRole("dialog", {
     name: "Activity in Studio",
   });
+  expect(trigger).toHaveAttribute("data-popup-preview");
   await user.click(trigger);
   expect(preview).toBeVisible();
+  expect(trigger).toHaveAttribute("data-popup-preview");
   await user.hover(preview);
   expect(preview).toBeVisible();
   await user.unhover(preview);
   await waitFor(() => expect(preview).not.toBeInTheDocument());
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "Activity in Studio" });
+  expect(trigger).not.toHaveAttribute("data-popup-preview");
 });
 
 test("activity keeps profile loading lazy, explains stale results and opens the selected thread", async () => {

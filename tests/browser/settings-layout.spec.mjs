@@ -13,8 +13,12 @@ test("settings share a centered, bounded column and keep controls contained acro
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("main")).toBeFocused();
+  await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.
-  const profile = page.getByRole("region", { name: "Profile", exact: true });
+  const profile = page.getByRole("region", {
+    name: "Identity",
+    exact: true,
+  });
   await expect(
     profile.getByRole("button", { name: "Copy public key" }),
   ).toBeVisible();
@@ -56,20 +60,17 @@ test("settings share a centered, bounded column and keep controls contained acro
       await page.setViewportSize({ width, height: 900 });
       for (const name of [
         "Profile",
+        "Identity",
         "Appearance",
         "Notifications",
         "Shortcuts",
-        "Agents",
-        "Plugins",
-        "Updates",
+        "Agent setup",
+        "Manage plugins",
+        "Software updates",
       ]) {
-        await selectSettingsSection(
-          page,
-          name,
-          name === "Updates" ? "Software updates" : name,
-        );
+        await selectSettingsSection(page, name);
         const section = page.getByRole("region", {
-          name: name === "Updates" ? "Software updates" : name,
+          name,
           exact: true,
         });
         if (name === "Profile") {
@@ -155,37 +156,67 @@ test("settings share a centered, bounded column and keep controls contained acro
   await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
     "200%",
   );
-  await selectSettingsSection(page, "Agents");
-  const agents = page.getByRole("region", { name: "Agents", exact: true });
-  await expect
-    .poll(
-      () =>
-        agents.evaluate((root) => {
-          const bounds = root.getBoundingClientRect();
-          return [...root.querySelectorAll("*")]
-            .filter((node) => {
-              if (
-                !node.checkVisibility() ||
-                node.getAttribute("aria-hidden") === "true"
-              )
-                return false;
+  for (const name of ["Appearance", "Agent setup"]) {
+    await selectSettingsSection(page, name);
+    const agents = page.getByRole("region", {
+      name,
+      exact: true,
+    });
+    await expect
+      .poll(
+        () =>
+          agents.evaluate((root) => {
+            const bounds = root.getBoundingClientRect();
+            return [...root.querySelectorAll("*")]
+              .filter((node) => {
+                // Accent colors intentionally scroll horizontally at large text sizes.
+                // Check the scrollport here; exercise each clipped swatch below.
+                if (node.parentElement?.closest("[data-accent-colors]"))
+                  return false;
+                if (
+                  !node.checkVisibility() ||
+                  node.getAttribute("aria-hidden") === "true"
+                )
+                  return false;
+                const box = node.getBoundingClientRect();
+                return box.left < bounds.left || box.right > bounds.right;
+              })
+              .map((node) => ({
+                tag: node.tagName,
+                text: node.textContent,
+                width: node.getBoundingClientRect().width,
+                available: bounds.width,
+              }));
+          }),
+        {
+          message:
+            "Management headings and actions fit at 200% in a narrow panel",
+        },
+      )
+      .toEqual([]);
+    if (name === "Appearance") {
+      const swatches = agents.getByRole("button", { name: / accent color$/ });
+      await expect(swatches.first()).toBeVisible();
+      for (const swatch of await swatches.all()) {
+        await swatch.focus();
+        await expect(swatch).toBeFocused();
+        await expect
+          .poll(() =>
+            swatch.evaluate((node) => {
+              const bounds = node
+                .closest("[data-accent-colors]")
+                .getBoundingClientRect();
               const box = node.getBoundingClientRect();
-              return box.left < bounds.left || box.right > bounds.right;
-            })
-            .map((node) => ({
-              tag: node.tagName,
-              text: node.textContent,
-              width: node.getBoundingClientRect().width,
-              available: bounds.width,
-            }));
-        }),
-      {
-        message:
-          "Management headings and actions fit at 200% in a narrow panel",
-      },
-    )
-    .toEqual([]);
-  await page.screenshot({ path: info.outputPath("agents-dark-390-200.png") });
+              return box.left >= bounds.left && box.right <= bounds.right;
+            }),
+          )
+          .toBe(true);
+      }
+    }
+    await page.screenshot({
+      path: info.outputPath(`${name.toLowerCase()}-dark-390-200.png`),
+    });
+  }
 });
 
 // Real layout metrics and Base UI focus handoff need a browser; empty/loading
@@ -339,7 +370,7 @@ test("hosted settings empty and setup cards fit without covering their actions",
       await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
       for (const width of [1440, 800, 390]) {
         await page.setViewportSize({ width, height: 1000 });
-        await selectSettingsSection(page, "Hosted communities");
+        await selectSettingsSection(page, "Builderlab hosting");
         const card = page.locator(".buzz-empty-state").filter({
           has: page.getByRole("heading", {
             name: signedIn

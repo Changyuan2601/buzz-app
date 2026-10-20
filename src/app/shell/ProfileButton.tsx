@@ -434,7 +434,6 @@ export function ProfileButton({
               Appearance
             </MenuSubmenuTrigger>
             <MenuSubmenuPopup
-              size="compact"
               aria-label="Appearance"
               finalFocus={appearanceTrigger}
             >

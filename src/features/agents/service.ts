@@ -1,4 +1,10 @@
 import { createLocalAgentActivity } from "./local-activity";
+import {
+  AgentConfigStore,
+  type SettingsSchema,
+  type Subject,
+} from "./agent-config";
+import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -16,6 +22,8 @@ import { ownerReads } from "./reads";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import { migrateWatchFilters } from "./migrate-filter";
+import { agentStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -79,6 +87,7 @@ import {
   type AgentIdentity,
   type Carry,
   type AgentsNative,
+  type AgentMedia,
   type AgentUpload,
   type OldTeam,
   type PortableAgents,
@@ -87,21 +96,32 @@ import {
 import {
   readArchiveUnchecked,
   readRecords,
+  recordKey,
   readTeams,
   readUnfinished,
   setAttention,
   writeArchiveUnchecked,
-  writeRecords,
+  removeRecord,
+  splitLegacyRecords,
+  writeRecord,
   writeTeams,
   writeUnfinished,
+  withProgress,
   type AgentRecord,
+  type TimerProgress,
   type SkippedObject,
   type Team,
   type Unfinished,
 } from "./store";
-import { meChat } from "./me-chat";
-import { readCheckpoints, writeCheckpoints } from "./catch-up";
+import { soloChat } from "./solo-chat";
+import {
+  readCheckpoints,
+  splitLegacyCheckpoints,
+  writeCheckpoints,
+  type Checkpoints,
+} from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { nameSoloChat } from "./solo-chat-name";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -197,7 +217,76 @@ export type AgentTab<Config = unknown> = Readonly<{
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
-/** The agent as `run` holds it. It works for as long as the agent exists. */
+/** One of an agent's conversation sessions on this device. Without `root` it
+ * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
+ * chat's; with it, the thread's. `at` is when it last took in a message
+ * or ended a turn, in milliseconds. `status` is the type's latest
+ * observation of it while running here, such as "Working", "Idle" or a
+ * failed turn's outcome; absent means unobserved, not idle. */
+export type AgentSession = Readonly<{
+  channelId: string;
+  root?: string;
+  at?: number;
+  status?: string;
+}>;
+/** Read-only: reading never starts, stops or changes a session. */
+export type AgentSessions = Readonly<{
+  list(pubkey: string): readonly AgentSession[];
+  subscribe(listener: () => void): () => void;
+}>;
+/** Token counts as the harness reported them. An absent count is unknown, not
+ * zero. `input` excludes the cache counts; together they are the prompt. */
+export type TokenCounts = Readonly<{
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  /** Of `cacheWrite`, those cached for an hour rather than five minutes. */
+  cacheWrite1h?: number;
+}>;
+/** One model request of a session, as the harness recorded it. */
+export type UsageObservation = Readonly<{
+  /** The harness's id for the request, when it records one; unique within
+   * the session. */
+  requestId?: string;
+  /** When the harness recorded the request, in milliseconds. */
+  at: number;
+  model: string;
+  tokens: TokenCounts;
+  /** USD the harness itself recorded, and how it says it got it, e.g.
+   * goose's `estimated`; absent when it records none. */
+  cost?: Readonly<{ usd: number; source: string }>;
+}>;
+/**
+ * A snapshot of one harness session an agent ran on this device: all its
+ * usage, its descendants' (subagents') included, so a consumer never adds a
+ * child session again. `channelId` and `root` say where in Buzz it started,
+ * when the session records it.
+ *
+ * A snapshot without `gaps` is complete: it replaces whatever a consumer kept
+ * for the session. An incomplete one should leave the consumer's previous
+ * snapshot in place and report the gap. A session missing from a later read
+ * is not deleted: its source may be gone, not its usage.
+ */
+export type SessionUsage = Readonly<{
+  /** The harness's own session id, opaque to others. */
+  id: string;
+  /** Equal for two reads that saw the same usage. Opaque and unordered: it
+   * says whether a snapshot changed, not which is newer. */
+  revision: string;
+  /** What the read could not see, e.g. a subagent's vanished file. */
+  gaps: readonly string[];
+  channelId?: string;
+  root?: string;
+  title?: string;
+  startedAt: number;
+  lastAt: number;
+  observations: readonly UsageObservation[];
+}>;
+/** The agent as `run` holds it. A run's handle works for as long as the
+ * agent exists; one from `Agents.handle` fails each call while `handle`
+ * would not return it, and for good once the agent's type or its plugin is
+ * replaced, so ask for a new one then. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
@@ -205,11 +294,22 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
-  /** Uploads base64 `data`, an image or MP4 video, as the agent. */
+  audienceAuthority?(
+    destination: string,
+    sources: readonly string[],
+  ): Promise<unknown>;
+  /** Finds profiles by `name` or `display_name`, as the agent, best match
+   * first. `undefined` when its community has no profile name search. */
+  searchProfiles(
+    query: string,
+    limit: number,
+  ): Promise<RelayEvent[] | undefined>;
+  /** Uploads base64 `data`, a file of any type its community accepts, as
+   * the agent. `mime` is a hint; the community decides the type. */
   upload(data: string, mime: string): Promise<AgentUpload>;
-  /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,
-   * as base64. */
-  media(url: string): Promise<string>;
+  /** Saves one of its community's media blobs, of any type, by URL or
+   * `sha256[.ext]`, to a local file for the agent. */
+  media(url: string): Promise<AgentMedia>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
@@ -319,6 +419,8 @@ export type Delivery<Config = unknown> = Readonly<{
   agent: AgentHandle;
   /** The agent's config when this run started. */
   config: Config;
+  /** The synced config revisions this run started from; empty when local. */
+  revisions?: readonly string[];
   /** The model the owner asked for in the triggering message: one of the
    * type's `models`. Absent means the agent's own model. */
   model?: string;
@@ -343,6 +445,13 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** Offers the owner Stop on this request's activity: `stop` stops the turn
+   * the request is in, and resolves once the harness has asked it to. The
+   * turn still settles what it handed to `workingUntil`. */
+  interruptible?(stop: () => Promise<void>): void;
+  /** The harness's own title for this mention's conversation. The host may
+   * name a Solo chat with it once; the type need not know whether it did. */
+  named?(title: string): void;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -390,7 +499,15 @@ export type AgentProvider = Readonly<{
   attentionAction?: (() => void) | undefined;
   /** Provider-owned recovery/progress controls and optional saved defaults. */
   DialogBody: ComponentType<{ onClose(): void }>;
+  /** Compact device default picker; persistence remains provider-owned. */
+  DefaultControl?: ComponentType<{ onConfigure(): void }>;
 }>;
+/** The artifact types an agent's config channel binding has made synced. */
+export type ConfigBinding = Readonly<{
+  settings?: Readonly<{ mode: Mode; subject: Subject }>;
+  instructions?: Readonly<{ mode: Mode; subject: Subject }>;
+}>;
+
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
@@ -427,10 +544,30 @@ export type AgentType<Config = unknown> = {
   provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
+  /** Each agent's sessions, for views across agents. */
+  sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** Read-only: snapshots of the sessions the agent ran from Buzz on this
+   * device with activity since `since` (milliseconds). `since` only bounds
+   * activity time; it is no checkpoint, and a session last active before it
+   * that the harness later corrected is not read again. Reading never starts,
+   * stops or changes a session; rejects when `signal` aborts. */
+  usage?(
+    agent: Agent<Config>,
+    options: Readonly<{ since: number; signal: AbortSignal }>,
+  ): Promise<readonly SessionUsage[]>;
+  /** The settings that sync across devices and how they merge into this
+   * device's config. Without it, the type's settings never sync. */
+  syncedSettings?: Readonly<{
+    schema: SettingsSchema;
+    withSynced(
+      config: Config,
+      settings: Readonly<Record<string, string>>,
+    ): Config;
+  }>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
@@ -472,6 +609,18 @@ export type RemoteAgentType = Readonly<{
       signal: AbortSignal;
     }>,
   ): Promise<void>;
+  /** Stops the turn it is running in one conversation, named by its channel
+   * and thread root (a top-level message's own id). False when nothing there
+   * was running. Without it, its turns offer no Stop. */
+  interrupt?(
+    input: Readonly<{
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }>,
+  ): Promise<boolean>;
   /** Stops it and deletes its key. An agent already gone counts as removed. */
   remove(
     input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
@@ -577,6 +726,13 @@ export type Agents = {
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
+  /** The agent as `run` holds it, outside any run: for one of the calling
+   * plugin's types while this copy of the app runs it, its type is not
+   * changing and its community is live, else undefined. A type whose agents
+   * act on something other than a message, such as a call, publishes with
+   * it; like any type whose agents run here, it has `run`. A kept handle
+   * throws once this no longer holds, so ask again when acting. */
+  handle(pubkey: string): AgentHandle | undefined;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
@@ -589,6 +745,11 @@ export type Agents = {
     pubkey: string,
     signal?: AbortSignal,
   ): Promise<string | null | undefined>;
+  /** Where agent types keep what they save for an agent, such as its
+   * sessions. Every program that runs this machine's agents shares it, so
+   * keep each agent's state under its own key. A write is saved only once
+   * its promise settles. */
+  readonly storage: AgentStore;
   /** Makes an agent of `type` in the selected community: here, or with a
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
@@ -630,6 +791,14 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether the owner can stop a hosted agent's turns through its provider. */
+  interruptible(pubkey: string): boolean;
+  /** Has a hosted agent's provider stop its turn in one conversation. False
+   * when nothing there was running. */
+  interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ): Promise<boolean>;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -675,6 +844,39 @@ const blank = (pubkey: string): AgentRecord => ({
   attention: EMPTY,
   config: undefined,
 });
+/** `record` with the owner's `change` to its settings; throws when the
+ * change is not valid for it. */
+function changed(record: AgentRecord, change: AgentChange): AgentRecord {
+  let next = record;
+  if (change.config !== undefined) next = { ...next, config: change.config };
+  if (change.attentionEnabled !== undefined) {
+    const { attentionEnabled: _, ...rest } = next;
+    next = change.attentionEnabled ? { ...rest, attentionEnabled: true } : rest;
+  }
+  for (const [slug, value] of Object.entries(change.attention ?? {}))
+    next = setAttention(
+      next,
+      slug,
+      value,
+      undefined,
+      change.restart?.includes(slug) ? "restart" : undefined,
+    );
+  // As the spec's writer: an Interest stays while anything still uses it.
+  for (const [slug, value] of Object.entries(change.attention ?? {})) {
+    const id = parseSlug(slug)?.id;
+    if (value !== null || !slug.startsWith("interest/") || !id) continue;
+    if (
+      Object.values(next.attention).some(
+        (object) =>
+          object.value.type !== "interest" && object.value.interest_id === id,
+      )
+    )
+      throw new Error(
+        "Remove or move the watches and timers that use this Interest first",
+      );
+  }
+  return next;
+}
 /** A new agent's settings: its type's defaults. */
 function defaults(pubkey: string, type: RegisteredAgentType) {
   const { config, attention = {} } = type.defaults();
@@ -827,7 +1029,14 @@ export class AgentsService extends Service implements Agents {
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
+  /** Each agent's settings as saved, and as the owner and the agent see them. */
   private records: Record<string, AgentRecord>;
+  /** Each agent's last change in its queue, until it settles. */
+  private readonly changes = new Map<string, Promise<void>>();
+  /** How many changes other than timer progress each agent has queued. */
+  private readonly changing = new Map<string, number>();
+  /** Each agent's timer progress that is not saved yet. */
+  private readonly progressing = new Map<string, readonly TimerProgress[]>();
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
@@ -876,6 +1085,8 @@ export class AgentsService extends Service implements Agents {
       unable?: boolean;
     }
   >();
+  /** Confirmed synced config copies, the only synced launch source. */
+  private readonly configStore: AgentConfigStore;
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -883,19 +1094,26 @@ export class AgentsService extends Service implements Agents {
     ctx: Context,
     private readonly communities: AgentCommunities,
     private readonly native: AgentsNative | undefined = nativeAgents(),
-    private readonly storage: Storage = globalThis.localStorage,
+    readonly storage: AgentStore = agentStorage(),
     private readonly authorize: (
       pubkey: string,
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
     private readonly jev: ClassifierNative | undefined = nativeClassifier(),
+    /** Which artifact types an agent has synced, from its config channel
+     * binding. Unset, every agent starts `local`. */
+    private readonly configBinding?: (agent: Agent) => ConfigBinding,
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
-    migrateAgentStorage(storage);
+    // Each changes the copy at once and logs a failed save itself.
+    void migrateAgentStorage(storage);
+    void migrateWatchFilters(storage);
     this.records = readRecords(storage);
+    void splitLegacyRecords(storage, this.records);
+    void splitLegacyCheckpoints(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
@@ -907,9 +1125,12 @@ export class AgentsService extends Service implements Agents {
       running: [],
       teams: this.teamList,
     });
+    this.configStore = new AgentConfigStore(storage);
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
     );
+    /** The catch-up progress this program last read or saved. */
+    let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
@@ -918,8 +1139,18 @@ export class AgentsService extends Service implements Agents {
       community: (agent) => this.bindingOf(agent),
       records: () => Object.values(this.records),
       checkpoints: {
-        read: () => readCheckpoints(this.storage),
-        write: (checkpoints) => writeCheckpoints(this.storage, checkpoints),
+        read: () => (savedProgress = readCheckpoints(this.storage)),
+        write: (checkpoints) => {
+          void writeCheckpoints(this.storage, checkpoints, savedProgress).catch(
+            (error) => {
+              console.warn("Agent catch-up progress was not saved", error);
+              // The copy went back to what is saved: the next save compares
+              // with that.
+              savedProgress = readCheckpoints(this.storage);
+            },
+          );
+          savedProgress = checkpoints;
+        },
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
@@ -928,7 +1159,48 @@ export class AgentsService extends Service implements Agents {
         if (!identity) throw new Error("No such agent on this device");
         return this.recordOf(identity);
       },
-      write: (record) => this.write(record),
+      change: async (pubkey, apply) => {
+        const record = await this.change(pubkey, (saved) => {
+          const identity = this.live(pubkey);
+          if (!identity) throw new Error("No such agent on this device");
+          return apply(saved ?? this.recordOf(identity));
+        });
+        if (!record) throw new Error("No such agent on this device");
+        return record;
+      },
+      changing: (pubkey) => this.changing.has(pubkey),
+      timers: (pubkey) => this.timersOf(pubkey),
+      progress: (pubkey, ran) => this.progress(pubkey, ran),
+      start: (agent) => {
+        const { settings, instructions } = this.configBinding?.(agent) ?? {};
+        const merge = this.types().find(
+          (type) => type.key === agent.type,
+        )?.syncedSettings;
+        if (!merge && isSynced(this.configStore, settings))
+          return {
+            ok: false,
+            state: "invalid",
+            reason: "This agent type has no synced settings",
+          };
+        return resolveStart({
+          store: this.configStore,
+          local: agent.config as object,
+          agentType: agent.type,
+          ...(settings && merge
+            ? {
+                settings: {
+                  ...settings,
+                  schema: merge.schema,
+                  withSynced: merge.withSynced as (
+                    config: object,
+                    synced: Readonly<Record<string, string>>,
+                  ) => object,
+                },
+              }
+            : {}),
+          ...(instructions ? { instructions } : {}),
+        });
+      },
       team: (pubkey) =>
         teamPrompt(
           this.teamList,
@@ -969,11 +1241,19 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
-      meChat: (agent, channel, signal) =>
-        meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      soloChat: (agent, channel, signal) =>
+        soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
+      named: (agent, event, title) =>
+        void nameSoloChat(
+          this.relay(agent.pubkey),
+          agent.owner,
+          agent.pubkey,
+          event,
+          title,
+        ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
     ctx.effect(() => {
       const stops = [
@@ -1091,6 +1371,10 @@ export class AgentsService extends Service implements Agents {
   };
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
+  handle(pubkey: string) {
+    const owner = this.ctx.pluginOwner;
+    return owner && this.runners.handle(pubkey, owner.id);
+  }
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
@@ -1120,8 +1404,14 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner }) =>
-            Object.freeze({ pubkey, name, relayUrl: relay, owner }),
+          .map(({ pubkey, name, relay, owner, picture }) =>
+            Object.freeze({
+              pubkey,
+              name,
+              relayUrl: relay,
+              owner,
+              ...(picture ? { picture } : {}),
+            }),
           ),
       ),
       ...(state.error ? { error: state.error } : {}),
@@ -1268,7 +1558,7 @@ export class AgentsService extends Service implements Agents {
       [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
     )
       throw new Error("The provider returned a key that is already in use");
-    this.writeUnfinished([
+    await this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       {
         pubkey,
@@ -1314,7 +1604,9 @@ export class AgentsService extends Service implements Agents {
       runtime: setup.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
-    this.writeUnfinished(this.unfinished.filter((entry) => entry !== setup));
+    await this.writeUnfinished(
+      this.unfinished.filter((entry) => entry !== setup),
+    );
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
     // Listed with its picture either way; its own profile is the provider's.
@@ -1511,7 +1803,7 @@ export class AgentsService extends Service implements Agents {
     // one is made only with members.
     if (!saved && !members.length) return result;
     try {
-      const team = this.writeImportedTeam(old, teamId, saved, [
+      const team = await this.writeImportedTeam(old, teamId, saved, [
         ...kept,
         ...members,
       ]);
@@ -1554,7 +1846,7 @@ export class AgentsService extends Service implements Agents {
         record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
-      this.write(record);
+      await this.change(identity.pubkey, () => record);
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.
       console.warn(`Agent ${identity.name} settings were not saved`, error);
@@ -1598,43 +1890,14 @@ export class AgentsService extends Service implements Agents {
       throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
-    let record = this.recordOf(identity);
-    if (change.config !== undefined)
-      record = { ...record, config: change.config };
-    if (change.attentionEnabled !== undefined) {
-      const { attentionEnabled: _, ...rest } = record;
-      record = change.attentionEnabled
-        ? { ...rest, attentionEnabled: true }
-        : rest;
-    }
-    for (const [slug, value] of Object.entries(change.attention ?? {}))
-      record = setAttention(
-        record,
-        slug,
-        value,
-        undefined,
-        change.restart?.includes(slug) ? "restart" : undefined,
-      );
-    // As the spec's writer: an Interest stays while anything still uses it.
-    for (const [slug, value] of Object.entries(change.attention ?? {})) {
-      const id = parseSlug(slug)?.id;
-      if (value !== null || !slug.startsWith("interest/") || !id) continue;
-      if (
-        Object.values(record.attention).some(
-          (object) =>
-            object.value.type !== "interest" && object.value.interest_id === id,
-        )
-      )
-        throw new Error(
-          "Remove or move the watches and timers that use this Interest first",
-        );
-    }
     if (
       change.config !== undefined ||
       change.attention ||
       change.attentionEnabled !== undefined
     )
-      this.write(record);
+      await this.change(pubkey, (saved) =>
+        changed(saved ?? this.recordOf(identity), change),
+      );
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
     const renamed = name !== undefined && name !== identity.name;
@@ -1680,6 +1943,32 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  /** Whether the owner can stop a hosted agent's turn: its provider can. */
+  interruptible(pubkey: string) {
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.pubkey === pubkey &&
+        entry.place === "hosted" &&
+        !entry.unfinished,
+    );
+    return !!this.types().find((entry) => entry.key === agent?.type)?.remote
+      ?.interrupt;
+  }
+  /** Stops the hosted agent's turn in `place`; false when none was running. */
+  async interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ) {
+    const { agent, remote, binding } = this.hosted(pubkey);
+    if (!remote.interrupt) throw new Error("This agent can't be stopped here");
+    return remote.interrupt({
+      pubkey,
+      community: agent.relay,
+      ...place,
+      signal: binding.controller.signal,
+    });
+  }
+
   /** A hosted agent shown now, its provider, and its community's live session. */
   private hosted(pubkey: string, unfinished = false) {
     const agent = this.state.agents.find(
@@ -1719,18 +2008,19 @@ export class AgentsService extends Service implements Agents {
       );
       await native.setType(pubkey, type);
       try {
-        const nextRecord = {
-          ...this.recordOf(identity),
-          config: change ? change.config : adopted,
-        };
-        const records = { ...this.records, [pubkey]: nextRecord };
-        writeRecords(this.storage, records);
-        // Publish the in-memory pair only after its config is durable.
-        this.records = records;
-        this.identities = this.identities.map((saved) =>
-          saved.pubkey === pubkey ? { ...saved, type } : saved,
+        await this.change(
+          pubkey,
+          (saved) => ({
+            ...(saved ?? this.recordOf(identity)),
+            config: change ? change.config : adopted,
+          }),
+          // Shown with its new type, only once its config is saved.
+          () => {
+            this.identities = this.identities.map((saved) =>
+              saved.pubkey === pubkey ? { ...saved, type } : saved,
+            );
+          },
         );
-        this.update();
       } catch (error) {
         try {
           await native.setType(pubkey, identity.type);
@@ -1842,7 +2132,7 @@ export class AgentsService extends Service implements Agents {
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);
-      this.writeUnfinished(
+      await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
     });
@@ -1871,7 +2161,7 @@ export class AgentsService extends Service implements Agents {
       instructions,
       members: Object.freeze([...new Set(members)]),
     });
-    this.writeTeams(
+    await this.writeTeams(
       id
         ? this.teamList.map((saved) => (saved.id === id ? team : saved))
         : [...this.teamList, team],
@@ -1882,7 +2172,7 @@ export class AgentsService extends Service implements Agents {
   /** Puts `members` on an old Buzz team's copy `id`, made from `saved` or,
    * the first time, `team`. Its name and instructions here are never
    * replaced. */
-  private writeImportedTeam(
+  private async writeImportedTeam(
     team: OldTeam,
     id: string,
     saved: Team | undefined,
@@ -1894,7 +2184,7 @@ export class AgentsService extends Service implements Agents {
       instructions: saved?.instructions ?? team.instructions,
       members: Object.freeze([...new Set(members)]),
     });
-    this.writeTeams(
+    await this.writeTeams(
       saved
         ? this.teamList.map((entry) => (entry === saved ? joined : entry))
         : [...this.teamList, joined],
@@ -1903,15 +2193,25 @@ export class AgentsService extends Service implements Agents {
   }
 
   async removeTeam(id: string) {
-    this.writeTeams(this.teamList.filter((team) => team.id !== id));
+    await this.writeTeams(this.teamList.filter((team) => team.id !== id));
   }
 
-  /** Saves the teams; memory changes only once storage has taken them. */
+  /** Saves the teams; memory changes once storage has taken them, and the
+   * promise settles once they are saved. When the save fails, memory goes
+   * back to the teams storage still has. */
   private writeTeams(teams: readonly Team[]) {
-    writeTeams(this.storage, teams);
+    const saving = writeTeams(this.storage, teams);
+    const shown = this.showTeams(teams);
+    return saving.catch((error: unknown) => {
+      if (this.teamList === shown) this.showTeams(readTeams(this.storage));
+      throw error;
+    });
+  }
+  private showTeams(teams: readonly Team[]) {
     this.teamList = Object.freeze(teams);
     this.state = Object.freeze({ ...this.state, teams: this.teamList });
     this.notify();
+    return this.teamList;
   }
 
   /** Saves which imports need an archive check, then keeps it in memory. */
@@ -1920,14 +2220,29 @@ export class AgentsService extends Service implements Agents {
     const next = new Set(this.unarchiving);
     if (unchecked) next.add(pubkey);
     else next.delete(pubkey);
-    writeArchiveUnchecked(this.storage, next);
+    // Unsaved, the next start offers no Retry until a check fails again.
+    void writeArchiveUnchecked(this.storage, next).catch((error) =>
+      console.warn("Agent archive checks were not saved", error),
+    );
     this.unarchiving = next;
   }
-  /** Saves the unfinished setups; memory changes only once storage has them. */
+
+  /** Saves the unfinished setups; memory changes once storage has taken them,
+   * and the promise settles once they are saved. When the save fails, memory
+   * goes back to the setups storage still has. */
   private writeUnfinished(unfinished: readonly Unfinished[]) {
-    writeUnfinished(this.storage, unfinished);
+    const saving = writeUnfinished(this.storage, unfinished);
+    const shown = this.showUnfinished(unfinished);
+    return saving.catch((error: unknown) => {
+      if (this.unfinished === shown)
+        this.showUnfinished(readUnfinished(this.storage));
+      throw error;
+    });
+  }
+  private showUnfinished(unfinished: readonly Unfinished[]) {
     this.unfinished = Object.freeze(unfinished);
     this.update();
+    return this.unfinished;
   }
 
   /** Reads the viewer's agent records in the community, then lists each of
@@ -2137,12 +2452,109 @@ export class AgentsService extends Service implements Agents {
     return agent;
   }
 
-  /** Saves one record; memory changes only once storage has taken it. */
-  private write(record: AgentRecord) {
-    const records = { ...this.records, [record.pubkey]: record };
-    writeRecords(this.storage, records);
-    this.records = records;
-    this.update();
+  /** Changes one agent's record. This is the only way a record changes:
+   * owner settings, the agent's attention tools, timer progress, a provider
+   * change and removal all send a change here. One agent's changes run in
+   * the order they are sent, each after the one before it is saved or has
+   * failed, so each one applies to the newest saved record, never to a copy
+   * another change replaces. `apply` gets that record (or undefined) and
+   * returns the next one, or null to remove it; it may throw to change
+   * nothing. The owner and the agent see a change once it is saved, and the
+   * promise settles then. When the save fails, the promise rejects and they
+   * keep the saved record, so a form keeps its unsaved changes. `saved`
+   * runs as the change is shown, before anyone is told. */
+  private change(
+    pubkey: string,
+    apply: (
+      record: AgentRecord | undefined,
+    ) => AgentRecord | null | Promise<AgentRecord | null>,
+    saved?: (record: AgentRecord | null) => void,
+  ): Promise<AgentRecord | null> {
+    this.changing.set(pubkey, (this.changing.get(pubkey) ?? 0) + 1);
+    return this.queued(pubkey, async () => {
+      try {
+        const base = this.records[pubkey];
+        const next = await apply(base);
+        await this.commit(pubkey, base, next);
+        saved?.(next);
+        this.update();
+        return next;
+      } finally {
+        const left = (this.changing.get(pubkey) ?? 1) - 1;
+        if (left) this.changing.set(pubkey, left);
+        else {
+          this.changing.delete(pubkey);
+          // Its timers waited for this change, saved or failed.
+          this.runners.wake(pubkey);
+        }
+      }
+    });
+  }
+  /** Records that timers ran or started counting, as a change to their run
+   * state only. It applies to whatever the record is when its turn comes, so
+   * it never undoes a change sent before it: when a timer was rearmed or
+   * restarted meanwhile, its new deadline stays and only the occurrences it
+   * used are added. Timers see it at once (`timersOf`), and memory keeps it
+   * even when its save fails, so a timer does not run again at once. */
+  private progress(pubkey: string, ran: TimerProgress) {
+    const pending = this.progressing.get(pubkey) ?? [];
+    this.progressing.set(pubkey, [...pending, ran]);
+    void this.queued(pubkey, async () => {
+      try {
+        const base = this.records[pubkey];
+        const next = base && withProgress(base, ran);
+        if (!base || !next) return;
+        await this.commit(pubkey, base, next).catch((error) => {
+          console.warn(`Agent ${pubkey} timer state was not saved`, error);
+          this.records = { ...this.records, [pubkey]: next };
+        });
+        this.update();
+      } finally {
+        const left = (this.progressing.get(pubkey) ?? []).filter(
+          (entry) => entry !== ran,
+        );
+        if (left.length) this.progressing.set(pubkey, left);
+        else this.progressing.delete(pubkey);
+      }
+    });
+  }
+  /** Runs `step` after the agent's earlier changes have settled. */
+  private queued<T>(pubkey: string, step: () => Promise<T>) {
+    const run = (this.changes.get(pubkey) ?? Promise.resolve()).then(step);
+    const tail = run.then(
+      () => {},
+      () => {},
+    );
+    this.changes.set(pubkey, tail);
+    void tail.then(() => {
+      if (this.changes.get(pubkey) === tail) this.changes.delete(pubkey);
+    });
+    return run;
+  }
+  /** Saves `next` over `base` in the agent's own key, then keeps it. Only
+   * this agent's key: others may be another program's to change. */
+  private async commit(
+    pubkey: string,
+    base: AgentRecord | undefined,
+    next: AgentRecord | null,
+  ) {
+    if (next === base) return;
+    if (next) await writeRecord(this.storage, next);
+    else if (this.storage.get(recordKey(pubkey)) !== null)
+      await removeRecord(this.storage, pubkey);
+    const { [pubkey]: _, ...others } = this.records;
+    this.records = next ? { ...others, [pubkey]: next } : others;
+  }
+  /** The agent's timers' run state as its timers go by: saved, with the
+   * progress still being saved. */
+  private timersOf(pubkey: string) {
+    const record = this.records[pubkey];
+    const pending = this.progressing.get(pubkey);
+    if (!record || !pending) return record?.timers ?? EMPTY;
+    return (
+      pending.reduce((next, ran) => withProgress(next, ran) ?? next, record)
+        .timers ?? EMPTY
+    );
   }
   private live(pubkey: string) {
     return this.identities.find(
@@ -2279,24 +2691,25 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .map((saved) => saved.pubkey),
       );
-      if (Object.keys(this.records).some((pubkey) => !live.has(pubkey))) {
-        this.records = Object.fromEntries(
-          Object.entries(this.records).filter(([pubkey]) => live.has(pubkey)),
+      const gone = Object.keys(this.records).filter(
+        (pubkey) => !live.has(pubkey),
+      );
+      for (const pubkey of gone)
+        void this.change(pubkey, () => null).catch((error) =>
+          console.warn(`Agent ${pubkey} settings were not removed`, error),
         );
-        writeRecords(this.storage, this.records);
-      }
       // A deleted agent leaves its teams; the teams stay.
       if (
         this.teamList.some((team) =>
           team.members.some((pubkey) => !live.has(pubkey)),
         )
       )
-        this.writeTeams(
+        void this.writeTeams(
           this.teamList.map((team) => ({
             ...team,
             members: team.members.filter((pubkey) => live.has(pubkey)),
           })),
-        );
+        ).catch((error) => console.warn("Agent teams were not saved", error));
     } catch (error) {
       if (turn !== this.listed) return;
       this.state = Object.freeze({

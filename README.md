@@ -179,7 +179,7 @@ request-owned, cancelled on disconnect and cleaned before admission is released.
 
 Picker/paste/drop share the same tab-local draft. Files must finish uploading
 before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
-unsent files. Background Send, attachment-first new sessions and UX polish are
+unsent files. Background Send, attachment-first new chats and UX polish are
 separate work. Live uploads use the development broker in dev runs and the
 native `relay_upload` path in packaged desktop builds. The native host prepares
 HEIC and supported video/voice-note inputs with fixed demuxers and bounded child
@@ -235,7 +235,7 @@ buzzodz --profile experiment plugin list
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
 Bundled pages work on web; their enabled settings are stored in that browser.
-Folder and Git/GitHub loading is available in **desktop Settings → Plugins**.
+Folder and Git/GitHub loading is available in **desktop Settings → Plugins → Manage plugins**.
 Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
 then select a built plugin subfolder and install it. New installs are disabled;
 updates retain their enabled state and may run immediately. Repositories must

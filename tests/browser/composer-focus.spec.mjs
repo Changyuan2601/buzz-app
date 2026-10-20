@@ -37,6 +37,36 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
   ).toBeFocused();
 });
 
+// The host can focus the editor while a typed character is in the DOM but not
+// yet read by ProseMirror (native typing that refocuses the window does). The
+// focus must not restore the caret from before that character.
+test("a focus between a keystroke and its read keeps the caret after the typed text", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await page.keyboard.type("hello ");
+  await expect(input).toHaveText("hello");
+  await input.evaluate((element) => {
+    window.addEventListener(
+      "input",
+      () => {
+        element.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        element.dispatchEvent(new FocusEvent("focus"));
+      },
+      { capture: true, once: true },
+    );
+  });
+  await page.keyboard.type("any");
+  await expect(input).toHaveText("hello any");
+  await expect(input).toBeFocused();
+});
+
 // Real Base UI menus close when focus leaves them. A conversation that mounts
 // while a menu is open, as at startup, must leave focus with that menu.
 test("a conversation mounting behind an open menu keeps the menu open", async ({
@@ -169,7 +199,7 @@ test.describe("text field focus appearance", () => {
   test.use({
     historyCounts: { alpha: 1, beta: 0 },
     productionBroker: false,
-    sessionWriteKinds: [9, 9000, 9007],
+    channelWriteKinds: [9, 9000, 9007],
   });
 
   for (const mode of ["light", "dark"]) {

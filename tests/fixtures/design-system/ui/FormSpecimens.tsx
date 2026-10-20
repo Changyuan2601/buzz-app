@@ -235,6 +235,15 @@ export function SearchExamples() {
   return (
     <div className="component-specimen-stack">
       <FormExample
+        title="Search palette"
+        description="Composer surface, generous input spacing, and larger search text."
+        code={
+          '<SearchField variant="palette" value={query} onValueChange={setQuery} />'
+        }
+      >
+        <SearchField variant="palette" value={query} onValueChange={setQuery} />
+      </FormExample>
+      <FormExample
         title="Search and clear"
         description="The accessible label stays present even when visually hidden. Clearing returns focus to the input; its action slot stays the same width."
         code={`<SearchField
@@ -374,6 +383,7 @@ export function SelectExamples() {
 <div style={{ maxWidth: 160 }}>
   <Select
     label="Row workspace"
+    leading={<CodeIcon size={20} />}
     variant="compact"
     align="end"
     value={inline}
@@ -435,6 +445,7 @@ export function SelectExamples() {
         <div style={{ maxWidth: 160 }}>
           <Select
             label="Row workspace"
+            leading={<CodeIcon size={20} />}
             variant="compact"
             align="end"
             value={inline}
@@ -444,6 +455,7 @@ export function SelectExamples() {
         </div>
         <Select
           label="Card workspace"
+          valueSuffix=" · Default"
           variant="compact"
           appearance="subtle"
           leading={<CodeIcon size={16} aria-hidden="true" />}
@@ -527,6 +539,38 @@ export function WorkspaceCombobox({
   );
 }
 
+function PopupSearchExample() {
+  const options = ["Anthropic", "Databricks", "OpenAI"];
+  const [value, setValue] = useState<string | null>("Databricks");
+  const [query, setQuery] = useState("");
+  return (
+    <Combobox.Root
+      items={options}
+      value={value}
+      onValueChange={setValue}
+      inputValue={query}
+      onInputValueChange={setQuery}
+      onOpenChange={(open) => {
+        if (open) setQuery("");
+      }}
+      autoHighlight
+    >
+      <Combobox.Trigger label="Provider">
+        {value ?? "Choose a provider"}
+      </Combobox.Trigger>
+      <Combobox.Popup search empty="No matching providers.">
+        <Combobox.List>
+          {(item: string) => (
+            <Combobox.Item key={item} value={item}>
+              {item}
+            </Combobox.Item>
+          )}
+        </Combobox.List>
+      </Combobox.Popup>
+    </Combobox.Root>
+  );
+}
+
 export function ComboboxExamples() {
   const [state, setState] = useState<ExampleState>("ready");
   return (
@@ -542,6 +586,7 @@ export function ComboboxExamples() {
 ${workspaceComboboxCode}`}
       >
         <WorkspaceCombobox />
+        <PopupSearchExample />
         <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />

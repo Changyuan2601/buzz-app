@@ -19,7 +19,9 @@ import { MessageLink, resolveLink } from "./MessageLink";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
 import { keypair, signed } from "../relay/testing";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
+import { soloChatLinkMessage } from "../solo/share";
+import { MessageMarkdown } from "../messages/MessageMarkdown";
 import { ConversationPresentation } from "./ConversationPresentation";
 import { LinkThreadTabContext } from "./LinkLabelContext";
 
@@ -338,13 +340,14 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
 });
 
-it("a signed details rename keeps generated link bytes, numeric label and navigation unchanged", async () => {
+it("a signed chosen rename repaints the session card without changing authored link bytes or focus", async () => {
   const id = "11111111-1111-4111-8111-111111111111",
     viewer = keypair(),
     relay = keypair();
   let clock = 100,
     name = "First prompt",
-    about = sessionDescription();
+    labels: string[][] = [["t", SOLO_LABEL]],
+    about = "";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -356,6 +359,7 @@ it("a signed details rename keeps generated link bytes, numeric label and naviga
     record(39000, [
       ["name", name],
       ["t", "stream"],
+      ...labels,
       ["private"],
       ["about", about],
     ]),
@@ -364,6 +368,7 @@ it("a signed details rename keeps generated link bytes, numeric label and naviga
   ];
   const publish = vi.fn(async () => {});
   const owner = createRelaySession({
+    channelIdentity: true,
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     media: () => undefined,
@@ -376,6 +381,7 @@ it("a signed details rename keeps generated link bytes, numeric label and naviga
       publish: async (event) => {
         name = event.tags.find(([key]) => key === "name")?.[1] ?? name;
         about = event.tags.find(([key]) => key === "about")?.[1] ?? about;
+        labels = event.tags.filter(([key]) => key === "t");
         clock++;
       },
     },
@@ -402,7 +408,10 @@ it("a signed details rename keeps generated link bytes, numeric label and naviga
         {label}
       </MessageLink>,
     );
-    const anchor = screen.getByRole("link", { name: label });
+    const anchor = screen.getByRole("link", {
+      name: `Open Session: ${id.slice(0, 8)}`,
+    });
+    anchor.focus();
     const base = await owner.session.channelDetails.load(id);
     await act(async () =>
       owner.session.channelDetails.save(base, {
@@ -410,11 +419,65 @@ it("a signed details rename keeps generated link bytes, numeric label and naviga
         name: "Accessible contrast",
       }),
     );
-    expect(await screen.findByRole("link", { name: label })).toBe(anchor);
+    expect(
+      await screen.findByRole("link", {
+        name: "Open Session: Accessible contrast",
+      }),
+    ).toBe(anchor);
+    expect(anchor).toHaveFocus();
+    expect(owner.session.channels.list().channels[0]?.labels).toContain(
+      SOLO_NAMED_LABEL,
+    );
     expect(anchor).toHaveAttribute("data-link-label", label);
     expect(publish).not.toHaveBeenCalled();
   } finally {
     cleanup();
     owner.dispose();
   }
+});
+
+it.each(["Session · 12345678", "Session: PR 45 fixes"])(
+  "renders sent session labels as cards without membership: %s",
+  (label) => {
+    render(
+      <MessageLink
+        url="buzz://channel/12345678"
+        label={label}
+        registry={undefined}
+        onOpenLink={() => true}
+      >
+        {label}
+      </MessageLink>,
+    );
+    const link = screen.getByRole("link", {
+      name: `Open Session: ${label.replace(/^Session(?::| ·)\s+/, "")}`,
+    });
+    expect(link.querySelector("svg.tabler-icon-file-text")).toBeInTheDocument();
+    expect(link).toHaveTextContent("Session:");
+  },
+);
+
+it("shows escaped chosen names faithfully when only the sent label is available", () => {
+  const name = "PR_45 & <fix> [draft] \\_notes";
+  render(
+    <MessageMarkdown
+      row={{
+        id: "message",
+        channelId: "channel",
+        authorId: "author",
+        content: soloChatLinkMessage("session", name),
+        createdAt: 1,
+        mentions: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+        participants: [],
+      }}
+      media={() => undefined}
+      onOpenLink={() => true}
+    />,
+  );
+  expect(
+    screen.getByRole("link", { name: `Open Session: ${name}` }),
+  ).toHaveTextContent(name);
 });

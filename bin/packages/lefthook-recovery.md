@@ -1,9 +1,9 @@
 # Temporary Lefthook recovery package
 
 This override builds [Lefthook](https://github.com/evilmartians/lefthook) at
-`cc9969c2e2198aafff8accc63ee1aee30e9a2aa4` with `lefthook-recovery.patch`.
-The source archive is SHA-256 pinned in `lefthook.hcl`; two independent downloads
-produced the same digest. Hermit pins Go 1.27.0 and generates the tool proxies.
+`eb4e504b7c1d1ea6cb1fd29542431cb6d1a93a03` (v2.2.2) with
+`lefthook-recovery.patch`. The source archive is SHA-256 pinned in `lefthook.hcl`.
+Hermit pins Go 1.27.0 and generates the tool proxies.
 The small `bin/lefthook` launcher provisions Go before invoking the generated
 `bin/lefthook-runner` proxy: lazy Hermit execution otherwise unpacks Lefthook
 before Go, and recursively invoking Hermit inside unpack deadlocks. Hermit 0.52.3 also unpacks explicit installs in parallel: run
@@ -12,14 +12,17 @@ Normal hook setup uses the launcher and needs no separate Go command.
 The build uses `CGO_ENABLED=0`, `-trimpath`, and the upstream Go module checksums.
 No private package service, fork release, or global tool replacement is required.
 
-The patch fixes the shared patch files and broad positional stash deletion
-reported in [upstream #1529](https://github.com/evilmartians/lefthook/issues/1529).
-[Upstream #1530](https://github.com/evilmartians/lefthook/pull/1530) addresses
-worktree isolation, but this patch also replaces shared stash-list cleanup with
-create-only, compare-and-delete backup refs. Shared owned refs retain backups
+Upstream 2.2.1 isolates worktree patches. Upstream 2.2.2 matches its backup hash,
+then drops the captured positional stash ref; an intervening sibling stash can
+shift that position and be deleted instead. This patch retains create-only,
+compare-and-delete backup refs without changing upstream's patch isolation.
+It refuses cleanup without an owned hash, including after a failed save.
+Shared owned refs retain backups
 during garbage collection from another worktree. The patch includes upstream
 unit/integration tests, recovery documentation, and an explicit version change
-to `2.1.18-buzz.3` (the version is a source constant, not a linker variable).
+to `2.2.3-buzz.1` (the version is a source constant, not a linker variable).
+The next-patch prerelease version lets `min_version` reject stock 2.2.2;
+this is still upstream 2.2.2, not an upstream 2.2.3 release.
 Concurrent runs within the same worktree remain unsupported.
 
 ## Revalidate or replace
@@ -48,13 +51,18 @@ PATH="$PWD:$PATH" "$go_bin" test -cpu 24 -race -count=1 -timeout=30s -tags=integ
 ```
 
 In buzz-app run `bin/node --test tests/integration/*.test.mjs`, including real
-lhm by setting `BUZZ_REAL_LHM` to its executable. No global hooks/configuration
-are changed by those fixtures.
+lhm by setting `BUZZ_REAL_LHM` to its executable and `BUZZ_STOCK_LEFTHOOK` to the
+official 2.2.2 executable. The cleanup regression inserts a sibling stash after
+the vulnerable runner's list snapshot, or immediately before the patched runner's
+atomic ref deletion. It verifies stash ownership, the index and unstaged edits.
+Set `BUZZ_RECOVERY_RUNNER` to an official 2.2.2 executable and run that test alone
+to demonstrate the expected failure. No global hooks/configuration are changed.
 
 At the next upstream release, check whether it includes all these protections.
-`min_version` rejects current stock runners, **not future stock 2.1.18+**. Remove
+`min_version` rejects stock 2.2.2, **not future stock 2.2.3+**. Remove
 the override/patch and the temporary Go pin only after an official version passes
-the overlap, recovery, GC, legacy-stash and machine-policy regressions. Do not
+the cleanup-interleaving, overlap, recovery, GC, legacy-stash and machine-policy
+regressions. Do not
 replace this pin with an unverified newer stock binary.
 
 ## License

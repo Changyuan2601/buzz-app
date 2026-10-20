@@ -1,0 +1,441 @@
+.capsuleWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.capsule {
+  --interaction-hover: var(--bg-chrome-selected);
+  color: var(--text-standard);
+  margin: 0;
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  /* Match the shared small shell navigation/search/profile controls. */
+  min-height: var(--space-8);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+}
+.capsule > :first-child {
+  margin-inline-end: var(--space-1);
+}
+.capsuleContent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.capsuleDivider {
+  width: 1px;
+  height: var(--space-4);
+  flex-shrink: 0;
+  background: var(--border-standard);
+}
+.capsuleError {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  z-index: 10;
+}
+.waveform {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-half);
+  height: 24px;
+  width: 30px;
+  flex-shrink: 0;
+  color: var(--text-standard);
+}
+.capsule .waveform {
+  height: var(--space-5);
+  width: var(--space-6);
+}
+.waveform > span {
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  transition: height var(--duration-settle) var(--easing-settle);
+}
+.waveform[data-muted="true"] {
+  color: var(--text-secondary);
+}
+.window {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  padding: var(--space-6);
+  gap: var(--space-5);
+}
+.windowHeader {
+  min-height: 1.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+.windowSettings {
+  grid-area: 1 / 1;
+  justify-self: start;
+}
+.windowMinimize {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+.windowFooter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.windowControls {
+  display: flex;
+  gap: var(--space-3);
+}
+.windowLayout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.windowLayout > main {
+  flex: 1;
+  min-width: 0;
+}
+.windowDiscussion {
+  width: 360px;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--border-standard);
+  background: var(--surface-panel);
+}
+@media (prefers-reduced-motion: reduce) {
+  .waveform > span {
+    transition: none;
+  }
+}
+
+.avatarStack {
+  position: relative;
+  display: inline-block;
+  height: 1.25rem;
+  flex-shrink: 0;
+  isolation: isolate;
+}
+.stackAvatar,
+.avatarOverflow {
+  position: absolute;
+  inset: 0 auto auto 0;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  box-shadow: 0 0 0 2px var(--surface-panel);
+}
+.stackAvatar {
+  opacity: 1;
+  transform: translateX(var(--avatar-offset)) scale(1);
+  transition:
+    transform var(--duration-settle) var(--easing-enter),
+    opacity var(--duration-state) var(--easing-enter);
+}
+@starting-style {
+  .stackAvatar {
+    opacity: 0;
+    transform: translateX(calc(var(--avatar-offset) + 0.75rem)) scale(0.95);
+  }
+}
+.avatarOverflow {
+  left: auto;
+  right: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stackAvatar {
+    transition: none;
+  }
+}
+
+.activeLauncher {
+  --interaction-hover: var(--affordance-success-hover);
+  --interaction-pressed: var(--affordance-success-pressed);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-success);
+  color: var(--text-success);
+}
+.launcherDivider {
+  width: 1px;
+  height: var(--space-4);
+  background: var(--border-success-subtle);
+}
+
+.leaveGlyph {
+  display: grid;
+  place-items: center;
+}
+.leaveGlyph > svg {
+  grid-area: 1 / 1;
+}
+.leaveGlyph .disconnectGlyph {
+  opacity: 0;
+}
+.activeLauncher [data-huddle-leave]:focus-visible .headphonesGlyph {
+  opacity: 0;
+}
+.activeLauncher [data-huddle-leave]:focus-visible .disconnectGlyph {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .activeLauncher [data-huddle-leave]:hover .headphonesGlyph {
+    opacity: 0;
+  }
+  .activeLauncher [data-huddle-leave]:hover .disconnectGlyph {
+    opacity: 1;
+  }
+}
+@media (hover: none) {
+  .leaveGlyph .headphonesGlyph {
+    opacity: 0;
+  }
+  .leaveGlyph .disconnectGlyph {
+    opacity: 1;
+  }
+}
+
+.avatarStage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  container-type: size;
+  display: grid;
+  place-items: center;
+}
+.selfBubble {
+  aspect-ratio: 1;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: clamp(48px, min(20cqw, 55cqh), 100px);
+  transform: translate(calc(50cqw - 50%), -50%);
+  transition: transform var(--duration-settle) var(--easing-enter);
+}
+.avatarStage[data-has-peers="true"] .selfBubble {
+  transform: translate(
+    calc(17cqw - 50% + var(--cloud-shift-x, 0px)),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
+}
+.remoteCloud {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 64cqw;
+  height: 100%;
+  transform: translate(
+    var(--cloud-shift-x, 0px),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
+  container-type: inline-size;
+}
+.remoteCloud[data-has-self="false"] {
+  right: 50%;
+  transform: translate(
+    calc(50% + var(--cloud-shift-x, 0px)),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
+}
+.cloudBubble {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  aspect-ratio: 1;
+  transform: translate(
+    calc(-50% + var(--bubble-x)),
+    calc(-50% + var(--bubble-y))
+  );
+  transition: transform var(--duration-settle) var(--easing-enter);
+}
+.bubbleArtwork {
+  position: relative;
+  /* Grid removes the inline avatar’s baseline gap beneath photo artwork. */
+  display: grid;
+  width: 100%;
+  aspect-ratio: 1;
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity var(--duration-state) var(--easing-enter),
+    transform var(--duration-settle) var(--easing-enter);
+}
+.bubbleArtwork {
+  isolation: isolate;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+.avatarForeground {
+  z-index: 1;
+}
+.speakingHalo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-selected);
+  opacity: 0;
+  transform: scale(1);
+  transition:
+    opacity 280ms var(--easing-settle),
+    transform 280ms var(--easing-settle);
+}
+.speakingHalo[data-speaking="true"] {
+  opacity: 1;
+  transform: scale(var(--speaker-scale));
+}
+.bubbleName {
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity var(--duration-state) var(--easing-enter),
+    transform var(--duration-settle) var(--easing-enter);
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translate(-50%, -40%) scale(0.95);
+  max-width: max(100%, 3.5rem);
+  padding: var(--space-half) var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
+  box-shadow: 0 0 0 2px var(--surface-panel);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.avatarStage [data-name-active="true"] .bubbleName {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+@starting-style {
+  .bubbleArtwork {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.cloudOverflow {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+@media (prefers-reduced-motion: reduce) {
+  .selfBubble,
+  .bubbleName,
+  .speakingHalo,
+  .cloudBubble,
+  .bubbleArtwork {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .speakingHalo[data-speaking="true"] {
+    transform: scale(1.15);
+  }
+}
+
+/* Compact Leave keeps its red hover; window controls share the mobile gray fill. */
+.capsule [data-huddle-leave],
+.windowControls [data-huddle-leave] {
+  color: var(--text-call-leave);
+}
+.capsule [data-huddle-leave] {
+  background: transparent;
+}
+.windowControls {
+  --interaction-fill: var(--affordance-subtle-hover);
+  --interaction-hover: var(--affordance-subtle-pressed);
+}
+@media (hover: hover) and (pointer: fine) {
+  .capsule > button:hover + .capsuleDivider,
+  .capsuleDivider:has(+ button:hover) {
+    opacity: 0;
+  }
+  .capsule [data-huddle-leave]:hover {
+    background: var(--affordance-danger-pressed);
+  }
+}
+.capsule [data-huddle-leave]:active {
+  background: var(--affordance-danger-pressed);
+}
+
+.requestBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.requestAvatar {
+  width: 8rem;
+  height: 8rem;
+}
+.requestBody p {
+  margin: 0;
+}
+.requestTitle {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.requestName {
+  display: block;
+}
+
+.requestActions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+.requestCompactActions {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-1);
+  align-items: center;
+}
+
+:is(.requestActions, .requestCompactActions) [data-huddle-join] {
+  --interaction-fill: var(--affordance-call-join);
+  --interaction-hover: var(--affordance-call-join-hover);
+  --interaction-pressed: var(--affordance-call-join);
+  color: var(--text-inverse);
+}
+
+:is(.requestActions, .requestCompactActions) [data-variant="destructive"] {
+  --affordance-danger: var(--affordance-call-decline);
+  --affordance-danger-hover: var(--affordance-call-decline-hover);
+  --affordance-danger-pressed: var(--affordance-call-decline);
+  color: var(--text-inverse);
+}
+
+.callerName {
+  max-inline-size: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { ToastProvider } from "../shared/design-system/ui/Toast";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { AgentSettings } from "./AgentSettings";
 import {
   rememberAgentsPreference,
@@ -43,7 +43,7 @@ it("defaults on, persists opt-out, and follows another window's preference", asy
 
 it("keeps an unsaved opt-out effective and offers retry without changing the choice", async () => {
   const user = userEvent.setup();
-  render(<AgentSettings />, {
+  const view = render(<AgentSettings />, {
     wrapper: ToastProvider,
   });
   const write = vi
@@ -56,8 +56,18 @@ it("keeps an unsaved opt-out effective and offers retry without changing the cho
   );
   expect(rememberAgentsPreference()).toBe(false);
   expect(screen.getByRole("dialog")).toHaveTextContent("could not be saved");
+  view.rerender(<AgentSettings active={false} />);
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  view.rerender(<AgentSettings />);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "could not be saved",
+  );
   write.mockRestore();
-  await user.click(screen.getByRole("button", { name: "Retry saving" }));
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving mentioned agents" }),
+  );
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(localStorage.getItem("buzz-remember-mentioned-agents.v1")).toBe("off");
 });

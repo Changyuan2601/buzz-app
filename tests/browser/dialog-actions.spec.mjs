@@ -1,3 +1,4 @@
+import { openCommunityPicker } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 // Real font metrics, footer overflow and native focus scrolling require browsers.
@@ -15,8 +16,8 @@ test("community dialog keeps oversized actions intact, reachable and keyboard op
     route.fulfill({ json: { name: "Secondary", policy: null } }),
   );
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Add a community", exact: true })
+  await (await openCommunityPicker(page))
+    .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Relay URL", exact: true })
@@ -152,6 +153,9 @@ test("community dialog keeps oversized actions intact, reachable and keyboard op
   expect((await published).ok()).toBe(true);
   await expect(dialog).toBeHidden();
   await expect(
-    page.getByRole("button", { name: "Switch to Secondary", exact: true }),
-  ).toHaveAttribute("aria-current", "true");
+    page.getByRole("button", {
+      name: "Community switcher: Secondary",
+      exact: true,
+    }),
+  ).toBeVisible();
 });

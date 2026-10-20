@@ -108,12 +108,13 @@ it("offers joined streams/forums, including private and still-confirming channel
     channel("stream"),
     channel("forum", { channelType: "forum" }),
     channel("private", { private: true }),
+    channel("huddle", { huddle: true }),
     channel("archived", { archived: true }),
     // The real store's shape for a joined channel restored from cache.
     channel("cached", { cached: true, readOnly: true }),
     channel("readOnly", { readOnly: true }),
     channel("dm", { channelType: "dm" }),
-    channel("session", { channelType: "session" }),
+    channel("chat", { channelType: "solo" }),
     { id: "unknown", name: "unknown", members: ["viewer"] },
     channel("outside", { members: ["other"] }),
     { id: "missing", name: "missing", channelType: "stream" },
@@ -215,6 +216,7 @@ it.each(["Beta", "a [b] *c* _d_ ~e~ &amp; <f> \\ !"])(
 it.each<Partial<ChannelSummary>>([
   {},
   { members: [] },
+  { huddle: true },
   { archived: true },
   { readOnly: true },
   { name: "renamed" },

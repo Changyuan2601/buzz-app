@@ -5,6 +5,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
+import { wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
 const key = "buzz-appearance.v1";
@@ -42,7 +43,7 @@ async function expectMode(page, mode, inSettings = false) {
   await expect(
     page
       .getByRole("complementary", {
-        name: inSettings ? "Settings sidebar" : "Channel sidebar",
+        name: inSettings ? "Settings sidebar" : "Sidebar",
         exact: true,
       })
       .getByRole("navigation", {
@@ -60,7 +61,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
-  for (const label of ["Default message color", "Blue message color"]) {
+  for (const label of ["Chartreuse accent color", "Cobalt accent color"]) {
     const swatch = button(page, label);
     await page.mouse.move(0, 0);
     const colors = await swatch.evaluate((node) => {
@@ -68,7 +69,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       node.append(probe);
       const colors = {};
       for (const state of ["hover", "pressed"]) {
-        probe.style.backgroundColor = `var(--surface-message-action-${state})`;
+        probe.style.backgroundColor = `var(--affordance-accent-prominent-${state})`;
         colors[state] = getComputedStyle(probe).backgroundColor;
       }
       probe.remove();
@@ -83,9 +84,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       await page.mouse.up();
     }
   }
-  await button(page, "Blue message color").focus();
+  await button(page, "Cobalt accent color").focus();
   await page.keyboard.press("Enter");
-  await expect(button(page, "Blue message color")).toHaveAttribute(
+  await expect(button(page, "Cobalt accent color")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -119,9 +120,17 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       return color;
     }),
   );
+  // Selection follows the chosen accent at the default accent level.
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
-    "rgb(51, 51, 51)",
+    await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--affordance-selected)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    }),
   );
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
     "dark",
@@ -198,7 +207,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgb(26, 26, 26)" : "rgb(255, 255, 255)",
     );
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
@@ -222,8 +231,8 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       }
     }
   }
-  await button(page, "Pink message color").click();
-  const pink = await button(page, "Pink message color").evaluate((el) => {
+  await button(page, "Magenta accent color").click();
+  const pink = await button(page, "Magenta accent color").evaluate((el) => {
     const probe = document.createElement("span");
     probe.style.backgroundColor = "var(--surface-message-own)";
     el.append(probe);
@@ -234,7 +243,6 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   for (const preview of await page
     .locator('.buzz-theme-preview[data-tone="light"]')
     .all()) {
-    await expect(preview).toHaveAttribute("data-bubble-color", "pink");
     for (const bubble of await preview
       .locator(".buzz-theme-preview-message")
       .all())
@@ -250,6 +258,66 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expectMode(page, "dark", true);
   await settings(page);
   await expect(dark).toBeChecked();
+});
+
+// Browser-only: shared popup geometry, decorative chip opacity, and focus return
+// across themes and narrow layouts. Component tests own level persistence.
+test("accent dropdown shows intensity chips and supports pointer and keyboard selection", async ({
+  page,
+  app,
+}, testInfo) => {
+  await page.goto(app.origin);
+  await settings(page);
+  const select = page.getByRole("combobox", { name: "Accent level" });
+  for (const [mode, width] of [
+    ["Light", 1280],
+    ["Dark", 390],
+  ]) {
+    await page.setViewportSize({ width, height: 844 });
+    await chooseColorMode(page, mode);
+    await select.click();
+    for (const [name, opacity] of [
+      ["Snoozin’", "0.25"],
+      ["Hummin’", "0.5"],
+      ["Swarmin’", "0.75"],
+      ["Buzzin’", "1"],
+    ]) {
+      const option = page.getByRole("option", { name, exact: true });
+      await expect(option).toBeVisible();
+      const chip = option.locator(".buzz-select-leading > span");
+      await expect(chip).toHaveCSS("opacity", opacity);
+      await expect(chip).toHaveCSS("width", "20px");
+      await expect(chip).toHaveCSS("height", "16px");
+    }
+    const menu = page.getByRole("listbox");
+    const bounds = await menu.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    await page
+      .getByRole("region", { name: "Appearance", exact: true })
+      .screenshot({
+        path: testInfo.outputPath(`accent-level-${mode}.png`),
+      });
+    await page.getByRole("option", { name: "Buzzin’", exact: true }).click();
+    await expect(select).toHaveText("Buzzin’");
+    await expect(select).toBeFocused();
+    await expect(select).toHaveCSS("padding-inline-start", "8px");
+    await select.press("ArrowDown");
+    await expect(
+      page.getByRole("option", { name: "Buzzin’", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(
+      page.getByRole("option", { name: "Snoozin’", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(select).toHaveText("Snoozin’");
+    await expect(select).toBeFocused();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-level",
+      "neutral",
+    );
+  }
 });
 
 test("System appearance follows computer changes and keeps the selected choice after reload", async ({
@@ -484,10 +552,40 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
+    // The legacy fill keeps meaning "prominent", whatever the accent level.
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",
-      mode === "Light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+      await page.evaluate(() => {
+        const probe = document.createElement("span");
+        probe.style.backgroundColor = "var(--affordance-prominent)";
+        document.body.append(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      }),
     );
+    const legacy = await page.locator("#old-primary").evaluate((node) => {
+      const style = getComputedStyle(node);
+      const hex = (color) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.fillStyle = color;
+        context.fillRect(0, 0, 1, 1);
+        return (
+          "#" +
+          [...context.getImageData(0, 0, 1, 1).data]
+            .slice(0, 3)
+            .map((v) => v.toString(16).padStart(2, "0"))
+            .join("")
+        );
+      };
+      return { ink: hex(style.color), fill: hex(style.backgroundColor) };
+    });
+    expect(
+      wcagRatio(legacy.ink, legacy.fill),
+      `legacy primary ink in ${mode}`,
+    ).toBeGreaterThanOrEqual(4.5);
     await expect(page.locator("#old-primary")).toHaveCSS(
       "border-radius",
       "12px",

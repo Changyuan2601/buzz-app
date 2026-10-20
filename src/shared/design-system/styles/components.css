@@ -58,6 +58,10 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* A leading icon sits as close to the leading edge as to the top and bottom. */
+  .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
+    padding-inline-start: var(--space-1);
+  }
   /* Inline caption choices, such as the composer's model label. */
   .buzz-button[data-size="inline"] {
     @apply text-caption;
@@ -88,7 +92,7 @@
   }
   .buzz-button[data-variant="prominent"] {
     background: var(--affordance-prominent);
-    color: var(--text-inverse);
+    color: var(--text-on-prominent);
   }
   .buzz-button[data-variant="subtle"] {
     background: var(--interaction-fill);
@@ -352,12 +356,14 @@
     background: var(--interaction-selected);
   }
 
-  /* Glyph-state toggles stay unfilled; their caller supplies outline/filled art.
-     Keep the 32px small hit area with slightly larger 20px artwork. */
+  /* Bare controls stay unfilled. Glyph-state toggles keep their larger
+     artwork; row actions retain the standard icon sizing. */
   .buzz-button[data-icon-variant="bare"] {
     background: transparent;
   }
-  .buzz-button[data-icon-variant="bare"][data-size="sm"]
+  .buzz-button[data-icon-variant="bare"][aria-pressed]:where(
+      [data-icon-size="sm"]
+    )
     .buzz-button-label
     > svg {
     width: var(--space-5);
@@ -624,6 +630,10 @@
     box-shadow: var(--shadow-panel);
   }
 
+  .panel[data-shape="capsule"] {
+    border-radius: var(--radius-pill);
+  }
+
   /* A joined surface keeps one outer edge; nested panels retain opaque
      fills for responsive overlays while their layout owns the separators. */
   .panel[data-joined] .panel {
@@ -689,6 +699,9 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    /* Tab labels are controls, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   /* Geometry only. **Colour is not here, deliberately.**
@@ -736,7 +749,7 @@
 
   .buzz-tabs[data-variant="chrome"],
   .chrome-navigation {
-    background: var(--affordance-subtle);
+    background: var(--affordance-chrome);
   }
 
   .buzz-tabs[data-variant="chrome"] {
@@ -757,12 +770,12 @@
     height: 2rem;
     border-radius: var(--radius-pill);
     padding: 0 var(--space-4);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
   }
 
   /* Selection and hover occupy the same box; a selected tab does not hover. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
 
@@ -775,6 +788,40 @@
     bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Segmented filters on opaque surfaces, as used by sidebar scope. */
+  .buzz-tabs[data-variant="segmented"] {
+    display: flex;
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+    width: 100%;
+    gap: var(--space-1);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--space-8);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+  }
+  .buzz-tabs[data-variant="segmented"]
+    .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+    inset-block: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1007,6 +1054,9 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+    /* Navigation labels are controls, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
     transition:
       color var(--duration-state) var(--easing-state),
       background-color var(--duration-state) var(--easing-state);
@@ -1057,12 +1107,12 @@
     height: 2rem;
     padding: 0 var(--space-4);
     border-radius: var(--radius-pill);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
     @apply text-label;
   }
   .chrome-navigation
     .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
@@ -1072,6 +1122,20 @@
     box-shadow: var(--shadow-xs);
   }
 
+  .navigation-item[data-variant="search"] {
+    padding: var(--space-3);
+    border-radius: max(
+      0px,
+      calc(
+        var(
+          --search-palette-radius,
+          calc(var(--radius-panel) + var(--space-1))
+        ) -
+        var(--space-3)
+      )
+    );
+    corner-shape: squircle;
+  }
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;
@@ -1421,7 +1485,10 @@
     :is(
       .buzz-choice-row-description,
       .buzz-choice-row-trailing,
-      .buzz-menu-icon
+      .buzz-menu-icon,
+      .buzz-menu-trailing,
+      .buzz-menu-item-indicator,
+      .buzz-menu-submenu-arrow
     ) {
     color: inherit;
   }
@@ -1466,6 +1533,16 @@
   }
   :is(.buzz-menu-popup, .buzz-popover-popup):where([data-ending-style]) {
     transition-duration: calc(var(--duration-fast) / 2);
+  }
+  /* Context actions appear at the pointer immediately; retain a quiet exit. */
+  .buzz-menu-popup[data-context-menu] {
+    filter: none;
+    transform: none;
+    transition-property: opacity;
+  }
+  .buzz-menu-popup[data-context-menu]:not([data-ending-style]) {
+    opacity: 1;
+    transition: none;
   }
   html[data-keyboard-navigation] :is(.buzz-menu-popup, .buzz-popover-popup) {
     transition: none;
@@ -1637,6 +1714,29 @@
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-animate] .buzz-accordion-panel {
+    padding: 0;
+    height: var(--accordion-panel-height);
+    overflow: clip;
+    transition: height var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-animate] .buzz-accordion-content {
+    padding: var(--space-2);
+  }
+  .buzz-accordion[data-animate]
+    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+    height: 0;
+  }
+  :where(html[data-keyboard-navigation])
+    .buzz-accordion[data-animate]
+    .buzz-accordion-panel {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-accordion[data-animate] .buzz-accordion-panel {
+      transition: none;
+    }
+  }
   .buzz-accordion[data-variant="settings"]
     .buzz-accordion-trigger[aria-expanded="true"] {
     border-end-start-radius: 0;
@@ -1731,7 +1831,7 @@
     width: 0.875rem;
     height: 0.875rem;
     border-radius: var(--radius-pill);
-    background: var(--text-inverse);
+    background: var(--text-on-prominent);
     box-shadow: var(--shadow-xs);
     transform: translateX(0);
     transition: transform var(--duration-settle) var(--easing-settle);
@@ -1994,5 +2094,41 @@
     .buzz-arrive[data-leaving] {
       animation: none;
     }
+  }
+}
+
+@layer components {
+  .buzz-preference-row[data-variant="search"] {
+    padding: var(--space-3);
+    gap: var(--space-row-gap);
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-icon {
+    width: var(--space-6);
+    height: var(--space-6);
+    justify-content: flex-start;
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-icon > svg {
+    width: calc(var(--space-5) + 1px);
+    height: calc(var(--space-5) + 1px);
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-content {
+    gap: 0;
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-description {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+}
+
+@layer components {
+  .search-control-row {
+    border-radius: max(
+      0px,
+      calc(var(--search-palette-radius, var(--radius-panel)) - var(--space-3))
+    );
+    corner-shape: squircle;
+  }
+  .search-control-row[data-highlighted] {
+    background: var(--affordance-subtle-hover);
   }
 }

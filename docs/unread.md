@@ -54,7 +54,9 @@ catch-up (including a message taller than the viewport):
   unread until read in their thread. Replies outside the viewer's conversations
   do not count at all, so there is no reply activity to quiet. Mentions,
   broadcasts and marked messages are not quieted. Participation discovered
-  later makes a reply relevant again, with its own unread state intact.
+  later makes a reply relevant again, with its own unread state intact. A
+  timeline that shows replies (Solo chats) can end at one; that reply anchors
+  the live bottom without being acknowledged.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
@@ -129,6 +131,8 @@ backlog and the thread being read, without reading unopened threads' replies.
 The sidebar separates ordinary unread from directed attention. Ordinary backlog
 or local manual intent strengthens the channel label; protected attention alone
 retains its dot without bolding a caught-up channel. DMs retain unread bolding.
+Solo chat labels strengthen for any observed unread message, including mentions,
+broadcasts and relevant replies; their attention dots remain independent.
 Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
 avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:

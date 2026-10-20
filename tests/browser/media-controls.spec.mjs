@@ -1,6 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// Browser-only: inherited legacy colors on the real uploaded-file preview.
+// Browser-only: the file card retains the dark stage surface across host themes.
 test("file previews keep dark stage colors when host appearance changes", async ({
   page,
 }) => {
@@ -31,7 +31,7 @@ test("file previews keep dark stage colors when host appearance changes", async 
       "color",
       mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
     );
-    await expect(file).toHaveCSS("background-color", "rgb(35, 35, 35)");
+    await expect(file).toHaveCSS("background-color", "rgb(16, 16, 16)");
     await expect(file).toHaveCSS("color", "rgb(255, 255, 255)");
     await file.hover();
     await expect(file).toHaveCSS("background-color", "rgb(46, 46, 46)");

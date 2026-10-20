@@ -62,7 +62,10 @@ export async function respond(
 export const content = (reply: Reply) =>
   typeof reply === "string"
     ? [{ type: "text" as const, text: reply }]
-    : [{ type: "image" as const, data: reply.data, mimeType: reply.type }];
+    : [
+        { type: "image" as const, data: reply.data, mimeType: reply.type },
+        ...(reply.text ? [{ type: "text" as const, text: reply.text }] : []),
+      ];
 
 export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);

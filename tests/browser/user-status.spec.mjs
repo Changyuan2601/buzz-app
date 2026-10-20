@@ -66,6 +66,15 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(emojiButton).not.toHaveText("💬");
     await editor.getByLabel("Status message").fill("Design meeting");
     await expect(emojiButton).toHaveText("💬");
+    // This picker shares the external-trigger contract with message reactions.
+    // Escape restores its exact trigger without dismissing the status draft.
+    await emojiButton.click();
+    const emojiSearch = page.getByRole("searchbox", { name: "Search emoji" });
+    await expect(emojiSearch).toBeFocused();
+    await emojiSearch.press("Escape");
+    await expect(emojiSearch).toBeHidden();
+    await expect(emojiButton).toBeFocused();
+    await expect(editor).toBeVisible();
     await expect(editor.getByLabel("Status message")).toHaveValue(
       "Design meeting",
     );

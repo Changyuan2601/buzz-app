@@ -420,7 +420,7 @@ export function HostedCommunities({
     <section aria-labelledby="hosted-communities-title">
       <Header
         id="hosted-communities-title"
-        title="Hosted communities"
+        title="Builderlab hosting"
         subtitle="Manage Block-hosted communities with Builderlab. Other relays don’t require this sign-in."
       />
       {failure}
@@ -507,7 +507,7 @@ export function HostedCommunities({
                 <div className="space-y-3">
                   <InlineHeader
                     title="Link this account to your Buzz identity"
-                    subtitle="This Builderlab account isn’t linked to a Buzz identity yet. Connect this device’s key to create and own communities under it — Buzz signs a one-time challenge locally, so your private key never leaves this computer."
+                    subtitle="This Builderlab account isn’t linked to a Buzz identity yet. Connect this device’s key to create and own communities under it — Buzz signs a one-time challenge locally. Connecting shares the signed proof and your public identity."
                   />
                   <Button
                     variant="primary"

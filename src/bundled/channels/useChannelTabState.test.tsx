@@ -141,10 +141,10 @@ test("channel switches retire each visit's menu opening without copying retained
   expect(mounted.result.current.selected).toBe(panelTabId(alphaTool));
 });
 
-test("Me and Messages retain independent workspaces for the same conversation", () => {
+test("Solo and Messages retain independent workspaces for the same conversation", () => {
   const session = {} as RelaySession;
   const messages = renderHook(() => useChannelTabState(session, "alpha"));
-  const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  const solo = renderHook(() => useChannelTabState(session, "alpha", "solo"));
   act(() => {
     messages.result.current.setTabs(() => [
       {
@@ -155,24 +155,26 @@ test("Me and Messages retain independent workspaces for the same conversation", 
       },
     ]);
     messages.result.current.select("messages-tab");
-    me.result.current.setTabs(() => [
-      { id: "me-tab", kind: "conversation", channelId: "beta" },
+    solo.result.current.setTabs(() => [
+      { id: "solo-tab", kind: "conversation", channelId: "beta" },
     ]);
-    me.result.current.select("me-tab");
-    me.result.current.setPaneOpen(false);
-    me.result.current.retireMenuEntries();
+    solo.result.current.select("solo-tab");
+    solo.result.current.setPaneOpen(false);
+    solo.result.current.retireMenuEntries();
   });
   expect(messages.result.current).toMatchObject({
     selected: "messages-tab",
     paneOpen: true,
     tabs: [{ id: "messages-tab" }],
   });
-  me.unmount();
-  const restored = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  solo.unmount();
+  const restored = renderHook(() =>
+    useChannelTabState(session, "alpha", "solo"),
+  );
   expect(restored.result.current).toMatchObject({
-    selected: "me-tab",
+    selected: "solo-tab",
     paneOpen: false,
-    tabs: [{ id: "me-tab" }],
+    tabs: [{ id: "solo-tab" }],
   });
 });
 
@@ -275,6 +277,11 @@ test("moving a thread reorders it within a pane and across panes", () => {
   expect(
     h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
   ).toMatchObject({ replyRequest: 1 });
+  // Focusing keeps the reply request, so the reply box keeps its target.
+  act(() => h.result.current.openThreadTab("alpha", "a", "a", "focus"));
+  expect(
+    h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
+  ).toMatchObject({ replyRequest: 1, focusRequest: 1 });
 });
 
 // A link's root hint is not identity: the reader's verified root merges a
@@ -549,10 +556,10 @@ test("agents open thread tabs in the background and never close a shown one", ()
     "thread:alpha:r4",
   ]);
   expect(page.result.current.selected).toBe("thread:alpha:r2");
-  // Other channels and the Me page keep their own tabs.
+  // Other channels and the Solo workspace keep their own tabs.
   expect(tabs.list("beta")).toEqual([]);
-  const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
-  expect(me.result.current.tabs).toEqual([]);
+  const solo = renderHook(() => useChannelTabState(session, "alpha", "solo"));
+  expect(solo.result.current.tabs).toEqual([]);
 });
 
 test("an agent's tab leaves a page's side panel showing", () => {
@@ -619,7 +626,7 @@ test.each(["channel", "page", "community", "unmount"])(
       page.rerender({
         session: destination === "community" ? tabSession() : session,
         channel: destination === "channel" ? "beta" : "alpha",
-        page: destination === "page" ? "me" : "messages",
+        page: destination === "page" ? "solo" : "messages",
       });
     expect(tabs.list("alpha").every((tab) => !tab.shown)).toBe(true);
     act(() => {

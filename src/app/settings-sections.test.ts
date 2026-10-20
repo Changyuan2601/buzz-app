@@ -1,10 +1,5 @@
 // @vitest-environment jsdom
 import { expect, it } from "vitest";
-import {
-  ChatCircleIcon,
-  UserIcon,
-  UsersIcon,
-} from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
 import {
@@ -29,23 +24,44 @@ const card = (
   };
 };
 const cards = [
+  // Plugin activation/re-enable order must not determine community navigation.
+  card("buzz.pairing/mobile", { personal: true }),
+  card("buzz.emoji/custom-emoji"),
+  card("buzz.channels/templates", { group: "App" }),
   card("example/groups"),
   card("other/groups"),
   card("example/membership", { section: "administration" }),
   card("example/hosted", { group: "Communities" }),
+  card("buzz.agents/jev-classifier", {
+    group: "Plugins",
+    title: "Jev classifier",
+  }),
+  card("block.hosted-communities/hosted", {
+    group: "Plugins",
+    title: "Builderlab hosting",
+  }),
+  card("block.builderlab/login", {
+    group: "Plugins",
+    title: "Builderlab agents",
+  }),
 ];
 const primary = { id: "primary", name: "Primary" };
 const app = [
+  "identity",
   "appearance",
   "notifications",
   "shortcuts",
   "agents",
-  "plugins",
+  "buzz.channels/templates",
   "updates",
+  ...(developerMode ? ["developer"] : []),
 ];
-const development = developerMode
-  ? [["development", "Development", ["developer"]]]
-  : [];
+const plugins = [
+  "plugins",
+  "block.builderlab/login",
+  "block.hosted-communities/hosted",
+  "buzz.agents/jev-classifier",
+];
 const outline = (model: ReturnType<typeof settingsSections>) =>
   model.groups.map((group) => [
     group.id,
@@ -62,12 +78,19 @@ it.each([
       [
         "community",
         "Primary",
-        ["profile", "example/groups", "other/groups", "leave-community"],
+        [
+          "profile",
+          "buzz.emoji/custom-emoji",
+          "example/groups",
+          "other/groups",
+          "buzz.pairing/mobile",
+          "leave-community",
+        ],
       ],
-      ["administration", "Administration", ["example/membership"]],
+      ["administration", "Community admin", ["example/membership"]],
+      ["app", "Buzz", app],
+      ["plugins", "Plugins", plugins],
       ["group:Communities", "Communities", ["example/hosted"]],
-      ["app", "App", app],
-      ...development,
     ],
   ],
   [
@@ -75,9 +98,10 @@ it.each([
     undefined,
     "appearance",
     [
+      ["personal", "Personal space", ["profile", "buzz.pairing/mobile"]],
+      ["app", "Buzz", app],
+      ["plugins", "Plugins", plugins],
       ["group:Communities", "Communities", ["example/hosted"]],
-      ["app", "App", ["profile", ...app]],
-      ...development,
     ],
   ],
 ])(
@@ -92,25 +116,22 @@ it.each([
   },
 );
 
-it("leaves contributed group icons to each presentation", () => {
-  const icons = Object.fromEntries(
-    settingsSections(cards, primary).sections.map((section) => [
-      section.id,
-      section.icon,
-    ]),
-  );
-  expect(icons).toMatchObject({
-    profile: UserIcon,
-    "example/groups": ChatCircleIcon,
-    "example/membership": UsersIcon,
-    "example/hosted": undefined,
-  });
-});
-
 it("classifies built-in sections apart from plugin card keys", () => {
-  for (const id of ["profile", "leave-community", ...app])
+  for (const id of [
+    "profile",
+    "identity",
+    "plugins",
+    "leave-community",
+    ...app.filter((id) => id !== "buzz.channels/templates"),
+  ])
     expect(isBuiltInSettingsSection(id)).toBe(true);
   expect(isBuiltInSettingsSection("developer")).toBe(developerMode);
-  for (const id of ["example/groups", "Profile", "", "administration"])
+  for (const id of [
+    "example/groups",
+    "buzz.channels/templates",
+    "Profile",
+    "",
+    "administration",
+  ])
     expect(isBuiltInSettingsSection(id)).toBe(false);
 });

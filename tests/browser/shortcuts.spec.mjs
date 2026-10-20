@@ -1,4 +1,5 @@
-import { openPage, pageChoices } from "./navigation.mjs";
+import { pluginAction } from "./plugin-settings.mjs";
+import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
 
@@ -313,7 +314,8 @@ test.describe("scaled history", () => {
       ),
     ).toBe(112);
     const sidebar = page.getByRole("complementary", {
-      name: "Channel sidebar",
+      name: "Sidebar",
+      exact: true,
     });
     const handle = page.getByRole("separator", {
       name: "Resize sidebar",
@@ -406,16 +408,15 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   ).toHaveCount(0);
   await expect(button(page, "Search Buzz")).toBeFocused();
   await page.keyboard.press(`${modifier}+,`);
-  await button(page, "Plugins").click();
-  const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });
+  await button(page, "Manage plugins").click();
+  const toggle = pluginAction(page, "Shortcut counter");
   await toggle.click();
-  const choices = await pageChoices(page);
-  await expect(
-    choices.getByRole("option", { name: "Settings", exact: true }),
-  ).toBeVisible();
-  await expect(
-    choices.getByRole("option", { name: "Shortcut counter", exact: true }),
-  ).toHaveCount(0);
+  const choices = await pageChoices(page, "Settings");
+  await expect(pageChoice(choices, "Settings")).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Shortcut counter");
+  await expect(pageChoice(choices, "Shortcut counter")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),

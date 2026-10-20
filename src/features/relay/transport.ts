@@ -1,6 +1,5 @@
+import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
-import { archiveClient } from "../archive/client";
-import type { ArchiveHost } from "../archive/types";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -14,9 +13,9 @@ import type { PrivateRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import {
   communityGitRepository,
-  projectGitHost,
-  type ProjectGit,
-} from "../projects/git";
+  repoGitHost,
+  type RepoGit,
+} from "../repos/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import {
@@ -39,6 +38,7 @@ import {
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
+  type SidebarFilterMutator,
   type SidebarDecoder,
   type SidebarMuteMutator,
   type SidebarPreferences,
@@ -83,7 +83,7 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
-  readonly projectGit?: ProjectGit;
+  readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
   /** Session-scoped owner proof, not an arbitrary signing capability. */
   readonly authorizeAgentLog?: (
@@ -107,17 +107,19 @@ export interface ReadTransport {
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
   readonly memberAdministration?: RelayWriter;
+  /** NIP-AR kind-45010 config artifacts only; never supplied to the outbox. */
+  readonly configArtifacts?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
-  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly writeSidebarSort?: SidebarSortMutator;
+  readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
@@ -125,6 +127,9 @@ export interface ReadTransport {
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;
+  /** The relay advertises `buzz-search-sort`: bridge search accepts
+   * `search_sort: "newest"`. Older relays silently rank by relevance. */
+  readonly searchSort?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -163,6 +168,7 @@ export interface ReadTransport {
   readonly viewer: string;
   /** Relay authority that signs discovery and window-bounds events. */
   readonly relayAuthor: string;
+  readonly audienceAuthorityCommunity?: string | undefined;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
   /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
@@ -443,10 +449,12 @@ export async function connectBrokerTransport(
     presence?: boolean;
     sidebarPreferences?: boolean;
     sidebarSortWrites?: boolean;
+    sidebarFilterWrites?: boolean;
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     channelIdentity?: boolean;
+    searchSort?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
@@ -458,6 +466,7 @@ export async function connectBrokerTransport(
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
+    audienceAuthorityCommunity?: string;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -551,26 +560,6 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
-    ...(session.agentActivity === true && session.live === true
-      ? {
-          activityArchive: archiveClient("broker", async (input, signal) => {
-            const response = await fetch(`${endpoint}/archive`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ viewer: session.viewer, ...input }),
-              signal: signal
-                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-                : AbortSignal.timeout(10000),
-            });
-            if (!response.ok)
-              throw new Error(
-                "Archive operation failed; retry without deleting stored data",
-              );
-            return response.json();
-          }).host,
-        }
-      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
@@ -635,7 +624,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.projectGit === true
       ? {
-          projectGit: projectGitHost((body, signal) =>
+          projectGit: repoGitHost((body, signal) =>
             fetch(`${endpoint}/project-git`, {
               method: "POST",
               credentials: "same-origin",
@@ -770,6 +759,7 @@ export async function connectBrokerTransport(
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
       : {}),
+    ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.channelKit
       ? {
           channelKit: {
@@ -855,6 +845,13 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(audienceAuthorityCommunity({
+      version: 1,
+      max_sources: 100,
+      community_id: session.audienceAuthorityCommunity,
+    })
+      ? { audienceAuthorityCommunity: session.audienceAuthorityCommunity }
+      : {}),
     ...(session.readStateCommunity
       ? {
           async readStateSnapshot(
@@ -917,6 +914,54 @@ export async function connectBrokerTransport(
                 sectionIds,
               ).sort ?? {}
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarFilterWrites
+      ? {
+          async writeSidebarFilter(
+            group,
+            mode,
+            sectionIds,
+            signal,
+            activeWindowSeconds,
+          ) {
+            const result = await fetch(`${endpoint}/sidebar-filter`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                group,
+                mode,
+                sectionIds,
+                activeWindowSeconds,
+              }),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as {
+              groups?: unknown;
+              activeWindowSeconds?: unknown;
+            };
+            const projected = projectSidebarPreferences(
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              sectionIds,
+              {
+                version: 1,
+                groups: value.groups,
+                activeWindowSeconds: value.activeWindowSeconds,
+              },
+            );
+            return {
+              filters: projected.filters ?? {},
+              activeWindowSeconds: projected.activeWindowSeconds ?? {},
+            };
           },
         }
       : {}),
@@ -1424,10 +1469,19 @@ export async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         "conflict: the relay state changed; reload before writing again",
       );
-    if ([400, 401, 403, 404, 413, 422].includes(response.status))
+    if ([400, 401, 403, 404, 413, 422].includes(response.status)) {
+      // Keep the relay's bounded `{error}` text for writers that classify it.
+      let reason: string | undefined;
+      await readApiFailure(response, (value) => {
+        const error = (value as { error?: unknown } | null)?.error;
+        if (typeof error === "string") reason = error;
+        return undefined;
+      });
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
+        reason,
       );
+    }
     // Only proven non-delivery is safe to mark failed. Socket quota reasons are
     // display-only: keep them distinct from HTTP API quota/cooldown ownership.
     const body = await readApiFailure(response, (value) => {

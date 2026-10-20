@@ -4,8 +4,9 @@
 // shown the conversation again. A one-off turn (a watch or timer wake) gets a
 // session of its own, closed when it ends. Every session holds one of the
 // host's MCP servers, so all goose agents share one pool of them, and the least
-// recently used idle session closes to make room. Nothing is saved: sessions
-// live as long as the app does.
+// recently used idle session closes to make room. Sessions live as long as
+// the app does; only when each conversation last used one is saved, so its
+// sessions stay listed after they close.
 import {
   GooseProcess,
   type ActivityReceipt,
@@ -24,6 +25,15 @@ export const IDLE_MS = 15 * 60_000;
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
 const LATE: Settled = { ok: false, error: "goose did not start in time" };
+/** Saved conversations per agent; the least recently used are forgotten. */
+const SAVED_LIMIT = 200;
+
+/** What is saved for one conversation: when its session last took in a
+ * message or ended a turn. */
+export type SavedConversation = Readonly<{ at: number }>;
+export type SessionStore = {
+  set(key: string, saved: SavedConversation): void;
+};
 
 /** A session's hold on one MCP server in the pool. */
 type Slot = {
@@ -126,11 +136,15 @@ export type SessionsOptions = Readonly<{
   pool: ServerPool;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
-  /** The agent's provider and model now, which each new turn runs on. */
+  /** The agent's provider, model and thinking level now, which each new
+   * turn runs on. */
   choice(): Choice;
   /** Changes when a setting a session was opened with has changed. */
   fingerprint(): string;
-  /** Called when a conversation's session opens or closes. */
+  /** Where each conversation's last use is saved. */
+  store?: SessionStore;
+  /** Called when a conversation's session opens, is sent a message, or
+   * closes. */
   onChange?(): void;
 }>;
 
@@ -139,6 +153,8 @@ type Live = {
   process: GooseProcess;
   fingerprint: string;
   slot: Slot;
+  /** When it last took in a message or ended a turn. */
+  at: number;
   timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -167,13 +183,20 @@ export class AgentSessions {
   seen(key: string) {
     return this.shown.get(key) ?? 0;
   }
-  /** Conversations with a session, and whether each is working. */
-  snapshot(): { key: string; busy: boolean; sessionId?: string }[] {
+  /** Conversations with a session, whether each is working, and when each
+   * last took in a message or ended a turn. */
+  snapshot(): {
+    key: string;
+    busy: boolean;
+    sessionId?: string;
+    at?: number;
+  }[] {
     return [
       ...[...this.live].map(([key, live]) => ({
         key,
         busy: live.session.busy,
         sessionId: live.session.id,
+        at: live.at,
       })),
       ...[...this.once.keys()].map((key) => ({ key, busy: true })),
     ];
@@ -271,6 +294,13 @@ export class AgentSessions {
     }
   }
 
+  /** Stops the turn running in conversation `key`, if any, once a session
+   * opening for it has taken its message. */
+  async interrupt(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    this.live.get(key)?.session.interrupt();
+  }
+
   /** Runs one turn in a new session, then closes it. `label` names it in the
    * snapshot. It gives up, and stops the turn, once `signal` aborts.
    * `prompt` is asked for the turn's text once the session is open, so a turn
@@ -330,8 +360,13 @@ export class AgentSessions {
     for (const live of this.once.values()) if (live) void this.close(live);
   }
 
+  /** Opened with old settings, or on a thinking level when goose's own is
+   * chosen now, which only a new session runs on. */
   private stale(live: Live) {
-    return live.fingerprint !== this.options.fingerprint();
+    return (
+      live.fingerprint !== this.options.fingerprint() ||
+      Boolean(live.session.effort && !this.options.choice().effort)
+    );
   }
 
   /** Opens a session for `key` in the agent's workspace, which `use` records
@@ -388,7 +423,7 @@ export class AgentSessions {
     const released = () => pool.release(slot);
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
-    const live = { session, process, fingerprint, slot };
+    const live = { session, process, fingerprint, slot, at: Date.now() };
     if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);
@@ -410,7 +445,8 @@ export class AgentSessions {
       this.drop(key, live);
       await live.session.server?.closed;
     };
-    this.touch(key, live);
+    // Not saved until a message is handed to it: its own may have given up.
+    this.countdown(key, live);
     this.options.onChange?.();
   }
   private async answer(
@@ -420,23 +456,34 @@ export class AgentSessions {
     activity: ActivityReceipt,
     model: string | undefined,
   ) {
-    const settled = await live.session.send(text, activity, model);
+    const sent = live.session.send(text, activity, model);
+    // Sending made it busy; a snapshot read when it opened is not.
+    this.options.onChange?.();
+    const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (!live.session.busy && this.stale(live)) this.drop(key, live);
     }
     return settled;
   }
-  /** Notes what the session has been shown and restarts its idle countdown. */
+  /** Notes that the session took in a message or ended a turn, and what it
+   * has been shown, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
+    live.at = Date.now();
+    this.options.store?.set(key, { at: live.at });
+    this.countdown(key, live);
+    if (seen !== undefined)
+      this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
+  }
+  /** Closes the session after IDLE_MS, or waits again while it is busy: a
+   * long turn is not new use. */
+  private countdown(key: string, live: Live) {
     this.options.pool.touch(live.slot);
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.session.busy) this.touch(key, live);
+      if (live.session.busy) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
-    if (seen !== undefined)
-      this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
@@ -450,6 +497,42 @@ export class AgentSessions {
   private close(live: Live) {
     return live.process.close(live.session);
   }
+}
+
+/** Conversations saved in local storage, by agent and then conversation. */
+export function localSessions(
+  storage: Storage,
+  agent: string,
+  name = "buzz.goose.sessions.v1",
+): SessionStore & {
+  /** Saved conversations, most recently used first. */
+  list(): [string, SavedConversation][];
+} {
+  const readAll = (): Record<string, Record<string, SavedConversation>> => {
+    try {
+      const value = JSON.parse(storage.getItem(name) ?? "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch {
+      return {};
+    }
+  };
+  const list = (saved: Record<string, SavedConversation> = {}) =>
+    Object.entries(saved)
+      .filter(([, conversation]) => typeof conversation?.at === "number")
+      .sort(([, a], [, b]) => b.at - a.at);
+  return {
+    list: () => list(readAll()[agent]),
+    set: (key, saved) => {
+      const all = readAll();
+      const kept = list({ ...all[agent], [key]: saved }).slice(0, SAVED_LIMIT);
+      all[agent] = Object.fromEntries(kept);
+      try {
+        storage.setItem(name, JSON.stringify(all));
+      } catch (error) {
+        console.warn("goose sessions were not saved", error);
+      }
+    },
+  };
 }
 
 /** `workspace` as an absolute path, which ACP sessions need: the host
@@ -469,7 +552,10 @@ export async function absolute(spawn: Spawn, workspace: string) {
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */
-function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function abortable<T>(
+  work: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return work;
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);

@@ -42,10 +42,13 @@ export function AgentCard({
   community,
   detail,
   icon,
+  tag,
   children,
   menu,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "children"> & {
+  /** A short status beside the name, such as "Default agent". */
+  tag?: ReactNode;
   agent: Portrayed;
   community?: string | undefined;
   /** One line under the name, such as its model. */
@@ -62,6 +65,7 @@ export function AgentCard({
         <AgentPortrait agent={agent} community={community} />
       </span>
       <span className={`${styles.name} text-label`}>{agent.name}</span>
+      {tag && <span className={styles.tag}>{tag}</span>}
       {detail && (
         <span className={styles.detail}>
           {icon}

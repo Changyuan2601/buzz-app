@@ -1,11 +1,13 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
+mod huddle;
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
     relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -222,6 +224,24 @@ pub(crate) async fn relay_git_authorization(
     ))
 }
 
+/// The largest complete signed NIP-AR artifact the relay takes: its default
+/// 512 KiB WebSocket frame (`DEFAULT_MAX_FRAME_BYTES`) less the `["EVENT",…]`
+/// wrapper. A 131,072-byte config snapshot plus the relay's 65,536 tag bytes
+/// fits even fully escaped. Mirrors `ARTIFACT_MAX_EVENT_BYTES` in
+/// `agent-config-artifacts.ts`.
+const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
+
+/// Kinds whose events may exceed the default 64 KiB signing bound.
+fn signing_limit(kind: u16) -> Option<usize> {
+    if catalog::is_catalog(kind) {
+        Some(catalog::MAX_EVENT_BYTES)
+    } else if kind == 45010 {
+        Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn relay_sign(
     host: tauri::State<'_, IdentityHost>,
@@ -244,11 +264,17 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = if catalog::is_catalog(event.kind) {
-        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
-    } else {
-        host.sign(event).await?
+    let artifact = event.kind == 45010;
+    let signed = match signing_limit(event.kind) {
+        Some(limit) => host.sign_bounded(event, limit).await?,
+        None => host.sign(event).await?,
     };
+    // The commitment bound above omits id, pubkey key and sig; the relay
+    // limits the whole event.
+    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    {
+        return Err("Relay event is too large".into());
+    }
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
@@ -1595,11 +1621,22 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     source: String,
     name: String,
 ) -> Result<()> {
     use tauri::Manager as _;
+    let allowed = match webview.label() {
+        "main" => true,
+        "huddle" => app
+            .try_state::<crate::huddle_window::HuddleWindow>()
+            .is_some_and(|host| host.permits_download(&source, &name)),
+        _ => false,
+    };
+    if !allowed {
+        return Err("This attachment is no longer available in this window".into());
+    }
     let url = download_target(&source).ok_or("Invalid media URL")?;
     let filename = download_name(&name, &url).to_owned();
     let directory = app

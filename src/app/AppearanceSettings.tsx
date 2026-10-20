@@ -1,14 +1,18 @@
 import {
-  BUBBLE_COLORS,
-  messageButtonStyle,
-} from "../shared/theme/bubble-color";
+  ACCENTS,
+  COLOR_LEVELS,
+  accentButtonStyle,
+  type ColorLevel,
+} from "../shared/theme/accent";
+import { Select } from "../shared/design-system/ui/Select";
+import styles from "./AccentLevelIndicator.module.css";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import {
   ArrowCounterClockwiseIcon,
   CheckIcon,
 } from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { Header } from "../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { ThemePicker } from "../shared/design-system/ui/ThemePicker";
@@ -21,6 +25,23 @@ import {
 } from "react";
 import type { Appearance } from "../shared/theme/service";
 
+import {
+  setThreadPlacementPreference,
+  useThreadPlacementPreference,
+} from "../features/messages/thread-preferences";
+
+const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
+  neutral: "Snoozin’",
+  touch: "Hummin’",
+  more: "Swarmin’",
+  full: "Buzzin’",
+};
+const COLOR_LEVEL_OPTIONS = COLOR_LEVELS.map((level) => ({
+  value: level,
+  label: COLOR_LEVEL_LABELS[level],
+  leading: <AccentLevelIndicator level={level} />,
+}));
+
 export function AppearanceSettings({
   appearance,
   active = true,
@@ -28,6 +49,7 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
+  const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -43,19 +65,29 @@ export function AppearanceSettings({
     pendingFocus.current = null;
     if (target?.isConnected) target.focus();
   });
-  const { preference, error, fontScale, fontError, bubbleColor, bubbleError } =
-    useSyncExternalStore(appearance.subscribe, appearance.snapshot);
+  const {
+    preference,
+    mode,
+    error,
+    fontScale,
+    fontError,
+    accent,
+    accentError,
+    colorLevel,
+    colorLevelError,
+  } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
       <div>
+        <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
+            id="setting-mode"
             title="Color mode"
             trailing={
               <ThemePicker
                 value={preference}
-                messageColor={bubbleColor}
                 onValueChange={appearance.setMode}
               />
             }
@@ -107,46 +139,42 @@ export function AppearanceSettings({
             }
           />
           <PreferenceRow
-            title="Message bubbles"
+            title="Accent color"
             trailing={(label) => (
               <fieldset
                 {...label}
                 className="m-0 min-w-0 max-w-full border-0 p-0"
               >
                 <div
-                  data-message-colors
+                  data-accent-colors
                   className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto p-1 scroll-p-1 [&>button]:scroll-m-1"
                 >
-                  {BUBBLE_COLORS.map((color) => {
-                    const colorLabel =
-                      color === "neutral"
-                        ? "Default"
-                        : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
+                  {ACCENTS.map((color) => {
+                    const colorLabel = `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
                     return (
                       <IconButton
                         key={color}
-                        data-bubble-color={color}
-                        style={messageButtonStyle}
+                        data-accent={color}
+                        data-color-mode={mode}
+                        style={accentButtonStyle}
                         variant="primary"
                         size="sm"
                         shape="round"
-                        aria-label={`${colorLabel} message color`}
+                        aria-label={`${colorLabel} accent color`}
                         title={colorLabel}
-                        aria-pressed={bubbleColor === color}
+                        aria-pressed={accent === color}
                         onFocus={(event) =>
                           event.currentTarget.scrollIntoView({
                             block: "nearest",
                             inline: "nearest",
                           })
                         }
-                        onClick={() => appearance.setBubbleColor(color)}
+                        onClick={() => appearance.setAccent(color)}
                         icon={
                           <CheckIcon
                             aria-hidden="true"
                             className={
-                              bubbleColor === color
-                                ? "opacity-100"
-                                : "opacity-0"
+                              accent === color ? "opacity-100" : "opacity-0"
                             }
                           />
                         }
@@ -157,17 +185,85 @@ export function AppearanceSettings({
               </fieldset>
             )}
           />
+          <PreferenceRow
+            title="Accent level"
+            trailing={
+              <Select
+                variant="compact"
+                label="Accent level"
+                value={colorLevel}
+                leading={<AccentLevelIndicator level={colorLevel} />}
+                groups={[{ label: "", options: COLOR_LEVEL_OPTIONS }]}
+                onValueChange={(value) =>
+                  appearance.setColorLevel(value as ColorLevel)
+                }
+              />
+            }
+          />
         </SettingsGroup>
-        {active && bubbleError && (
+      </div>
+      <div className="mt-section-gap">
+        <InlineHeader title="Conversations" />
+        <SettingsGroup>
+          <PreferenceRow
+            title="Open threads in"
+            subtitle="New threads open here. Already-open threads stay where you placed them."
+            trailing={
+              <Select
+                variant="compact"
+                label="Open threads in"
+                value={placement}
+                groups={[
+                  {
+                    label: "Pane",
+                    options: [
+                      { value: "side", label: "Side pane" },
+                      { value: "main", label: "Main pane" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "main" || value === "side")
+                    setThreadPlacementPreference(value);
+                }}
+              />
+            }
+          />
+        </SettingsGroup>
+        {active && unsaved && (
           <ToastNotice
-            title="Message color wasn’t saved"
-            description={bubbleError}
+            title="Thread preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setThreadPlacementPreference(placement)}
+            >
+              Retry saving thread placement
+            </Button>
+          </ToastNotice>
+        )}
+        {active && accentError && (
+          <ToastNotice
+            title="Accent color wasn’t saved"
+            description={accentError}
+          >
+            <Button size="sm" onClick={() => appearance.setAccent(accent)}>
+              Retry saving accent color
+            </Button>
+          </ToastNotice>
+        )}
+        {active && colorLevelError && (
+          <ToastNotice
+            title="Accent level wasn’t saved"
+            description={colorLevelError}
           >
             <Button
               size="sm"
-              onClick={() => appearance.setBubbleColor(bubbleColor)}
+              onClick={() => appearance.setColorLevel(colorLevel)}
             >
-              Retry saving message color
+              Retry saving accent level
             </Button>
           </ToastNotice>
         )}
@@ -198,5 +294,17 @@ export function AppearanceSettings({
         )}
       </div>
     </section>
+  );
+}
+
+function AccentLevelIndicator({ level }: { level: ColorLevel }) {
+  return (
+    <span
+      className={styles.chip}
+      aria-hidden="true"
+      style={{
+        opacity: (COLOR_LEVELS.indexOf(level) + 1) / COLOR_LEVELS.length,
+      }}
+    />
   );
 }

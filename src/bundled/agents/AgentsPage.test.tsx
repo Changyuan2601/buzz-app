@@ -32,6 +32,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import { localStore } from "../../features/agents/state";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -263,6 +264,7 @@ function setup(
     },
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
+    handle: () => undefined,
     register: vi.fn(),
     addTool: vi.fn(),
     tools: () => [],
@@ -324,6 +326,8 @@ function setup(
     }),
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    interruptible: () => false,
+    interrupt: vi.fn(async () => false),
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),
@@ -344,6 +348,7 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    storage: localStore(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -433,7 +438,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   );
 });
 
-it("checks providers in AI defaults and opens their host-owned dialogs", async () => {
+it("checks providers in Agent setup and opens their host-owned dialogs", async () => {
   const user = userEvent.setup();
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const relay = {
@@ -472,42 +477,57 @@ it("checks providers in AI defaults and opens their host-owned dialogs", async (
   } as unknown as RegisteredAgentType;
   try {
     const { echoProvider, agents } = setup([agent("Ada", 1)], {
-      more: [relay, broken, checking],
+      more: [
+        relay,
+        broken,
+        checking,
+        {
+          ...relay,
+          key: "test/crashed",
+          id: "crashed",
+          title: "Crashed",
+          provider: {
+            ...checkingProvider.contribution,
+            snapshot: () => {
+              throw new Error("Snapshot crashed");
+            },
+          },
+        },
+      ],
     });
     expect(
       screen.queryByRole("button", { name: "More agent actions" }),
     ).toBeNull();
-    const defaults = render(
-      <AgentSettings
-        agents={agents}
-        active={false}
-        archive={<div>Archived agents</div>}
-      />,
-    );
+    const defaults = render(<AgentSettings agents={agents} active={false} />);
     expect(echoProvider.check).not.toHaveBeenCalled();
-    expect(screen.queryByText("AI defaults")).toBeNull();
-    defaults.rerender(
-      <AgentSettings agents={agents} archive={<div>Archived agents</div>} />,
-    );
     expect(
-      screen
-        .getByText("AI defaults")
-        .compareDocumentPosition(screen.getByText("Archived agents")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.queryByRole("heading", { name: "Harness defaults" }),
+    ).toBeNull();
+    defaults.rerender(<AgentSettings agents={agents} />);
+    expect(screen.getByRole("heading", { name: "Agent setup" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Harness defaults" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("switch", { name: "Remember mentioned agents" }),
+    ).toBeVisible();
     const menu = defaults.container;
     const echo = within(menu).getByRole("button", {
       name: "Echo, ready",
     });
-    const relayRow = within(menu).getByRole("button", {
-      name: "Relay, unavailable",
-    });
-    expect(relayRow).toBeDisabled();
+    expect(
+      within(menu).queryByRole("button", {
+        name: "Relay, unavailable",
+      }),
+    ).toBeNull();
     expect(
       within(menu).getByRole("button", {
         name: "Repair Broken, attention",
       }),
     ).toBeEnabled();
+    expect(
+      within(menu).getByRole("button", { name: "Crashed, unavailable" }),
+    ).toBeDisabled();
     const checkingRow = within(menu).getByRole("button", {
       name: "Checking, checking",
     });
@@ -680,9 +700,21 @@ it("keeps name edits inline and lets a failed save retry", async () => {
     name: "Updated",
   });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
-  expect(
-    screen.getByRole("textbox", { name: "Agent name" }),
-  ).toBeInTheDocument();
+  // An empty name replaces the failed save's error with the name prompt.
+  Element.prototype.animate = vi.fn();
+  try {
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  await user.type(field, "Updated");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(agents.save).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(
@@ -748,11 +780,11 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
   expect(
-    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+    within(rail).queryByRole("button", { name: "Change harness from Echo" }),
   ).not.toBeInTheDocument();
   agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
   const typeTrigger = screen.getByRole("button", {
-    name: "Change provider from Echo",
+    name: "Change harness from Echo",
   });
   expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
   await user.click(typeTrigger);
@@ -798,7 +830,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(agents.retype).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
   expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
   expect(
@@ -823,7 +855,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     config: { endpoint: "wss://custom.example" },
   });
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
 });
 
@@ -869,7 +901,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
 });
 
-it("cancels inline name edits and rejects an empty name", async () => {
+it("cancels inline name edits and flags an empty name on Save", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -886,12 +918,34 @@ it("cancels inline name edits and rejects an empty name", async () => {
   expect(
     screen.queryByRole("button", { name: "Message" }),
   ).not.toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: "Agent name" }));
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Agent name" }),
-    "Discarded",
-  );
+  const field = screen.getByRole("textbox", { name: "Agent name" });
+  await user.clear(field);
+  // jsdom lacks the Web Animations API the shake uses.
+  const animate = vi.fn();
+  Element.prototype.animate = animate;
+  try {
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Add a name to save your agent");
+    expect(animate).toHaveBeenCalledOnce();
+    await user.keyboard("{Enter}");
+    expect(animate).toHaveBeenCalledTimes(2);
+    expect(agents.save).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  // Cancelling while flagged starts the next edit clean.
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await edit();
+  const reopened = screen.getByRole("textbox", { name: "Agent name" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(reopened).not.toHaveAttribute("aria-invalid");
+  await user.clear(reopened);
+  await user.type(reopened, "Discarded");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   await edit();
@@ -1578,7 +1632,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   const choose = async () => {
     await user.click(
-      screen.getByRole("button", { name: "Change provider from Echo" }),
+      screen.getByRole("button", { name: "Change harness from Echo" }),
     );
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Destination" }),
@@ -1592,7 +1646,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
   expect(
-    screen.getByRole("button", { name: "Change provider from Echo" }),
+    screen.getByRole("button", { name: "Change harness from Echo" }),
   ).toBeInTheDocument();
   await choose();
   await user.click(screen.getByRole("button", { name: "Install and connect" }));
@@ -1600,7 +1654,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Change provider from Destination" }),
+    screen.getByRole("button", { name: "Change harness from Destination" }),
   ).toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1872,4 +1926,37 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(field).toBeVisible();
   expect(field).toHaveValue("Unsaved reply");
   expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("announces the default agent and presents its menu status without a fake toggle", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable" },
+  };
+  const connection = {
+    status: "ready",
+    scope: "default-card",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
 });

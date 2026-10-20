@@ -6,10 +6,12 @@ import {
   validSidebarSectionOrder,
   validSidebarSectionRemoval,
   editSidebarSort,
+  editSidebarFilter,
   editSidebarToggle,
   validSidebarAssignment,
   validSidebarChannelId,
   validSidebarSort,
+  validSidebarFilter,
 } from "./sidebar-edits";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
@@ -18,6 +20,7 @@ import {
   type SidebarAssignmentIntent,
   type SidebarGroups,
   type SidebarSortMode,
+  type SidebarFilterMode,
 } from "./sidebar-preferences";
 import type { ReadTransport } from "./transport";
 
@@ -26,13 +29,14 @@ const coordinates = [
   "channel-stars",
   "channel-mutes",
   "channel-sort",
+  "channel-filter",
 ] as const;
 type Coordinate = (typeof coordinates)[number];
 type Head = { payload: Record<string, unknown>; createdAt: number };
 const empty = (coordinate: Coordinate): Record<string, unknown> =>
   coordinate === "channel-sections"
     ? { version: 1, sections: [], assignments: {} }
-    : coordinate === "channel-sort"
+    : coordinate === "channel-sort" || coordinate === "channel-filter"
       ? { version: 1, groups: {} }
       : { version: 1, channels: {} };
 const cancelled = (signal: AbortSignal) => signal.throwIfAborted();
@@ -55,6 +59,8 @@ export function nativeSidebar(transport: ReadTransport) {
       raw["channel-stars"],
       raw["channel-mutes"],
       raw["channel-sort"],
+      undefined,
+      raw["channel-filter"],
     );
   }
   async function head(
@@ -88,7 +94,9 @@ export function nativeSidebar(transport: ReadTransport) {
     project(coordinate, value);
     return {
       payload:
-        coordinate === "channel-sections" || coordinate === "channel-sort"
+        coordinate === "channel-sections" ||
+        coordinate === "channel-sort" ||
+        coordinate === "channel-filter"
           ? projectSidebarRecord(coordinate, value)
           : value,
       createdAt: events[0]?.created_at ?? 0,
@@ -105,6 +113,7 @@ export function nativeSidebar(transport: ReadTransport) {
       coordinate === "channel-mutes" ? value : undefined,
       coordinate === "channel-sort" ? value : undefined,
       sectionIds,
+      coordinate === "channel-filter" ? value : undefined,
     );
   }
   async function mutate<T>(
@@ -274,6 +283,49 @@ export function nativeSidebar(transport: ReadTransport) {
         (value) =>
           ((value.groups as Record<string, string>)[group] ?? "alpha") === mode,
         "Sidebar sort changed on another device; reload and try again",
+      );
+    },
+    async writeSidebarFilter(
+      group: string,
+      mode: SidebarFilterMode,
+      sectionIds: readonly string[],
+      signal: AbortSignal,
+      activeWindowSeconds?: number | null,
+    ) {
+      if (!validSidebarFilter(group, mode, sectionIds, activeWindowSeconds))
+        throw new Error("Invalid sidebar filter intent");
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
+        const next = editSidebarFilter(
+          current,
+          createdAt,
+          group,
+          mode,
+          Date.now(),
+          activeWindowSeconds,
+        );
+        const settings = project("channel-filter", next, sectionIds);
+        return {
+          next,
+          result: {
+            filters: settings.filters ?? {},
+            activeWindowSeconds: settings.activeWindowSeconds ?? {},
+          },
+        };
+      };
+      return mutate(
+        "channel-filter",
+        signal,
+        prepare,
+        (value) =>
+          editSidebarFilter(
+            value,
+            0,
+            group,
+            mode,
+            Date.now(),
+            activeWindowSeconds,
+          ) === value,
+        "Sidebar filter changed on another device; reload and try again",
       );
     },
   };

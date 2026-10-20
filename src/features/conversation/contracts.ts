@@ -1,9 +1,10 @@
 // FOUNDATION: Preview conversation contribution contract; data and delivery stay session-owned.
-import type { ComponentType } from "react";
+import type { ComponentType, ReactElement, ReactNode, Ref } from "react";
 import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -19,7 +20,7 @@ export type TargetOpener = Readonly<{
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
@@ -107,9 +108,26 @@ export type LinkRenderer = Readonly<{
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;
+/** Presentation for a fenced code block, chosen by its info-string language.
+ * The host retains the frame and copy action; failure or removal restores the code. */
+export type CodeBlockRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(language: string): boolean;
+  component: ComponentType<{ code: string; language: string }>;
+  /** A control the host places before its copy action, such as expanding the block. */
+  action?: ComponentType<{ code: string; language: string }> | undefined;
+}>;
 export type ContributionReader<T> = Readonly<{
   snapshot(): readonly Contribution<T>[];
   subscribe(listener: () => void): () => void;
+}>;
+/** Optional presentation supplied to the host-owned thread button. */
+export type MessageSummaryActivity = Readonly<{
+  participants: readonly string[];
+  content: ReactNode;
+  label: string;
+  ref: Ref<HTMLButtonElement>;
 }>;
 export type ComposerAccessoryProps = Readonly<{
   session: RelaySession;
@@ -118,6 +136,11 @@ export type ComposerAccessoryProps = Readonly<{
   threadRootId?: string | undefined;
   /** Present only for message-placed accessories; the exact triggering row. */
   message?: ChannelMessage;
+  /** A single selected decorator may wrap the host summary with its preview.
+   * Render without activity when idle; the host owns reply counts/navigation. */
+  renderMessageSummary?:
+    | ((activity?: MessageSummaryActivity) => ReactElement | null)
+    | undefined;
   /** Host-owned thread navigation from a timeline message, even before replies.
    * Absent inside the thread. False after this contribution or message retires. */
   openThread?: (() => boolean) | undefined;
@@ -131,6 +154,8 @@ export type ComposerAccessoryProps = Readonly<{
 export type ComposerAccessory = Readonly<{
   /** Defaults to the composer. Message accessories render beside reactions. */
   placement?: "composer" | "message";
+  /** Opt into decorating the message summary; only the first ordered owner wins. */
+  decoratesMessageSummary?: boolean;
   id: string;
   title: string;
   order?: number;
@@ -172,6 +197,7 @@ export type ConversationExtensions = Readonly<{
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
+  codeBlocks?: ContributionReader<CodeBlockRenderer>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */
@@ -241,3 +267,35 @@ export type ComposerCompletion = Readonly<{
   ): CompletionQuery | null;
   component: ComponentType<ComposerCompletionProps>;
 }>;
+
+/** A conversation a page opens in a tab beside its own. `messageId` opens at
+ * that message: in its thread when `threadId` is given, or else in the
+ * conversation, or its thread if it is a reply or too old to find. Without
+ * `messageId`, keyboard focus moves to the tab's composer once it is ready,
+ * unless the user clicks or types first. */
+export type PageTabTarget = {
+  channelId: string;
+  threadId?: string;
+  messageId?: string;
+};
+/** `keep` opens a tab beside the others instead of in place of the last.
+ * `markRead: false` keeps a conversation tab from marking what it shows read,
+ * so the page decides; threads read as in Channels. */
+export type PageTabOptions = { keep?: boolean; markRead?: boolean };
+export type PageTabsProps = {
+  /** Keys the page's tabs, which last as long as its community session. */
+  id: string;
+  session: RelaySession;
+  scope: string;
+  label: string;
+  icon?: ReactNode;
+  /** The page's own first tab. `open` shows a joined conversation in a host tab. */
+  children(
+    open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+    close: (target: PageTabTarget) => boolean,
+    isOpen: (target: PageTabTarget) => boolean,
+  ): ReactNode;
+  /** `false` keeps showing a tab out of its channel visit, so the page decides
+   * what is read; tabs visit as Channels tabs do by default. */
+  visits?: boolean | undefined;
+};

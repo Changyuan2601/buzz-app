@@ -11,7 +11,7 @@ const connected: LiveSnapshot = {
   status: "connected",
   routes: [{ id: "observer", status: "live", replay: "unknown" }],
 };
-function fixture(findMessage?: Parameters<typeof createAgentActivity>[5]) {
+function fixture(findMessage?: Parameters<typeof createAgentActivity>[4]) {
   vi.useFakeTimers();
   vi.setSystemTime(1800000000000);
   const observe = vi.fn();
@@ -20,7 +20,6 @@ function fixture(findMessage?: Parameters<typeof createAgentActivity>[5]) {
     true,
     observe,
     (channel) => !(denied && channel === "a"),
-    undefined,
     undefined,
     findMessage,
   );

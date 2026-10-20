@@ -1,6 +1,6 @@
 import type { ChannelMessage } from "./contracts";
 import type { EventData } from "./events";
-import { foldMessages } from "./fold";
+import { collapseHuddleCards, foldMessages } from "./fold";
 import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
 
@@ -114,6 +114,7 @@ export class MessageProjection {
                     ],
                     {
                       includeReplies: this.includeReplies(),
+                      collapseHuddles: false,
                       signingAuthority: this.signingAuthority,
                     },
                   )[0]
@@ -123,7 +124,10 @@ export class MessageProjection {
             else this.messages.delete(id);
           }
           this.rows = Object.freeze(
-            [...this.messages.values()].sort(compareMessages),
+            collapseHuddleCards(
+              [...this.messages.values()],
+              this.relayAuthor,
+            ).sort(compareMessages),
           );
         },
         affected.size,

@@ -1,6 +1,18 @@
 # Builderlab
 
-The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+Create agents that Builderlab hosts for you, so they keep working even when Buzz is closed.
+
+## Getting started
+
+1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
+2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
+3. Use the agent's **Instructions** tab to tell it what to do.
+
+---
+
+# Builderlab
+
+The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the

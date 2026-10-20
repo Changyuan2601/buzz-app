@@ -136,7 +136,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -146,7 +146,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await row.click();
   await row.click({ button: "right" });
@@ -278,15 +278,18 @@ test("delete confirmation without typing purges the selected channel and survive
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
+  // Its neighbor (not the sidebar's first row) takes its place, so a long
+  // sidebar does not scroll away from where the channel was. It opens as it
+  // does from its row: current, with its composer focused.
   await expect(
-    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(row).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
@@ -447,12 +450,12 @@ test("pending toast in narrow navigation preserves visible recovery after uncert
   expect(app.report.unexpected).toEqual([]);
 });
 
-// Browser-only: recover an archived session after leaving its URL via the real
-// search -> header -> Settings route. The empty session has no message fallback.
-test.describe("legacy sessions", () => {
-  test.use({ sessionChannels: ["11111111-1111-4111-8111-111111111111"] });
+// Browser-only: recover an archived Solo chat after leaving its URL via the real
+// search -> header -> Settings route. The empty Solo chat has no message fallback.
+test.describe("Solo chat lifecycle", () => {
+  test.use({ soloChannels: ["11111111-1111-4111-8111-111111111111"] });
 
-  test("sidebar and header manage a session and recover it through name search", async ({
+  test("sidebar and header manage a Solo chat and recover it through name search", async ({
     page,
     app,
   }) => {
@@ -462,7 +465,7 @@ test.describe("legacy sessions", () => {
       .getByRole("button", { name: "Lifecycle channel", exact: true });
     await row.click();
     const composer = page.getByRole("textbox", {
-      name: "Message this session",
+      name: "Message your agents",
     });
     await expect(composer).toBeVisible();
     await expect(
@@ -475,7 +478,7 @@ test.describe("legacy sessions", () => {
       name: "Actions for Lifecycle channel",
     });
     await menu
-      .getByRole("menuitem", { name: "Delete channel", exact: true })
+      .getByRole("menuitem", { name: "Delete chat", exact: true })
       .click();
     const deletion = page.getByRole("dialog", {
       name: "Delete Lifecycle channel?",
@@ -486,22 +489,25 @@ test.describe("legacy sessions", () => {
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
 
     const header = page.getByRole("button", {
-      name: "Channel actions",
+      name: "Chat actions",
       exact: true,
     });
     await header.click();
     await page
-      .getByRole("menuitem", { name: "Archive channel", exact: true })
+      .getByRole("menuitem", { name: "Archive chat", exact: true })
       .click();
     const archive = page.getByRole("dialog", {
-      name: "Archive channel: Lifecycle channel",
+      name: "Archive chat: Lifecycle channel",
     });
     await archive
-      .getByRole("button", { name: "Archive channel", exact: true })
+      .getByRole("button", { name: "Archive chat", exact: true })
       .click();
     await expect(archive).toHaveCount(0);
     await expect(row).toHaveCount(0);
-    await expect(page).toHaveURL(url);
+    // Archiving an open Solo conversation now hands off to a new Solo draft.
+    await expect(page).not.toHaveURL(url);
+    // The retained address must still support archived-history recovery.
+    await page.goto(url);
     await expect(composer).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Share", exact: true }),
@@ -527,23 +533,23 @@ test.describe("legacy sessions", () => {
     const result = search
       .getByRole("group", { name: "Channels" })
       .getByRole("option", { name: /Lifecycle channel/ });
-    await expect(result).toContainText("Archived channel");
+    await expect(result).toContainText("Archived chat");
     await result.click();
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await expect(composer).toBeDisabled();
-    await openChannelDetails(page);
+    await header.click();
     await expect(
       page.getByRole("button", { name: "View members" }),
     ).toHaveCount(0);
     await page
-      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .getByRole("menuitem", { name: "Unarchive chat", exact: true })
       .click();
     const restore = page.getByRole("dialog", {
-      name: "Unarchive channel: Lifecycle channel",
+      name: "Unarchive chat: Lifecycle channel",
     });
     await restore
-      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .getByRole("button", { name: "Unarchive chat", exact: true })
       .click();
     await expect(restore).toHaveCount(0);
     await expect(row).toBeVisible();
@@ -552,11 +558,12 @@ test.describe("legacy sessions", () => {
       page.getByRole("button", { name: "Share", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
+    await header.click();
     await page
-      .getByRole("button", { name: "Delete channel", exact: true })
+      .getByRole("menuitem", { name: "Delete chat", exact: true })
       .click();
     await deletion
-      .getByRole("button", { name: "Delete channel", exact: true })
+      .getByRole("button", { name: "Delete chat", exact: true })
       .click();
     await expect(deletion).toHaveCount(0);
     await expect(row).toHaveCount(0);

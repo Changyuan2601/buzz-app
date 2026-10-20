@@ -222,6 +222,22 @@ async function live() {
   return { goose, cwd, tools, calls, requests, results, sends };
 }
 
+/** Setup on the real goose; it resolves `~` with the workspace process,
+ * which prints the folder. */
+const homeSetup = () =>
+  new GooseSetup(async (id, options = {}) => {
+    if (id !== "workspace") return spawn(id, options);
+    queueMicrotask(() =>
+      options.onStdout?.(`${String(options.cwd).replace(/^~/, homedir())}\n`),
+    );
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  });
+
 describe.skipIf(!BIN)("goose-acp", () => {
   it("answers with the Buzz tools, the Buzz prompt and a title", {
     timeout: 180_000,
@@ -328,6 +344,49 @@ describe.skipIf(!BIN)("goose-acp", () => {
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain(
         "banana",
       );
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("stops the running turn without posting what it wrote", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools, sends } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt:
+          "You are a Buzz agent. You reply in Buzz only by calling the send tool, once, with final true.",
+      });
+      const steps: string[] = [];
+      const started = Date.now();
+      const settled = session.send(
+        "Run the shell command `sleep 60`, then reply in Buzz with the word done.",
+        { step: (tool) => steps.push(tool) },
+      );
+      await expect
+        .poll(
+          () =>
+            steps.some(
+              (step) => step !== "Thinking" && step !== "Writing reply",
+            ),
+          { timeout: 60_000, interval: 200 },
+        )
+        .toBe(true);
+      session.interrupt();
+      const answer = await settled;
+      expect(answer).toEqual({ ok: true });
+      // It ended well before the command would have.
+      expect(Date.now() - started).toBeLessThan(55_000);
+      expect(session.busy).toBe(false);
+      expect(sends()).toEqual([]);
+      // The session takes the next message as usual.
+      await expect(
+        session.send("Reply in Buzz with the word again."),
+      ).resolves.toEqual({ ok: true });
+      expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain("again");
     } finally {
       await goose.kill();
     }
@@ -471,22 +530,42 @@ describe.skipIf(!BIN)("goose-acp", () => {
     }
   });
 
+  it("puts a session on a thinking level goose lists for its model", {
+    timeout: 120_000,
+  }, async () => {
+    const { levels, current } = await homeSetup().efforts({
+      provider: "",
+      model: "",
+    });
+    const level = levels.find((item) => item !== current);
+    if (!level) throw new Error("goose's model lists no other thinking level");
+    const { goose, cwd, results } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        systemPrompt: "",
+        choice: () => ({ provider: "", model: "", effort: level }),
+      });
+      const settled = await session.send("Reply with exactly: OK");
+      expect(settled.ok).toBe(true);
+      const { configOptions = [] } = (results
+        .filter((item) => item.method === "session/set_config_option")
+        .at(-1)?.result ?? {}) as {
+        configOptions?: { id: string; currentValue: string }[];
+      };
+      expect(
+        configOptions.find((option) => option.id === "thinking_effort")
+          ?.currentValue,
+      ).toBe(level);
+    } finally {
+      await goose.kill();
+    }
+  });
+
   it("lists goose's providers and tests its default one", {
     timeout: 120_000,
   }, async () => {
-    // goose resolves `~` with the workspace process, which prints the folder.
-    const setup = new GooseSetup(async (id, options = {}) => {
-      if (id !== "workspace") return spawn(id, options);
-      queueMicrotask(() =>
-        options.onStdout?.(`${String(options.cwd).replace(/^~/, homedir())}\n`),
-      );
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited: Promise.resolve(0),
-      };
-    });
+    const setup = homeSetup();
     const { providers, defaults } = await setup.providers();
     expect(providers.length).toBeGreaterThan(0);
     expect(providers.some((item) => item.keys.length > 0)).toBe(true);

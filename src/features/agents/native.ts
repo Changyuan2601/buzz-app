@@ -1,3 +1,4 @@
+import { audienceAuthorityFilter } from "../sessions/audience-authority";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
 
@@ -75,6 +76,14 @@ export type AgentUpload = Readonly<{
   thumb?: string;
   duration?: number;
 }>;
+/** A community media blob saved to a local file for the agent; `data`
+ * (base64) is the image itself when the agent can be shown it. */
+export type AgentMedia = Readonly<{
+  path: string;
+  type: string;
+  size: number;
+  data?: string;
+}>;
 export type AgentsNative = {
   list(): Promise<readonly AgentIdentity[]>;
   /** Generates a key, has the signed-in owner attest it, and saves both. */
@@ -114,10 +123,25 @@ export type AgentsNative = {
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
-  /** Uploads base64 `data` (an image or MP4) as the agent. */
+  /** Current audience decisions, forwarded separately from verified event arrays. */
+  audienceAuthority?(
+    pubkey: string,
+    destination: string,
+    sources: readonly string[],
+  ): Promise<unknown>;
+  /** Finds profiles by `name` or `display_name` in the agent's community, as
+   * the agent, best match first. `undefined` when the community has no
+   * profile name search. */
+  searchProfiles(
+    pubkey: string,
+    query: string,
+    limit: number,
+  ): Promise<RelayEvent[] | undefined>;
+  /** Uploads base64 `data`, a file of any type its community accepts, as
+   * the agent. `mime` is a hint; the community decides the type. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
-  /** Downloads one of its community's media blobs as the agent, as base64. */
-  media(pubkey: string, url: string): Promise<string>;
+  /** Saves one of its community's media blobs, of any type, as the agent. */
+  media(pubkey: string, url: string): Promise<AgentMedia>;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
   remember(
     pubkey: string,
@@ -169,6 +193,19 @@ export const nativeAgents = (): AgentsNative | undefined =>
           }),
         query: async (pubkey, filters) =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
+        audienceAuthority: (pubkey, destination, sources) =>
+          invoke("app_agent_query", {
+            pubkey,
+            filters: audienceAuthorityFilter(destination, sources),
+          }),
+        searchProfiles: async (pubkey, query, limit) => {
+          const found = await invoke("app_agent_search_profiles", {
+            pubkey,
+            query,
+            limit,
+          });
+          return found == null ? undefined : eventsDto(found);
+        },
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),

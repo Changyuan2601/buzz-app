@@ -81,6 +81,58 @@ const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
   {
+    id: "session-links",
+    title: "Session links",
+    description:
+      "Session cards rendered through the real message UI, with fixed labels and document icons.",
+    examples: [
+      {
+        id: "session-id",
+        title: "Unnamed session",
+        description:
+          "The document icon and Session label stay fixed; unnamed sessions show their short ID.",
+        rows: [
+          message("session-id", "[Session: 06366cc0](buzz://channel/06366cc0)"),
+        ],
+      },
+      {
+        id: "session-name",
+        title: "Chosen name",
+        description: "A deliberately chosen name replaces the ID.",
+        rows: [
+          message(
+            "session-name",
+            "[Session: PR 45 fixes](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+      {
+        id: "session-long-name",
+        title: "Long name",
+        description:
+          "Long names truncate and remain available on hover. Try Narrow preview or enlarged text.",
+        rows: [
+          message(
+            "session-long-name",
+            "[Session: PR 45 fixes and a very long chosen title for checking the layout at narrow widths](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+      {
+        id: "session-caption",
+        title: "Session with a caption",
+        description:
+          "The caption keeps its bubble; the session card sits below it, within the same message.",
+        rows: [
+          message(
+            "session-caption",
+            "Please review these changes.\n\n[Session: PR 45 fixes](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+    ],
+  },
+  {
     id: "references",
     title: "Links and rich content",
     description:
@@ -109,7 +161,7 @@ export const groups: Group[] = [
       single(
         "code-diff",
         "Code diff preview",
-        "The production diff card retains readable text inside an outgoing bubble.",
+        "The production diff card owns its surface without an outer message bubble.",
         patch,
         {
           diff: {
@@ -320,6 +372,24 @@ export const groups: Group[] = [
           "long-unbroken-reference-".repeat(8),
       ),
       single(
+        "wrapping-short-last-line",
+        "Short last line",
+        "The bubble and its prose share a compact width without forced line balancing.",
+        "im glad shes going to deepmind. one of the places that im curious about going next",
+      ),
+      single(
+        "wrapping-two-sentences",
+        "Two conversational sentences",
+        "Short paragraphs wrap naturally inside a compact bubble.",
+        "man i got my new mac mini yesterday. old one i bought was base level with very little storage space",
+      ),
+      single(
+        "wrapping",
+        "Conversational wrapping",
+        "Long prose wraps within the compact message measure while retaining pretty wrapping.",
+        "and no one seems to have complained about the max character length on messages that results in the right half of the screen being unused",
+      ),
+      single(
         "markdown",
         "Rich text",
         "Headings, emphasis, quotes, lists, links, and inline code.",
@@ -360,6 +430,17 @@ export const groups: Group[] = [
         },
       ),
       single(
+        "custom-emoji-only-missing",
+        "Unavailable emoji-only message",
+        "A transparent message keeps its shortcode readable with colored bubble preferences.",
+        ":missing:",
+        {
+          emoji: [
+            { shortcode: "missing", url: "https://fixture.test/missing-emoji" },
+          ],
+        },
+      ),
+      single(
         "mentions",
         "Person mention",
         "An explicit recipient plus a matching profile binds the name to its identity.",
@@ -372,6 +453,42 @@ export const groups: Group[] = [
         "The current renderer shows the replacement body without a separate edited badge.",
         "Updated: the review is now at 3 pm.",
         { edited: true },
+      ),
+    ],
+  },
+  {
+    id: "diagrams",
+    title: "Mermaid diagrams",
+    description:
+      "Fenced mermaid blocks drawn by the bundled plugin inside the host code frame.",
+    examples: [
+      single(
+        "diagram-flowchart",
+        "Flowchart with a subgraph",
+        "Nodes, edges and a subgraph between surrounding prose.",
+        "Here is the release flow:\n\n```mermaid\nflowchart LR\n  draft[Draft PR] --> review{Review}\n  review -->|changes| draft\n  review -->|approved| ci\n  subgraph Checks\n    ci[CI] --> e2e[Browser tests]\n  end\n  e2e --> merge((Merge))\n```\n\nPing me if a step is unclear.",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-sequence",
+        "Sequence diagram",
+        "Participants, messages and a note.",
+        "```mermaid\nsequenceDiagram\n  participant App\n  participant Relay\n  App->>Relay: Publish event\n  Relay-->>App: OK\n  Note over App,Relay: Signed and verified\n```",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-pie",
+        "Pie chart",
+        "Series colors on the message surface.",
+        '```mermaid\npie title Review time\n  "Waiting" : 45\n  "Reviewing" : 30\n  "Fixing" : 15\n  "Merging" : 10\n```',
+        { authorId: agent },
+      ),
+      single(
+        "diagram-invalid",
+        "Invalid source",
+        "The parse error and the source replace the diagram.",
+        "```mermaid\nflowchart LR\n  A --> (\n```",
+        { authorId: agent },
       ),
     ],
   },

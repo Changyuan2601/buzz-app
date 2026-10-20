@@ -238,13 +238,13 @@ describe("the attention tools", () => {
     const added = await call("watch_add", {
       ...asks,
       name: "Asks",
-      filter: "!is_reply",
+      is_reply: false,
       expected_state: ABSENT,
     });
     const updated = await call("watch_update", {
       id: "asks",
       kinds: [9, 40002],
-      clear: ["filter"],
+      clear: ["is_reply"],
       expected_state: added.expected_state,
     });
     expect(updated.object).toEqual({
@@ -375,7 +375,7 @@ describe("the attention tools", () => {
     const added = await call("watch_add", {
       ...asks,
       name: "Asks",
-      filter: "!is_reply",
+      is_reply: false,
       expected_state: ABSENT,
     });
     for (const expected_state of [added.expected_state, ABSENT])
@@ -386,7 +386,7 @@ describe("the attention tools", () => {
       );
     expect((await call("watch_show", { id: "asks" })).object).toMatchObject({
       name: "Asks",
-      filter: "!is_reply",
+      is_reply: false,
     });
   });
 

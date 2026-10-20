@@ -1,4 +1,7 @@
-import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import {
+  ChannelLifecycleDialog,
+  lifecycleNoun,
+} from "../../bundled/channels/ChannelLifecycleDialog";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   createContext,
@@ -17,7 +20,6 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { readView, writeView } from "../../shared/view-state";
 
 /** The persistent sidebar owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
@@ -65,7 +67,6 @@ type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
   session: RelaySession;
   scope: string;
-  draftParents: string[];
   preparingDm: PreparingDm | undefined;
   lifecycleDialog:
     | {
@@ -97,7 +98,6 @@ type Handoff = State & {
   >;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
-  updateDraftParents(update: (previous: string[]) => string[]): void;
   prepareDm(members: readonly string[]): void;
   clearPreparingDm(): void;
   openLifecycle(
@@ -179,13 +179,6 @@ export function ChannelNavigationProvider({
       lifecycleCallbacks,
       activityThread,
       activityAgent,
-      updateDraftParents(change) {
-        update((previous) => {
-          const draftParents = change(previous.draftParents);
-          writeView(previous.scope, "sessions:channel-drafts", draftParents);
-          return { ...previous, draftParents };
-        });
-      },
       prepareDm(members) {
         // Capture before the caller starts opening the DM, not in a deferred updater.
         const existing = new Set(
@@ -267,9 +260,20 @@ export function ChannelNavigationProvider({
             key={`${scope}:${connection.generation}`}
             channelId={state.lifecycleDialog.channel.id}
             channelName={state.lifecycleDialog.channel.name}
+            noun={lifecycleNoun(state.lifecycleDialog.channel)}
             action={state.lifecycleDialog.action}
             lifecycle={connection.session.channelLifecycle}
             onSubmit={value.beginLifecycle}
+            // Submission closes asynchronously; use the same captured origin
+            // as cancellation instead of Base UI's older focus-history entry.
+            finalFocus={() => {
+              const { trigger, focusFallback } = state.lifecycleDialog ?? {};
+              return trigger?.isConnected
+                ? trigger
+                : focusFallback?.isConnected
+                  ? focusFallback
+                  : true;
+            }}
             close={() => {
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
@@ -299,14 +303,10 @@ export function ChannelNavigationProvider({
   );
 }
 function restore(session: RelaySession, scope: string): State {
-  const saved = readView<unknown>(scope, "sessions:channel-drafts", []);
   return {
     session,
     scope,
     preparingDm: undefined,
     lifecycleDialog: undefined,
-    draftParents: Array.isArray(saved)
-      ? saved.filter((id): id is string => typeof id === "string")
-      : [],
   };
 }

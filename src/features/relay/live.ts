@@ -118,8 +118,6 @@ export type LiveCallbacks = {
   receive(events: readonly VerifiedEvent[], provenance?: LiveProvenance): void;
   /** Host-only encrypted telemetry route; never ordinary history reconciliation. */
   telemetry?(event: VerifiedEvent, generation: number): void;
-  capture?(event: VerifiedEvent): void;
-  captureState?(state: "saving" | "off" | "error"): void;
   /** Decoded host DTO on the browser transport. */
   observer?(frame: ObserverFrame, generation: number): void;
   presence?(event: VerifiedEvent): void;
@@ -137,7 +135,6 @@ export type LiveSubscription = {
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
   observe?(generation: number | null): void;
-  archive?(kinds: readonly number[]): void;
   /** Ephemeral status: true = accepted, false = unconfirmed/refused, null = unsent.
    * Admission skips report their remaining delay; no durable queue is created. */
   publishPresence?(
@@ -194,7 +191,6 @@ type Route = {
   wire?: string;
   count: number;
   since: number;
-  metricsSince?: number;
   liveOnly?: boolean;
   previous?: Route;
   retryRenewal?: boolean;
@@ -203,7 +199,7 @@ type Route = {
 };
 export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
-  39005, 20002,
+  39005, 20002, 48100, 48101, 48102, 48103,
 ];
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -238,15 +234,6 @@ export function subscribeRelayTraffic(
   let denying: Set<string> | undefined;
   let priority: string[] = [];
   let observer: number | null = null;
-  let observerSince = 0;
-  let archiveKinds: readonly number[] = [];
-  const telemetryKinds = () =>
-    [
-      ...new Set([
-        ...(observer !== null ? [OBSERVER_KIND] : []),
-        ...archiveKinds,
-      ]),
-    ].sort();
   let presenceAuthors: readonly string[] = [];
   let presenceReceipt:
     | { id: string; finish(accepted: boolean): void }
@@ -303,25 +290,6 @@ export function subscribeRelayTraffic(
   function remove(route: Route) {
     closeWire(route);
     routes.delete(route.id);
-  }
-  function renewTelemetry(route: Route, keepMetrics: boolean) {
-    if (!keepMetrics) {
-      remove(route);
-      return;
-    }
-    // Stored 44200 can bridge admission delay; ephemeral activity cannot. Never
-    // replay beyond the host's five-minute ingest window or reset the display floor.
-    if (route.wire)
-      route.metricsSince ??= Math.max(
-        route.since,
-        Math.floor(Date.now() / 1000) - 60,
-      );
-    closeWire(route);
-    route.status = "pending";
-    route.count = 0;
-    route.quotaRetries = 0;
-    delete route.error;
-    delete route.retryRenewal;
   }
   const scope = (route: Route) =>
     route.channelIds ?? (route.channelId ? [route.channelId] : []);
@@ -386,7 +354,7 @@ export function subscribeRelayTraffic(
       ranked.slice(
         0,
         LIVE_CHANNEL_CAPACITY -
-          (observer !== null || archiveKinds.length ? 1 : 0) -
+          (observer !== null ? 1 : 0) -
           (presenceAuthors.length ? 1 : 0),
       ),
     );
@@ -394,7 +362,7 @@ export function subscribeRelayTraffic(
     const globals = new Set([
       "profiles",
       "membership",
-      ...(observer !== null || archiveKinds.length ? ["observer"] : []),
+      ...(observer !== null ? ["observer"] : []),
       ...(presenceAuthors.length ? ["presence"] : []),
     ]);
     // Scope is immutable for a wire. Retirement rebuilds only the affected batch;
@@ -572,28 +540,24 @@ export function subscribeRelayTraffic(
           );
       }, setupTimeoutMs);
       active++;
-      if (route.id === "observer") {
-        route.since = Math.floor(Date.now() / 1000);
-        if (route.metricsSince !== undefined)
-          route.metricsSince = Math.max(route.metricsSince, route.since - 240);
-      }
+      if (route.id === "observer") route.since = Math.floor(Date.now() / 1000);
       const filters = scope(route).length
         ? (route.liveOnly
             ? [scope(route)]
             : scope(route).map((id) => [id])
           ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
-        : [
-            route.id === "presence"
-              ? { kinds: [20001], authors: presenceAuthors }
-              : route.id === "profiles"
-                ? { kinds: [0, 10100, 30177] }
-                : route.id === "observer"
-                  ? {
-                      kinds: telemetryKinds(),
-                      "#p": [viewer],
-                    }
-                  : { kinds: [44100, 44101], "#p": [viewer] },
-          ];
+        : route.id === "presence"
+          ? [{ kinds: [20001], authors: presenceAuthors }]
+          : route.id === "profiles"
+            ? [{ kinds: [0, 10100, 30177] }]
+            : route.id === "observer"
+              ? [{ kinds: [OBSERVER_KIND], "#p": [viewer] }]
+              : [
+                  { kinds: [44100, 44101], "#p": [viewer] },
+                  // NIP-CL: the relay sends a system channel's notices only
+                  // to a filter that asks for them with #t.
+                  { kinds: [44100, 44101], "#p": [viewer], "#t": ["system"] },
+                ];
       send([
         "REQ",
         wire,
@@ -601,7 +565,7 @@ export function subscribeRelayTraffic(
           ...filter,
           // Each channel retains its original replay allowance. Replacements
           // are live-only on every actual dispatch, including cooldown retries.
-          since: route.metricsSince ?? route.since,
+          since: route.since,
           ...(route.id === "observer"
             ? {}
             : { limit: route.liveOnly ? 0 : LIVE_REPLAY_LIMIT }),
@@ -857,20 +821,12 @@ export function subscribeRelayTraffic(
             callbacks.presence?.(incoming);
         } else if (route.id === "observer") {
           if (
-            archiveKinds.includes(incoming.kind) &&
-            incoming.created_at >=
-              (incoming.kind === 44200
-                ? (route.metricsSince ?? route.since)
-                : route.since)
-          )
-            callbacks.capture?.(incoming);
-          if (
             observer !== null &&
             incoming.kind === OBSERVER_KIND &&
-            incoming.created_at >= Math.max(route.since, observerSince)
+            incoming.created_at >= route.since
           )
             callbacks.telemetry?.(incoming, observer);
-        } else if (![OBSERVER_KIND, 44200].includes(incoming.kind))
+        } else if (incoming.kind !== OBSERVER_KIND)
           callbacks.receive(
             [incoming],
             Object.freeze({
@@ -888,7 +844,6 @@ export function subscribeRelayTraffic(
         if (route.previous) closeWire(route.previous);
         delete route.previous;
         route.status = "live";
-        delete route.metricsSince;
         delete route.error;
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         notify();
@@ -1003,35 +958,12 @@ export function subscribeRelayTraffic(
         );
       return requests.publish(event, signal);
     },
-    archive(kinds) {
-      if (kinds.some((kind) => ![OBSERVER_KIND, 44200].includes(kind)))
-        throw new Error("Invalid archive capture kinds");
-      const next = [...new Set(kinds)].sort();
-      if (closed || JSON.stringify(next) === JSON.stringify(archiveKinds))
-        return;
-      const before = telemetryKinds();
-      const keepMetrics = archiveKinds.includes(44200) && next.includes(44200);
-      archiveKinds = next;
-      const route = routes.get("observer");
-      if (route && JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
-        renewTelemetry(route, keepMetrics);
-      sync();
-    },
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
-      const before = telemetryKinds();
       observer = next;
-      // Display generations must not interrupt an unchanged capture route. Keep
-      // its ingress floor, but admit only fresh telemetry to the new display.
-      observerSince = Math.floor(Date.now() / 1000);
       const route = routes.get("observer");
-      if (
-        route &&
-        (!archiveKinds.length ||
-          JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
-      )
-        renewTelemetry(route, archiveKinds.includes(44200));
+      if (route) remove(route); // Fence the old wire before enabling a new generation.
       sync();
     },
     prioritize(input) {

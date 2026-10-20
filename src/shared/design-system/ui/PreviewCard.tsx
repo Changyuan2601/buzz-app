@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { behindActiveModal, observeModals } from "../modalLayer";
+import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -74,15 +74,15 @@ export function PreviewCard({
   const heldLeave = useRef(false);
   const promote = useCallback((positioner: HTMLDivElement) => {
     // Join the top layer after the hovered row's floating actions, but not
-    // above a modal the trigger is outside. The portal is never inside one.
+    // above an unrelated interactive overlay. The portal is never inside one.
     // Base UI still owns placement, timing, focus and unmounting.
     const update = () => {
       const trigger = triggerRef.current;
-      if (trigger && behindActiveModal(trigger)) positioner.hidePopover?.();
+      if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
       else positioner.showPopover?.();
     };
     update();
-    const stopObserving = observeModals(update);
+    const stopObserving = observeOverlays(update);
     // Hover cannot see its trigger scroll away from a still pointer: the
     // preview would stay open, follow the trigger out of its scroller and
     // take the wheel. Keyboard focus keeps its preview, because focusing a

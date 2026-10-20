@@ -131,6 +131,61 @@ it.each([
   },
 );
 
+it("denying one channel retires another's permission read, which rereads until answered", async () => {
+  const h = setup();
+  const [a, b, c] = [
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  ];
+  h.emit(
+    [a, b, c].map((id, index) =>
+      roster(relay, id, [viewer.pubkey], 10 + index),
+    ),
+  );
+  const load = h.session.channelLifecycle.load(c);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  let request = h.next();
+  for (const denied of [a, b]) {
+    h.session.channels.ensure(denied);
+    h.next().fail(new Error("Relay read failed (403)"));
+    await vi.waitFor(() => expect(request.signal?.aborted).toBe(true));
+    await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+    request = h.next();
+    for (const filter of request.filters) expect(filter["#d"]).toEqual([c]);
+  }
+  request.respond([
+    metadata(relay, c, "c", 20, [["t", "stream"]]),
+    signed(relay, {
+      kind: 39001,
+      content: "",
+      tags: [
+        ["d", c],
+        ["p", viewer.pubkey, "owner"],
+      ],
+    }),
+    roster(relay, c, [viewer.pubkey], 20),
+  ]);
+  expect(await load).toMatchObject({ canArchive: true, canDelete: true });
+  expect(h.session.channels.list().channels.map((ch) => ch.id)).toEqual([c]);
+});
+
+it("session dispose aborts an in-flight permission read without rereading", async () => {
+  const h = setup();
+  const c = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  h.emit([roster(relay, c, [viewer.pubkey], 10)]);
+  const load = h.session.channelLifecycle.load(c);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const rejected = expect(load).rejects.toMatchObject({ name: "AbortError" });
+  // Disposal retires the shared read without the lifecycle rereading it:
+  // the closed lifecycle rejects before it reaches the closed reader, which
+  // would otherwise reject each reread synchronously.
+  h.dispose();
+  await rejected;
+  expect(h.pending).toHaveLength(1);
+  expect(h.pending[0]?.signal?.aborted).toBe(true);
+});
+
 it("a complete roster omitting a generic-only channel purges it; partial live discovery does not", async () => {
   const h = setup();
   h.emit([message(alice, "a", "private", 10)]);

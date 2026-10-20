@@ -28,16 +28,6 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
 
-it("shows the default's label when no model is chosen", () => {
-  setup("");
-  expect(control()).toHaveTextContent("Default model");
-});
-
-it("shows the chosen model's label", () => {
-  setup("opus");
-  expect(control()).toHaveTextContent("Opus");
-});
-
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
   await user.click(control());
@@ -152,19 +142,35 @@ it("is disabled as a whole", () => {
   expect(control()).toBeDisabled();
 });
 
-it("shows that models are loading", () => {
-  render(
+it("keeps loading inside the disabled picker and restores the selected value", () => {
+  const onChange = vi.fn();
+  const view = render(
     <ModelPicker
       models={[]}
       allowCustomModel={false}
       value=""
       defaultLabel="Default model"
-      onChange={vi.fn()}
+      onChange={onChange}
       loading
     />,
   );
-  expect(control()).toBeDisabled();
-  expect(screen.getByText("Loading models…")).toBeVisible();
+  const picker = control();
+  expect(picker).toBeDisabled();
+  expect(picker).toContainElement(screen.getByText("Loading models…"));
+  view.rerender(
+    <ModelPicker
+      models={models}
+      allowCustomModel={false}
+      value="opus"
+      defaultLabel="Default model"
+      onChange={onChange}
+    />,
+  );
+  expect(control()).toBe(picker);
+  expect(picker).toBeEnabled();
+  expect(picker).toHaveTextContent("Opus");
+  expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
 });
 
 it("keeps compact choices finite and includes rich model descriptions", async () => {
@@ -206,8 +212,8 @@ it("lists the inherited default once with its catalog copy", async () => {
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Opus");
-  expect(control()).not.toHaveTextContent("Default");
+  expect(control()).toHaveTextContent("Opus · Default");
+  expect(screen.getByTitle("Opus · Default")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(2);
@@ -231,6 +237,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
+  expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
     name: "Opus · Default",
@@ -265,9 +272,122 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Sonnet");
+  expect(control()).toHaveTextContent("Sonnet · Default");
   await user.click(control());
   expect(
     await screen.findByRole("option", { name: "Sonnet · Default" }),
   ).toHaveAttribute("aria-selected", "true");
+});
+
+it("opens a family before selecting a model and strips only its display prefix", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      modelLabelPrefixes={["databricks-", "goose-"]}
+      models={[
+        { id: "databricks-gpt-6", label: "databricks-gpt-6" },
+        { id: "databricks-gpt-6-codex", label: "databricks-gpt-6-codex" },
+        { id: "databricks-kimi-k2", label: "databricks-kimi-k2" },
+        { id: "unrecognized-model", label: "unrecognized-model" },
+      ]}
+      value="databricks-gpt-6"
+      defaultLabel="Provider default"
+      onChange={onChange}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: /^Model:/ });
+  expect(trigger).toHaveTextContent("gpt-6");
+  expect(trigger).not.toHaveTextContent("databricks-");
+  await user.click(trigger);
+  expect(screen.queryByRole("menuitemradio", { name: "kimi-k2" })).toBeNull();
+  expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Codex" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "GPT" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Other" })).toBeVisible();
+  screen.getByRole("menuitem", { name: "OpenAI" }).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "gpt-6" }),
+  ).toBeVisible();
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "gpt-6-codex" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-gpt-6-codex");
+});
+
+it("keeps custom entry and default selection in the family menu", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      allowCustomModel
+      models={models}
+      value="sonnet"
+      defaultLabel="Provider default"
+      onChange={onChange}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: /^Model:/ }));
+  await user.click(
+    await screen.findByRole("menuitemradio", {
+      name: "Provider default · Default",
+    }),
+  );
+  expect(onChange).toHaveBeenLastCalledWith("");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await user.click(screen.getByRole("button", { name: /^Model:/ }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Custom model" }),
+  );
+  await user.type(screen.getByRole("textbox"), "new-model");
+  await user.click(screen.getByRole("button", { name: "Use model" }));
+  expect(onChange).toHaveBeenLastCalledWith("new-model");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toHaveFocus(),
+  );
+});
+
+it("keeps a Default suffix beside inherited card models as defaults change", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  const props = {
+    compact: true,
+    appearance: "subtle" as const,
+    models: [
+      { id: "gpt-6.1-sol", label: "GPT-6.1-Sol" },
+      { id: "gpt-6.1-astra", label: "GPT-6.1-Astra" },
+    ],
+    value: "",
+    defaultLabel: "GPT-6.1-Sol",
+    onChange,
+  };
+  const view = render(<ModelPicker {...props} />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol · Default$/);
+  expect(control().querySelector(".buzz-select-value")).toHaveTextContent(
+    /^GPT-6.1-Sol$/,
+  );
+  expect(
+    control().querySelector(".buzz-select-value-suffix"),
+  ).toHaveTextContent("· Default");
+  expect(screen.getByTitle("GPT-6.1-Sol · Default")).toBeVisible();
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "GPT-6.1-Sol · Default" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Escape}");
+
+  view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Astra · Default$/);
+  expect(onChange).not.toHaveBeenCalled();
+
+  view.rerender(<ModelPicker {...props} value="gpt-6.1-sol" />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
+
+  view.rerender(<ModelPicker {...props} loading />);
+  expect(control()).toHaveTextContent("Loading models…");
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
 });

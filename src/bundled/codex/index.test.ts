@@ -242,3 +242,20 @@ it("starts the server once Codex is updated and checked, only while a Codex agen
   expect(update).toHaveBeenCalledTimes(5);
   expect(warm).toHaveBeenCalledOnce();
 });
+
+it("observes each saved conversation as a session, read-only", () => {
+  vi.spyOn(CodexRuntime.prototype, "conversations").mockReturnValue([
+    {
+      key: JSON.stringify(["room", "r".repeat(64)]),
+      channelId: "room",
+      root: "r".repeat(64),
+      threadId: "t1",
+      at: 2000,
+    },
+    { key: JSON.stringify(["dm", "channel"]), channelId: "dm", threadId: "t2" },
+  ]);
+  expect(applied()?.sessions?.list("a".repeat(64))).toEqual([
+    { channelId: "room", root: "r".repeat(64), at: 2000 },
+    { channelId: "dm" },
+  ]);
+});

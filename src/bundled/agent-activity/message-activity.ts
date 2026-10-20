@@ -5,7 +5,10 @@ import { requestWork } from "../../features/agents/request-work";
 export function messageActivity(...args: Parameters<typeof requestWork>) {
   return requestWork(...args).filter(({ state, lifecycle, dismissed }) =>
     lifecycle
-      ? state !== "done" && state !== "superseded" && !dismissed
+      ? state !== "done" &&
+        state !== "superseded" &&
+        state !== "stopped" &&
+        !dismissed
       : state === "working" || state === "unknown",
   );
 }

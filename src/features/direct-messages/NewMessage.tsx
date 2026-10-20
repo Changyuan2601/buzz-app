@@ -1,3 +1,4 @@
+import { composerMarkdown } from "../messages/composer-markdown";
 import {
   useEffect,
   useLayoutEffect,
@@ -268,11 +269,12 @@ export function NewMessage({
     }
   }
   async function send(draft: MentionDraft) {
+    const content = composerMarkdown(draft);
     if (
       attempt.current ||
       !ready ||
       !recipients.length ||
-      !draft.text.trim() ||
+      !content.trim() ||
       !session.directMessages.available
     )
       return;
@@ -316,7 +318,7 @@ export function NewMessage({
         validateAgents();
         const messageId = session.messages.send(
           id,
-          draft.text,
+          content,
           draft.recipients.map((person) => person.pubkey),
           [],
           {

@@ -422,6 +422,59 @@ fn folder_reload_updates_current_revision_and_preserves_disabled_state() {
         .contains("reloaded"));
 }
 #[test]
+fn live_reload_preserves_enabled_state_and_rejects_stale_module_reads() {
+    let (_temp, manager, source) = fixture();
+    manager.install(&source).unwrap();
+    let first = manager
+        .change("enable", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
+    let next = manager
+        .reload_live("example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert!(next.enabled);
+    assert_ne!(next.revision, first.revision);
+    assert_eq!(next.previous.as_deref(), Some(first.revision.as_str()));
+    assert!(manager.module("example.page", &first.revision).is_err());
+    assert!(manager
+        .module("example.page", &next.revision)
+        .unwrap()
+        .contains("reloaded"));
+}
+
+#[test]
+fn accepting_reload_permissions_does_not_accept_a_different_publisher() {
+    let (_temp, manager, source) = fixture();
+    sign_release(&source, &SecretKey::generate().to_secret_hex()).unwrap();
+    manager.install(&source).unwrap();
+    let first = manager.change("enable", "example.page").unwrap();
+    fs::write(source.join("plugin.js"), "export const changed = true;").unwrap();
+    sign_release(&source, &SecretKey::generate().to_secret_hex()).unwrap();
+    assert!(manager
+        .reload_live("example.page")
+        .err()
+        .unwrap()
+        .contains("Publisher changed"));
+    let after = manager.catalog().unwrap();
+    let plugin = |catalog: buzzodz_plugins::Catalog| {
+        catalog
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+    };
+    assert_eq!(plugin(first).revision, plugin(after).revision);
+}
+
+#[test]
 fn folder_reload_compares_effective_output_limits() {
     for (before, after, allowed) in [
         (None, Some(4096), true),
@@ -926,9 +979,8 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
     for id in [
         "buzz.identity-naming",
         "buzz.terminal",
-        "buzz.sessions",
         "buzz.inbox",
-        "buzz.projects",
+        "buzz.repos",
         "buzz.emoji",
         "buzz.mentions",
         "buzz.voice-notes",
@@ -1062,10 +1114,10 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
     assert!(catalog
         .plugins
         .iter()
-        .any(|plugin| plugin.manifest.id == "buzz.me"));
+        .any(|plugin| plugin.manifest.id == "buzz.inbox"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
-        let default = !matches!(id, "buzz.bestie" | "buzz.todos");
+        let default = !matches!(id, "buzz.bestie" | "buzz.todos" | "buzz.usage");
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {
             assert!(manager.change("disable", id).is_err());

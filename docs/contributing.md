@@ -1,6 +1,6 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.18-buzz.3,
+The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.3-buzz.1,
 and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
@@ -36,6 +36,8 @@ than committing machine-specific paths or disabling certificate verification.
 No user-level npm configuration edit, Corepack bootstrap, or temporary
 tool PATH is needed for a clean public-registry setup. Commit the `bin/` scripts
 and package symlinks; `.hermit/` contains ignored local state.
+
+CMake is pinned through Hermit for the native Opus codec build.
 
 All tool versions are unchanged by the public-tooling migration. The public
 catalog does not yet include Node 24.18.0, so `bin/packages/node.hcl` pins its
@@ -421,11 +423,11 @@ override for lhm.
 
 The installed hooks fail rather than silently skip when they cannot find
 Lefthook; `bin/lefthook uninstall` removes them. The repository pins a temporary
-patched runner, `2.1.18-buzz.3`, to fix concurrent linked-worktree recovery.
+patched runner, `2.2.3-buzz.1` (upstream 2.2.2 plus ownership-safe recovery refs).
 Standalone shims select `bin/lefthook`. **Under lhm, activate Hermit before
 committing or pushing** (`source bin/activate-hermit`), since lhm selects
 `lefthook` from `PATH` and does not read the repo's `lefthook:` setting. A
-nonactivated GUI/agent shell using stock 2.1.17 or older is rejected by
+nonactivated GUI/agent shell using stock 2.2.2 or older is rejected by
 `min_version` before any unstaged edits are hidden. **If no Lefthook exists on
 PATH, lhm 0.14.1 can silently skip hooks instead** (especially in linked worktrees);
 the repository config cannot prevent that fallback. Use Git from an activated
@@ -433,7 +435,14 @@ shell, or a client that actually inherits that shell’s environment, and verify
 `command -v lefthook` resolves to this checkout’s `bin/lefthook`. Do not bypass
 hooks or change machine policy. Upgrading Homebrew's stock runner is not this fix.
 
-This version gate is temporary, not a capability check: future stock 2.1.18+
+Stock 2.2.2 isolates worktree patches but still lists a backup's positional stash
+ref before dropping it. A sibling stash inserted between those commands shifts
+the position and gets deleted instead. Keep owned recovery refs until upstream
+cleanup is atomic. Under lhm, an older runner also makes `git worktree add` fail
+through `post-checkout`; activate Hermit first, or use
+`git -c core.hooksPath=/dev/null worktree add …` for that one command.
+
+This version gate is temporary, not a capability check: future stock 2.2.3+
 would pass it. Reassess the gate at the next upstream release and adopt only a
 release verified to preserve the recovery guarantees. Source, license,
 revalidation commands, and removal criteria are in

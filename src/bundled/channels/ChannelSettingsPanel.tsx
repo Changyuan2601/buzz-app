@@ -145,7 +145,7 @@ export function ChannelSettingsPanel({
                 </h3>
               </div>
               <dl className={styles.settingsDetails}>
-                {channel.channelType !== "session" &&
+                {channel.channelType !== "solo" &&
                   channel.channelType !== "dm" && (
                     <>
                       <SettingsDetail

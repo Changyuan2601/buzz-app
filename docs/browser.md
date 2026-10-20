@@ -85,6 +85,6 @@ export function apply(ctx) {
 }
 ```
 
-In Settings → Plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. The website and navigation controls should appear beside the conversation; a default-band panel that also matches the link, such as GitHub for a GitHub URL, wins instead. Other links keep their existing behavior.
+In Settings → Plugins → Manage plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. The website and navigation controls should appear beside the conversation; a default-band panel that also matches the link, such as GitHub for a GitHub URL, wins instead. Other links keep their existing behavior.
 
 Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web, Windows and Linux keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.

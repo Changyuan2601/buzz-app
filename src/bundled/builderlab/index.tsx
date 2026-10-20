@@ -1,4 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
+import { handoffBackupSession } from "../../features/identity/backup";
+import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
 import {
   browserCredential,
@@ -10,7 +12,7 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
 export const inject = ["host", "settingsCards", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -29,6 +31,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
+  const backupSession = () => {
+    if (!nativeIdentityEnabled()) return;
+    handoffBackupSession(
+      "builderlab",
+      session.snapshot().status === "signed-in"
+        ? session.credential().value
+        : null,
+    );
+  };
+  ctx.effect(() => {
+    const stop = session.subscribe(backupSession);
+    return () => {
+      stop();
+      if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
+    };
+  });
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
@@ -91,11 +109,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   ctx.settingsCards.register({
     id: "login",
-    title: "Builderlab",
-    group: "Integrations",
+    title: "Builderlab agents",
+    group: "Plugins",
     component: ({ active }) => (
-      <>
+      <section aria-labelledby="builderlab-agents-title">
+        <Header id="builderlab-agents-title" title="Builderlab agents" />
         <Login
+          showHeading={false}
           session={session}
           available={loginAvailable}
           unavailableReason={
@@ -106,7 +126,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           active={active}
         />
         <RemoteAgents client={agents} session={session} active={active} />
-      </>
+      </section>
     ),
   });
 };

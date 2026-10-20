@@ -1,0 +1,58 @@
+.card {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  width: fit-content;
+  max-width: 100%;
+  background: var(--surface-panel);
+}
+.details {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+}
+.details time {
+  font-variant-numeric: tabular-nums;
+}
+.status {
+  margin-inline-end: var(--space-3);
+  color: var(--status-online);
+  width: var(--space-6);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+.actions {
+  margin-inline-start: var(--space-6);
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--space-1);
+}
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wave {
+  display: flex;
+  gap: var(--space-half);
+  align-items: center;
+  height: 24px;
+}
+.wave i {
+  width: 3px;
+  height: 8px;
+  background: currentColor;
+  border-radius: var(--radius-pill);
+}
+.wave i:nth-child(2),
+.wave i:nth-child(4) {
+  height: 16px;
+}
+.wave i:nth-child(3) {
+  height: 24px;
+}

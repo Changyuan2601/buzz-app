@@ -7,6 +7,21 @@ import styles from "./ChannelDurationField.module.css";
 
 const durations = [86400, 604800, 1209600];
 
+/** Exact temporary lifetime in its largest whole unit, such as "7 days". */
+export function channelDurationLabel(ttlSeconds: number) {
+  const [duration, unit] =
+    ttlSeconds === 1209600
+      ? [2, "week"]
+      : ttlSeconds % 86400 === 0
+        ? [ttlSeconds / 86400, "day"]
+        : ttlSeconds % 3600 === 0
+          ? [ttlSeconds / 3600, "hour"]
+          : ttlSeconds % 60 === 0
+            ? [ttlSeconds / 60, "minute"]
+            : [ttlSeconds, "second"];
+  return `${duration} ${unit}${duration === 1 ? "" : "s"}`;
+}
+
 /** Draft-only lifetime controls shared by Create and Edit. */
 export function ChannelDurationField({
   temporary,
@@ -34,17 +49,7 @@ export function ChannelDurationField({
   };
   const shorter = [...durations].reverse().find((value) => value < ttlSeconds);
   const longer = durations.find((value) => value > ttlSeconds);
-  const [duration, unit] =
-    ttlSeconds === 1209600
-      ? [2, "week"]
-      : ttlSeconds % 86400 === 0
-        ? [ttlSeconds / 86400, "day"]
-        : ttlSeconds % 3600 === 0
-          ? [ttlSeconds / 3600, "hour"]
-          : ttlSeconds % 60 === 0
-            ? [ttlSeconds / 60, "minute"]
-            : [ttlSeconds, "second"];
-  const label = `${duration} ${unit}${duration === 1 ? "" : "s"}`;
+  const label = channelDurationLabel(ttlSeconds);
   return (
     <Field
       label={fieldLabel ?? "Duration"}

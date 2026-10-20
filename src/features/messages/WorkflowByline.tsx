@@ -27,14 +27,14 @@ export function WorkflowByline({
 }) {
   const target = profileTarget(ownerId);
   return (
-    <>
+    <span className={styles.workflowAttribution}>
       <strong className={styles.author}>Workflow</strong>
       <span className={styles.workflowOwner}>
         <span aria-hidden="true">· </span>owned by{" "}
         {target && canOpenLink?.(target) ? (
           <Button
             variant="link"
-            size="xs"
+            size="inline"
             aria-label={`View workflow owner ${ownerName} profile`}
             onClick={() => onOpenLink(target)}
           >
@@ -74,6 +74,6 @@ export function WorkflowByline({
           </p>
         </PopoverPopup>
       </PopoverRoot>
-    </>
+    </span>
   );
 }

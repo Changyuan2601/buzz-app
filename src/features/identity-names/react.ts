@@ -32,7 +32,12 @@ export function useIdentityNames(names: IdentityNameView | undefined) {
 const noMembers: readonly string[] = [];
 /** Channel membership defines ambiguity, not the community-wide profile cache. */
 export function useChannelIdentityNames(
-  session: RelaySession | undefined,
+  session:
+    | {
+        names?: IdentityNameView | undefined;
+        channels: Pick<RelaySession["channels"], "list" | "subscribeList">;
+      }
+    | undefined,
   channelId: string | undefined,
 ) {
   const members = useListedChannel(

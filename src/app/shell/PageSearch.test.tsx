@@ -22,6 +22,13 @@ import { isApplePlatform } from "../../features/shortcuts/format";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -29,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
@@ -59,7 +67,7 @@ it("keeps typing focus while arrows select results and Enter opens the selection
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
   const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  const messages = within(dialog).getByRole("option", { name: "Multiplayer" });
+  const messages = within(dialog).getByRole("option", { name: "Messages" });
   expect(
     within(dialog).queryByRole("option", { name: "Home" }),
   ).not.toBeInTheDocument();
@@ -170,7 +178,7 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
   const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  const messages = within(dialog).getByRole("option", { name: "Multiplayer" });
+  const messages = within(dialog).getByRole("option", { name: "Messages" });
   const settings = within(dialog).getByRole("option", { name: "Settings" });
   const apple = isApplePlatform(navigator.platform);
   expect(messages).toHaveAttribute(

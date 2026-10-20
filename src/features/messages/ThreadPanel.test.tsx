@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
@@ -83,20 +84,22 @@ vi.mock("./MessageComposer", () => ({
     channelId,
     scope,
     onSend,
-    personalConversation,
+    ownSoloConversation,
     activityClickOpensPanel,
     disabled,
     placeholder,
+    focusRequest,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
       data-channel={channelId}
       data-scope={scope}
-      data-personal={personalConversation}
+      data-own-solo={ownSoloConversation}
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
+      data-focus-request={focusRequest}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -457,6 +460,29 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
+it.each([
+  ["waits", undefined, "1"],
+  ["clicks elsewhere first", "pointerDown", "0"],
+  ["types elsewhere first", "keyDown", "0"],
+] as const)(
+  "a focus request reaches the reply box once its root loads, unless the user %s",
+  (_, action, delivered) => {
+    const h = messagesHarness();
+    h.snapshot.status = "loading";
+    h.snapshot.root = undefined;
+    Object.assign(h.props, { focusRequest: 1 });
+    h.render();
+    expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+    if (action) fireEvent[action](document.body, { key: "a" });
+    h.snapshot.root = row;
+    h.snapshot.status = "ready";
+    h.render();
+    expect(screen.getByRole("region", { name: "Composer" })).toHaveAttribute(
+      "data-focus-request",
+      delivered,
+    );
+  },
+);
 it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
@@ -583,7 +609,7 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
-it("separates the original from replies with the relay's reply total", () => {
+it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };
   h.snapshot.status = "loading";
@@ -637,32 +663,33 @@ it("separates the original from replies with the relay's reply total", () => {
   // A just-sent reply can arrive before the relay's summary counts it.
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
 
-  // The total comes from the summary, not from the replies loaded so far.
+  // Replies follow the root without a divider, regardless of the relay total.
   h.snapshot.root = { ...row, replyCount: 11 };
   h.render();
-  const divider = screen.getByText("11 replies");
+  expect(screen.queryByText("11 replies")).not.toBeInTheDocument();
   const root = screen.getByText("root");
   const reply = screen.getByText("first reply");
   expect(
-    root.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  expect(
-    divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+    root.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 
   h.snapshot.root = { ...row, replyCount: 1 };
   h.render();
-  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.replies = [];
   h.render();
   expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.root = undefined;
   h.render();
@@ -1303,31 +1330,31 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes the Me recipient, readiness and direct Activity contract through to thread composition", () => {
+it("passes the Solo recipient, readiness and direct Activity contract through to thread composition", () => {
   const h = messagesHarness();
   const view = render(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled
     />,
   );
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-personal", "true");
+  expect(composer).toHaveAttribute("data-own-solo", "true");
   expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
   view.rerender(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled={false}
     />,
   );
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-personal");
+  expect(composer).not.toHaveAttribute("data-own-solo");
   expect(composer).not.toHaveAttribute("data-direct-activity");
 });
 
@@ -1335,7 +1362,7 @@ it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
   { channelType: "stream" as const, archived: true as const, joinable: false },
-  { channelType: "session" as const, joinable: false },
+  { channelType: "solo" as const, joinable: false },
 ])(
   "replaces the reply composer for a $channelType preview (joinable: $joinable)",
   ({ joinable, ...metadata }) => {
@@ -1581,6 +1608,47 @@ it("a workspace diverts a wrong-root link without replacing its confirmed reader
   expect(h.thread).toHaveBeenCalledOnce();
   expect(screen.getByRole("region", { name: "Composer" })).toBe(editor);
   expect(next.complete).not.toHaveBeenCalled();
+});
+
+it("a retained reader reveals its exact selected message, again for each new request", async () => {
+  const h = messagesHarness();
+  const reply = { ...row, id: "d".repeat(64), content: "the reply" };
+  h.snapshot.replies = [reply];
+  h.snapshot.target = reply;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: reply.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+  const revealedReply = () =>
+    vi
+      .mocked(HTMLElement.prototype.scrollIntoView)
+      .mock.contexts.some(
+        (context) => (context as HTMLElement).dataset.messageId === reply.id,
+      );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  // The same message again: the retained reader selects it and reveals anew.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await waitFor(() =>
+    expect(h.view.retarget).toHaveBeenCalledWith(
+      reply.id,
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  expect(h.thread).toHaveBeenCalledOnce();
+  // A rerender without a new request does not reveal again.
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  h.rerenderProps();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(revealedReply()).toBe(false);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

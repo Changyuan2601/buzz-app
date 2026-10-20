@@ -3,9 +3,13 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
+import { PageTabs } from "./PageTabs";
+import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { MessageSettings } from "./MessageSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import { CopyIcon } from "../../shared/design-system/icons";
+import { isApplePlatform } from "../../features/shortcuts/format";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import type { ArchiveShortcut } from "./ChannelsPage";
 export const inject = [
   "pages",
   "relay",
@@ -14,8 +18,10 @@ export const inject = [
   "navigation",
   "settingsCards",
   "agents",
+  "shortcuts",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
+  registerSharedSessions(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",
@@ -23,20 +29,46 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: ChannelCompletion,
   });
   const extensions = ctx.conversation;
+  extensions.registerTabs((props) => (
+    <PageTabs {...props} host={ctx} extensions={extensions} />
+  ));
   const relay = ctx.relay;
-  const panels = ctx.panels;
-  const pages = ctx.pages;
   const navigator = ctx.navigation;
-  const agents = ctx.agents;
-  ctx.settingsCards.register({
-    id: "messages",
-    title: "Messages",
-    icon: ChatCircleIcon,
-    component: MessageSettings,
+  const panels = ctx.panels;
+  const archive: ArchiveShortcut = {};
+  ctx.shortcuts.register({
+    id: "new-conversation",
+    title: "New conversation",
+    binding: { key: "n", mod: true },
+    order: 10,
+    allowInEditable: true,
+    // Off Apple platforms, Ctrl+N is shell history in the terminal.
+    when: () =>
+      !!relay.snapshot().scope &&
+      (isApplePlatform(window.navigator.platform) ||
+        !document.activeElement?.closest(".xterm")),
+    run: () => {
+      const { scope } = relay.snapshot();
+      if (scope) void navigator.open(soloDraftTarget(scope));
+    },
   });
+  ctx.shortcuts.register({
+    id: "archive-chat",
+    title: "Archive chat",
+    // Apple Mail's Archive. Elsewhere Ctrl is Mod, and Ctrl+Shift+A is Home.
+    binding: isApplePlatform(globalThis.navigator?.platform ?? "")
+      ? { key: "a", mod: true, ctrl: true }
+      : { key: "e", mod: true, shift: true },
+    order: 20,
+    allowInEditable: true,
+    when: () => !!archive.current?.available(),
+    run: () => archive.current?.run(),
+  });
+  const agents = ctx.agents;
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
+    group: "App",
     icon: CopyIcon,
     component: ({ active }) => (
       <ChannelTemplateSettings agents={agents} active={active} />
@@ -58,7 +90,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         extensions={extensions}
         relay={relay}
         panels={panels}
-        pages={pages}
+        archive={archive}
         companion={companion}
         agents={agents}
       />

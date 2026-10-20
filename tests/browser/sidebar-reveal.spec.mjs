@@ -67,7 +67,10 @@ test("restoring the saved position does not cancel a delayed entry's reveal", as
     ([key, value]) => localStorage.setItem(key, JSON.stringify(value)),
     [key, { collapsed: [], scrollTop: 800, width: 260, location: "row:5" }],
   );
-  const sidebar = page.getByRole("navigation", { name: "Sidebar" });
+  const sidebar = page.getByRole("navigation", {
+    name: "Sidebar",
+    exact: true,
+  });
   // Remount at another destination whose entry is still being looked up.
   await page.evaluate(() =>
     window.sidebar.update({
@@ -93,7 +96,10 @@ test("a user scroll before a delayed entry renders keeps that position for its d
 }) => {
   const { errors } = watchPageErrors(page);
   await page.goto(url);
-  const sidebar = page.getByRole("navigation", { name: "Sidebar" });
+  const sidebar = page.getByRole("navigation", {
+    name: "Sidebar",
+    exact: true,
+  });
   await rows(page, 45);
   await update(page, { mounted: true });
   await expect(sidebar.locator('[data-row="0"]')).toHaveAttribute(

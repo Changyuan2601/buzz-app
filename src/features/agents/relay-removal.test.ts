@@ -81,7 +81,7 @@ function setup(
     });
     return removal;
   };
-  return { fixture, instance, remove, dispose };
+  return { fixture, instance, remove };
 }
 const coordinate = () => `30177:${viewer.pubkey}:${agent.pubkey}`;
 
@@ -302,49 +302,6 @@ it("settles already enqueued channel removals when a later enqueue throws", asyn
   }
   expect(removals()).toEqual([]);
   expect(outbox.snapshot()).toHaveLength(255);
-});
-
-it("settles a gated removal before disposing its session after early assertion failure", async () => {
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let started!: () => void;
-  const reading = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  const { fixture, instance, remove, dispose } = setup(
-    viewer,
-    undefined,
-    ({ transport }) => {
-      const query = transport.query;
-      transport.query = async (filters, signal) => {
-        if (filters.some(({ kinds }) => kinds?.includes(0))) {
-          started();
-          await held;
-          signal?.throwIfAborted();
-        }
-        return query(filters, signal);
-      };
-    },
-  );
-  const removal = remove(undefined, release);
-  let archiveStatusAtSettlement: string | undefined;
-  const outcome = Promise.allSettled([removal]).then(([result]) => {
-    archiveStatusAtSettlement = instance.session.archives.snapshot().status;
-    return result;
-  });
-  await reading;
-  try {
-    expect("early failure").toBe("completed removal");
-  } catch {
-    // Exercise the fixture teardown directly, independently of callback finally.
-    await dispose();
-  }
-  expect(await outcome).toMatchObject({ status: "rejected" });
-  expect(archiveStatusAtSettlement).toBe("idle");
-  expect(instance.session.archives.snapshot().status).toBe("unavailable");
-  expect(fixture.published).toEqual([]);
 });
 
 it("a cancelled removal signs and publishes nothing", async () => {

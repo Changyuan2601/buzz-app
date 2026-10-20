@@ -33,7 +33,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "jev-classifier",
     title: "Jev classifier",
-    group: "Integrations",
+    group: "Plugins",
     component: ({ active }) => (
       <ClassifierSettings agents={agents} active={active} />
     ),

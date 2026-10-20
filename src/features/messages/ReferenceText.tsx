@@ -2,6 +2,7 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { ChannelList, ChannelSummary, Profile } from "../relay/contracts";
 import { messageReferences } from "./message-references";
 import { MessageLink } from "../conversation/MessageLink";
@@ -58,7 +59,7 @@ function referenceChannels(queries: ChannelLists) {
 }
 
 export function useReferenceDirectory(
-  session: RelaySession | undefined,
+  session: RelaySession | ComposerSession | undefined,
   selectedProfiles?: ReadonlyMap<string, Profile>,
 ) {
   const profiles = useSyncExternalStore(
@@ -126,7 +127,7 @@ export function ReferenceText({
   renderText(text: string): ReactNode;
   onOpenLink(url: string): boolean;
   extensions?: ConversationExtensions | undefined;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   channelId?: string | undefined;
   interactive?: boolean;
@@ -171,6 +172,7 @@ export function ReferenceText({
           key={reference.start}
           className={styles.link}
           data-mention-kind={reference.kind}
+          data-mention-self={reference.id === session?.viewer ? "" : undefined}
           title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${label}\n${reference.id}`}
         >
           <Icon aria-hidden="true" className={styles.icon} />

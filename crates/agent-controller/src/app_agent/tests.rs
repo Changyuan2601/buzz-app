@@ -385,7 +385,11 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let other = Secret::generate().unwrap();
     assert!(agent.sign(&other, 9, String::new(), vec![]).is_err());
     assert!(agent.http_auth(&other, &agent.events_url(), b"{}").is_err());
-    for url in [agent.events_url(), agent.query_url()] {
+    for url in [
+        agent.events_url(),
+        agent.query_url(),
+        agent.profile_search_url(),
+    ] {
         let auth = agent.http_auth(&key, &url, b"{}").unwrap();
         assert_eq!(auth["kind"], 27235);
         assert_eq!(auth["tags"][0], serde_json::json!(["u", url]));
@@ -427,12 +431,10 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     );
     assert_eq!(agent.media_url(&media).unwrap(), media);
     assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
-    assert!(agent.verify_media_hash(&media, bytes).is_ok());
-    assert!(agent.verify_media_hash(&media, b"different body").is_err());
+    assert!(agent.verify_media_hash(&media, &sha).is_ok());
+    assert!(agent.verify_media_hash(&media, &"0".repeat(64)).is_err());
     let thumbnail = format!("{}/media/{sha}.thumb.jpg", agent.endpoint(""));
-    assert!(agent
-        .verify_media_hash(&thumbnail, b"derived thumbnail")
-        .is_ok());
+    assert!(agent.verify_media_hash(&thumbnail, &"0".repeat(64)).is_ok());
     for input in [
         format!("https://elsewhere.test/media/{sha}.png"),
         format!("{media}?x=1"),

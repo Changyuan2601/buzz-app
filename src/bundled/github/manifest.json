@@ -3,5 +3,8 @@
   "name": "GitHub",
   "apiVersion": 1,
   "description": "View GitHub repositories, pull requests, issues, and commits.",
-  "discovery": { "category": "developer-tools-and-integrations" }
+  "discovery": {
+    "category": "developer-tools-and-integrations",
+    "tags": ["code"]
+  }
 }

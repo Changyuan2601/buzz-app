@@ -22,9 +22,3 @@
   max-width: 32rem;
   white-space: pre-wrap;
 }
-
-.identityValue {
-  display: block;
-  overflow-wrap: anywhere;
-  user-select: all;
-}

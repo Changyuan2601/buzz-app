@@ -67,12 +67,11 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
       />
       <IconButton
         type="button"
-        variant="solid"
-        shape="round"
-        size="toolbar"
+        variant="subtle"
+        size="sm"
         disabled={recorder.status !== "recording"}
-        aria-label="Finish voice note"
-        title="Finish voice note"
+        aria-label="Stop recording"
+        title="Stop recording"
         onClick={() => void finish()}
         icon={<Square size={16} fill="currentColor" aria-hidden="true" />}
       />

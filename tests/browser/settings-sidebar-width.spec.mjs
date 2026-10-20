@@ -18,7 +18,7 @@ test("Settings keeps the channel sidebar width across navigation and reload", as
 }) => {
   await open(page, app);
   const channels = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
     exact: true,
   });
   const settings = page.getByRole("complementary", {
@@ -55,7 +55,7 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
   await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 600, height: 950 });
   await expect(
-    page.getByRole("complementary", { name: "Channel sidebar" }),
+    page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).not.toBeVisible();
   const conversation = page.getByRole("article", {
     name: "Conversation",
@@ -67,7 +67,7 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
     .click();
   expect((await conversation.boundingBox()).width).toBe(contentWidth);
   const channels = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
     exact: true,
   });
   await expect.poll(() => sidebarWidth(channels)).toBe(220);
@@ -141,7 +141,7 @@ test("sidebar width survives route remounts when saving it fails", async ({
   });
   await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   const channels = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
     exact: true,
   });
   await expect.poll(() => sidebarWidth(channels)).toBe(520);
@@ -165,7 +165,7 @@ test("sidebar width updates across open windows without losing a draft", async (
 }) => {
   await open(page, app);
   const channels = page.getByRole("complementary", {
-    name: "Channel sidebar",
+    name: "Sidebar",
     exact: true,
   });
   const resize = page.getByRole("separator", {

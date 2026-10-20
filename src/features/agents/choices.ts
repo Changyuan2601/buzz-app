@@ -124,6 +124,7 @@ export function createAgentChoices({
           pubkey: row.pubkey,
           name: row.name,
           ...choices.get(row.pubkey),
+          ...(row.picture ? { avatar: row.picture } : {}),
           managed: true,
           managedName: row.name,
         });

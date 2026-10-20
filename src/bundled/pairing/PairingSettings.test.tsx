@@ -209,6 +209,13 @@ it.each(["uncertain", "cancelled"] as const)(
       );
     });
     expect(native.start).toHaveBeenCalledTimes(1);
+    // A selected community supplies the address instead of the manual field.
+    expect(native.start.mock.calls[0]).toEqual([
+      expect.any(String),
+      viewer,
+      "https://community.example",
+    ]);
+    expect(screen.queryByLabelText("Community address")).toBeNull();
     status = { phase: "transferring" };
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);

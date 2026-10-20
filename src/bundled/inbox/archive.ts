@@ -84,7 +84,7 @@ function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   );
 }
 
-// A session row merges what were separate per-message rows, so archives saved
+// A Solo chat row merges what were separate per-message rows, so archives saved
 // for some of them must not hide the rest.
 const partial = (entries: readonly Archive[], item: InboxItem) => {
   const observed = new Set(entries.flatMap((archive) => archive.messageIds));

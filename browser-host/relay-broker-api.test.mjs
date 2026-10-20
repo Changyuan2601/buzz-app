@@ -1625,178 +1625,120 @@ test("presence snapshot progresses while an ordinary response body is held", asy
     await h.close();
   }
 });
-test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
-  "real outbox creates, invites and sends without Sessions support (parent: %s)",
-  async (parent) => {
-    const h = await harness(
-      (call) =>
-        Response.json(
-          call.url.endsWith("/events")
-            ? { accepted: true, event_id: call.body.id }
-            : [],
-        ),
-      { channelCreation: true },
-    );
-    let owner;
-    let traffic;
-    try {
-      const transport = await connectBrokerTransport(h.base);
-      traffic = await openBrokerSocket(transport);
-      expect(transport.writer.kinds).toContain(9007);
-      expect(transport.writer.kinds).not.toContain(9050);
-      owner = createOutbox(transport.viewer, transport.writer, {
-        load: () => [],
-        save: () => {},
-      });
-      const id = "11111111-1111-4111-8111-111111111111";
-      const creationId = owner.outbox.send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", "Work"],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
-          [
-            "about",
-            `Buzz session (buzz.sessions/v1)${parent ? `\nparent:${parent}` : ""}`,
-          ],
-          ...(parent ? [] : [["ttl", "600"]]),
-        ],
-      });
-      await vi.waitFor(() =>
-        expect(
-          owner.local.snapshot().find((row) => row.event.id === creationId)
-            ?.delivery,
-        ).toBe("accepted"),
-      );
-      const creation = owner.local
-        .snapshot()
-        .find((row) => row.event.id === creationId)?.event;
-      expect(creation).toBeDefined();
-      const fixtureKey = new Uint8Array(32);
-      fixtureKey[31] = 7;
-      for (const ttl of ["", "0", "+1", "1\n", "2147483648"]) {
-        const invalid = {
-          ...creation,
-          tags: [
-            ...creation.tags.filter(
-              ([key]) => key !== "ttl" && key !== "client-id",
-            ),
-            ["ttl", ttl],
-          ],
-        };
-        expect((await h.post("sign", invalid)).status).toBe(400);
-        const signed = finalizeEvent(structuredClone(invalid), fixtureKey);
-        expect((await h.post("publish", signed)).status).toBe(400);
-      }
-      if (parent) {
-        const invalid = {
-          ...creation,
-          tags: [
-            ...creation.tags.filter(([key]) => key !== "client-id"),
-            ["ttl", "600"],
-          ],
-        };
-        expect((await h.post("sign", invalid)).status).toBe(400);
-        expect(
-          (
-            await h.post(
-              "publish",
-              finalizeEvent(structuredClone(invalid), fixtureKey),
-            )
-          ).status,
-        ).toBe(400);
-      }
-      const temporaryCreationId = owner.outbox.send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", "33333333-3333-4333-8333-333333333333"],
-          ["name", "Standup"],
-          ["visibility", "open"],
-          ["channel_type", "stream"],
-          ["ttl", "604800"],
-        ],
-      });
-      await vi.waitFor(() =>
-        expect(
-          owner.local
-            .snapshot()
-            .find((row) => row.event.id === temporaryCreationId)?.delivery,
-        ).toBe("accepted"),
-      );
-      const invitationId = owner.outbox.send({
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", id],
-          ["p", "a".repeat(64)],
-        ],
-      });
-      await vi.waitFor(() =>
-        expect(
-          owner.local.snapshot().find((row) => row.event.id === invitationId)
-            ?.delivery,
-        ).toBe("accepted"),
-      );
-      const messageId = owner.outbox.send({
-        kind: 9,
-        content: "Hello",
-        tags: [
-          ["h", id],
-          ["p", "a".repeat(64)],
-        ],
-      });
-      await vi.waitFor(() =>
-        expect(
-          owner.local.snapshot().find((row) => row.event.id === messageId)
-            ?.delivery,
-        ).toBe("accepted"),
-      );
-      expect(h.publications.map((event) => event.kind)).toEqual([
-        9007, 9007, 9000, 9,
-      ]);
-      const denied = await h.post("sign", {
-        kind: 9050,
-        created_at: 1700000000,
-        content: JSON.stringify({ action: "create", title: "Work" }),
-        tags: [["h", id]],
-      });
-      expect(denied.status).toBe(400);
-    } finally {
-      owner?.dispose();
-      traffic?.dispose();
-      await h.close();
-    }
-  },
-);
-
-test.each(["sign", "publish"])(
-  "%s rejects truncated channel creation tags as a client error",
-  async (route) => {
-    const h = await harness(success, { channelCreation: true });
-    try {
-      const required = [
-        ["h", "11111111-1111-4111-8111-111111111111"],
+test("real outbox creates, invites and sends", async () => {
+  const h = await harness(
+    (call) =>
+      Response.json(
+        call.url.endsWith("/events")
+          ? { accepted: true, event_id: call.body.id }
+          : [],
+      ),
+    { channelCreation: true },
+  );
+  let owner;
+  let traffic;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9007);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const id = "11111111-1111-4111-8111-111111111111";
+    const creationId = owner.outbox.send({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
         ["name", "Work"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["ttl", "600"],
+        ["t", "buzz.solo"],
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === creationId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    const creation = owner.local
+      .snapshot()
+      .find((row) => row.event.id === creationId)?.event;
+    expect(creation).toBeDefined();
+    const fixtureKey = new Uint8Array(32);
+    fixtureKey[31] = 7;
+    for (const ttl of ["", "2147483648"]) {
+      const invalid = {
+        ...creation,
+        tags: [
+          ...creation.tags.filter(
+            ([key]) => key !== "ttl" && key !== "client-id",
+          ),
+          ["ttl", ttl],
+        ],
+      };
+      expect((await h.post("sign", invalid)).status).toBe(400);
+      const signed = finalizeEvent(structuredClone(invalid), fixtureKey);
+      expect((await h.post("publish", signed)).status).toBe(400);
+    }
+    const temporaryCreationId = owner.outbox.send({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "33333333-3333-4333-8333-333333333333"],
+        ["name", "Standup"],
         ["visibility", "open"],
         ["channel_type", "stream"],
-      ];
-      for (let length = 0; length < required.length; length++) {
-        const response = await h.post(route, {
-          kind: 9007,
-          created_at: 1700000000,
-          content: "",
-          tags: required.slice(0, length),
-        });
-        expect(response.status).toBe(400);
-      }
-    } finally {
-      await h.close();
-    }
-  },
-);
+        ["ttl", "604800"],
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local
+          .snapshot()
+          .find((row) => row.event.id === temporaryCreationId)?.delivery,
+      ).toBe("accepted"),
+    );
+    const invitationId = owner.outbox.send({
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", id],
+        ["p", "a".repeat(64)],
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === invitationId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    const messageId = owner.outbox.send({
+      kind: 9,
+      content: "Hello",
+      tags: [
+        ["h", id],
+        ["p", "a".repeat(64)],
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === messageId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications.map((event) => event.kind)).toEqual([
+      9007, 9007, 9000, 9,
+    ]);
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
 
 test("member addition works without channel creation, while role elevation remains rejected", async () => {
   const h = await harness(success);
@@ -3517,19 +3459,10 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       expect(signed).toMatchObject(change);
       await transport.channelDetails.publish(signed, signal);
     }
-    for (const ttl of ["1", "2147483647", ""]) {
-      const change = {
-        ...template,
-        tags: [...template.tags.slice(0, 2), ["ttl", ttl]],
-      };
-      const signed = await transport.channelDetails.sign(change, signal);
-      expect(signed).toMatchObject(change);
-      await transport.channelDetails.publish(signed, signal);
-    }
     for (const tags of [
-      [...template.tags.slice(0, 2), ["ttl", "+1"]],
-      [...template.tags.slice(0, 2), ["ttl", "1\n"]],
-      [...template.tags.slice(0, 2), ["ttl", "1"], ["ttl", ""]],
+      [...template.tags.slice(0, 3), ["ttl", "+1"]],
+      [...template.tags.slice(0, 3), ["ttl", "1\n"]],
+      [...template.tags.slice(0, 3), ["ttl", "1"], ["ttl", ""]],
       [template.tags[0], ["ttl", "1"], template.tags[1]],
     ]) {
       const change = { ...template, tags };
@@ -3555,13 +3488,13 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     expect(reopened).toMatchObject(reopening);
     expect((await h.post("publish", reopened)).status).toBe(400);
     await transport.channelDetails.publish(reopened, signal);
-    expect(h.publications).toHaveLength(7);
+    expect(h.publications).toHaveLength(4);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(7);
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();

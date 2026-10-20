@@ -1,3 +1,4 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
@@ -48,7 +49,18 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "underline");
-  await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
+  // Links follow the accent at the default accent level.
+  await expect(link).toHaveCSS(
+    "color",
+    await link.evaluate((node) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-link)";
+      node.parentElement?.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }),
+  );
   // Release the held profile while the link is focused, before the navigation
   // below: profile reads give up after 10s, and a loaded engine can spend that
   // long on navigation, leaving nothing pending to release.
@@ -331,13 +343,28 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   const link = page
     .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
     .getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toBeVisible();
+  await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
-  await link.hover();
+  // Move the raw pointer: Locator.hover retries by scrolling the timeline,
+  // and each scroll restarts Virtua's pointer-event hold.
+  let box = await link.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
+  // Opening the preview can re-measure rows and scroll the list. WebKit can
+  // then take the link out of its hover state although the pointer stays on
+  // it, and the probe below would wait for a mouseleave that cannot happen.
+  // After the list settles, move onto the link again (1px aside, as WebKit
+  // can ignore a move to the unchanged position) and prove it is hovered.
+  await virtuaIdle(page);
+  box = await link.boundingBox();
+  const point = { x: box.x + box.width / 2 - 1, y: box.y + box.height / 2 };
+  await page.mouse.move(point.x, point.y);
+  await expect
+    .poll(() => link.evaluate((element) => element.matches(":hover")))
+    .toBe(true);
   const closed = await preview.evaluateHandle((popup) => {
     const seen = { closed: false };
     new MutationObserver(() => {
@@ -349,11 +376,8 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   // Virtua stops the list hit-testing until 150ms after each scroll. When
   // the browser hit-tests the still pointer in that time, as WebKit does
   // after a scroll, it reports a mouseleave from the link. A 1px move that
-  // stays on the link makes that hit-test happen now; WebKit can ignore a
-  // move to the unchanged position.
+  // stays on the link makes that hit-test happen now.
   const list = page.locator('[data-channel-timeline="alpha"] ol');
-  const box = await link.boundingBox();
-  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const hitTest = async (pointerEvents) => {
     await list.evaluate((element, value) => {
       element.style.pointerEvents = value;
@@ -621,10 +645,8 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   ).toBeVisible();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
-  await page
-    .getByRole("switch", { name: "Enable Links", exact: true })
-    .uncheck();
+  await button(page, "Manage plugins").click();
+  await setPluginEnabled(page, "Links", false);
   await openPage(page, "Messages");
   await row.locator("a").first().click();
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);

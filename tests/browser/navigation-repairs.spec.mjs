@@ -1,3 +1,4 @@
+import { selectCommunity } from "./navigation.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -14,19 +15,19 @@ test("Back restores Personal space without inheriting the active community", asy
 }) => {
   await open(page, app);
   const rail = page.getByRole("navigation", { name: "Communities" });
-  await button(page, "Personal space").click();
+  await selectCommunity(page, "Personal space");
   await expect(
-    rail.getByRole("button", { name: "Personal space" }),
-  ).toHaveAttribute("aria-current", "true");
+    rail.getByRole("button", { name: "Community switcher: Personal space" }),
+  ).toBeVisible();
   const personal = await entry(page);
-  await button(page, "Switch to Primary").click();
+  await selectCommunity(page, "Primary");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   await button(page, "Go back").click();
   await expect(
-    rail.getByRole("button", { name: "Personal space" }),
-  ).toHaveAttribute("aria-current", "true", { timeout: 1500 });
+    rail.getByRole("button", { name: "Community switcher: Personal space" }),
+  ).toBeVisible({ timeout: 1500 });
   expect(await entry(page)).toEqual(personal);
   await expect(
     page.getByRole("heading", { name: "Your channels, one conversation." }),
@@ -70,12 +71,12 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   // Start outside Messages so its header activation owns preserve-focus intent.
   // Settings also reads the community profile through /session, racing this gate.
   await page.goto(
-    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.me", pageId: "me" }))}`,
+    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.workflows", pageId: "workflows" }))}`,
   );
-  await expect(
-    page.getByRole("tab", { name: "Solo", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  const messages = page.getByRole("tab", { name: "Multiplayer", exact: true });
+  await expect
+    .poll(async () => (await entry(page)).target.pageId)
+    .toBe("workflows");
+  const messages = page.getByRole("tab", { name: "Messages", exact: true });
   await messages.focus();
   await messages.press("Enter");
   await expect(
@@ -110,7 +111,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   });
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("tabpanel", { name: "Multiplayer", exact: true }),
+    page.getByRole("tabpanel", { name: "Messages", exact: true }),
   ).toBeFocused();
 });
 
@@ -119,17 +120,15 @@ test("Skip to content focuses main without adding a visit or dropping Back", asy
   app,
 }) => {
   await open(page, app);
-  await openPage(page, "Projects");
-  await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
-  ).toBeFocused();
+  await openPage(page, "Workflows");
+  await expect(page.getByRole("main")).toBeFocused();
   const before = await entry(page);
   const url = page.url();
   const skip = page.getByRole("link", { name: "Skip to content", exact: true });
   await skip.focus();
   await skip.press("Enter");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible({ timeout: 1500 });
   await expect(page.getByRole("main")).toBeFocused();
   expect(await entry(page)).toEqual(before);
@@ -183,9 +182,9 @@ launchTest(
     });
     await expect(page.locator("#buzz-launch")).toHaveCount(0);
     await expect(failed).toBeVisible();
-    await openPage(page, "Projects");
+    await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
-    await button(page, "Agents").first().click();
+    await page.getByRole("tab", { name: "Agents", exact: true }).click();
     await page.evaluate(() => {
       location.hash = "#buzz=%7B";
     });

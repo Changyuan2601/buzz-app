@@ -1,6 +1,7 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -12,6 +13,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
+import { readProject } from "../../features/agent-harness/project";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
@@ -59,6 +61,8 @@ type Request = {
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
   team: string;
+  /** The Solo chat's workspace Canvas section, if it has one. */
+  project?: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -70,9 +74,9 @@ type Request = {
   superseded?: () => void;
   failActivity(reason: string): void;
 };
-/** `at` is when the binding last started a turn; bindings saved before it
- * existed have none. `tools` is the `addedKey` of the thread's tools, absent
- * when plugins added none. */
+/** `at` is when the binding last took in a message or ended a turn; bindings
+ * saved before it existed have none. `tools` is the `addedKey` of the
+ * thread's tools, absent when plugins added none. */
 type Saved = {
   threadId: string;
   workspace: string;
@@ -88,6 +92,10 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** The owner stopped it, so its interruption is not reported. */
+  stopped?: boolean;
+  /** The one interrupt every Stop of this turn shares. */
+  stopping?: Promise<void>;
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
   model?: string;
   effort?: string;
@@ -126,6 +134,8 @@ type Entry = {
   saved: Record<string, Saved>;
   /** Standalone turns now running, for their tool calls to find. */
   onces: Set<Once>;
+  /** Requests delivered and not yet taken into a turn, nor ended. */
+  waiting: Set<Request>;
 };
 type Server = {
   rpc: AppServer;
@@ -144,6 +154,10 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
+/** How long a stopped turn's shells are looked for, and how often. Codex hands
+ * one over about 50ms after the turn ends. */
+const STOP_LINGER_MS = 1_000;
+const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -172,7 +186,7 @@ export class CodexRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -244,6 +258,11 @@ export class CodexRuntime {
     if (code !== 0 || !absoluteWorkspace(workspace))
       throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
+  }
+  /** Copies `threadId` from the user's Codex home, if it is there. */
+  private async adopt(threadId: string) {
+    const process = await this.spawn("adopt", { args: [threadId] });
+    await process.exited;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
     // A stopped agent's draining turns don't bring its sessions back.
@@ -360,15 +379,14 @@ export class CodexRuntime {
       saved,
       lanes: new Map(),
       onces: new Set(),
+      waiting: new Set(),
     };
     this.entries.set(pubkey, entry);
     return entry;
   }
   private load(storageKey: string) {
     try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(storageKey) ?? "{}",
-      );
+      const stored: unknown = JSON.parse(this.storage.get(storageKey) ?? "{}");
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         return Object.fromEntries(
           Object.entries(stored).filter(
@@ -452,16 +470,23 @@ export class CodexRuntime {
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
-    try {
-      this.storage.setItem(entry.storageKey, JSON.stringify(entry.saved));
-    } catch (error) {
-      this.status(
-        request.agent.pubkey,
-        key,
-        "Session could not be saved",
-        message(error),
+    void this.storage
+      .set(entry.storageKey, JSON.stringify(entry.saved))
+      .catch((error: unknown) =>
+        this.status(
+          request.agent.pubkey,
+          key,
+          "Session could not be saved",
+          message(error),
+        ),
       );
-    }
+  }
+  /** Dates the binding now, when it takes in a message or ends a turn. */
+  private touch(request: Request, entry: Entry, key: string) {
+    const saved = entry.saved[key];
+    if (!saved) return;
+    this.save(request, entry, key, { ...saved, at: Date.now() });
+    for (const listener of this.listeners) listener();
   }
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
@@ -485,11 +510,17 @@ export class CodexRuntime {
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
-    const topLevel = await reads.meChat(
+    const topLevel = await reads.soloChat(
       agent.owner,
       channelId,
       delivery.signal,
     );
+    // Only a Solo chat's Canvas is handed over.
+    const canvas = reads.canvas?.bind(reads);
+    const project = topLevel
+      ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
+          ?.section
+      : undefined;
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();
@@ -521,6 +552,7 @@ export class CodexRuntime {
         ...(topLevel ? { topLevel } : {}),
       },
       team: delivery.team ?? "",
+      ...(project ? { project: `${project}\n` } : {}),
       answered,
       failActivity,
       ...(delivery.step ? { step: delivery.step } : {}),
@@ -540,6 +572,8 @@ export class CodexRuntime {
     const key = JSON.stringify([channelId, root ?? "channel"]);
     const text = textOf(request.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
+    delivery.interruptible?.(() => this.interrupt(entry, key, request));
+    entry.waiting.add(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
       lane = { tail: entry.after, queued: 0 };
@@ -547,6 +581,11 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
+      let queued = false;
+      const queue = () => {
+        queued = true;
+        this.start(request, text, key, lane, entry);
+      };
       // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
@@ -559,16 +598,18 @@ export class CodexRuntime {
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
           // messages first. A turn keeps the posting policy it was admitted
-          // with, so a request under the other policy waits for it too.
+          // with, so a request under the other policy waits for it too. A
+          // turn the owner stopped takes nothing more.
           if (
             active.finished ||
+            active.stopped ||
             lane.queued ||
             request.conversation.topLevel !==
               active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           const context = await this.history(request, entry.abort.signal);
@@ -576,19 +617,21 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          if (active.finished) {
-            this.start(request, text, key, lane, entry);
+          if (active.finished || active.stopped) {
+            queue();
             return;
           }
           await active.rpc.request("turn/steer", {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
+              `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
             ),
           });
           active.reply = request;
           active.requests.push(request);
+          entry.waiting.delete(request);
+          this.touch(request, entry, key);
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -597,7 +640,7 @@ export class CodexRuntime {
           }
           // A completion racing the request means this is the next ordinary turn.
           if (message(error) === "no active turn to steer") {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           request.failActivity(`Steering was not accepted: ${message(error)}`);
@@ -608,6 +651,8 @@ export class CodexRuntime {
           // The running turn never took this request in, so nothing else
           // answers it: let go of its working hold now, not at that turn's end.
           request.answered();
+        } finally {
+          if (!queued) entry.waiting.delete(request);
         }
       });
       active.steering = accepted.catch((error) =>
@@ -736,6 +781,37 @@ export class CodexRuntime {
     }
   }
 
+  /** Stops the turn in conversation `key` that took `request` in, once it
+   * started. A request still waiting for its turn is not stopped. Stops of
+   * one turn share its interrupt, so one that fails cannot undo another. */
+  private interrupt(entry: Entry, key: string, request: Request) {
+    if (entry.waiting.has(request))
+      return Promise.reject(
+        new Error("Codex has not started on this message yet"),
+      );
+    const active = entry.lanes.get(key)?.active;
+    if (!active?.requests.includes(request) || active.finished)
+      return Promise.resolve();
+    active.stopped = true;
+    active.stopping ??= (async () => {
+      try {
+        await active.ready;
+        if (active.finished || !active.threadId || !active.turnId) return;
+        await active.rpc.request("turn/interrupt", {
+          threadId: active.threadId,
+          turnId: active.turnId,
+        });
+      } catch (error) {
+        // A turn that did not stop still reports how it ends, and can be
+        // stopped again.
+        delete active.stopping;
+        if (!active.finished) active.stopped = false;
+        throw error;
+      }
+    })();
+    return active.stopping;
+  }
+
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
@@ -764,6 +840,7 @@ export class CodexRuntime {
       .catch(() => undefined)
       .then(async () => {
         current.queued--;
+        entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -839,6 +916,11 @@ export class CodexRuntime {
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
+      relayAuthor: this.reads(agent.pubkey)?.relayAuthor?.(),
+      audienceAuthorityCommunity: this.reads(
+        agent.pubkey,
+      )?.audienceAuthorityCommunity?.(),
+      signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
       spawn: this.spawn,
       cwd: turn.workspace,
       check,
@@ -874,14 +956,18 @@ export class CodexRuntime {
     }
     return {
       success: true,
-      contentItems: [
+      contentItems:
         typeof reply === "string"
-          ? { type: "inputText", text: reply }
-          : {
-              type: "inputImage",
-              imageUrl: `data:${reply.type};base64,${reply.data}`,
-            },
-      ],
+          ? [{ type: "inputText", text: reply }]
+          : [
+              {
+                type: "inputImage",
+                imageUrl: `data:${reply.type};base64,${reply.data}`,
+              },
+              ...(reply.text
+                ? [{ type: "inputText" as const, text: reply.text }]
+                : []),
+            ],
     };
   }
   /** The agent's memory, or only entry `slug`, as its community's reads give
@@ -903,14 +989,17 @@ export class CodexRuntime {
       throw new Error("Buzz is not connected to this community");
     return listing;
   }
-  private async terminals(rpc: AppServer, threadId: string) {
+  /** Stops the thread's shells. `linger` keeps looking that long: a command
+   * a stopped turn was waiting on becomes a background terminal only just
+   * after the turn ends. */
+  private async terminals(rpc: AppServer, threadId: string, linger = 0) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
     try {
       await rpc.request("thread/backgroundTerminals/clean", { threadId });
+      const until = Date.now() + linger;
       // clean acknowledges submission. Direct termination is the completion
       // barrier for any shells still reported by the server.
-      let cursor: string | null = null;
-      do {
+      for (let cursor: string | null = null; ; ) {
         const page: {
           data: { processId: string }[];
           nextCursor: string | null;
@@ -928,7 +1017,10 @@ export class CodexRuntime {
           ),
         );
         cursor = page.nextCursor;
-      } while (cursor);
+        if (cursor) continue;
+        if (Date.now() >= until) break;
+        await new Promise((resolve) => setTimeout(resolve, LINGER_POLL_MS));
+      }
       const remaining = await rpc.request<{ data: unknown[] }>(
         "thread/backgroundTerminals/list",
         { threadId, limit: 1 },
@@ -1073,31 +1165,38 @@ export class CodexRuntime {
       const tools = addedKey(added);
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
-      let started: { thread: { id: string; cwd: string } };
-      try {
-        started = await rpc.request<typeof started>(
-          resuming ? "thread/resume" : "thread/start",
-          {
-            ...params,
-            ...(resuming
-              ? { threadId: existing?.threadId, excludeTurns: true }
-              : {
-                  dynamicTools: dynamicTools(added),
-                }),
-          },
-        );
-      } catch (error) {
-        if (
-          !resuming ||
-          message(error) !==
-            `no rollout found for thread id ${existing?.threadId}`
-        )
-          throw error;
-        started = await rpc.request<typeof started>("thread/start", {
+      type Started = { thread: { id: string; cwd: string } };
+      const start = () =>
+        rpc.request<Started>("thread/start", {
           ...params,
           dynamicTools: dynamicTools(added),
         });
-      }
+      const resume = (threadId: string) =>
+        rpc.request<Started>("thread/resume", {
+          ...params,
+          threadId,
+          excludeTurns: true,
+        });
+      let started: Started;
+      if (resuming) {
+        const { threadId } = existing;
+        const missing = (error: unknown) => {
+          if (message(error) !== `no rollout found for thread id ${threadId}`)
+            throw error;
+        };
+        // A thread saved before Buzz had its own Codex home is in the user's;
+        // continue a copy, or start fresh if there is none.
+        started = await resume(threadId)
+          .catch(async (error) => {
+            missing(error);
+            await this.adopt(threadId);
+            return resume(threadId);
+          })
+          .catch(async (error) => {
+            missing(error);
+            return start();
+          });
+      } else started = await start();
       active.threadId = started.thread.id;
       server.threads.set(active.threadId, agent.pubkey);
       signal.throwIfAborted();
@@ -1113,7 +1212,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
         ),
         model,
         effort,
@@ -1134,7 +1233,11 @@ export class CodexRuntime {
       const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
-      if (status === "interrupted") {
+      if (status === "interrupted" && active.stopped) {
+        for (const taken of active.requests) taken.answered();
+        await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
+        this.status(agent.pubkey, key, "Stopped");
+      } else if (status === "interrupted") {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
@@ -1178,6 +1281,9 @@ export class CodexRuntime {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");
       followed.stop();
+      // A turn Codex took in has ended, however it ended.
+      if (active.turnId && !entry.abort.signal.aborted)
+        this.touch(request, entry, key);
       turnAbort.abort(new Error("The Codex turn has ended"));
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.

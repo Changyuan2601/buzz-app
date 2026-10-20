@@ -325,9 +325,9 @@ it("launches the exact menu contribution and removes it when unavailable", async
 });
 
 it.each([true, false])(
-  "legacy sessions use verified lifecycle permissions (owner=%s)",
+  "Solo chats use verified lifecycle permissions (owner=%s)",
   async (owner) => {
-    const h = harness({ ...channel, channelType: "session", private: true });
+    const h = harness({ ...channel, channelType: "solo", private: true });
     h.lifecycleLoad.mockResolvedValue({
       channelId: "alpha",
       channelType: "stream",
@@ -341,12 +341,12 @@ it.each([true, false])(
       .setup()
       .click(screen.getByRole("button", { name: "Channel actions" }));
     await screen.findByRole("menuitem", {
-      name: owner ? "Delete channel" : "Leave channel",
+      name: owner ? "Delete chat" : "Leave chat",
     });
-    expect(!!screen.queryByRole("menuitem", { name: "Archive channel" })).toBe(
+    expect(!!screen.queryByRole("menuitem", { name: "Archive chat" })).toBe(
       owner,
     );
-    expect(!!screen.queryByRole("menuitem", { name: "Delete channel" })).toBe(
+    expect(!!screen.queryByRole("menuitem", { name: "Delete chat" })).toBe(
       owner,
     );
     expect(h.lifecycleLoad).toHaveBeenCalledWith(

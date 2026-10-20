@@ -61,6 +61,16 @@ function serialize(
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
   if (tag === "IMG")
     return text(node.getAttribute("data-copy-emoji") ?? "", format);
+  // A plugin-presented code block copies as its whole source, not its drawing,
+  // with the terminator a rendered PRE's code carries.
+  const source = node.getAttribute("data-copy-code");
+  if (source !== null) {
+    if (!holds(node, range)) return "";
+    const code = text(`${source}\n`, format);
+    return format === "text"
+      ? code
+      : fence(node.getAttribute("data-copy-language") ?? "", code);
+  }
   const inner = children(node, format, range);
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
@@ -106,7 +116,7 @@ function serialize(
           if (remainder.toString()) code += "\n";
         }
       }
-      return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre>`;
+      return fence(language, code);
     }
   }
   if (
@@ -229,6 +239,10 @@ function markdown(node: Node, range?: Range): string {
   return composerMarkdown(projectComposerDocument(doc).draft);
 }
 
+function fence(language: string, code: string): string {
+  return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre>`;
+}
+
 function text(value: string, format: CopyFormat): string {
   return format === "html" ? escapeHtml(value) : value;
 }
@@ -258,7 +272,23 @@ function clip(node: Text, range?: Range): string {
 
 /** A chip keeps its identity only when all of its text is selected. */
 function whole(element: Element, range?: Range): boolean {
+  return !range || within(element, range).toString() === element.textContent;
+}
+
+/** Whether a selection covers an element or some of its text, not merely
+ * ends inside it, as a triple-click on the paragraph above leaves it. */
+function holds(element: Element, range?: Range): boolean {
   if (!range) return true;
+  const bounds = element.ownerDocument.createRange();
+  bounds.selectNode(element);
+  return (
+    (range.compareBoundaryPoints(Range.START_TO_START, bounds) <= 0 &&
+      range.compareBoundaryPoints(Range.END_TO_END, bounds) >= 0) ||
+    within(element, range).toString() !== ""
+  );
+}
+
+function within(element: Element, range: Range): Range {
   const part = range.cloneRange();
   const bounds = element.ownerDocument.createRange();
   bounds.selectNodeContents(element);
@@ -266,7 +296,7 @@ function whole(element: Element, range?: Range): boolean {
     part.setStart(bounds.startContainer, bounds.startOffset);
   if (part.compareBoundaryPoints(Range.END_TO_END, bounds) > 0)
     part.setEnd(bounds.endContainer, bounds.endOffset);
-  return part.toString() === element.textContent;
+  return part;
 }
 
 // Preserve explicit breaks, blocks, and the tab/newline boundaries browsers use
@@ -310,8 +340,8 @@ const blocks =
   "div, p, li, ol, ul, section, table, blockquote, pre, h1, h2, h3, h4, h5, h6, tr, thead, tbody, tfoot, td, th";
 
 function siblingSeparator(previous: Node, current: Node) {
-  const previousTag = previous instanceof Element ? previous.tagName : "";
-  const currentTag = current instanceof Element ? current.tagName : "";
+  const previousTag = blockName(previous);
+  const currentTag = blockName(current);
   if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
     return "\t";
   // Markdown separates blocks with a blank line, as the composer's serializer
@@ -322,6 +352,14 @@ function siblingSeparator(previous: Node, current: Node) {
 }
 
 const markdownBlock = /^(P|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE)$/;
+
+// A presented code block's frame separates like the PRE it replaces.
+const blockName = (node: Node) =>
+  node instanceof Element
+    ? node.hasAttribute("data-copy-code")
+      ? "PRE"
+      : node.tagName
+    : "";
 
 /** Whitespace between rendered blocks is formatting; blocks supply separators. */
 function formatting(node: Node): boolean {

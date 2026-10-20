@@ -1,4 +1,5 @@
 import { assert, describe, expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { createRelaySession } from "./session";
 import type { HeadPersistence } from "./persistence";
 import {
@@ -172,6 +173,73 @@ describe("channel store", () => {
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
+  it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
+    // Agents, search and previews read single old messages through the
+    // session. Merging one into an open window above its loaded history makes
+    // a gap that later pages fill in the middle, which the timeline reads as
+    // new arrivals and does not anchor, so the reader jumps back.
+    const { store, queries, next, pending } = setup();
+    const page = (filter: Record<string, unknown>) => {
+      const index = pending.findIndex((entry) =>
+        Object.entries(filter).every(
+          ([key, value]) =>
+            JSON.stringify(entry.filters[0]?.[key as "limit"]) ===
+            JSON.stringify(value),
+        ),
+      );
+      const [entry] = pending.splice(index, 1);
+      assert.exists(entry);
+      return entry;
+    };
+    const newer = message(alice, "c", "newer", 20),
+      middle = message(alice, "c", "middle", 10),
+      old = message(alice, "c", "old", 5);
+    // Read before the window opens: it also seeds the live tail.
+    const early = store.session.read([{ ids: [old.id], limit: 1 }]);
+    next().respond([old]);
+    await early;
+    queries.ensure("c");
+    next().respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
+    // Read while the window is open.
+    const late = store.session.read([{ ids: [old.id], limit: 1 }]);
+    page({ ids: [old.id] }).respond([old]);
+    await late;
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
+    // A read inside the loaded history still lands.
+    const live = message(alice, "c", "live", 30);
+    const current = store.session.read([{ ids: [live.id], limit: 1 }]);
+    page({ ids: [live.id] }).respond([live]);
+    await current;
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      newer.id,
+      live.id,
+    ]);
+    queries.loadOlder("c");
+    page({ until: 20 }).respond([
+      middle,
+      old,
+      bounds(relay, "c", `20:${newer.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      old.id,
+      middle.id,
+      newer.id,
+      live.id,
+    ]);
+    store.dispose();
+  });
   it("evicts the least recently ensured window beyond capacity, aborting its request and rejecting late results", async () => {
     const { queries, store, next, pending } = setup(2);
     const evicted = vi.fn();
@@ -238,65 +306,7 @@ describe("channel store", () => {
   });
 });
 
-it("keeps session replies in the main timeline and observes parent changes", async () => {
-  const { store, queries, next } = setup();
-  const parent = "11111111-1111-4111-8111-111111111111";
-  const sessionMetadata = (time: number, moved = false) =>
-    signed(relay, {
-      kind: 39000,
-      content: "",
-      created_at: time,
-      tags: [
-        ["d", "work"],
-        ["name", "Work topic"],
-        ["t", "stream"],
-        ["private"],
-        [
-          "about",
-          `Buzz session (buzz.sessions/v1)${moved ? `\nparent:${parent}` : ""}`,
-        ],
-      ],
-    });
-  queries.ensureList();
-  next().respond([roster(relay, "work", [viewer.pubkey]), sessionMetadata(10)]);
-  await flush();
-  expect(queries.list().channels[0]).toMatchObject({
-    channelType: "session",
-    name: "Work topic",
-  });
-  queries.ensure("work");
-  const request = next();
-  expect(request.filters[0]).not.toHaveProperty("top_level");
-  const root = message(viewer, "work", "Prompt", 20);
-  const reply = message(alice, "work", "Reply", 21, [
-    ["e", root.id, "", "root"],
-    ["e", root.id, "", "reply"],
-  ]);
-  request.respond([root, reply]);
-  await flush();
-  next().respond([]); // Load message overlays before exposing the conversation.
-  await flush();
-  expect(queries.window("work").rows.map((row) => row.content)).toEqual([
-    "Prompt",
-    "Reply",
-  ]);
-  // Drain profile lookup, then refresh the same roster with only a parent change.
-  next().respond([]);
-  await flush();
-  queries.refreshList?.();
-  next().respond([
-    roster(relay, "work", [viewer.pubkey]),
-    sessionMetadata(30, true),
-  ]);
-  await flush();
-  expect(queries.list().channels[0]).toMatchObject({
-    parentChannelId: parent,
-    updatedAt: 30,
-  });
-  store.dispose();
-});
-
-it("opens an ordinary private session with existing agent replies in its main timeline", async () => {
+it("opens an ordinary private Solo chat with existing agent replies in its main timeline", async () => {
   const { store, queries, next } = setup();
   queries.ensureList();
   next().respond([
@@ -309,7 +319,7 @@ it("opens an ordinary private session with existing agent replies in its main ti
         ["name", "Work"],
         ["t", "stream"],
         ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
+        ["t", "buzz.solo"],
       ],
     }),
     profile(alice, { name: "Alice" }),
@@ -349,7 +359,7 @@ it("opens an ordinary private session with existing agent replies in its main ti
   store.dispose();
 });
 
-it("projects explicit visibility and replaces description-only changes without exposing session metadata", async () => {
+it("projects explicit visibility and replaces description-only changes", async () => {
   const { store, queries, next } = setup();
   try {
     queries.ensureList();
@@ -381,18 +391,45 @@ it("projects explicit visibility and replaces description-only changes without e
         visibility: "public",
       });
     }
-    queries.refreshList?.();
+  } finally {
+    store.dispose();
+  }
+});
+
+it("projects the signed metadata lifetime and replaces lifetime-only changes", async () => {
+  const { store, queries, next } = setup();
+  try {
+    queries.ensureList();
     next().respond([
       roster(relay, "work", [viewer.pubkey]),
-      metadata(relay, "work", "Work", 1_700_000_010, [
-        ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
-        ["t", "stream"],
-      ]),
+      metadata(relay, "work", "Work"),
     ]);
     await flush();
-    expect(queries.list().channels[0]?.description).toBeUndefined();
-    expect(queries.list().channels[0]?.channelType).toBe("session");
+    expect(queries.list().channels[0]).not.toHaveProperty("ttlSeconds");
+    // Malformed metadata keeps the channel listed without inventing a lifetime.
+    for (const [index, [ttl, expected, replaced]] of (
+      [
+        [["ttl", "604800"], 604800, true],
+        [["ttl", "86400"], 86400, true],
+        [["ttl", "01"], undefined, true],
+        [[], undefined, false],
+      ] as const
+    ).entries()) {
+      const old = queries.list().channels[0];
+      queries.refreshList?.();
+      next().respond([
+        roster(relay, "work", [viewer.pubkey]),
+        metadata(relay, "work", "Work", 1_700_000_001 + index, [
+          ...(ttl.length ? [[...ttl]] : []),
+          ["t", "stream"],
+        ]),
+      ]);
+      await flush();
+      const channel = queries.list().channels[0];
+      expect(channel?.name).toBe("Work");
+      expect(channel?.ttlSeconds).toBe(expected);
+      expect(channel === old).toBe(!replaced);
+    }
   } finally {
     store.dispose();
   }
@@ -689,49 +726,102 @@ it("does not commit a roster read that lands after the list stopped being ready"
   }
 });
 
-it.each([false, true])(
-  "recognizes renamed sessions from the exact legacy marker (personal=%s)",
-  async (personal) => {
-    const { store, queries, next } = setup();
+it.each([
+  [48100, 48103],
+  [48103, 48100],
+])(
+  "keeps one Huddle card when live events arrive as %s then %s",
+  async (first, second) => {
+    let receive!: (events: readonly import("./events").RelayEvent[]) => void;
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.top_level))
+          return [
+            bounds(relay, "parent", "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          ];
+        return [
+          roster(relay, "parent", [viewer.pubkey]),
+          metadata(relay, "parent", "Parent"),
+        ].filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        );
+      },
+      subscribe(callbacks) {
+        receive = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
     try {
-      queries.ensureList();
-      const event = (name: string, time: number) =>
-        signed(relay, {
-          kind: 39000,
-          created_at: time,
-          content: "",
-          tags: [
-            ["d", "work"],
-            ["name", name],
-            ["t", "stream"],
-            ["private"],
-            [
-              "about",
-              `Buzz session (buzz.sessions/v1)${personal ? "\npersonal" : ""}`,
-            ],
-          ],
+      const channels = owner.session.channels;
+      channels.ensureList();
+      await vi.waitFor(() => expect(channels.list().status).toBe("ready"));
+      channels.ensure("parent");
+      await vi.waitFor(() =>
+        expect(channels.window("parent").status).toBe("ready"),
+      );
+      let startId: string | undefined;
+      for (const kind of [first, second]) {
+        const event = signed(relay, {
+          kind,
+          tags: [["h", "parent"]],
+          content: JSON.stringify({
+            ephemeral_channel_id: "00000000-0000-4000-8000-000000000002",
+          }),
         });
-      next().respond([
-        roster(relay, "work", [viewer.pubkey]),
-        event("First prompt", 10),
-      ]);
-      await flush();
-      expect(queries.list().channels[0]).toMatchObject({
-        name: "First prompt",
-        channelType: "session",
-      });
-      queries.refreshList?.();
-      next().respond([
-        roster(relay, "work", [viewer.pubkey]),
-        event("Named", 20),
-      ]);
-      await flush();
-      expect(queries.list().channels[0]).toMatchObject({
-        name: "Named",
-        channelType: "session",
-      });
+        if (kind === 48100) startId = event.id;
+        receive([event]);
+        expect(channels.window("parent").rows).toEqual([
+          expect.objectContaining({
+            id: startId ?? event.id,
+            huddle: expect.objectContaining({
+              state: startId ? "started" : "ended",
+            }),
+          }),
+        ]);
+      }
     } finally {
-      store.dispose();
+      owner.dispose();
     }
   },
 );
+
+it("settles a metadata retry during quota cooldown without issuing another read", async () => {
+  const { store, queries, next, pending } = setup();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+  try {
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().fail(new ReadError("unavailable", "Quota", 429, 5000));
+    await flush();
+    const failed = queries.list();
+    expect(failed.status).toBe("error");
+    expect(failed.channels[0]?.metadataPending).toBe(true);
+    const settled = vi.fn();
+    const stop = queries.subscribeList(settled);
+    queries.ensureList();
+    await flush();
+    expect(pending).toHaveLength(0);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(queries.list()).not.toBe(failed);
+    expect(queries.list()).toEqual(failed);
+    stop();
+    clock.mockReturnValue(6001);
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().respond([metadata(relay, "a", "Alpha")]);
+    await flush();
+    expect(queries.list()).toMatchObject({
+      status: "ready",
+      channels: [{ name: "Alpha", metadataPending: undefined }],
+    });
+  } finally {
+    store.dispose();
+    clock.mockRestore();
+  }
+});

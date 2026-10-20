@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChannelSummary } from "../relay/contracts";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 const none: readonly ChannelSummary[] = [];
 
 type Result = {
   /** The lookup that produced this result: its session, query and attempt. */
-  owner: { session: RelaySession };
+  owner: { session: ComposerSession };
   channels: readonly ChannelSummary[];
   partial: boolean;
   error?: string;
@@ -16,7 +16,7 @@ type Result = {
  * the composer's `#` completion. The store resolves each match, so opening one
  * reaches the read-only preview. */
 export function usePublicChannelSearch(
-  session: RelaySession,
+  session: ComposerSession,
   query: string,
   ready: boolean,
   exact = false,

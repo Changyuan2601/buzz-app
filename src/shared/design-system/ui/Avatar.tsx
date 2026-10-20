@@ -23,7 +23,13 @@ function rememberAvatar(src: string) {
     const oldest = loadedAvatarSources.values().next().value;
     if (oldest !== undefined) loadedAvatarSources.delete(oldest);
   }
+  for (const retry of failedAvatars.get(src) ?? []) retry();
 }
+// A failed request may be transient (relay, network or native proxy), and a
+// mounted avatar gets no new source to reset it. Behind the fallback, retry the
+// same source a bounded number of times, and whenever another mount loads it.
+const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
+const failedAvatars = new Map<string, Set<() => void>>();
 
 function AvatarArtwork({
   src,
@@ -34,6 +40,7 @@ function AvatarArtwork({
 }) {
   const [status, setStatus] = useState<ImageStatus>("loading");
   const [showFallback, setShowFallback] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [previouslyLoaded] = useState(() => loadedAvatarSources.has(src));
   const image = useRef<HTMLImageElement>(null);
   useLayoutEffect(() => {
@@ -54,6 +61,23 @@ function AvatarArtwork({
     const timer = window.setTimeout(() => setShowFallback(true), 150);
     return () => window.clearTimeout(timer);
   }, [status]);
+  useEffect(() => {
+    if (status !== "failed") return;
+    const retry = () => {
+      setShowFallback(true);
+      setAttempt(attempt + 1);
+      setStatus("loading");
+    };
+    const waiting = failedAvatars.get(src) ?? new Set();
+    failedAvatars.set(src, waiting.add(retry));
+    const delay = RETRY_DELAYS_MS[attempt];
+    const timer = delay === undefined ? 0 : window.setTimeout(retry, delay);
+    return () => {
+      window.clearTimeout(timer);
+      waiting.delete(retry);
+      if (!waiting.size) failedAvatars.delete(src);
+    };
+  }, [src, status, attempt]);
   if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
   return (
     <>

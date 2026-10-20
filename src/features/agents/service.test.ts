@@ -4,37 +4,59 @@ import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentConfigStore, type Subject } from "./agent-config";
+import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
-import type { LiveBatch, LiveListener } from "../relay/incoming";
-import type { RelayData, RelaySnapshot } from "../relay/service";
+import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
-import type {
-  AgentEventTemplate,
-  AgentIdentity,
-  AgentsNative,
-  PortableAgents,
-} from "./native";
+import type { AgentIdentity } from "./native";
 import {
+  type Agent,
   AgentsService,
-  type AgentCommunities,
   type AgentType,
+  type ConfigBinding,
   type Delivery,
   type Trigger,
   fromOwner,
   teamPrompt,
 } from "./service";
 import type { ClassifierNative } from "./classifier";
-import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
+import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
+import { fileStore, type AgentStore } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
+import {
+  bot,
+  channel,
+  dm,
+  event,
+  fakeCommunities,
+  fakeNative,
+  fakeRelay,
+  groupDm,
+  other,
+  sibling,
+  steps,
+  viewer,
+} from "./service-testing";
+
+/** The tag that the echo type's default watch matches. */
+const DEPLOY = ["t", "deploy"];
+/** A message the echo type's default watch matches. */
+const deploy = (id: string, patch: Partial<RelayEvent> = {}) =>
+  event(id, {
+    content: "deploy",
+    ...patch,
+    tags: [["h", channel], DEPLOY, ...(patch.tags ?? [])],
+  });
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
-const steps: string[] = [];
 const leaveChannels = vi.hoisted(() => vi.fn());
 // The viewer's kind 30177 records, as the community's outbox writes them.
 const records = vi.hoisted(() => ({
@@ -49,375 +71,19 @@ vi.mock("./relay-removal", () => ({
   removeRelayAgent: records.removeAgent,
 }));
 
-const viewer = "a".repeat(64);
-const other = "b".repeat(64);
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
-const bot = "c".repeat(64);
-const sibling = "d".repeat(64);
-const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
-const dm = "dm-with-bot";
-const groupDm = "dm-with-bot-and-other";
-const event = (id: string, patch: Partial<RelayEvent> = {}) =>
-  ({
-    id: id.padEnd(64, "0"),
-    pubkey: other,
-    kind: 9,
-    created_at: 100,
-    content: `hello ${id}`,
-    tags: [["h", channel]],
-    sig: "",
-    ...patch,
-  }) as unknown as RelayEvent;
-
-function fakeRelay(origin = "https://relay.example.test") {
-  const live = new Set<LiveListener>();
-  /** Listeners that asked for replayed history too. */
-  const replays = new Set<LiveListener>();
-  const changes = new Set<() => void>();
-  const rosterChanges = new Set<() => void>();
-  // The agent is in `channel`, `dm` and `groupDm`; `private` is the owner's
-  // alone, and `dm-others` and `dm-unknown` are DMs it is not known to be in
-  // (discovery emits an empty roster, never a missing one). `saved` has only a
-  // roster loaded from disk, not yet confirmed by the relay.
-  const rows: {
-    id: string;
-    name?: string;
-    channelType?: "dm";
-    members: string[];
-    cached?: true;
-  }[] = [
-    { id: channel, name: "general", members: [viewer, bot] },
-    { id: "private", name: "private", members: [viewer] },
-    { id: dm, channelType: "dm", members: [viewer, bot] },
-    { id: groupDm, channelType: "dm", members: [viewer, other, bot] },
-    { id: "dm-others", channelType: "dm", members: [viewer, other] },
-    { id: "dm-unknown", channelType: "dm", members: [] },
-    { id: "saved", name: "saved", members: [viewer, bot], cached: true },
-  ];
-  const archived = new Set<string>();
-  const archives = {
-    archived,
-    /** The last read did not finish, as when its session closed. */
-    unknown: false,
-    /** The community has no archives at all. */
-    unavailable: false,
-    snapshot() {
-      return { status: this.unavailable ? "unavailable" : "ready" };
-    },
-    get supported() {
-      return !this.unavailable;
-    },
-    consent: vi.fn(
-      async (_pubkey: string, _signal?: AbortSignal) =>
-        ({ auth: ["auth"] }) as { auth: string[] } | null,
-    ),
-    ensure: vi.fn(async () => {}),
-    refresh: vi.fn(async () => {}),
-    state(pubkey: string) {
-      if (this.unknown) return "unknown";
-      return archived.has(pubkey) ? "archived" : "not-archived";
-    },
-    writable: true,
-    request: vi.fn(async (action: string, pubkey: string) => {
-      steps.push(action);
-      if (action === "archive") archived.add(pubkey);
-      else archived.delete(pubkey);
-    }),
-  };
-  let status = "connected";
-  const statuses = new Set<() => void>();
-  /** The viewer's kind 30177 records the community returns. */
-  const listed: RelayEvent[] = [];
-  /** The kind 9 messages it stores, which catch-up reads. */
-  const history: RelayEvent[] = [];
-  /** Each agent's `core` memory as the community holds it. */
-  const memories = new Map<string, string>();
-  const session = {
-    archives,
-    agentMemories: {
-      read: vi.fn(async (pubkey: string) => {
-        const body = memories.get(pubkey);
-        return {
-          entries: body === undefined ? [] : [{ slug: "core", body }],
-          partial: false,
-        };
-      }),
-    },
-    read: vi.fn(async (filters: readonly ReadFilter[]) =>
-      filters[0]?.kinds?.includes(9) ? page(history, filters[0]) : [...listed],
-    ),
-    mePlacement: { snapshot: () => ({ status: "ready" }), has: () => false },
-    channels: {
-      list: () => ({ channels: rows.map((row) => ({ ...row })) }),
-      subscribeList(listener: () => void) {
-        rosterChanges.add(listener);
-        return () => rosterChanges.delete(listener);
-      },
-    },
-    live: {
-      snapshot: () => ({ status }),
-      subscribe(listener: () => void) {
-        statuses.add(listener);
-        return () => statuses.delete(listener);
-      },
-    },
-    subscribeLive(listener: LiveListener, options?: { replay?: boolean }) {
-      const listeners = options?.replay ? replays : live;
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    publishAgentPresence: vi.fn(
-      async (
-        _: "online" | "offline",
-        __: readonly string[],
-        ___: AbortSignal,
-      ) => true,
-    ),
-  } as unknown as RelaySession;
-  let snapshot: RelaySnapshot = {
-    status: "ready",
-    generation: 1,
-    viewer,
-    origin,
-    scope: `${origin}:${viewer}`,
-    session,
-  };
-  const connected_ = snapshot;
-  return {
-    relay: {
-      snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changes.add(listener);
-        return () => changes.delete(listener);
-      },
-      retry: vi.fn(),
-    } as unknown as RelayData,
-    /** Drops the connection, or restores it with a new session. */
-    connect(connected: boolean) {
-      snapshot = connected
-        ? { ...connected_, session: { ...session } as RelaySession }
-        : { status: "disconnected", generation: 2, session };
-      for (const listener of changes) listener();
-    },
-    /** Restores the connection signed in as `next`, in a new session. */
-    signIn(next: string) {
-      snapshot = {
-        ...connected_,
-        viewer: next,
-        scope: `${origin}:${next}`,
-        session: { ...session } as RelaySession,
-      };
-      for (const listener of changes) listener();
-    },
-    /** Fails the connection, as a first connect that timed out does. */
-    fail() {
-      snapshot = { status: "error", generation: 4, session, error: "down" };
-      for (const listener of changes) listener();
-    },
-    /** Replaces the session, as after the transport was lost. */
-    reconnecting() {
-      snapshot = { status: "connecting", generation: 3, session };
-      for (const listener of changes) listener();
-    },
-    /** Drops and restores the socket inside the same session, as live.ts does. */
-    recover() {
-      for (const next of ["retrying", "connected"]) {
-        status = next;
-        for (const listener of statuses) listener();
-      }
-    },
-    emit: (batch: LiveBatch) => {
-      for (const listener of batch.replay ? replays : [...live, ...replays])
-        listener(batch);
-    },
-    /** The relay confirms channel `id`'s roster, with these members. */
-    confirm(id: string, members: string[]) {
-      const index = rows.findIndex((row) => row.id === id);
-      rows[index] = { id, name: id, members };
-      for (const listener of rosterChanges) listener();
-    },
-    archives,
-    listed,
-    history,
-    memories,
-    session,
-    presence: session.publishAgentPresence as ReturnType<
-      typeof vi.fn<RelaySession["publishAgentPresence"]>
-    >,
-    origin,
-  };
-}
-/** One page of `events` for `filter`, as the relay pages them: newest first,
- * ties by id ascending, below the `until`/`before_id` cursor. */
-function page(events: readonly RelayEvent[], filter: ReadFilter) {
-  const until = filter.until ?? Number.MAX_SAFE_INTEGER;
-  return events
-    .filter(
-      (event) =>
-        event.created_at >= (filter.since ?? 0) &&
-        (event.created_at < until ||
-          (event.created_at === until &&
-            (filter.before_id === undefined || event.id > filter.before_id))) &&
-        (!filter["#h"] ||
-          event.tags.some(
-            ([key, value]) => key === "h" && value === filter["#h"]?.[0],
-          )),
-    )
-    .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))
-    .slice(0, filter.limit);
-}
-
-/** The viewer's joined communities, one selected; `open` connects any of them. */
-function fakeCommunities(...joined: ReturnType<typeof fakeRelay>[]) {
-  let relays = joined;
-  const changes = new Set<() => void>();
-  let selected: string | null = relays[0]?.origin ?? null;
-  return {
-    communities: {
-      snapshot: () => ({
-        viewer,
-        selected,
-        memberships: relays.map(({ origin }) => ({ id: origin, name: origin })),
-      }),
-      subscribe: (listener: () => void) => {
-        changes.add(listener);
-        return () => changes.delete(listener);
-      },
-      open: vi.fn(
-        (id: string) => relays.find((fake) => fake.origin === id)?.relay,
-      ),
-    } as unknown as AgentCommunities,
-    select(next: string | null) {
-      selected = next;
-      for (const listener of changes) listener();
-    },
-    leave(origin: string) {
-      relays = relays.filter((fake) => fake.origin !== origin);
-      if (selected === origin) selected = null;
-      for (const listener of changes) listener();
-    },
-  };
-}
-
-function fakeNative(identities: AgentIdentity[] = []) {
-  let published = 0;
-  const keys = [bot, sibling];
-  const at = (pubkey: string) =>
-    identities.findIndex((identity) => identity.pubkey === pubkey);
-  const change = (pubkey: string, patch: Partial<AgentIdentity>) => {
-    const index = at(pubkey);
-    const identity = identities[index];
-    if (identity) identities[index] = { ...identity, ...patch };
-  };
-  const native = {
-    list: vi.fn(async () => [...identities]),
-    create: vi.fn(async (_: string, __: string, type: string, name: string) => {
-      const identity = {
-        pubkey: keys.shift() as string,
-        relay: "wss://relay.example.test",
-        owner: viewer,
-        type,
-        name,
-        deleted: false,
-      };
-      identities.push(identity);
-      return identity;
-    }),
-    portable: vi.fn(
-      async (): Promise<PortableAgents> => ({
-        agents: [
-          { source: "harness" as const, pubkey: bot, name: "Old", relay: "" },
-          {
-            source: "installed" as const,
-            pubkey: sibling,
-            name: "Older",
-            relay: "",
-          },
-        ],
-        teams: [],
-        warnings: ["Could not read one store"],
-      }),
-    ),
-    port: vi.fn(
-      async (
-        _: string,
-        pubkey: string,
-        destination: string,
-        owner: string,
-        type: string,
-      ) => {
-        const identity = {
-          pubkey,
-          relay: destination.replace(/^https:/, "wss:"),
-          owner,
-          type,
-          name: "Older",
-          deleted: false,
-        };
-        // As native does, under its lock every copy of the app shares: a
-        // re-import replaces a deleted row and refuses a live one.
-        const index = identities.findIndex((item) => item.pubkey === pubkey);
-        if (index >= 0 && !identities[index]?.deleted)
-          throw new Error("That agent is already here");
-        if (index >= 0) identities.splice(index, 1);
-        identities.push(identity);
-        return { agent: identity, carry: { instructions: "Triage." } };
-      },
-    ),
-    rename: vi.fn(async (pubkey: string, name: string) => {
-      change(pubkey, { name });
-    }),
-    setPicture: vi.fn(async (pubkey: string, picture: string | null) => {
-      const index = at(pubkey);
-      const { picture: _, ...identity } = identities[index] as AgentIdentity;
-      identities[index] = picture ? { ...identity, picture } : identity;
-    }),
-    setType: vi.fn(async (pubkey: string, type: string) => {
-      change(pubkey, { type });
-    }),
-    beginDelete: vi.fn(async (pubkey: string) => {
-      steps.push("stop");
-      change(pubkey, { deleting: true });
-    }),
-    remove: vi.fn(async (pubkey: string) => {
-      steps.push("key");
-      change(pubkey, { deleted: true });
-    }),
-    forget: vi.fn(async (pubkey: string) => {
-      steps.push("forget");
-      identities.splice(at(pubkey), 1);
-    }),
-    publish: vi.fn(async (pubkey: string, template: AgentEventTemplate) =>
-      event(`p${++published}`, {
-        pubkey,
-        kind: template.kind,
-        content: template.content,
-        tags: (template.tags ?? []).map((tag) => [...tag]),
-      }),
-    ),
-    publishProfile: vi.fn(async (_: string) => {}),
-    query: vi.fn(async () => []),
-    upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
-    media: vi.fn(async () => ""),
-    remember: vi.fn(async (pubkey: string) =>
-      event(`m${++published}`, { pubkey }),
-    ),
-    claim: vi.fn(async (_: string) => true),
-    release: vi.fn(async (_: string) => {}),
-  } satisfies AgentsNative;
-  return native;
-}
 
 type Config = { reply: string };
 async function setup({
-  storage = memoryStorage(),
+  storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   history = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
+  binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -443,6 +109,7 @@ async function setup({
     authorize,
     activity,
     jev,
+    binding,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -482,7 +149,7 @@ async function setup({
           since: 1,
           channels: [channel],
           kinds: [9],
-          filter: 'content == "deploy"',
+          tags: { t: ["deploy"] },
         },
       },
     }),
@@ -791,10 +458,10 @@ it("imports a team with the members that came, names the rest, and leaves later 
   expect(result.teamError).toBeUndefined();
   // Imported on its own afterwards, it never joins the team.
   native.port.mockImplementation(port);
-  const stored = storage.getItem("buzz.agents.teams.v1");
+  const stored = storage.get("buzz.agents.teams.v1");
   await importOld(service, birch);
   expect(service.find(birch)).toBeDefined();
-  expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
+  expect(storage.get("buzz.agents.teams.v1")).toBe(stored);
   expect(service.snapshot().teams).toEqual([savedShift([alder, carrow])]);
 });
 
@@ -1186,7 +853,7 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(result.team).toBeUndefined();
   expect(service.find(carrow)).toBeDefined();
   expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
-  expect(service.snapshot().teams).toBe(teams);
+  expect(service.snapshot().teams).toEqual(teams);
 });
 
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
@@ -1199,9 +866,9 @@ it("delivers mentions and matching watches once, and never the agent's own event
       ["p", bot],
     ],
   });
-  const watched = event("w", { content: "deploy" });
+  const watched = deploy("w");
   emit({ events: [mention, mention, event("x"), watched], channelId: channel });
-  emit({ events: [event("own", { pubkey: bot, content: "deploy" })] });
+  emit({ events: [deploy("own", { pubkey: bot })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   const [first, second] = run.mock.calls.map(([delivery]) => delivery);
   expect(first?.trigger).toEqual({ type: "mention", event: mention });
@@ -1262,7 +929,7 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
       [],
     ]),
   );
-  expect(storage.getItem("buzz.agents.teams.v1")).not.toContain(sibling);
+  expect(storage.get("buzz.agents.teams.v1")).not.toContain(sibling);
   await service.removeTeam(team.id);
   expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
 });
@@ -1366,7 +1033,7 @@ it("wakes on a reply in a thread it started only by a mention or a watch", async
   emit({ events: [reply("quiet")] });
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
-  emit({ events: [reply("watched", { content: "deploy" })] });
+  emit({ events: [reply("watched", { content: "deploy", tags: [DEPLOY] })] });
   emit({ events: [reply("named", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
   // Both queued before either ran; mentions go first.
@@ -1594,6 +1261,109 @@ it("keeps the in-flight run and the queue across edits; each job reads the agent
   expect(queued?.agent.name).toBe("Echo two");
 });
 
+it("starts each run from the start resolver, local with no synced revisions", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { config: { reply: "local" } });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0]).toMatchObject({
+    config: { reply: "local" },
+    revisions: [],
+  });
+});
+
+describe("a type without synced settings", () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  /** This device once had a synced settings revision of the agent. */
+  const withHistory = () => {
+    const storage = memoryStorage();
+    const store = new AgentConfigStore(storage);
+    const head = finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({
+          version: 1,
+          agentType: "example/echo",
+          settings: {},
+        }),
+        tags: [["op", "create"]],
+      },
+      generateSecretKey(),
+    ) as RelayEvent;
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: head,
+    });
+    expect(store.hadVersion(subject)).toBe(true);
+    return storage;
+  };
+  const fixtures: { ctx: Context }[] = [];
+  afterEach(async () => {
+    for (const f of fixtures.splice(0)) await f.ctx.fiber.dispose();
+  });
+  const mention = async (mode: Mode, storage = memoryStorage()) => {
+    const f = await setup({
+      storage,
+      binding: () => ({ settings: { mode, subject } }),
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.save(bot, { config: { reply: "local" } });
+    f.emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    fixtures.push(f);
+    return f;
+  };
+  const refused = async (f: Awaited<ReturnType<typeof mention>>) => {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "This agent type has no synced settings",
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+  };
+
+  it.each(["local", "migrating"] as const)(
+    "starts from the local config when settings are %s with no synced revision",
+    async (mode) => {
+      const f = await mention(mode);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0]).toMatchObject({
+        config: { reply: "local" },
+        revisions: [],
+      });
+    },
+  );
+
+  it("refuses to start when settings are explicitly synced", async () => {
+    await refused(await mention("synced"));
+  });
+
+  it.each(["local", "migrating"] as const)(
+    "refuses to start when settings are %s but this device had a synced revision",
+    async (mode) => {
+      await refused(await mention(mode, withHistory()));
+    },
+  );
+});
+
 it("keeps queued work across a disconnect and runs it once on reconnect", async () => {
   const { service, run, emit, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -1693,6 +1463,90 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   native.claim.mockClear();
   connect(true);
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+});
+
+it("hands a plugin its own agents outside any run, while this copy runs them", async () => {
+  const { service, plugin, ctx, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  expect(handle?.pubkey).toBe(bot);
+  await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
+  // Not to another plugin, nor to code that is no plugin's.
+  const other = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  expect(other.agents.handle(bot)).toBeUndefined();
+  expect(ctx.agents.handle(bot)).toBeUndefined();
+  // Nor while its community is offline, or another copy of the app holds it,
+  // and a handle kept from before stops working.
+  connect(false);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
+  await expect(
+    handle?.publish({ kind: 9, content: "late", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  await expect(
+    handle?.attention.write("x", null, { expected: "x" }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(() => handle?.attention.enabled()).toThrow("ask for its handle again");
+  native.claim.mockClear();
+  native.claim.mockResolvedValue(false);
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  // Nor once it is deleted.
+  native.claim.mockResolvedValue(true);
+  connect(false);
+  connect(true);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await service.remove(bot);
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
+  const { service, plugin, ctx, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const relay = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  relay.agents.register({
+    id: "relay",
+    title: "Relay",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const kept = plugin.agents.handle(bot);
+  let continueType = () => {};
+  const typeGate = new Promise<void>((resolve) => (continueType = resolve));
+  const persistType = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await typeGate;
+    return persistType?.(...args);
+  });
+  const changing = service.retype(bot, "other/relay");
+  await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  expect(relay.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "mid", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  continueType();
+  await changing;
+  await vi.waitFor(() => expect(relay.agents.handle(bot)).toBeDefined());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "after", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  // Changing back hands out a new handle, but never revives the kept one.
+  await service.retype(bot, "example/echo");
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await expect(
+    kept?.publish({ kind: 9, content: "revived", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(await published(native, 9)).toEqual([]);
 });
 
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
@@ -1918,7 +1772,7 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       event("reply", {
         pubkey: sibling,
         content: "deploy",
-        tags: [["h", channel], ["e", echoMessage], auth],
+        tags: [["h", channel], ["e", echoMessage], DEPLOY, auth],
       }),
     ],
   });
@@ -2047,9 +1901,9 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   expect(native.setType).not.toHaveBeenCalled();
   finish();
   await settle();
-  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
-    throw new Error("QuotaExceededError");
-  });
+  vi.spyOn(storage, "set").mockRejectedValueOnce(
+    new Error("QuotaExceededError"),
+  );
   await expect(
     service.retype(bot, "other/relay", {
       config: { prompt: "Reviewed target", model: "large" },
@@ -2392,7 +2246,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   await service.create({ type: "example/echo", name: "Echo" });
   warn.mockRestore();
-  expect(storage.getItem("buzz.agents.v1") ?? "").not.toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
@@ -2400,7 +2254,354 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   ]);
   // The next save stores them.
   await service.save(bot, { config: { reply: "saved" } });
-  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("rejects a save that agent storage could not write, and saves it on retry", async () => {
+  const disk = new Map<string, string>();
+  let failing = false;
+  const storage = fileStore(new Map(), async (key, value) => {
+    if (failing) throw new Error("disk full");
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  failing = true;
+  // Every config the owner sees. A form resets its draft when the shown
+  // config changes, so a change it never saved must not be shown at all.
+  const shown: unknown[] = [];
+  const stop = service.subscribe(() => shown.push(service.find(bot)?.config));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    service.save(bot, { config: { reply: "unsaved" } }),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  stop();
+  expect(shown).not.toContainEqual({ reply: "unsaved" });
+  expect(disk.get(`buzz.agent.v1:${bot}`)).not.toContain("unsaved");
+  // The agent shows what is saved, so a settings form's draft differs from it
+  // and its Save stays enabled.
+  expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+  failing = false;
+  await service.save(bot, { config: { reply: "unsaved" } });
+  expect(disk.get(`buzz.agent.v1:${bot}`)).toContain("unsaved");
+  expect(service.find(bot)?.config).toEqual({ reply: "unsaved" });
+});
+
+const tick = {
+  "watch/tick": {
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 10,
+    expires_at: null,
+  },
+} as const;
+
+it("keeps a settings change still being saved when a timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  // The timer comes due while the edit is still being saved: it waits.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  // A form still compares its draft against the saved settings.
+  expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+  release();
+  await saving;
+  expect(service.find(bot)?.config).toEqual({ reply: "edited" });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.config).toEqual({ reply: "edited" });
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
+});
+
+it("starts a timer due while a change was saving as soon as it is saved", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/b": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "b",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_001,
+        max_occurrences: 1,
+        expires_at: 1_063,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(59_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Due at 1061 while the edit saves; it expires before the 1065 tick.
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(run).not.toHaveBeenCalled();
+  release();
+  await saving;
+  await vi.advanceTimersByTimeAsync(100);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("starts a due timer in a free Interest while another timer's progress saves", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (interest: string, prompt: string, expires: number | null) =>
+    ({
+      type: "timer",
+      interest_id: interest,
+      prompt,
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: expires,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "interest/other": { type: "interest", instructions: "Other." },
+      "watch/a": timer("default", "a", null),
+      "watch/b": timer("other", "b", 1_061),
+    },
+  });
+  // A's run stays active, and its progress is still saving.
+  run.mockImplementation(() => new Promise<void>(() => {}));
+  hold = new Promise(() => {});
+  await vi.advanceTimersByTimeAsync(60_000);
+  const slugs = run.mock.calls.map(([{ trigger }]) =>
+    trigger.type === "timer" ? trigger.slug : trigger.type,
+  );
+  expect(slugs.sort()).toEqual(["watch/a", "watch/b"]);
+});
+
+it("keeps a timer rearm still being saved when another timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (prompt: string, interval: number, armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: interval,
+      armed_at: armed,
+      max_occurrences: 10,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "watch/a": timer("a", 60, 1_000),
+      "watch/b": timer("b", 90, 1_000),
+    },
+  });
+  // A runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // A is rearmed, keeping its used count, while B comes due at 1090.
+  const saving = service.save(bot, {
+    attention: { "watch/a": timer("a", 60, 1_070) },
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  release();
+  await saving;
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_070,
+    nextDue: 1_130,
+    used: 1,
+  });
+  expect(saved.timers["watch/b"]).toMatchObject({ armedAt: 1_000, used: 1 });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+});
+
+it("runs no occurrence of a timer while its rearm is being saved, so the rearm keeps its budget", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060; the next would be due at 1120.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(55_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Rearmed at 1115, which keeps its used count; still saving past 1120.
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_115) } });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  release();
+  await saving;
+  expect(service.find(bot)?.timers["watch/a"]).toEqual({
+    armedAt: 1_115,
+    nextDue: 1_175,
+    used: 1,
+  });
+  // Its second and last occurrence comes from the rearm, and no third.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(
+    JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}").timers["watch/a"],
+  ).toMatchObject({ armedAt: 1_115, used: 2 });
+});
+
+it("keeps the occurrence a timer used while its progress saves, when the owner rearms it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Its second and last occurrence runs at 1120; that progress is saving
+  // when the owner rearms it at 1121.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1_000);
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_121) } });
+  release();
+  await saving;
+  // The rearm applies after the progress: a new deadline, the used count kept.
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_121,
+    nextDue: 1_181,
+    used: 2,
+  });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+  // Its budget is spent: no third occurrence.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("runs a timer whose progress storage refuses only when due, and saves its count once it can", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const storage = memoryStorage();
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  const setItem = storage.setItem.bind(storage);
+  let refusing = true;
+  vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+    if (refusing && key === `buzz.agent.v1:${bot}`)
+      throw new Error("QuotaExceededError");
+    setItem(key, value);
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Due at 1060, 1120 and 1180. Its unsaved progress stays in memory, so it
+  // runs once each time it is due, never again at once after a run.
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(warn).toHaveBeenCalledWith(
+    `Agent ${bot} timer state was not saved`,
+    expect.objectContaining({ message: "QuotaExceededError" }),
+  );
+  refusing = false;
+  await vi.advanceTimersByTimeAsync(60_000);
+  warn.mockRestore();
+  expect(run).toHaveBeenCalledTimes(4);
+  const saved = JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 4 });
+});
+
+it("shows the saved teams after a team save agent storage could not write", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) throw new Error("disk full");
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [bot] });
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    service.saveTeam({ name: "Solo", instructions: "", members: [bot] }),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(service.snapshot().teams.map((team) => team.name)).toEqual(["Crew"]);
 });
 
 it("saves nothing when native create fails", async () => {
@@ -2442,7 +2643,7 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     "interest/default",
     "watch/channel",
   ]);
-  expect(storage.getItem("buzz.agents.v1")).toContain("chosen");
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("chosen");
 });
 
 it("keeps a new agent whose picture could not be set", async () => {
@@ -2529,7 +2730,83 @@ it("forgets records whose key is gone when identities load", async () => {
   expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
     "Echo",
   ]);
-  expect(storage.getItem("buzz.agents.v1")).not.toContain(sibling);
+  expect(storage.getItem("buzz.agents.v1")).toBeNull();
+  expect(storage.getItem(`buzz.agent.v1:${sibling}`)).toBeNull();
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("starts with the old shared records when a full store refuses their move", async () => {
+  const storage = memoryStorage();
+  const shared = JSON.stringify({
+    version: 1,
+    agents: { [bot]: { pubkey: bot, attention: {}, config: {} } },
+  });
+  storage.setItem("buzz.agents.v1", shared);
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key.startsWith("buzz.agent.v1:"))
+      throw new DOMException(
+        "The quota has been exceeded.",
+        "QuotaExceededError",
+      );
+    setItem(key, value);
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { service } = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+  });
+  expect(error).toHaveBeenCalledWith(
+    "Agent records were not split",
+    expect.any(DOMException),
+  );
+  error.mockRestore();
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Echo",
+  ]);
+  // The only saved copy stays for the next start to move.
+  expect(storage.getItem("buzz.agents.v1")).toBe(shared);
+});
+
+it("saving one agent leaves another program's changes to other agents", async () => {
+  const storage = memoryStorage();
+  for (const pubkey of [bot, sibling])
+    storage.setItem(
+      `buzz.agent.v1:${pubkey}`,
+      JSON.stringify({ pubkey, attention: {}, config: { reply: "start" } }),
+    );
+  const identity = (pubkey: string, name: string): AgentIdentity => ({
+    pubkey,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name,
+    deleted: false,
+  });
+  const { service } = await setup({
+    storage,
+    identities: [identity(bot, "Echo"), identity(sibling, "Other")],
+  });
+  await vi.waitFor(() => expect(service.find(sibling)).toBeDefined());
+  // The standalone host runs the sibling and saves its progress.
+  const hosted = JSON.stringify({
+    pubkey: sibling,
+    attention: {},
+    config: { reply: "from the host" },
+  });
+  storage.setItem(`buzz.agent.v1:${sibling}`, hosted);
+  await service.save(bot, { config: { reply: "edited" } });
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("edited");
+  expect(storage.getItem(`buzz.agent.v1:${sibling}`)).toBe(hosted);
 });
 
 it("keeps an agent created while identities are still loading", async () => {
@@ -2562,7 +2839,7 @@ it("keeps an agent created while identities are still loading", async () => {
   release([]);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   expect(service.find(bot)?.name).toBe("Echo");
-  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
 });
 
 it("reads the list again on refresh and clears the error a failed read left", async () => {
@@ -2577,6 +2854,7 @@ it("reads the list again on refresh and clears the error a failed read left", as
     owner: viewer,
     type: "example/echo",
     name: "Echo",
+    picture: "https://cdn.example.test/echo.png",
     deleted: false,
   };
   const native = fakeNative([identity]);
@@ -2606,6 +2884,7 @@ it("reads the list again on refresh and clears the error a failed read left", as
         name: "Echo",
         relayUrl: "wss://relay.example.test",
         owner: viewer,
+        picture: "https://cdn.example.test/echo.png",
       },
     ],
   });
@@ -2664,8 +2943,7 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
-  const stored = () =>
-    JSON.parse(storage.getItem("buzz.agents.v1") ?? "{}").agents[bot];
+  const stored = () => JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}");
   expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
@@ -2889,7 +3167,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "forget",
   ]);
   expect(service.snapshot().agents).toEqual([]);
-  expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
+  expect(storage.get(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(leaveChannels).toHaveBeenCalledWith(
     expect.objectContaining({ archives }),
     bot,
@@ -3187,7 +3465,7 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
       },
     },
   });
-  emit({ events: [event("w", { content: "deploy" })] });
+  emit({ events: [deploy("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   const triggers = run.mock.calls.map(([delivery]) => delivery.trigger);
   expect(triggers).toEqual([
@@ -4099,7 +4377,11 @@ it("starts catch-up again when its watch is edited while a page is being read", 
     });
     await settle();
     vi.setSystemTime((now + 60) * 1000);
-    history.push(posted("before", now + 10), posted("deploy", now + 20));
+    const other = keypair();
+    history.push(
+      eventDto(message(other, channel, "before", now + 10)),
+      posted("deploy", now + 20),
+    );
     const read = vi.mocked(session.read);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
@@ -4120,7 +4402,10 @@ it("starts catch-up again when its watch is edited while a page is being read", 
     await vi.waitFor(() => expect(catchUpReads(session)).toHaveLength(1));
     await service.save(bot, {
       attention: {
-        "watch/chat": { ...chat["watch/chat"], filter: 'content == "deploy"' },
+        "watch/chat": {
+          ...chat["watch/chat"],
+          exclude_authors: [other.pubkey],
+        },
       },
     });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -4148,7 +4433,11 @@ it("wakes nothing for what came before a watch was first caught up, as after an 
     await settle();
     first.connect(false);
     // As a build from before catch-up leaves it: the watch, and no progress.
-    storage.removeItem(CATCH_UP_KEY);
+    const progress = Array.from({ length: storage.length }, (_, index) =>
+      storage.key(index),
+    ).filter((key) => key?.startsWith(CATCH_UP_PREFIX));
+    expect(progress).not.toHaveLength(0);
+    for (const key of progress) storage.removeItem(key as string);
     vi.setSystemTime((start + 60) * 1000);
     const second = await setup({
       storage,
@@ -4536,14 +4825,7 @@ it("waits for a confirmed roster before catching up, saving no progress past wha
     const reads = catchUpReads(session).length;
     expect(reads).toBe(20);
     expect(run).not.toHaveBeenCalled();
-    const saved = () =>
-      Object.values(
-        (
-          JSON.parse(storage.getItem(CATCH_UP_KEY) ?? "{}") as {
-            streams?: Record<string, { after?: unknown }>;
-          }
-        ).streams ?? {},
-      );
+    const saved = () => Object.values(readCheckpoints(storage));
     expect(saved().some((checkpoint) => checkpoint.after)).toBe(false);
     confirm("saved", [viewer, bot]);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
@@ -4628,9 +4910,10 @@ it("wakes nothing from the time its watch was off, also when it is turned on aft
     await settle();
     first.connect(false);
     // Turned on again elsewhere while this copy was closed.
-    const saved = storage.getItem("buzz.agents.v1") ?? "";
+    const saved = storage.getItem(`buzz.agent.v1:${bot}`) ?? "";
+    expect(saved).toContain('"enabled":false');
     storage.setItem(
-      "buzz.agents.v1",
+      `buzz.agent.v1:${bot}`,
       saved.replace('"enabled":false', '"enabled":true'),
     );
     vi.setSystemTime((start + 60) * 1000);
@@ -4723,13 +5006,13 @@ it("keeps a new agent's attention off until its owner turns it on", async () => 
   await service.create({ type: "example/echo", name: "Echo" });
   expect(service.find(bot)?.attentionEnabled).toBe(false);
   // Its type's default watch matches, but wakes nothing while off.
-  emit({ events: [event("one", { content: "deploy" })] });
+  emit({ events: [deploy("one")] });
   await settle();
   await settle();
   expect(run).not.toHaveBeenCalled();
   await service.save(bot, { attentionEnabled: true });
   expect(service.find(bot)?.attentionEnabled).toBe(true);
-  emit({ events: [event("two", { content: "deploy" })] });
+  emit({ events: [deploy("two")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     type: "watch",
@@ -4746,10 +5029,7 @@ it("drops a queued watch run whose watch was disabled, or whose attention went o
     () => new Promise<void>((resolve) => (release = resolve)),
   );
   emit({
-    events: [
-      event("one", { content: "deploy" }),
-      event("two", { content: "deploy" }),
-    ],
+    events: [deploy("one"), deploy("two")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
@@ -4767,10 +5047,7 @@ it("drops a queued watch run whose watch was disabled, or whose attention went o
     () => new Promise<void>((resolve) => (release = resolve)),
   );
   emit({
-    events: [
-      event("three", { content: "deploy" }),
-      event("four", { content: "deploy" }),
-    ],
+    events: [deploy("three"), deploy("four")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   await service.save(bot, { attentionEnabled: false });
@@ -4791,10 +5068,7 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
     );
   hold();
   emit({
-    events: [
-      event("one", { content: "deploy" }),
-      event("two", { content: "deploy" }),
-    ],
+    events: [deploy("one"), deploy("two")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   await service.save(bot, { attentionEnabled: false });
@@ -4805,10 +5079,7 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
   // A replacement that still matches is a new watch: the old one's work goes.
   hold();
   emit({
-    events: [
-      event("three", { content: "deploy" }),
-      event("four", { content: "deploy" }),
-    ],
+    events: [deploy("three"), deploy("four")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   await service.save(bot, {
@@ -4820,7 +5091,7 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
   await settle();
   expect(run).toHaveBeenCalledTimes(2);
   // New events still wake the replacement.
-  emit({ events: [event("five", { content: "deploy" })] });
+  emit({ events: [deploy("five")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
 });
 
@@ -4830,7 +5101,7 @@ it("tells a run whose type queued its work that it is current while another comm
   await service.save(bot, { attentionEnabled: true });
   select(second.origin);
   expect(service.find(bot)).toBeUndefined();
-  emit({ events: [event("one", { content: "deploy" })] });
+  emit({ events: [deploy("one")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const delivery = run.mock.calls[0]?.[0] as Delivery;
   await settle();
@@ -4844,7 +5115,7 @@ it("tells a run whose type queued its work whether that work is still current", 
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
-  emit({ events: [event("one", { content: "deploy" })] });
+  emit({ events: [deploy("one")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const first = run.mock.calls[0]?.[0] as Delivery;
   // The run returned, as a type that queues its own work does.
@@ -4853,14 +5124,14 @@ it("tells a run whose type queued its work whether that work is still current", 
   // An earlier turn tightened the watch: its event no longer matches.
   await service.save(bot, {
     attention: {
-      "watch/channel": { ...watch, filter: 'content == "ship"' } as never,
+      "watch/channel": { ...watch, tags: { t: ["ship"] } } as never,
     },
   });
   expect(first.current()).toBe(false);
   await service.save(bot, {
     attention: { "watch/channel": watch as never },
   });
-  emit({ events: [event("two", { content: "deploy" })] });
+  emit({ events: [deploy("two")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   const second = run.mock.calls[1]?.[0] as Delivery;
   await settle();
@@ -5105,7 +5376,7 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
-  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain('"agents":[]');
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
 });
 
 it("keeps a hosted agent whose setup failed, and finishes it without making another", async () => {
@@ -5295,6 +5566,114 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
   await service.remove(hostedKey);
   expect(steps).toEqual(["provider", "leave"]);
   expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("offers Stop for a finished hosted agent whose provider can stop its turns", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(true);
+  // A local agent has no provider to ask.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.interruptible(bot)).toBe(false);
+  expect(service.interruptible("f".repeat(64))).toBe(false);
+});
+
+it("offers no Stop for a hosted agent whose provider cannot stop its turns", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("does not offer Stop for a hosted agent whose setup is unfinished", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow("provider down");
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("has a hosted agent's provider stop its turn in one conversation", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const interrupt = vi.fn(
+    async (_: {
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }) => false,
+  );
+  plugin.agents.register({ ...type, remote: { ...remote, interrupt } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(false);
+  expect(interrupt).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    channelId: "channel-1",
+    threadRootId: "m1",
+    signal: expect.any(AbortSignal),
+  });
+  interrupt.mockResolvedValueOnce(true);
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(true);
+});
+
+it("refuses to stop a hosted agent whose provider cannot", async () => {
+  const { service, plugin } = await setup();
+  const { type } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).rejects.toThrow("This agent can't be stopped here");
+});
+
+it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async (key) => {
+    if (failing && key === "buzz.agents.unfinished.v1")
+      throw new Error("disk full");
+  });
+  const { service, plugin } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow();
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(service.remove(hostedKey)).rejects.toThrow("disk full");
+  error.mockRestore();
+  // Still listed with what is saved, so a restart shows no other state and
+  // Delete can be tried again.
+  expect(service.find(hostedKey)?.unfinished).toBe(true);
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain(hostedKey);
 });
 
 it("refuses to finish a hosted agent's setup while it is being deleted", async () => {
@@ -5660,7 +6039,7 @@ it("projects accepted queued work and keeps working past handover until the plug
 it("shows a request whose run failed before handing anything over as failed, with why", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
-  f.run.mockRejectedValueOnce(new Error("Couldn't read your Me chats"));
+  f.run.mockRejectedValueOnce(new Error("Couldn't read your Solo chats"));
   f.emit({
     events: [
       event("1", {
@@ -5675,7 +6054,7 @@ it("shows a request whose run failed before handing anything over as failed, wit
     await vi.waitFor(() =>
       expect(f.activity.reader.work()[0]).toMatchObject({
         state: "error",
-        error: "Couldn't read your Me chats",
+        error: "Couldn't read your Solo chats",
       }),
     );
   } finally {
@@ -5864,6 +6243,40 @@ it("lets a run read and write its attention with expected-state tokens", async (
   ).rejects.toThrow(/^conflict:/);
 });
 
+it("fails an agent's attention write that agent storage could not save, and keeps the saved value", async () => {
+  let failing = false;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) throw new Error("disk full");
+  });
+  const { service, run, emit } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const { attention } = await handleOf(run, emit);
+  const shown = await attention.show("interest/default");
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    attention.write(
+      "interest/default",
+      { type: "interest", instructions: "Unsaved." },
+      { expected: shown.expected_state },
+    ),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(await attention.show("interest/default")).toEqual(shown);
+  expect(service.find(bot)?.attention["interest/default"]?.value).toEqual({
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  failing = false;
+  const written = await attention.write(
+    "interest/default",
+    { type: "interest", instructions: "Saved." },
+    { expected: shown.expected_state },
+  );
+  expect(written.object).toMatchObject({ instructions: "Saved." });
+});
+
 it("keeps attention off across a reload", async () => {
   const { service, storage, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5899,7 +6312,7 @@ it("stops watches and timers while attention is off, keeps every object, and res
   });
   const before = service.find(bot);
   expect(before?.attentionEnabled).toBe(false);
-  emit({ events: [event("w", { content: "deploy" })] });
+  emit({ events: [deploy("w")] });
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).not.toHaveBeenCalled();
   // Mentions still reach it.
@@ -5920,12 +6333,14 @@ it("stops watches and timers while attention is off, keeps every object, and res
   expect(run.mock.calls[0]?.[0].agent.attention.enabled()).toBe(false);
   await service.save(bot, { attentionEnabled: true });
   expect(service.find(bot)?.attention).toEqual(before?.attention);
-  emit({ events: [event("w2", { content: "deploy" })] });
+  emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);
+  // The overdue timer starts once turning attention on is saved, before the
+  // next tick and so before the later event.
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "mention",
-    "watch",
     "timer",
+    "watch",
   ]);
 });
 

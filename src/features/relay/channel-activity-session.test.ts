@@ -30,6 +30,7 @@ function setup() {
       ),
   );
   const sort: Record<string, "recent"> = {};
+  const filters: Record<string, "active" | "unreads"> = {};
   const owner = createRelaySession({
     ...wire.transport,
     channelActivity: activity,
@@ -44,6 +45,11 @@ function setup() {
       if (mode === "recent") sort[group] = mode;
       else delete sort[group];
       return { ...sort };
+    },
+    writeSidebarFilter: async (group, mode) => {
+      if (mode === "all") delete filters[group];
+      else filters[group] = mode;
+      return { filters: { ...filters }, activeWindowSeconds: {} };
     },
     subscribe(callbacks) {
       live = callbacks;
@@ -83,6 +89,35 @@ function setup() {
     initial,
   };
 }
+it("Active fetches activity independently of sort and shares Recent's demand lifetime", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setFilter("channels", "unreads", []);
+    expect(h.activity).not.toHaveBeenCalled();
+    await h.preferences.setFilter("channels", "active", []);
+    expect(h.activity).toHaveBeenCalledOnce();
+    const reading = take(h.pending);
+    expect(reading.ids).toEqual(["alpha", "beta"]);
+    await h.preferences.setSort("channels", "recent", []);
+    await h.preferences.setFilter("channels", "all", []);
+    expect(reading.signal.aborted).toBe(false);
+    expect(h.activity).toHaveBeenCalledOnce();
+    reading.resolve([message(h.peer, "beta", "recent activity", 100)]);
+    await flush();
+    expect(
+      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
+    ).toBe(100);
+    await h.preferences.setSort("channels", "alpha", []);
+    await h.preferences.setFilter("channels", "active", []);
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    const resumed = take(h.pending);
+    await h.preferences.setFilter("channels", "all", []);
+    expect(resumed.signal.aborted).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("reads no roster activity for A–Z, deduplicates Recent demand, and projects verified live activity monotonically", async () => {
   const h = setup();
   try {
@@ -272,6 +307,29 @@ it("cancels only after the last Recent section clears and refreshes unchanged ro
     h.owner.dispose();
   }
 });
+// Clearing every value on one channel's access loss flashed Recent sections to
+// A–Z until the next read finished.
+it("losing one channel keeps the others' activity while the roster rereads", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setSort("channels", "recent", []);
+    take(h.pending).resolve([
+      message(h.peer, "alpha", "a", 50),
+      message(h.peer, "beta", "b", 60),
+    ]);
+    await flush();
+    h.live().receive([
+      roster(h.relay, "alpha", [], Math.floor(Date.now() / 1000) + 1),
+    ]);
+    const find = (id: string) =>
+      h.channels.list().channels.find((channel) => channel.id === id);
+    expect(find("beta")?.lastActivityAt).toBe(60);
+    expect(find("alpha")?.lastActivityAt).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
 it.each(["clear", "dispose", "revoke", "disconnect"] as const)(
   "%s fences activity reads and cannot leak late data into a new lifetime",
   async (action) => {
@@ -306,3 +364,27 @@ function take<T>(pending: T[]): T {
   assert.exists(next, "Expected a pending operation");
   return next;
 }
+
+it("projects authoritative empty activity through later loading and failed refreshes", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setFilter("channels", "active", []);
+    take(h.pending).resolve([]);
+    await flush();
+    const quiet = () =>
+      h.channels.list().channels.find(({ id }) => id === "beta");
+    expect(quiet()).toMatchObject({ activityKnown: true });
+    expect(quiet()?.lastActivityAt).toBeUndefined();
+    await h.preferences.setFilter("channels", "all", []);
+    await h.preferences.setFilter("channels", "active", []);
+    expect(h.channels.list().activityStatus).toBe("loading");
+    expect(quiet()?.activityKnown).toBe(true);
+    take(h.pending).reject(new Error("offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    expect(quiet()?.activityKnown).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});

@@ -158,13 +158,7 @@ export function subscribeBrokerTraffic(
               if (!lines.length) continue; // Keepalives carry no data.
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
-              if (kind === "archive-error") callbacks.captureState?.("error");
-              else if (kind === "archive-state") {
-                const state = (data as { state?: unknown })?.state;
-                if (state === "saving" || state === "off" || state === "error")
-                  callbacks.captureState?.(state);
-              } else if (kind === "message")
-                callbacks.receive([eventDto(data)]);
+              if (kind === "message") callbacks.receive([eventDto(data)]);
               else if (kind === "traffic") {
                 if (
                   !data ||

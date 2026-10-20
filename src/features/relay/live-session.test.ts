@@ -12,7 +12,7 @@ import {
   scriptedTransport,
 } from "./testing";
 
-it("clears retained project homes on live recovery, cache clearing, and disposal", async () => {
+it("clears retained repository homes on live recovery, cache clearing, and disposal", async () => {
   const relay = keypair(),
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -25,13 +25,13 @@ it("clears retained project homes on live recovery, cache clearing, and disposal
     },
   });
   const seed = async () => {
-    const pending = owner.session.projects.home(
-      "project-channel",
+    const pending = owner.session.repositories.home(
+      "repo-channel",
       new AbortController().signal,
     );
     wire.next().respond([]);
     await pending;
-    expect(owner.session.projects.peekHome("project-channel")).toEqual({
+    expect(owner.session.repositories.peekHome("repo-channel")).toEqual({
       status: "none",
     });
   };
@@ -39,15 +39,15 @@ it("clears retained project homes on live recovery, cache clearing, and disposal
     await seed();
     live.state({ status: "connected", routes: [] });
     live.state({ status: "retrying", routes: [] });
-    expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+    expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
     await seed();
     await owner.clearCache();
-    expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+    expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
     await seed();
   } finally {
     owner.dispose();
   }
-  expect(owner.session.projects.peekHome("project-channel")).toBeUndefined();
+  expect(owner.session.repositories.peekHome("repo-channel")).toBeUndefined();
 });
 
 it("establishing a large roster reads only retained windows, not every channel head", async () => {
@@ -341,3 +341,71 @@ it.each([1, 2, 130])(
     }
   },
 );
+
+it("a reconnect catch-up head newer than every loaded row keeps those rows on screen", async () => {
+  // The catch-up moves the read cursor to the new head. Rows the reader had
+  // already loaded sit below that cursor and must stay visible.
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { prepared: true },
+  );
+  const rows = () =>
+    owner.session.channels.window("c").rows.map((row) => row.id);
+  try {
+    owner.session.channels.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "c", [viewer.pubkey]),
+        metadata(relay, "c", "C"),
+      ]);
+    await flush();
+    const seen = message(alice, "c", "seen", 10),
+      missed = message(alice, "c", "missed", 30),
+      old = message(alice, "c", "old", 5);
+    owner.session.channels.ensure("c");
+    await flush();
+    wire.next().respond([
+      seen,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 10, id: seen.id },
+      }),
+    ]);
+    await flush();
+    expect(rows()).toEqual([seen.id]);
+    live.state({ status: "connected", routes: [] });
+    live.established("c");
+    await flush();
+    expect(wire.pending.length).toBeGreaterThan(0);
+    while (wire.pending.length) {
+      wire.next().respond([
+        missed,
+        bounds(relay, "c", "head", {
+          has_more: true,
+          next_cursor: { created_at: 30, id: missed.id },
+        }),
+      ]);
+      await flush();
+    }
+    expect(rows()).toEqual([seen.id, missed.id]);
+    // Reads older than any loaded page still wait for paging to reach them.
+    const read = owner.session.read([{ ids: [old.id], limit: 1 }]);
+    wire.next().respond([old]);
+    await read;
+    expect(rows()).toEqual([seen.id, missed.id]);
+  } finally {
+    owner.dispose();
+  }
+});

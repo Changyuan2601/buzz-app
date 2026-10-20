@@ -1,0 +1,6 @@
+.chip {
+  inline-size: var(--space-5);
+  block-size: var(--space-4);
+  border-radius: var(--radius-chip);
+  background: var(--affordance-accent-prominent);
+}

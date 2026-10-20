@@ -2,11 +2,12 @@ import { isTauri } from "@tauri-apps/api/core";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
-import { config, defaults, validWorkspace } from "./config";
+import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
+import { readUsage } from "./usage";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 export const inject = ["agents", "host"];
@@ -21,12 +22,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const providerController = new CodexProvider(start, localStorage, setup);
+  const providerController = new CodexProvider(
+    start,
+    ctx.agents.storage,
+    setup,
+  );
   const runtime = new CodexRuntime(
     start,
     (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
     (pubkey, signal) => ctx.agents.core(pubkey, signal),
-    localStorage,
+    ctx.agents.storage,
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
   );
@@ -80,9 +85,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.dispose();
     setup.dispose();
   });
-  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
-    createTabs(providerController, runtime, start, setup);
-  ctx.agents.register({
+  const {
+    Create,
+    CreateModel,
+    DefaultControl,
+    ProviderDialogBody,
+    SettingsTab,
+    ActivityTab,
+  } = createTabs(providerController, runtime, start, setup);
+  ctx.agents.register<Config>({
     id: TYPE_ID,
     title: "Codex",
     icon: CodexLogoIcon,
@@ -126,11 +137,35 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(spawn, agent, since, signal),
+    }),
     provider: {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,
       check: () => providerController.check(),
       DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
+    sessions: {
+      list: (pubkey) => {
+        const views = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.status]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const status = views.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              ...(at !== undefined && { at }),
+              ...(status && { status }),
+            };
+          });
+      },
+      subscribe: runtime.subscribe,
     },
     tabs: [
       {

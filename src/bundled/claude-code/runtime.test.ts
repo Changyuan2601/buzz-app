@@ -6,6 +6,7 @@ import type { BuzzClient } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -19,6 +20,7 @@ import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
+import { workspaceCanvas } from "../../features/solo/workspace";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -50,14 +52,31 @@ function setup(
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
-    /** Channels filed in the owner's Me; the owner is the viewer. */
-    me?: Set<string>;
-    channelType?: "stream" | "session";
+    /** Channels that are the owner's own Solo chats; the owner is the viewer. */
+    solo?: Set<string>;
+    named?: Delivery["named"];
+    title?: string;
+    /** The channel's Canvas, as it reads now. */
+    canvas?: { content: string; pubkey?: string };
   }> = {},
 ) {
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
+    if (options.title && (id === "workspace" || id === "read")) {
+      spawnOptions?.onStdout?.(
+        id === "workspace"
+          ? "/Users/me/.buzz\n"
+          : Buffer.from(
+              JSON.stringify({ type: "ai-title", aiTitle: options.title }) +
+                "\n",
+            ).toString("base64"),
+      );
+      return {
+        exited: Promise.resolve(0),
+        kill: async () => {},
+      } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
+    }
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
@@ -79,8 +98,7 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType:
-              options.channelType ?? (options.me ? "session" : "stream"),
+            channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
           },
         ],
@@ -94,21 +112,29 @@ function setup(
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
-    mePlacement: {
-      state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.mePlacement.state,
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => !!options.me?.has(id),
+    canvas: {
+      available: !!options.canvas,
+      read: vi.fn(
+        async () =>
+          options.canvas && {
+            pubkey: alice,
+            kind: 40100,
+            created_at: 100,
+            tags: [["h", channel]],
+            ...options.canvas,
+          },
+      ),
     },
   };
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
-  const storage = {
+  const storage = localStore({
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
-  } as Storage;
+    removeItem: (key: string) => void data.delete(key),
+  } as Storage);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -161,6 +187,7 @@ function setup(
     },
   };
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
   const attention = { on: true };
   // Slugs the host would no longer run, as when a watch was tightened.
   const stale = new Set<string>();
@@ -185,6 +212,8 @@ function setup(
       config: DEFAULT_CONFIG,
       signal,
       workingUntil,
+      interruptible,
+      ...(options.named ? { named: options.named } : {}),
       // The host's answer, as it is when asked.
       current: () =>
         trigger.type === "mention" ||
@@ -211,7 +240,6 @@ function setup(
     runtime,
     added,
     deliver,
-    placement: session.mePlacement,
     published,
     claudes,
     fake,
@@ -221,6 +249,7 @@ function setup(
     data,
     agent,
     workingUntil,
+    interruptible,
     attention,
     objects,
     stale,
@@ -231,11 +260,11 @@ function setup(
 it("names each saved session's channel as the community lists it", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
-    {
+    localStore({
       getItem: (key: string) => data.get(key) ?? null,
       setItem: (key: string, value: string) => void data.set(key, value),
       removeItem: (key: string) => void data.delete(key),
-    } as Storage,
+    } as Storage),
     self,
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
@@ -286,6 +315,42 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
   expect(published).toEqual([]);
+});
+
+it("tells a subscriber when a new conversation's first turn starts working", async () => {
+  const { runtime, deliver, claudes } = setup([], { hold: true });
+  // As a view does: each notification reads the snapshot again.
+  runtime.subscribe(() => void runtime.sessions(self));
+  expect(runtime.sessions(self)).toEqual([]);
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.prompts).toHaveLength(1);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: true }]);
+  claude?.finish();
+  await flush(10);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
+});
+
+it("hands the host a stopper that interrupts the mention's running turn", async () => {
+  const { deliver, claudes, interruptible } = setup([], { hold: true });
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  const stop = interruptible.mock.calls[0]?.[0];
+  if (!stop) throw new Error("no stopper");
+  const interrupts = () =>
+    claude?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    );
+  expect(interrupts()).toEqual([]);
+  await stop();
+  expect(interrupts()).toHaveLength(1);
+  claude?.finish();
+  await flush(10);
 });
 
 const EFFORTS = [
@@ -980,7 +1045,7 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(prompt).toMatch(/<attention>\nHandle the work that caused this turn/);
   // Its process stops once the turn is done, and no session is kept for it.
   expect(claude?.killed).toBe(true);
-  expect(data.get("buzz.claude-code.sessions.v1") ?? "{}").toBe("{}");
+  expect(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}").toBe("{}");
   expect(runtime.sessions(self)).toEqual([]);
 });
 
@@ -1284,39 +1349,7 @@ async function send(claude: FakeClaude | undefined, id: string, args: object) {
   )?.response?.mcp_response?.result;
 }
 
-it("fails a session mention it cannot place until the placement can be read", async () => {
-  const mention = (id: string) =>
-    message(id, `@Claude ${id}`, {
-      created_at: 100 + Number(id),
-      tags: [
-        ["h", channel],
-        ["p", self],
-      ],
-    });
-  const { deliver, placement, published, claudes, workingUntil } = setup([], {
-    channelType: "session",
-  });
-  placement.state = { status: "error", error: "Recipe read failed" };
-  await expect(
-    deliver({ type: "mention", event: mention("1") }),
-  ).rejects.toThrow(
-    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
-  );
-  await flush(10);
-  expect(placement.refresh).toHaveBeenCalledOnce();
-  expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
-  expect(workingUntil).not.toHaveBeenCalled();
-  expect(published).toEqual([]);
-  placement.state = { status: "ready" };
-  await deliver({ type: "mention", event: mention("2") });
-  await flush(10);
-  const prompts = claudes().flatMap((process) => process.prompts);
-  expect(prompts).toHaveLength(1);
-  expect(prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
-  expect(workingUntil).toHaveBeenCalledOnce();
-});
-
-it("continues an owner's Me chat as one channel session posted at the top level", async () => {
+it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
   const earlier = message("1", "Earlier in the chat");
   const first = message("2", "@Claude first", {
     created_at: 110,
@@ -1336,7 +1369,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   });
   const { deliver, published, claudes, agent, read } = setup([earlier, first], {
     hold: true,
-    me: new Set([channel]),
+    solo: new Set([channel]),
   });
   agent.query.mockImplementation(async () => [first]);
   await deliver({ type: "mention", event: first });
@@ -1383,7 +1416,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn, and keeps the next turn's conversation while it waits", async () => {
+it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {
   const mention = (id: string) =>
     message(id, `@Claude ${id}`, {
       created_at: 100 + Number(id),
@@ -1392,8 +1425,11 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
         ["p", self],
       ],
     });
-  const me = new Set([channel]);
-  const { runtime, published, claudes, agent } = setup([], { hold: true, me });
+  const solo = new Set([channel]);
+  const { runtime, published, claudes, agent } = setup([], {
+    hold: true,
+    solo,
+  });
   agent.query.mockImplementation(async () => [mention("2")]);
   const config = { ...DEFAULT_CONFIG, scope: "channel" };
   runtime.sync([{ pubkey: self, config } as Agent]);
@@ -1410,10 +1446,10 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
   await run(mention("1"));
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
-  me.delete(channel);
+  solo.delete(channel);
   await run(mention("2"));
   await flush(10);
-  // It waits for the Me turn rather than steering into it.
+  // It waits for the Solo turn rather than steering into it.
   expect(claude?.prompts).toHaveLength(1);
   // Admitted to the channel's conversation, it is told so even if the agent
   // is moved to thread scope meanwhile.
@@ -1436,34 +1472,6 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
     ],
   ]);
   runtime.dispose();
-});
-
-it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
-  const event = message("7", "@Claude converted", {
-    tags: [
-      ["h", channel],
-      ["p", self],
-    ],
-  });
-  const { deliver, published, claudes, runtime } = setup([], {
-    hold: true,
-    me: new Set([channel]),
-    channelType: "stream",
-  });
-  try {
-    await deliver({ type: "mention", event });
-    await flush(10);
-    const process = claudes().find((item) => item.prompts.length);
-    expect(process?.prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
-    expect(process?.prompts[0]).toContain(event.id);
-    await send(process, "converted-reply", {
-      text: "Threaded",
-      reply: event.id,
-    });
-    expect(published[0]?.tags).toContainEqual(["e", event.id, "", "reply"]);
-  } finally {
-    runtime.dispose();
-  }
 });
 
 it("gives a tool the partial listing a slow native read answers", async () => {
@@ -1527,4 +1535,178 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
   }
+});
+
+it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {
+  const f = setup();
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "profiles.ensure": f.session.profiles.ensure,
+    publish: f.agent.publish,
+    query: f.agent.query,
+    upload: f.agent.upload,
+    media: f.agent.media,
+    remember: f.agent.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .filter(([, fn]) => fn.mock.calls.length > 0)
+        .map(([name, fn]) => [name, fn.mock.calls]),
+    );
+  f.core.mockResolvedValue("I am Claude.");
+  await f.deliver({
+    type: "mention",
+    event: message("1", "@Claude 1", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  expect(f.claudes()).toHaveLength(1);
+  expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
+  // The start makes no config requests. The only call is the conversation's
+  // name lookup for the sender and mentioned agent, which requests only
+  // profiles missing from the cache (none when both are cached).
+  expect(made()).toEqual({
+    "profiles.ensure": [[[alice, self], "foreground"]],
+  });
+});
+
+it("a failed first Solo chat turn releases naming so a successful retry can offer Claude's title", async () => {
+  const named = vi.fn();
+  const f = setup([], {
+    hold: true,
+    solo: new Set([channel]),
+    named,
+    title: "A useful title",
+  });
+  await f.deliver({ type: "mention", event: message("1", "Name this chat") });
+  await flush();
+  const first = f.claudes().find((process) => process.prompts.length);
+  if (!first) throw new Error("No Claude turn started");
+  first.finish({ error: "Try again" });
+  await flush();
+  expect(named).not.toHaveBeenCalled();
+  await f.deliver({
+    type: "mention",
+    event: message("2", "Try again", { created_at: 101 }),
+  });
+  await flush();
+  const retry = f
+    .claudes()
+    .filter((process) => process.prompts.length)
+    .at(-1);
+  if (!retry) throw new Error("No Claude retry started");
+  retry.finish();
+  await flush();
+  expect(named).toHaveBeenCalledExactlyOnceWith("A useful title");
+  f.runtime.dispose();
+});
+
+it("hands a Solo chat's Canvas to each turn and lets its session stay in the workspace's folders", async () => {
+  const mention = (id: string) =>
+    message(id, "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const canvasValue = {
+    content: workspaceCanvas({
+      folders: ["~/Development/app"],
+      worktree: { location: "~/Development/app-trees", baseBranch: "main" },
+      canvas: "Use the design system.",
+    }),
+  };
+  const { deliver, claudes, runtime, session } = setup([], {
+    solo: new Set([channel]),
+    canvas: canvasValue,
+  });
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.cwd).toBe("~/.buzz");
+  expect(first?.options.args).toEqual(
+    expect.arrayContaining([
+      "--add-dir",
+      "~/Development/app",
+      "--add-dir",
+      "~/Development/app-trees",
+    ]),
+  );
+  expect(first?.prompts[0]).toContain("<workspace-canvas>");
+  expect(first?.prompts[0]).toContain(
+    "not your own workspace: `~/Development/app`, `~/Development/app-trees`",
+  );
+  expect(first?.prompts[0]).toContain("Use the design system.");
+
+  // A Canvas that cannot be read keeps the session and its folders.
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  session.canvas.read.mockRejectedValueOnce(new Error("offline"));
+  await deliver({ type: "mention", event: mention("3") });
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  expect(first?.prompts).toHaveLength(2);
+  expect(first?.prompts[1]).not.toContain("<workspace-canvas>");
+
+  // New folders restart the idle session, resumed where it was.
+  const canvas: { content: string; pubkey?: string } = canvasValue;
+  canvas.content = workspaceCanvas({
+    folders: ["~/Development/other"],
+    canvas: "",
+  });
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(second?.options.args).toContain("~/Development/other");
+  expect(second?.options.args).not.toContain("~/Development/app");
+  expect(second?.prompts[0]).toContain("`~/Development/other`");
+
+  // Someone else's edit, as in a shared Solo chat, is not handed over: the
+  // session is told to drop the earlier Canvas and loses its folders.
+  canvas.pubkey = "b".repeat(64);
+  canvas.content = workspaceCanvas({ folders: ["~/elsewhere"], canvas: "x" });
+  await deliver({ type: "mention", event: mention("4") });
+  await flush(10);
+  const third = claudes().filter((process) => process.prompts.length)[2];
+  expect(second?.killed).toBe(true);
+  expect(third?.options.args).not.toContain("--add-dir");
+  expect(third?.prompts[0]).not.toContain("~/elsewhere");
+  expect(third?.prompts[0]).toContain("Disregard any earlier workspace Canvas");
+
+  // So is a Canvas its owner cleared.
+  delete canvas.pubkey;
+  canvas.content = "";
+  await deliver({ type: "mention", event: mention("5") });
+  await flush(10);
+  expect(third?.prompts[1]).toContain("Disregard any earlier workspace Canvas");
+  runtime.dispose();
+});
+
+it("hands no Canvas to a shared channel's turns", async () => {
+  const event = message("1", "@Claude go", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, runtime, session } = setup([], {
+    canvas: {
+      content: workspaceCanvas({ folders: ["~/repo"], canvas: "Steer me" }),
+    },
+  });
+  await deliver({ type: "mention", event });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(session.canvas.read).not.toHaveBeenCalled();
+  expect(claude?.options.args).not.toContain("--add-dir");
+  expect(claude?.prompts[0]).not.toContain("workspace-canvas");
+  runtime.dispose();
 });

@@ -24,6 +24,7 @@ import type {
   AgentProviderSnapshot,
   AgentViewProps,
 } from "../../features/agents/service";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -102,7 +103,7 @@ export class CodexProvider {
 
   constructor(
     private readonly spawn: Spawn,
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly setup?: CodexSetup,
   ) {
     this.state = Object.freeze({
@@ -187,7 +188,9 @@ export class CodexProvider {
       if (this.abort === abort) this.abort = undefined;
     }
   }
-  saveDefaults(next: ProviderDefaults) {
+  /** Settles once the defaults are saved, and only then uses them; rejects,
+   * keeping the saved ones, when they could not be saved. */
+  async saveDefaults(next: ProviderDefaults) {
     const selected = this.model(next.model);
     const effort =
       !next.effort ||
@@ -197,7 +200,10 @@ export class CodexProvider {
         ? next.effort
         : (selected?.defaultReasoningEffort ?? "");
     const defaults = Object.freeze({ model: next.model, effort });
-    this.writeDefaults(defaults);
+    await this.storage.set(
+      STORAGE_KEY,
+      JSON.stringify({ version: 1, ...defaults }),
+    );
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
@@ -230,16 +236,10 @@ export class CodexProvider {
   private model(model: string) {
     return catalogModel(model, this.state.data);
   }
-  private writeDefaults(defaults: ProviderDefaults) {
-    this.storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ version: 1, ...defaults }),
-    );
-  }
   private readDefaults(): ProviderDefaults {
     try {
       const value: unknown = JSON.parse(
-        this.storage.getItem(STORAGE_KEY) ?? "null",
+        this.storage.get(STORAGE_KEY) ?? "null",
       );
       if (
         value &&
@@ -409,6 +409,59 @@ export function createTabs(
     );
   }
 
+  function DefaultControl({ onConfigure }: { onConfigure(): void }) {
+    const state = useProvider();
+    const [error, setError] = useState("");
+    return (
+      <>
+        <ModelPicker
+          includeDefault={false}
+          resetLabel="Use Codex recommended"
+          compact
+          groupByFamily
+          label="Codex default model"
+          loading={state.checking}
+          models={choices(state.data).map((choice) => ({
+            ...choice,
+            efforts: [
+              { id: "", label: "Automatic" },
+              ...(
+                catalogModel(choice.id, state.data)
+                  ?.supportedReasoningEfforts ?? []
+              ).map((level) => ({
+                id: level.reasoningEffort,
+                label: effortName(level.reasoningEffort),
+              })),
+            ],
+          }))}
+          effort={state.defaults.effort}
+          effortLabel={
+            state.defaults.effort
+              ? effortName(state.defaults.effort)
+              : "Automatic"
+          }
+          onEffortChange={(model, effort) => {
+            provider.saveDefaults({ model, effort }).then(
+              () => setError(""),
+              (reason) => setError(String(reason)),
+            );
+          }}
+          value={state.defaults.model}
+          defaultModel={catalogModel("", state.data)?.model}
+          defaultLabel={providerDefaultLabel("", state.data)}
+          onConfigure={onConfigure}
+          onChange={(model) => {
+            provider.saveDefaults({ model, effort: "" }).then(
+              () => setError(""),
+              (reason) => setError(String(reason)),
+            );
+          }}
+        />
+        {error && <span role="alert">{error}</span>}
+      </>
+    );
+  }
+
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const defaultsForm = useId();
     const state = useProvider();
@@ -420,6 +473,7 @@ export function createTabs(
     );
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
+    const [savingDefaults, setSavingDefaults] = useState(false);
     const action =
       error === NOT_INSTALLED
         ? ({ step: "install", label: "Install Codex" } as const)
@@ -427,7 +481,6 @@ export function createTabs(
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;
     useEffect(() => setDraft(state.defaults), [state.defaults]);
-    const nativeModel = data?.models.find((model) => model.isDefault);
     const selected = catalogModel(draft.model, data);
     const efforts = [
       {
@@ -499,63 +552,26 @@ export function createTabs(
           hidden={state.readiness !== "ready"}
           onSubmit={(event) => {
             event.preventDefault();
+            if (savingDefaults) return;
             setSaveError("");
-            try {
-              provider.saveDefaults(draft);
-            } catch (reason) {
-              setSaveError(message(reason));
-              return;
-            }
-            onClose();
+            setSavingDefaults(true);
+            // Closes only once saved; else the draft stays to try again.
+            provider
+              .saveDefaults(draft)
+              .then(onClose, (reason) => setSaveError(message(reason)))
+              .finally(() => setSavingDefaults(false));
           }}
         >
-          <Select
-            label="Default model"
-            variant="preference"
-            value={draft.model}
-            disabled={checking || !data}
-            groups={[
-              {
-                label: "",
-                options: [
-                  {
-                    value: "",
-                    label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
-                    description: nativeModel
-                      ? "Following Codex's recommendation"
-                      : undefined,
-                    disabled: !nativeModel,
-                  },
-                  ...(draft.model &&
-                  !data?.models.some((model) => model.model === draft.model)
-                    ? [
-                        {
-                          value: draft.model,
-                          label: `${draft.model} (unavailable)`,
-                        },
-                      ]
-                    : []),
-                  ...(data?.models.map((model) => ({
-                    value: model.model,
-                    label: model.displayName,
-                    description: model.description,
-                  })) ?? []),
-                ],
-              },
-            ]}
-            onValueChange={(model) => setDraft({ ...draft, model, effort: "" })}
-          />
           <Select
             label="Default thinking"
             valueLabel={
               draft.effort ? undefined : codexDefaultEffortLabel("", selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
-            disabled={checking || !selected}
+            disabled={checking || !selected || savingDefaults}
             onValueChange={(effort) => setDraft({ ...draft, effort })}
           />
           {saveError && (
@@ -577,6 +593,7 @@ export function createTabs(
               type="submit"
               form={defaultsForm}
               variant="prominent"
+              loading={savingDefaults}
               disabled={
                 JSON.stringify(draft) === JSON.stringify(state.defaults)
               }
@@ -904,6 +921,7 @@ export function createTabs(
                 ? undefined
                 : codexDefaultEffortLabel(effective.effort, selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -983,6 +1001,7 @@ export function createTabs(
     CreateModel,
     Create,
     ProviderDialogBody,
+    DefaultControl,
     SettingsTab,
     ActivityTab,
   };

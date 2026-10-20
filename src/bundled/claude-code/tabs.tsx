@@ -1,5 +1,7 @@
+import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
   useEffect,
@@ -397,15 +399,71 @@ export function createTabs({
   }
 
   /** Claude Code installation and account readiness on this computer. */
-  function ProviderDialogBody({ onClose }: { onClose(): void }) {
+  function DefaultControl({ onConfigure }: { onConfigure(): void }) {
     const state = useSetupCatalog();
-    const savedDefaults = useSyncExternalStore(
+    const saved = useSyncExternalStore(
       defaults.subscribe,
       defaults.snapshot,
       defaults.snapshot,
     );
-    const [draftDefault, setDraftDefault] = useState(savedDefaults.model);
-    const [defaultError, setDefaultError] = useState("");
+    const [error, setError] = useState("");
+    return (
+      <>
+        <ModelDiscoveryRecovery
+          error={state.modelsError}
+          loading={state.modelsChecking}
+          retry={() => void setup.loadModels(true)}
+        >
+          <ModelPicker
+            includeDefault={false}
+            resetLabel="Use Claude default"
+            compact
+            groupByFamily
+            label="Claude default model"
+            models={modelChoices(state.models).map((choice) => ({
+              ...choice,
+              efforts: (() => {
+                const model = state.models.find(
+                  (item) => item.value === choice.id,
+                );
+                const levels = model ? effortChoices(effortLevels(model)) : [];
+                return levels.length
+                  ? [{ id: "", label: "Automatic" }, ...levels]
+                  : [];
+              })(),
+            }))}
+            effort={saved.effort ?? ""}
+            effortLabel={saved.effort ? effortLabel(saved.effort) : "Automatic"}
+            onEffortChange={(model, effort) => {
+              defaults.save({ model, effort }).then(
+                () => setError(""),
+                (reason) => setError(String(reason)),
+              );
+            }}
+            value={
+              saved.model
+                ? (providerDefaultModel(saved.model, state.models) ??
+                  saved.model)
+                : ""
+            }
+            defaultModel={providerDefaultModel("", state.models)}
+            defaultLabel={providerDefaultLabel("", state.models)}
+            onConfigure={onConfigure}
+            onChange={(model) => {
+              defaults.save({ model }).then(
+                () => setError(""),
+                (reason) => setError(String(reason)),
+              );
+            }}
+          />
+        </ModelDiscoveryRecovery>
+        {error && <span role="alert">{error}</span>}
+      </>
+    );
+  }
+
+  function ProviderDialogBody({ onClose }: { onClose(): void }) {
+    const state = useSetupCatalog();
     const [code, setCode] = useState("");
     const status = state.status;
     const ready = status?.state === "ready" && !state.checking;
@@ -429,21 +487,6 @@ export function createTabs({
           : status?.state === "signed-out"
             ? ({ step: "login", label: "Sign in" } as const)
             : undefined;
-    const nativeModel = state.models.find(
-      (candidate) => candidate.value === "default",
-    );
-    const listed = modelChoices(state.models);
-    // A saved default Claude has not listed (yet) stays selectable.
-    const defaultChoices =
-      draftDefault && !listed.some((choice) => choice.id === draftDefault)
-        ? [
-            ...listed,
-            { id: draftDefault, label: resolvedModelName(draftDefault) },
-          ]
-        : listed;
-    const nativeLabel = nativeModel?.resolvedModel
-      ? `Claude default (${resolvedModelName(nativeModel.resolvedModel)})`
-      : "Claude default";
     const latestOutputLine = state.output
       .replaceAll("\r", "\n")
       .split("\n")
@@ -481,17 +524,6 @@ export function createTabs({
                   ? "Waiting for Claude Code sign-in…"
                   : (latestOutputLine ?? "Installing Claude Code…")}
               </p>
-              <Button onClick={() => void setup.cancel()}>Cancel</Button>
-            </div>
-          ) : action ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                autoFocus
-                variant="prominent"
-                onClick={() => void setup.run(action.step)}
-              >
-                {action.label}
-              </Button>
             </div>
           ) : null}
           {status?.state === "missing" && !state.running && (
@@ -540,78 +572,27 @@ export function createTabs({
             </p>
           )}
         </div>
-        <form
-          className="grid gap-3"
-          hidden={!ready}
-          onSubmit={(event) => {
-            event.preventDefault();
-            setDefaultError("");
-            try {
-              defaults.save({ model: draftDefault });
-            } catch (error) {
-              setDefaultError(message(error));
-              return;
+        {ready && (
+          <p className="m-0 text-body-sm text-subtle">Claude is signed in.</p>
+        )}
+        <ProviderDialogActions>
+          <Button
+            onClick={() =>
+              state.running && !ready ? void setup.cancel() : onClose()
             }
-            onClose();
-          }}
-        >
-          <Select
-            label="Default model"
-            variant="preference"
-            value={draftDefault}
-            groups={[
-              {
-                label: "",
-                options: [
-                  {
-                    value: "",
-                    label: nativeLabel,
-                    description: nativeModel
-                      ? "Following Claude Code's recommendation"
-                      : undefined,
-                  },
-                  ...defaultChoices.map(({ id, ...copy }) => ({
-                    value: id,
-                    ...copy,
-                  })),
-                ],
-              },
-            ]}
-            {...(draftDefault === "" ? { valueLabel: nativeLabel } : {})}
-            {...(state.modelsChecking
-              ? { description: "Loading Claude's models…" }
-              : {})}
-            {...(state.modelsError
-              ? { error: `Couldn't load Claude's models: ${state.modelsError}` }
-              : {})}
-            onValueChange={setDraftDefault}
-          />
-          {state.modelsError && (
-            <div>
-              <Button
-                variant="ghost"
-                onClick={() => void setup.loadModels(true)}
-              >
-                Try again
-              </Button>
-            </div>
-          )}
-          {defaultError && (
-            <p role="alert" className="buzz-field-error">
-              {defaultError}
-            </p>
-          )}
-          <div>
+          >
+            {ready ? "Done" : "Cancel"}
+          </Button>
+          {!ready && action && !state.running && !state.checking && (
             <Button
-              type="submit"
+              autoFocus
               variant="prominent"
-              disabled={draftDefault === savedDefaults.model}
-              focusableWhenDisabled
+              onClick={() => void setup.run(action.step)}
             >
-              Save defaults
+              {action.label}
             </Button>
-          </div>
-        </form>
+          )}
+        </ProviderDialogActions>
       </div>
     );
   }
@@ -864,6 +845,7 @@ export function createTabs({
             setupState.models,
           )}
           defaultDescription="Following the provider's model default"
+          loading={setupState.modelsChecking}
           onChange={(model) => {
             // An effort the new model does not list goes back to the default;
             // without Claude's list, the effort is kept.
@@ -885,6 +867,7 @@ export function createTabs({
         <Select
           label="Thinking"
           valueLabel={draft.effort ? undefined : "Automatic"}
+          valueSuffix={draft.effort ? undefined : " · Default"}
           variant="preference"
           value={draft.effort}
           groups={[{ label: "", options: effortOptions }]}
@@ -959,6 +942,7 @@ export function createTabs({
     CreateModel,
     Create,
     ProviderDialogBody,
+    DefaultControl,
     SettingsTab,
     ActivityTab,
   };

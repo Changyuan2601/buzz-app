@@ -62,9 +62,7 @@ import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/Keyboa
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
-  return (
-    <ThemePicker value={value} onValueChange={setValue} messageColor="blue" />
-  );
+  return <ThemePicker value={value} onValueChange={setValue} />;
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
@@ -239,6 +237,9 @@ function TypingDotsSpecimen() {
             <TypingDots state="waiting" /> Received · waiting to start
           </span>
         </Specimen>
+        <Specimen prop='size="small"'>
+          <TypingDots size="small" />
+        </Specimen>
         <Specimen prop='state="working" (default)'>
           <span className="flex items-center gap-2 text-body">
             <TypingDots /> Working
@@ -287,6 +288,15 @@ function AvatarStackSpecimen() {
         aria-label="Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} />
+      </Button>
+      <Button
+        size="xs"
+        variant="subtle"
+        shape="control"
+        aria-label="Small agent activity"
+      >
+        <AvatarStack items={items.slice(1, 2)} size="mini" />
+        <TypingDots size="small" />
       </Button>
       <Button
         variant="ghost"
@@ -681,6 +691,9 @@ function FullPageSurfaceSpecimen() {
 function PanelSpecimen() {
   return (
     <div className="component-specimen-stack">
+      <Panel as="div" shape="capsule" aria-label="Capsule surface">
+        <div className="p-2">Shell control group</div>
+      </Panel>
       <SpecimenGroup
         label="Panel — the surface by itself"
         code={`<div className="w-full h-64 p-workspace-inset rounded-panel bg-app">
@@ -776,6 +789,13 @@ function TabsSpecimen() {
   }));
   return (
     <div className="component-specimen-stack">
+      <Tabs
+        label="Segmented filters"
+        variant="segmented"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={DESTINATIONS}
+      />
       <Button
         disabled={!closable.includes("Thread")}
         onClick={() => {
@@ -1743,6 +1763,24 @@ function RadioGroupSpecimen() {
   return (
     <>
       <SpecimenGroup
+        label="Text-only tiles"
+        code={`<Field label="Delivery" nativeLabel={false}>
+  <RadioGroup defaultValue="all">
+    <Radio value="all" label="All updates" variant="tile" />
+    <Radio value="mentions" label="Mentions only" variant="tile" />
+    <Radio value="none" label="Unavailable" variant="tile" disabled />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Delivery" nativeLabel={false}>
+          <RadioGroup defaultValue="all">
+            <Radio value="all" label="All updates" variant="tile" />
+            <Radio value="mentions" label="Mentions only" variant="tile" />
+            <Radio value="none" label="Unavailable" variant="tile" disabled />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Native form reset"
         code={`<form aria-label="Notification preferences">
   <Field label="Notifications">
@@ -1985,6 +2023,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   accordion: () => (
     <SpecimenFrame
       code={`<Accordion
+  animate
   items={[
     {
       value: "purpose",
@@ -2037,6 +2076,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     >
       <InlineHeader title="Active section" />
       <Accordion
+        animate
         variant="section"
         items={[
           {

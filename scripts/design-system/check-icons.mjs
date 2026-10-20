@@ -30,6 +30,7 @@ const nonIconDependencies = new Set([
   "@testing-library/jest-dom",
   "@testing-library/react",
   "@testing-library/user-event",
+  "@types/d3-scale",
   "@types/mdast",
   "@types/node",
   "@types/react",
@@ -39,6 +40,7 @@ const nonIconDependencies = new Set([
   "@xterm/xterm",
   "blurhash",
   "consola", // Runtime logging, not an icon catalog.
+  "d3-scale", // Chart scales and ticks; marks are Buzz-rendered SVG.
   "dockview-react",
   "emoji-mart",
   "flexlayout-react",
@@ -52,6 +54,7 @@ const nonIconDependencies = new Set([
   "micromark-extension-gfm-table",
   "motion",
   "nostr-tools",
+  "pele",
   "postcss",
   "prosemirror-commands",
   "prosemirror-history",

@@ -8,7 +8,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { profileKey } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -33,7 +33,7 @@ export function RichComposerInput({
   ...input
 }: EditableInputProps & {
   draft: MentionDraft;
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   extensions: ConversationExtensions | undefined;

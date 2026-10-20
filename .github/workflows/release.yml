@@ -117,6 +117,7 @@ jobs:
             -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = EYF346PHUG' "$app"
           spctl --assess --type execute --verbose=4 "$app"
           xcrun stapler validate "$app"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Contents/Info.plist")"
           codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true || { echo '::error::Signed app is missing microphone entitlement'; exit 1; }
           goose="$app/Contents/Resources/bin/goose-acp"
@@ -375,7 +376,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl desktop-file-utils file git \
             libasound2-dev libayatana-appindicator3-dev libgtk-3-dev librsvg2-dev \
-            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf pkg-config \
+            libopus-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf pkg-config \
             squashfs-tools wget xdg-utils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

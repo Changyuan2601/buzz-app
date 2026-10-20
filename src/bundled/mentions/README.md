@@ -1,3 +1,15 @@
+# Mentions
+
+Find and mention people, agents, and teams while you write.
+
+## Getting started
+
+1. Type @ in the composer and pick someone from the suggestions.
+2. Or choose **Mention a member** to search everyone in your community.
+3. Pick a team to mention all of its members at once.
+
+---
+
 # Mention rules
 
 `version 2` · `client contract` · `uses existing tags`
@@ -43,7 +55,7 @@ MUST, MUST NOT, SHOULD, and MAY have their RFC 2119 meanings.
 
 Choosing a person does not give them access. A mention does not promise that an
 agent will accept or answer. The existing channel membership, add-member
-permission, and session invitation rules stay the authority. Labels are
+permission, and Solo chat invitation rules stay the authority. Labels are
 presentation only. Clients MUST send and store exact keys, not labels.
 
 This contract does not define profile validation, archive state, presence, or
@@ -59,9 +71,9 @@ archived and not read-only, the choice set is:
 2. the agents that the client offers for mention in this channel; and
 3. people and agents found by a community directory search for the current query.
 
-Sessions MUST NOT add directory people. This follows the channel type, so it
-also holds in session composers that do not invite agents, such as media
-comments and edits. A session that invites agents uses its own agent list
+Solo chats MUST NOT add directory people. This follows the channel type, so it
+also holds in Solo chat composers that do not invite agents, such as media
+comments and edits. A Solo chat that invites agents uses its own agent list
 instead of item 3. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
@@ -95,7 +107,7 @@ admitted only when no directory search for it is pending and the last search
 did not fail. While the search runs, the chooser shows no rows for that query.
 If the search fails, the chooser keeps its error and a way to retry. The
 desktop UI test "a failed multi-word directory search keeps its error and
-retry" in [session-agents.test.tsx](session-agents.test.tsx) covers this case:
+retry" in [solo-agents.test.tsx](solo-agents.test.tsx) covers this case:
 `@Mary J` fails, then Retry finds Mary Jane. The one case where the client MAY
 skip the search is the refuted prefix in section 6. An `@` inside a mention
 that the user already selected does not open a query.
@@ -191,7 +203,7 @@ set of choices when all of these are true:
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items
-1 and 2, or a session's own agent list). The client selects:
+1 and 2, or a Solo chat's own agent list). The client selects:
 
 1. the exact name among the local choices, once every member's name is known;
    otherwise
@@ -251,8 +263,8 @@ A DM has fixed participants, so there is no choice to make. The client MUST NOT
 ask. It sends outside keys in a DM as references, which do not notify them. The
 chooser row says so before the user picks the person.
 
-A session MUST NOT ask either, in any session composer. Its recipients follow
-the session choice policy.
+A Solo chat MUST NOT ask either, in any Solo chat composer. Its recipients follow
+the Solo chat choice policy.
 
 Adding a member from this prompt MUST NOT start an agent. The sent message is
 what notifies it. If the draft or its attachments change while adding runs, the
@@ -303,7 +315,7 @@ and `managed` are false. `history` maps a key to recency (higher is newer).
 
 Section 6 and the prompt in section 7 are interaction rules. Test them with
 client UI tests. The desktop tests are in
-[session-agents.test.tsx](session-agents.test.tsx) and
+[solo-agents.test.tsx](solo-agents.test.tsx) and
 `tests/browser/mention-rules.spec.mjs`.
 
 Run the fixtures against the desktop code from the repository root:

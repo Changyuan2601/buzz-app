@@ -13,9 +13,7 @@ import { Note, PageHeader, Section } from "./primitives";
 
 /**
  * What each component is built on, read from the registry rather than written
- * down here — `src/shared/ui/registry.test.ts` binds those entries to the
- * imports in the component files, so a component that gains or drops a Base UI
- * part changes this page by failing that test first.
+ * down here.
  *
  * A dash is an answer, not a gap. A header, a section, and a surface have no
  * behaviour to inherit, so wrapping them in a Base UI part would add a

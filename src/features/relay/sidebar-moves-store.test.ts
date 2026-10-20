@@ -64,15 +64,14 @@ async function setup() {
     data = { ...data, sort: next };
     return next;
   });
-  const owner = createSidebarPreferencesStore(
+  const owner = createSidebarPreferencesStore({
     read,
-    true,
-    assignment,
-    star,
-    undefined,
-    mute,
-    sort,
-  );
+    available: true,
+    write: assignment,
+    writeStar: star,
+    writeMute: mute,
+    writeSort: sort,
+  });
   await owner.queries.ensure();
   return { owner, prefs: owner.queries, assignment, star, read, mute, sort };
 }

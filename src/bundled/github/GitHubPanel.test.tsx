@@ -9,20 +9,10 @@ import {
   within,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, assert, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { GitHubPanel } from "./index";
-import styles from "./GitHub.module.css";
-
-assert.exists(styles.additions);
-assert.exists(styles.deletions);
-assert.exists(styles.branch);
-assert.exists(styles.branchLabel);
-const additionsClass = styles.additions;
-const deletionsClass = styles.deletions;
-const branchClass = styles.branch;
-const branchLabelClass = styles.branchLabel;
 
 afterEach(() => {
   cleanup();
@@ -72,8 +62,6 @@ it.each([
     const changes = screen.getByText("Changes").parentElement;
     if (!changes) throw new Error("Missing Changes row");
     expect(changes.querySelector("dd")).toHaveTextContent("+174 / −28");
-    expect(within(changes).getByText("+174")).toHaveClass(additionsClass);
-    expect(within(changes).getByText("−28")).toHaveClass(deletionsClass);
   },
 );
 
@@ -99,8 +87,8 @@ it("preserves zero counts and leaves an open issue neutral", async () => {
   );
   await screen.findByRole("heading", { name: "A small improvement" });
   expect(screen.getByText("open")).not.toHaveAttribute("data-pr-state");
-  expect(screen.getByText("+0")).toHaveClass(additionsClass);
-  expect(screen.getByText("−0")).toHaveClass(deletionsClass);
+  expect(screen.getByText("+0")).toBeInTheDocument();
+  expect(screen.getByText("−0")).toBeInTheDocument();
 });
 
 it("links branch labels to their own repositories and preserves unavailable branches", async () => {
@@ -138,8 +126,6 @@ it("links branch labels to their own repositories and preserves unavailable bran
     "href",
     "https://github.com/contributor/project/tree/fix/small%20detail",
   );
-  expect(head).toHaveClass(branchClass);
-  expect(screen.getByRole("link", { name: "main" })).toHaveClass(branchClass);
   expect(head).toHaveAttribute("target", "_blank");
   expect(head).toHaveAttribute("rel", "noreferrer");
   expect(screen.getByRole("link", { name: "main" })).toHaveAttribute(
@@ -168,9 +154,6 @@ it("links branch labels to their own repositories and preserves unavailable bran
   await screen.findByRole("heading", { name: "An unavailable branch #2" });
   const deleted = screen.getByText("contributor:deleted");
   expect(deleted).toBeVisible();
-  expect(deleted).toHaveClass(branchLabelClass);
-  expect(deleted).not.toHaveClass(branchClass);
-  expect(screen.getByText("example:main")).toHaveClass(branchLabelClass);
   expect(deleted.parentElement).toHaveTextContent(
     "contributor:deleted → example:main",
   );

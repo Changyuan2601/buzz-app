@@ -104,6 +104,14 @@ it("uses independent explicit channel routes and self-p globals; equal interests
       limit: 500,
     },
   ]);
+  // NIP-CL: system channel notices reach only a filter with #t:["system"].
+  expect(h.first.requests()[1]?.[3]).toEqual({
+    kinds: [44100, 44101],
+    "#p": [h.key.pubkey],
+    "#t": ["system"],
+    since: expect.any(Number),
+    limit: 500,
+  });
   const before = h.first.sent.length;
   h.owner.update(["b", "a", "a"]);
   expect(h.first.sent).toHaveLength(before);
@@ -1525,190 +1533,6 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
-
-it.each(["before auth", "pending", "established"])(
-  "keeps capture on one wire across display generations (%s)",
-  async (phase) => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1800000000000);
-    const h = setup([]);
-    const capture = vi.fn(),
-      telemetry = vi.fn();
-    Object.assign(h.callbacks, { capture, telemetry });
-    try {
-      h.owner.archive?.([24200, 44200]);
-      if (phase !== "before auth") await h.first.auth();
-      if (phase === "established")
-        for (const [, id] of h.first.requests())
-          await h.first.receive(["EOSE", id]);
-      h.owner.observe?.(1);
-      if (phase === "before auth") await h.first.auth();
-      const route = h.first.requests().find((r) => r[2].kinds.includes(24200));
-      assert.exists(route);
-      for (const [, id] of h.first.requests())
-        await h.first.receive(["EOSE", id]);
-      const wires = h.first.sent.slice();
-      const event = (
-        serial: number,
-        created_at = Math.floor(Date.now() / 1000),
-      ) =>
-        signed(h.key, {
-          kind: 24200,
-          content: String(serial),
-          tags: [],
-          created_at,
-        });
-      const beforeReset = event(1);
-      await h.first.receive(["EVENT", route[1], beforeReset]);
-      expect(telemetry).toHaveBeenLastCalledWith(beforeReset, 1);
-      // An old frame delivered after reset still belongs in the archive, never
-      // in the new display generation. Capture's ingress floor must not move.
-      vi.setSystemTime(Date.now() + 5000);
-      h.callbacks.state.mockClear();
-      h.owner.observe?.(2);
-      expect(h.callbacks.state).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "connected",
-          routes: expect.arrayContaining([
-            expect.objectContaining({ id: "observer", status: "live" }),
-          ]),
-        }),
-      );
-      await h.first.receive(["EVENT", route[1], beforeReset]);
-      expect(capture).toHaveBeenCalledTimes(2);
-      expect(telemetry).toHaveBeenCalledTimes(1);
-      const fresh = event(2);
-      await h.first.receive(["EVENT", route[1], fresh]);
-      expect(telemetry).toHaveBeenLastCalledWith(fresh, 2);
-      h.owner.observe?.(null);
-      await h.first.receive(["EVENT", route[1], event(3)]);
-      expect(capture).toHaveBeenCalledTimes(4);
-      expect(telemetry).toHaveBeenCalledTimes(2);
-      vi.setSystemTime(Date.now() + 5000);
-      h.owner.observe?.(3);
-      const resumed = event(4);
-      await h.first.receive(["EVENT", route[1], resumed]);
-      expect(telemetry).toHaveBeenLastCalledWith(resumed, 3);
-      expect(capture).toHaveBeenLastCalledWith(resumed);
-      expect(h.first.sent).toEqual(wires);
-      expect(h.callbacks.receive).not.toHaveBeenCalled();
-    } finally {
-      h.owner.dispose();
-    }
-  },
-);
-
-it("changes the capture wire only when the combined kind demand changes", async () => {
-  vi.useFakeTimers();
-  const h = setup([]);
-  const capture = vi.fn(),
-    telemetry = vi.fn();
-  Object.assign(h.callbacks, { capture, telemetry });
-  try {
-    h.owner.observe?.(1);
-    await h.first.auth();
-    for (const [, id] of h.first.requests())
-      await h.first.receive(["EOSE", id]);
-    const first = h.first.requests().at(-1);
-    assert.exists(first);
-    const wires = h.first.sent.slice();
-    h.owner.archive?.([24200]);
-    expect(h.first.sent).toEqual(wires);
-    h.owner.archive?.([]);
-    expect(h.first.sent).toEqual(wires);
-    const event = signed(h.key, {
-      kind: 24200,
-      content: "opaque",
-      tags: [],
-      created_at: Math.floor(Date.now() / 1000),
-    });
-    await h.first.receive(["EVENT", first[1], event]);
-    expect(capture).not.toHaveBeenCalled();
-    expect(telemetry).toHaveBeenCalledExactlyOnceWith(event, 1);
-    h.owner.archive?.([44200]);
-    const both = h.first.requests().at(-1);
-    assert.exists(both);
-    expect(both[1]).not.toBe(first[1]);
-    expect(both[2].kinds).toEqual([24200, 44200]);
-    expect(h.first.sent).toContainEqual(["CLOSE", first[1]]);
-    h.owner.observe?.(null);
-    const metrics = h.first.requests().at(-1);
-    assert.exists(metrics);
-    expect(metrics[2].kinds).toEqual([44200]);
-    expect(h.first.sent).toContainEqual(["CLOSE", both[1]]);
-    h.owner.archive?.([]);
-    expect(h.first.sent).toContainEqual(["CLOSE", metrics[1]]);
-    expect(h.first.requests()).toHaveLength(5); // two globals, three owner wires
-    expect(h.sockets).toHaveLength(1);
-  } finally {
-    h.owner.dispose();
-  }
-});
-
-it.each(["display", "capture"])(
-  "replays stored metrics across a delayed %s kind change without replaying activity",
-  async (change) => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1800000000000);
-    const admission = createLiveAdmission(),
-      h = setup([], admission);
-    const capture = vi.fn(),
-      telemetry = vi.fn();
-    Object.assign(h.callbacks, { capture, telemetry });
-    try {
-      h.owner.archive?.([44200]);
-      await h.first.auth();
-      for (const [, id] of h.first.requests())
-        await h.first.receive(["EOSE", id]);
-      const first = h.first.requests().at(-1);
-      assert.exists(first);
-      // A long-lived route should replay only the handoff overlap, not its whole lifetime.
-      await vi.advanceTimersByTimeAsync(600_000);
-      admission.pause(3);
-      if (change === "display") h.owner.observe?.(1);
-      else h.owner.archive?.([24200, 44200]);
-      const count = h.first.requests().length;
-      await vi.advanceTimersByTimeAsync(1000);
-      const inGap = Math.floor(Date.now() / 1000);
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(h.first.requests()).toHaveLength(count + 1);
-      const next = h.first.requests().at(-1);
-      assert.exists(next);
-      expect(next[2].since).toBe(inGap - 61);
-      expect(next[2].since).toBeLessThan(inGap);
-      const metric = signed(h.key, {
-        kind: 44200,
-        content: "gap",
-        tags: [],
-        created_at: inGap,
-      });
-      await h.first.receive(["EVENT", next[1], metric]);
-      expect(capture).toHaveBeenCalledExactlyOnceWith(metric);
-      await h.first.receive([
-        "EVENT",
-        next[1],
-        signed(h.key, {
-          kind: 24200,
-          content: "not replayable",
-          tags: [],
-          created_at: inGap,
-        }),
-      ]);
-      expect(capture).toHaveBeenCalledTimes(1);
-      expect(telemetry).not.toHaveBeenCalled();
-      expect(h.callbacks.receive).not.toHaveBeenCalled();
-      await h.first.receive(["EOSE", next[1]]);
-      await h.first.receive(["CLOSED", next[1], "temporary: unavailable"]);
-      await vi.advanceTimersByTimeAsync(1000);
-      h.owner.retry();
-      expect(h.first.requests().at(-1)?.[2].since).toBe(
-        Math.floor(Date.now() / 1000),
-      );
-    } finally {
-      h.owner.dispose();
-    }
-  },
-);
 
 it("presence holds its receipt without delaying ordinary setup and shares correlated cooldown", async () => {
   vi.useFakeTimers();

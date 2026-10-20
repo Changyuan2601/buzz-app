@@ -96,7 +96,10 @@ export function useAppNavigation(
     (target.route.params === "Inbox" || target.route.params === "Bestie")
       ? target.route.params.toLowerCase()
       : undefined;
-  let waiting = legacyHome || legacyPage !== undefined;
+  const legacyMessagesSettings =
+    settings && target.section === "buzz.channels/messages";
+  let waiting =
+    legacyHome || legacyPage !== undefined || legacyMessagesSettings;
   if (scope === null) {
     waiting ||= client.status === "loading" || client.selected !== null;
   } else if (scope) {
@@ -168,7 +171,20 @@ export function useAppNavigation(
         pageId: legacyPage,
         ...(scope !== undefined ? { scope } : {}),
       });
-  }, [services, state.attempt, legacyHome, legacyPage, scope]);
+    else if (legacyMessagesSettings && target.kind === "settings")
+      services.navigationHost.resolve(state.attempt, {
+        ...target,
+        section: "appearance",
+      });
+  }, [
+    services,
+    state.attempt,
+    legacyHome,
+    legacyPage,
+    legacyMessagesSettings,
+    target,
+    scope,
+  ]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],
@@ -330,7 +346,7 @@ export function useAppNavigation(
       // selected, authorized destination; never reconnect an unrelated community.
       if (
         (pageKey === channelsKey ||
-          pageKey === "buzz.projects/projects" ||
+          pageKey === "buzz.repos/repos" ||
           pageKey === "buzz.agents/agents" ||
           settings) &&
         !state.ingress &&

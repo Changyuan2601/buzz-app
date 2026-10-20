@@ -4,6 +4,7 @@
 // Only the progress is saved, never an event.
 import type { Agent } from "./service";
 import type { EventData, ReadFilter } from "../relay/events";
+import type { AgentStore } from "./store";
 
 export const CATCH_UP_KEY = "buzz.agents.catch-up.v1";
 /** Events in one read, as Janet's catch-up pages are. */
@@ -56,10 +57,62 @@ export const undelivered = (checkpoint: Checkpoint, event: Position) =>
   (!checkpoint.after || oldestFirst(event, checkpoint.after) > 0) &&
   !checkpoint.heard?.some(({ id }) => id === event.id);
 
-export function readCheckpoints(storage: Storage): Checkpoints {
+/** Each agent's catch-up progress has its own key, so programs that run
+ * different agents and share this storage never write over each other's
+ * progress. */
+export const CATCH_UP_PREFIX = "buzz.agents.catch-up.v1:";
+export const catchUpKey = (pubkey: string) => `${CATCH_UP_PREFIX}${pubkey}`;
+
+/** The agent a stream key belongs to, or undefined for a malformed key. */
+function ownerOf(key: string): string | undefined {
+  try {
+    const [pubkey] = JSON.parse(key) as unknown[];
+    return typeof pubkey === "string" && ID.test(pubkey) ? pubkey : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A valid checkpoint, with its fields in one order; undefined otherwise. */
+function checkpointOf(value: unknown): Checkpoint | undefined {
+  const { through, upper, after, heard } = (value ?? {}) as Checkpoint;
+  if (
+    !time(through) ||
+    (upper !== undefined && !(time(upper) && upper > through))
+  )
+    return undefined;
+  const valid =
+    after === undefined ||
+    (upper !== undefined &&
+      time(after.created_at) &&
+      after.created_at > through &&
+      after.created_at <= upper &&
+      ID.test(after.id));
+  if (!valid) return undefined;
+  const live = (Array.isArray(heard) ? heard : [])
+    .filter(
+      (event) =>
+        time(event?.created_at) &&
+        event.created_at > through &&
+        typeof event.id === "string" &&
+        ID.test(event.id),
+    )
+    .slice(-HEARD_LIMIT)
+    .map(({ created_at, id }) => ({ created_at, id }));
+  return {
+    through,
+    ...(upper !== undefined ? { upper } : {}),
+    ...(after ? { after: { created_at: after.created_at, id: after.id } } : {}),
+    ...(live.length ? { heard: live } : {}),
+  };
+}
+
+/** The valid checkpoints of one stored value, of `pubkey`'s streams only when
+ * it is given. */
+function parseStreams(text: string | null, pubkey?: string) {
   let stored: unknown;
   try {
-    stored = JSON.parse(storage.getItem(CATCH_UP_KEY) ?? "null");
+    stored = JSON.parse(text ?? "null");
   } catch {
     return {};
   }
@@ -70,47 +123,101 @@ export function readCheckpoints(storage: Storage): Checkpoints {
   if (!streams || typeof streams !== "object") return {};
   const checkpoints: Record<string, Checkpoint> = {};
   for (const [key, value] of Object.entries(streams)) {
-    const { through, upper, after, heard } = (value ?? {}) as Checkpoint;
-    if (
-      !time(through) ||
-      (upper !== undefined && !(time(upper) && upper > through))
-    )
-      continue;
-    const valid =
-      after === undefined ||
-      (upper !== undefined &&
-        time(after.created_at) &&
-        after.created_at > through &&
-        after.created_at <= upper &&
-        ID.test(after.id));
-    if (!valid) continue;
-    const live = (Array.isArray(heard) ? heard : [])
-      .filter(
-        (event) =>
-          time(event?.created_at) &&
-          event.created_at > through &&
-          typeof event.id === "string" &&
-          ID.test(event.id),
-      )
-      .slice(-HEARD_LIMIT)
-      .map(({ created_at, id }) => ({ created_at, id }));
-    checkpoints[key] = {
-      through,
-      ...(upper !== undefined ? { upper } : {}),
-      ...(after
-        ? { after: { created_at: after.created_at, id: after.id } }
-        : {}),
-      ...(live.length ? { heard: live } : {}),
-    };
+    if (pubkey !== undefined && ownerOf(key) !== pubkey) continue;
+    const checkpoint = checkpointOf(value);
+    if (checkpoint) checkpoints[key] = checkpoint;
   }
   return checkpoints;
 }
 
-export function writeCheckpoints(storage: Storage, checkpoints: Checkpoints) {
-  storage.setItem(
-    CATCH_UP_KEY,
-    JSON.stringify({ version: 1, streams: checkpoints }),
+/** One stored value, the same text for the same progress. */
+const serialize = (checkpoints: Checkpoints) =>
+  JSON.stringify({
+    version: 1,
+    streams: Object.fromEntries(
+      Object.entries(checkpoints).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      ),
+    ),
+  });
+
+/** Every agent's progress: its own key's, or else the old shared value's. */
+export function readCheckpoints(storage: AgentStore): Checkpoints {
+  const legacy = parseStreams(storage.get(CATCH_UP_KEY));
+  const own: Record<string, Checkpoints> = {};
+  for (const key of storage.keys()) {
+    if (!key.startsWith(CATCH_UP_PREFIX)) continue;
+    const pubkey = key.slice(CATCH_UP_PREFIX.length);
+    own[pubkey] = parseStreams(storage.get(key), pubkey);
+  }
+  return Object.assign(
+    Object.fromEntries(
+      Object.entries(legacy).filter(([key]) => {
+        const pubkey = ownerOf(key);
+        return pubkey !== undefined && !own[pubkey];
+      }),
+    ),
+    ...Object.values(own),
   );
+}
+
+/** Valid checkpoints by agent. */
+function byAgent(checkpoints: Checkpoints) {
+  const agents = new Map<string, Record<string, Checkpoint>>();
+  for (const [key, value] of Object.entries(checkpoints)) {
+    const pubkey = ownerOf(key);
+    const checkpoint = checkpointOf(value);
+    if (pubkey === undefined || !checkpoint) continue;
+    const streams = agents.get(pubkey) ?? {};
+    streams[key] = checkpoint;
+    agents.set(pubkey, streams);
+  }
+  return agents;
+}
+
+/** Saves the progress of each agent whose progress changed since `saved`,
+ * this program's last save or read, in its own key, and removes the key of
+ * an agent with none left. An agent this program did not move is never
+ * written, so it keeps what the program that runs it saved, even when this
+ * program's copy of it is older. Settles once every write is saved. */
+export async function writeCheckpoints(
+  storage: AgentStore,
+  checkpoints: Checkpoints,
+  saved: Checkpoints,
+) {
+  const next = byAgent(checkpoints);
+  const last = byAgent(saved);
+  const writes: Promise<void>[] = [];
+  for (const pubkey of new Set([...next.keys(), ...last.keys()])) {
+    const streams = next.get(pubkey);
+    const before = last.get(pubkey);
+    const text = streams && serialize(streams);
+    if (text === (before && serialize(before))) continue;
+    writes.push(storage.set(catchUpKey(pubkey), text ?? null));
+  }
+  await Promise.all(writes);
+}
+
+/** Moves progress from the old value that held every agent's into one key
+ * per agent, then removes it, as `splitLegacyRecords` does records. A key
+ * is only added where none is saved: a program that starts from the old
+ * value after another moved it, and ran its agents on, keeps their newer
+ * progress. */
+export async function splitLegacyCheckpoints(storage: AgentStore) {
+  if (storage.get(CATCH_UP_KEY) === null) return;
+  const agents = byAgent(readCheckpoints(storage));
+  try {
+    await Promise.all(
+      [...agents].map(([pubkey, streams]) =>
+        storage.add(catchUpKey(pubkey), serialize(streams)),
+      ),
+    );
+    await storage.set(CATCH_UP_KEY, null);
+  } catch (error) {
+    // This must not stop startup. The shared value stays, so the progress is
+    // read from it and the move is tried again at the next start.
+    console.error("Agent catch-up progress was not split", error);
+  }
 }
 
 /** The agent's streams: one for each channel of each event watch whose kinds

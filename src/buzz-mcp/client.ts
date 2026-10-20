@@ -29,6 +29,14 @@ export type Upload = Readonly<{
   thumb?: string;
   duration?: number;
 }>;
+/** A community media blob saved to a local file; `data` (base64) is the
+ * image itself when the agent can be shown it. */
+export type Media = Readonly<{
+  path: string;
+  type: string;
+  size: number;
+  data?: string;
+}>;
 /** One of the owner's channel templates, as a channel made from it starts:
  * its Canvas and the owner's agents it adds. */
 export type ChannelTemplate = Readonly<{
@@ -67,14 +75,30 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** Trusted connection authorities, never inferred from query results. */
+  readonly relayAuthor?: string | undefined;
+  readonly signingAuthority?: string | undefined;
+  /** Host-bound current server decision, never a model-supplied assertion. */
+  authorizeAudience?(
+    destination: string,
+    sources: readonly string[],
+  ): Promise<ReadonlySet<string>>;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Finds profiles whose `name` or `display_name` matches `query`, best
+   * match first. `undefined` when the community has no profile name search;
+   * NIP-50 search, which matches the whole profile, is the fallback. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+  ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
   publish(event: Template): Promise<BuzzEvent>;
+  /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
-  /** Downloads a community media blob, by its URL or `sha256[.ext]`, as
-   * base64. */
-  media(url: string): Promise<string>;
+  /** Saves a community media blob of any type, by its URL or
+   * `sha256[.ext]`, to a local file. */
+  media(url: string): Promise<Media>;
   /** A local file's bytes, for tools that take a `path`. */
   read(path: string): Promise<Uint8Array>;
   /** The agent's memory entries, decrypted; only entry `slug` when given. */

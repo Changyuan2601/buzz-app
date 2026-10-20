@@ -5,6 +5,7 @@ import type {
 import { AttachmentView } from "../conversation/AttachmentView";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useRef, useState } from "react";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   AnimatePresence,
@@ -18,11 +19,7 @@ import {
   draftAttachmentMedia,
   useDraftAttachmentSource,
 } from "./use-draft-attachment-source";
-import {
-  ArrowsClockwiseIcon,
-  FileTextIcon,
-  XIcon,
-} from "../../shared/design-system/icons";
+import { ArrowsClockwiseIcon, XIcon } from "../../shared/design-system/icons";
 import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
@@ -138,6 +135,10 @@ function AttachmentItem({
   const element = useMediaElementSource(video ? source : undefined);
   const videoSource = element.src;
   const failed = !!source && (failedSource === source || element.unavailable);
+  // A finished upload swaps in the sent copy. Keep the current thumbnail until
+  // that copy has loaded so the swap never shows a blank frame.
+  const [shown, setShown] = useState(source);
+  const incoming = image && source !== shown ? source : undefined;
   const bytes = item.uploaded?.size ?? item.file.size;
   const size =
     bytes < 1024 * 1024
@@ -221,12 +222,28 @@ function AttachmentItem({
           }}
         >
           {image ? (
-            <img
-              key={source}
-              src={source}
-              alt=""
-              onError={() => setFailedSource(source)}
-            />
+            <>
+              {shown && (
+                <img
+                  key={shown}
+                  src={shown}
+                  alt=""
+                  onError={() => setFailedSource(shown)}
+                />
+              )}
+              {incoming && (
+                <img
+                  key={incoming}
+                  src={incoming}
+                  alt=""
+                  onLoad={() => setShown(incoming)}
+                  onError={() => {
+                    setShown(incoming);
+                    setFailedSource(incoming);
+                  }}
+                />
+              )}
+            </>
           ) : (
             // Not `muted`: this still preview never plays. WebKitGTK stops a
             // muted video's pipeline whenever it leaves the viewport and
@@ -258,7 +275,7 @@ function AttachmentItem({
             data-draft-preview={item.id}
             aria-label={`Preview ${item.file.name}`}
             onClick={(event) => preview(event.currentTarget)}
-            icon={<FileTextIcon size={20} />}
+            icon={<FileTypeIcon name={item.file.name} mime={item.file.type} />}
           />
         </span>
       )}

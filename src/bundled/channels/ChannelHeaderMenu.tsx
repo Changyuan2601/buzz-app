@@ -23,6 +23,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
+import { lifecycleNoun } from "./ChannelLifecycleDialog";
 
 /** Entry points only: editors and the sidebar retain dialog and mutation ownership. */
 export function ChannelHeaderMenu({
@@ -158,6 +159,7 @@ export function ChannelHeaderMenu({
           open={open}
           disabled={!!handoff.lifecycleDialog}
           separator
+          noun={lifecycleNoun(channel)}
           choose={(action) =>
             handoff.openLifecycle(
               channel,

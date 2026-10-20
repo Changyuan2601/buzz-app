@@ -98,33 +98,6 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
   await user.click(remove);
   expect(choose).toHaveBeenCalledWith("delete");
 });
-it("orders Leave, Archive, Delete and uses danger only for Delete", async () => {
-  const lifecycle = capability();
-  lifecycle.load.mockResolvedValue({ ...settings, canLeave: true });
-  render(
-    <ContextMenuRoot open>
-      <MenuPopup>
-        <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
-          choose={() => {}}
-          disabled={false}
-          separator={false}
-        />
-      </MenuPopup>
-    </ContextMenuRoot>,
-  );
-  await screen.findByRole("menuitem", { name: "Delete channel" });
-  expect(
-    screen
-      .getAllByRole("menuitem")
-      .map((item) => [item.textContent, item.dataset.tone]),
-  ).toEqual([
-    ["Leave channel", "default"],
-    ["Archive channel", "default"],
-    ["Delete channel", "danger"],
-  ]);
-});
 it.each([
   { action: "leave", label: "Leave channel", channelType: "stream" },
   { action: "hide", label: "Hide conversation", channelType: "dm" },
@@ -603,10 +576,10 @@ it.each([
   ["archive", "Archive channel", "prominent", "subtle", true],
   ["unarchive", "Unarchive channel", "prominent", "subtle", true],
   ["hide", "Hide conversation", "prominent", "subtle", true],
-  ["leave", "Leave channel", "subtle", "prominent", false],
-  ["delete", "Delete channel", "destructive", "prominent", false],
+  ["leave", "Leave channel", "subtle", "subtle", false],
+  ["delete", "Delete channel", "destructive", "subtle", false],
 ] as const)(
-  "Enter presses the prominent default button for %s",
+  "Enter presses the focused default button for %s",
   async (action, label, confirmVariant, cancelVariant, confirms) => {
     const lifecycle = capability();
     const close = vi.fn();
@@ -642,3 +615,48 @@ it.each([
     }
   },
 );
+
+it("names Solo chats as chats in the menu, dialog and result", async () => {
+  const user = userEvent.setup();
+  const lifecycle = capability();
+  const choose = vi.fn();
+  render(
+    <ContextMenuRoot open>
+      <MenuPopup>
+        <ChannelLifecycleMenu
+          channelId="id"
+          lifecycle={lifecycle}
+          choose={choose}
+          disabled={false}
+          separator={false}
+          noun="chat"
+        />
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Archive chat" }),
+  ).toBeDefined();
+  expect(screen.getByRole("menuitem", { name: "Delete chat" })).toBeDefined();
+  cleanup();
+  render(
+    <ToastProvider>
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Planning"
+        noun="chat"
+        action="archive"
+        lifecycle={lifecycle}
+        completed={() => {}}
+        close={() => {}}
+      />
+    </ToastProvider>,
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Archive chat: Planning" }),
+  ).toHaveTextContent(
+    "Archive this chat for everyone in it and remove it from the sidebar.",
+  );
+  await user.click(screen.getByRole("button", { name: "Archive chat" }));
+  expect(await screen.findByText("Chat archived: Planning")).toBeDefined();
+});

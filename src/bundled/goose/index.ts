@@ -6,13 +6,13 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
+import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
-/** A turn's run returns once goose has it, so this bounds only the hand-over. */
-const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -25,14 +25,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
     host,
     agents.relay,
     (pubkey, signal) => agents.core(pubkey, signal),
+    localStorage,
     () => agents.tools(),
   );
   const spawn = host.spawn?.bind(host);
-  const setup = new GooseSetup(spawn);
-  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
+  const setup = new GooseSetup(spawn, () => runtime.defaultsChanged());
+  const history = new GooseHistory(spawn);
+  const {
+    Create,
+    CreateModel,
+    SettingsTab,
+    ActivityTab,
+    DefaultControl,
+    ProviderDialogBody,
+  } = createTabs({
     setup,
     runtime,
-    history: new GooseHistory(spawn),
+    history,
   });
   const sync = () => {
     const snapshot = agents.snapshot();
@@ -57,6 +66,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    provider: {
+      snapshot: setup.snapshot,
+      subscribe: setup.subscribe,
+      check: setup.check,
+      DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -73,11 +89,49 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const { model, provider } = config(agent.config);
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
+    sessions: {
+      list: (pubkey) => {
+        const live = runtime.sessions(pubkey);
+        const busy = new Map(live.map((view) => [view.key, view.busy]));
+        const used = new Map(
+          runtime.conversations(pubkey).map(({ key, at }) => [key, at]),
+        );
+        // Open ones are listed even when saving them failed. A one-off turn
+        // joins no conversation.
+        for (const { key, at } of live) if (at !== undefined) used.set(key, at);
+        return [...used]
+          .sort(([, a], [, b]) => b - a)
+          .map(([key, at]) => {
+            const [channelId = key, root] = key.split("/");
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
+      },
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(
+          history,
+          agent.pubkey,
+          config(agent.config).workspace,
+          since,
+          signal,
+        ),
+    }),
     tabs: [
       {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {
@@ -88,8 +142,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
-    run: (delivery) => runtime.run(delivery),
-    runOnce: (turn) => runtime.runOnce(turn),
-    timeoutMs: HANDOVER_MS,
+    ...gooseRun(runtime),
   });
 };

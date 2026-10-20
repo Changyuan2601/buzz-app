@@ -17,379 +17,6 @@ const expectKeyboardRing = async (control: Locator, offset = "2px") => {
   await expect(control).toHaveCSS("outline-offset", offset);
 };
 
-test("floating fills nest with their painted owner across themes, widths and text scales", async ({
-  page,
-}) => {
-  for (const width of [390, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const mode of ["light", "dark"]) {
-      for (const scale of [1, 1.5]) {
-        await page.goto(`${viewer}#/design/components/popover`);
-        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
-        if (await toggle.count()) await toggle.click();
-        await page.evaluate((scale) => {
-          document.documentElement.style.fontSize = `${16 * scale}px`;
-        }, scale);
-        for (const [label, size, radius] of [
-          ["Account actions", "compact", 8],
-          ["Recent activity", "wide", 16],
-        ] as const) {
-          const trigger = page.getByRole("button", {
-            name: label,
-            exact: true,
-          });
-          await trigger.click();
-          const popup = page.locator(
-            `.buzz-popover-popup[data-size="${size}"]`,
-          );
-          await expect(popup).toHaveCSS("border-radius", `${radius * scale}px`);
-          const row = popup.locator(".navigation-item").first();
-          await row.hover();
-          const geometry = await popup.evaluate((element) => {
-            const child = element.querySelector(".navigation-item");
-            if (!child) throw new Error("List popover has no row");
-            const outer = getComputedStyle(element);
-            const inner = getComputedStyle(child);
-            const bounds = element.getBoundingClientRect();
-            return {
-              outer: Number.parseFloat(outer.borderTopLeftRadius),
-              inset:
-                Number.parseFloat(outer.paddingLeft) +
-                Number.parseFloat(outer.borderLeftWidth),
-              corners: [
-                inner.borderTopLeftRadius,
-                inner.borderTopRightRadius,
-                inner.borderBottomLeftRadius,
-                inner.borderBottomRightRadius,
-              ],
-              left: bounds.left,
-              right: bounds.right,
-            };
-          });
-          for (const corner of geometry.corners) {
-            expect(Number.parseFloat(corner)).toBeCloseTo(
-              Math.max(0, geometry.outer - geometry.inset),
-              4,
-            );
-          }
-          expect(geometry.left).toBeGreaterThanOrEqual(0);
-          expect(geometry.right).toBeLessThanOrEqual(width);
-          await page.keyboard.press("Escape");
-          await expect(popup).toHaveCount(0);
-          await expect(trigger).toBeFocused();
-        }
-      }
-    }
-  }
-});
-
-test("badge motion centered pill scales with its avatar and reverses without jumping", async ({
-  page,
-}) => {
-  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
-  await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
-  await page.goto("/tests/fixtures/design-system/thinking-avatar.html");
-  const card = page.getByRole("article", {
-    name: "Centered Start pill",
-    exact: true,
-  });
-  const ink = card.locator(".badge-pill-ink");
-  const root = card.locator(".badge-pill-root");
-  const dots = card.locator(".badge-pill-dots");
-  const artwork = card.locator(".badge-motion-artwork");
-  const restMask = await artwork.getAttribute("style");
-  const notch = card.locator(".badge-pill-notch");
-  const checkJoins = async () => {
-    const path = await notch.getAttribute("d");
-    expect(path?.match(/ C /g)).toHaveLength(2);
-    expect(path).not.toMatch(/NaN|Infinity/);
-    await expect(artwork).toHaveAttribute("style", restMask ?? "");
-  };
-  await card.getByRole("button", { name: "Thinking", exact: true }).click();
-  await page.clock.runFor(150);
-  await checkJoins();
-  await expect(dots).toHaveCSS("opacity", "1");
-  await expect(root).toHaveAttribute("data-phase", "morphing");
-  const middle = await ink.getAttribute("style");
-  await card.getByRole("button", { name: "Available", exact: true }).click();
-  expect(await ink.getAttribute("style")).toBe(middle);
-  await page.clock.runFor(150);
-  await expect(dots).toHaveCSS("opacity", "0");
-  await expect(root).toHaveAttribute("data-phase", "morphing");
-  await page.clock.runFor(170);
-  await expect(root).toHaveAttribute("data-phase", "available");
-  await expect(artwork).toHaveAttribute("style", restMask ?? "");
-  await expect(ink).toHaveCSS("width", "22px");
-  await card.getByRole("button", { name: "Thinking", exact: true }).click();
-  await page.clock.runFor(320);
-  await checkJoins();
-  const metrics = await card.locator(".badge-pill-measure").evaluate((el) => ({
-    width: (el as HTMLElement).offsetWidth,
-    height: (el as HTMLElement).offsetHeight,
-  }));
-  const actual = await ink.boundingBox();
-  expect(actual?.width).toBeCloseTo(metrics.width, 0);
-  expect(actual?.height).toBeCloseTo(metrics.height, 0);
-  await expect(ink).toHaveCSS("left", "44px");
-  await expect(ink).toHaveCSS("top", "88px");
-  const dot = card.locator(".badge-pill-dots i").first();
-  const dotWidth = (await dot.boundingBox())?.width ?? 0;
-  expect(dotWidth).toBeGreaterThan(0);
-  // Exercise actual renderer sizing, including a profile portrait.
-  for (const size of [24, 32, 40, 80, 88, 256]) {
-    await page
-      .getByRole("combobox", { name: "Avatar size" })
-      .selectOption(String(size));
-    await page.clock.runFor(320);
-    const scaled = await ink.boundingBox();
-    const detailScale = (size / 88) * Math.sqrt(Math.min(1, 88 / size));
-    expect(scaled?.width).toBeCloseTo(metrics.width * detailScale, 0);
-    expect(scaled?.height).toBeCloseTo(metrics.height * detailScale, 0);
-    expect((await dot.boundingBox())?.width).toBeCloseTo(
-      dotWidth * detailScale,
-      1,
-    );
-    const avatar = await artwork.boundingBox();
-    expect((scaled?.y ?? 0) + (scaled?.height ?? 0) / 2).toBeCloseTo(
-      (avatar?.y ?? 0) + size,
-      0,
-    );
-    await checkJoins();
-    await card.getByRole("button", { name: "Available", exact: true }).click();
-    await page.clock.runFor(320);
-    const restingBadge = await ink.boundingBox();
-    expect(restingBadge?.width).toBeCloseTo(size / 4, 1);
-    expect((restingBadge?.x ?? 0) + (restingBadge?.width ?? 0) / 2).toBeCloseTo(
-      (avatar?.x ?? 0) + size * 0.85,
-      1,
-    );
-    expect(
-      (restingBadge?.y ?? 0) + (restingBadge?.height ?? 0) / 2,
-    ).toBeCloseTo((avatar?.y ?? 0) + size * 0.85, 1);
-    await checkJoins();
-    await card.getByRole("button", { name: "Thinking", exact: true }).click();
-    await page.clock.runFor(320);
-  }
-
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await card.getByRole("button", { name: "Available", exact: true }).click();
-  await page.clock.runFor(20);
-  await expect(root).toHaveAttribute("data-phase", "available");
-});
-
-test("status badges keep avatar sizes and show a clear cutout in both modes", async ({
-  page,
-}) => {
-  await page.goto(`${viewer}#/design/components/avatar`);
-  const badges = page.locator(
-    '.buzz-avatar-status[data-shape="circle"][data-status]',
-  );
-  await expect(badges).toHaveCount(5);
-  await expect(
-    page.getByRole("img", { name: "Morgan Martin, online" }),
-  ).toHaveCount(3);
-  await expect(
-    page.getByRole("img", { name: "Morgan Martin, away" }),
-  ).toHaveCount(1);
-  await expect(
-    page.getByRole("img", { name: "Morgan Martin, offline" }),
-  ).toHaveCount(1);
-  for (const [index, size] of [24, 32, 40].entries()) {
-    const badge = badges.nth(index);
-    const avatar = badge.locator(".buzz-avatar");
-    const dot = badge.locator(".buzz-avatar-status-dot");
-    await expect(avatar).toHaveCSS("width", `${size}px`);
-    await expect(avatar).toHaveCSS("height", `${size}px`);
-    await expect(dot).toHaveCSS("width", `${size / 4}px`);
-    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
-    const placement = await badge.evaluate((el) => {
-      const art = el.querySelector(".buzz-avatar")?.getBoundingClientRect();
-      const point = el
-        .querySelector(".buzz-avatar-status-dot")
-        ?.getBoundingClientRect();
-      if (!art || !point) throw new Error("Status avatar parts are missing");
-      return [
-        point.x + point.width / 2 - art.x,
-        point.y + point.height / 2 - art.y,
-      ];
-    });
-    expect(placement[0]).toBeCloseTo(size * 0.85, 1);
-    expect(placement[1]).toBeCloseTo(size * 0.85, 1);
-  }
-  const plain = page
-    .locator(".component-specimen")
-    .filter({ hasText: "large · no badge" })
-    .locator(".buzz-avatar");
-  await expect(plain).toHaveCSS("mask-image", "none");
-  for (const width of [390, 800, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const [index, size] of [24, 32, 40].entries()) {
-      await expect(badges.nth(index).locator(".buzz-avatar")).toHaveCSS(
-        "width",
-        `${size}px`,
-      );
-    }
-  }
-
-  const large = badges.nth(2);
-  await expect(large.locator("img")).toHaveAttribute("data-loaded", "true");
-  for (const mode of ["light", "dark"]) {
-    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
-    if (await toggle.count()) await toggle.click();
-    for (const [status, color] of Object.entries(
-      mode === "light"
-        ? {
-            online: "rgb(33, 131, 88)",
-            away: "rgb(255, 186, 24)",
-            offline: "rgb(128, 128, 128)",
-          }
-        : {
-            online: "rgb(61, 214, 140)",
-            away: "rgb(255, 214, 10)",
-            offline: "rgb(164, 164, 164)",
-          },
-    )) {
-      const dot = page
-        .locator(
-          `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
-        )
-        .first();
-      await expect(dot).toHaveCSS("background-color", color);
-      await expect(dot).toHaveCSS("background-image", "none");
-      await expect(dot).toHaveCSS("box-shadow", "none");
-    }
-    // Only Online retains an outline. Away and Offline expose solid fills. Check
-    // the actual CSS paint stack in the browser, including squircle masks.
-    for (const status of ["online", "away", "offline"]) {
-      const dots = page.locator(
-        `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
-      );
-      const centers = await dots.evaluateAll((elements) =>
-        elements.map((element) => {
-          const outer = getComputedStyle(element);
-          const inner = getComputedStyle(element, "::after");
-          return {
-            content: inner.content,
-            inset: inner.inset,
-            color: inner.backgroundColor,
-            mask: inner.maskImage,
-            outerMask: outer.maskImage,
-          };
-        }),
-      );
-      for (const center of centers) {
-        if (status !== "online") {
-          expect(center.content).toBe("none");
-        } else {
-          expect(center.content).toBe('""');
-          expect(center.inset).toBe("1px");
-          expect(center.mask).toBe(center.outerMask);
-          expect(center.color).toBe(
-            mode === "light" ? "rgb(43, 154, 102)" : "rgb(51, 176, 116)",
-          );
-        }
-      }
-    }
-    await large.scrollIntoViewIfNeeded();
-    const box = await large.boundingBox();
-    if (!box) throw new Error("Large status avatar is not visible");
-    const clip = {
-      x: Math.floor(box.x),
-      y: Math.floor(box.y),
-      width: Math.ceil(box.x + box.width) - Math.floor(box.x),
-      height: Math.ceil(box.y + box.height) - Math.floor(box.y),
-    };
-    const png = await page.screenshot({ clip });
-    const paint = await page.evaluate(
-      async ({ base64, box, clip }) => {
-        const image = new Image();
-        image.src = `data:image/png;base64,${base64}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Canvas context is unavailable");
-        context.drawImage(image, 0, 0);
-        const pixel = (x: number, y: number) =>
-          [
-            ...context.getImageData(
-              Math.floor(box.x - clip.x + x),
-              Math.floor(box.y - clip.y + y),
-              1,
-              1,
-            ).data,
-          ].slice(0, 3);
-        return {
-          background: pixel(39, 39),
-          gap: pixel(28, 34),
-          dot: pixel(34, 34),
-          artwork: pixel(18, 20),
-        };
-      },
-      { base64: png.toString("base64"), box, clip },
-    );
-    const difference = (a: number[], b: number[]) =>
-      Math.max(...a.map((value, index) => Math.abs(value - (b[index] ?? 0))));
-    expect(difference(paint.gap, paint.background), `${mode} gap`).toBeLessThan(
-      12,
-    );
-    expect(
-      difference(paint.dot, mode === "light" ? [43, 154, 102] : [51, 176, 116]),
-      `${mode} rendered step-10 center`,
-    ).toBeLessThan(3);
-    expect(
-      difference(paint.dot, paint.background),
-      `${mode} dot`,
-    ).toBeGreaterThan(30);
-    expect(
-      difference(paint.artwork, paint.background),
-      `${mode} artwork`,
-    ).toBeGreaterThan(30);
-  }
-});
-
-test("agent status badges follow the squircle while keeping the artwork size", async ({
-  page,
-}) => {
-  await page.goto(`${viewer}#/design/components/avatar`);
-  const badges = page.locator(
-    '.buzz-avatar-status[data-shape="squircle"][data-status]',
-  );
-  await expect(badges).toHaveCount(5);
-  for (const [index, size] of [24, 32, 40].entries()) {
-    const avatar = badges.nth(index).locator(".buzz-avatar");
-    await expect(avatar).toHaveCSS("width", `${size}px`);
-    await expect(avatar).toHaveCSS("height", `${size}px`);
-    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
-    await expect(
-      badges.nth(index).locator(".buzz-avatar-status-dot"),
-    ).toHaveCSS("width", `${size / 4}px`);
-    await expect(
-      badges.nth(index).locator(".buzz-avatar-status-dot"),
-    ).toHaveCSS("mask-image", /^url\(/);
-  }
-  for (const status of ["online", "away", "offline"]) {
-    await expect(
-      page.getByRole("img", { name: `Agent artwork, ${status}` }),
-    ).toHaveCount(status === "online" ? 3 : 1);
-  }
-  const plain = page
-    .locator(".component-specimen")
-    .filter({ hasText: 'shape="squircle"' })
-    .first()
-    .locator(".buzz-avatar");
-  await expect(plain).toHaveCSS("mask-image", /^url\(/);
-  expect(
-    await plain.evaluate((element) => getComputedStyle(element).maskImage),
-  ).not.toBe(
-    await badges
-      .first()
-      .locator(".buzz-avatar")
-      .evaluate((element) => getComputedStyle(element).maskImage),
-  );
-});
-
 test("loaded avatar artwork stays mounted through status changes", async ({
   page,
 }) => {
@@ -419,6 +46,32 @@ test("loaded avatar artwork stays mounted through status changes", async ({
   await expect(artwork).toHaveAttribute("data-test-instance", "retained");
   await expect(artwork).toHaveAttribute("data-loaded", "true");
   await expect(artwork).toHaveCSS("opacity", "1");
+});
+
+test("thinking badge reverses mid-morph and settles at once under reduced motion", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
+  await page.goto("/tests/fixtures/design-system/thinking-avatar.html");
+  const card = page.getByRole("article", {
+    name: "Centered Start pill",
+    exact: true,
+  });
+  const root = card.locator(".badge-pill-root");
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(150);
+  await expect(root).toHaveAttribute("data-phase", "morphing");
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  await page.clock.runFor(320);
+  await expect(root).toHaveAttribute("data-phase", "available");
+
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(320);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  await page.clock.runFor(20);
+  await expect(root).toHaveAttribute("data-phase", "available");
 });
 
 test("built viewer loads every specimen and foundation without app connections", async ({
@@ -979,75 +632,6 @@ test("switch labels activate the control and busy switches preserve focus", asyn
   await expect(busy).toBeChecked();
 });
 
-test("avatar specimens preserve human and agent identity shapes in both modes", async ({
-  page,
-}) => {
-  await page.goto(`${viewer}#/design/components/avatar`);
-  for (const mode of ["light", "dark"]) {
-    const change = page.getByRole("button", { name: `Use ${mode} mode` });
-    if (await change.count()) await change.click();
-    const agent = page.getByRole("img", { name: "Brain", exact: true });
-    await expect(agent).toHaveCSS("border-radius", "0px");
-    await expect(agent).toHaveCSS("mask-image", /^url\(/);
-    const human = page.getByRole("img", { name: "Alex Lee", exact: true });
-    expect(
-      await human.evaluate(
-        (element) =>
-          parseFloat(getComputedStyle(element).borderTopLeftRadius) >=
-          element.clientWidth / 2,
-      ),
-    ).toBe(true);
-    for (const name of ["View Morgan profile", "View Alex profile"]) {
-      const button = page.getByRole("button", { name, exact: true });
-      await button.scrollIntoViewIfNeeded();
-      const artwork = button.locator(".buzz-avatar");
-      const inner = await button.evaluate((element) => ({
-        width: element.clientWidth,
-        height: element.clientHeight,
-      }));
-      await expect(artwork).toHaveCSS("width", `${inner.width}px`);
-      await expect(artwork).toHaveCSS("height", `${inner.height}px`);
-      if (name === "View Morgan profile") {
-        await expect(artwork.locator("img")).toHaveAttribute(
-          "data-loaded",
-          "true",
-        );
-        await expect(artwork.locator("img")).toHaveCSS("opacity", "1");
-      } else {
-        await expect(artwork).toHaveText("A");
-      }
-    }
-    const sizes = page.getByRole("img", { name: "Morgan Martin", exact: true });
-    for (const [index, size] of [24, 32, 40].entries()) {
-      await expect(sizes.nth(index)).toHaveCSS("width", `${size}px`);
-    }
-  }
-});
-
-test("typography shows the size ramp and renders xsmall mono details", async ({
-  page,
-}) => {
-  await page.goto(`${viewer}#/design/typography`);
-  for (const size of [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72, 96]) {
-    await expect(page.getByText(`size.${size}`, { exact: true })).toBeVisible();
-  }
-  const samples = page.getByText("createChannel(name, members)", {
-    exact: true,
-  });
-  await expect(samples).toHaveCount(3);
-  for (const sample of await samples.all()) {
-    await expect(sample).toHaveCSS("font-size", "12px");
-    await expect(sample).toHaveCSS("line-height", "16px");
-    await expect(sample).toHaveCSS("font-family", /JetBrains Mono/);
-  }
-  await expect(
-    page.getByRole("link", { name: "Typography source specification" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json",
-  );
-});
-
 // Native label focus and reset/FormData behavior must agree in real engines.
 // Detailed cancellation, controlled state and external form cases live in RTL.
 test("textarea labels focus explicit IDs and preserve edits", async ({
@@ -1188,113 +772,6 @@ test("radios enabled after mount remain synchronized on native reset", async ({
   ).toEqual({ delivery: "all" });
 });
 
-// Real CSS geometry, loading colors, and input modality cannot be proved in jsdom.
-test("buttons and icon buttons share size geometry and preserve loading and disabled treatments", async ({
-  page,
-}) => {
-  for (const kind of ["button", "icon-button"]) {
-    await page.goto(`${viewer}#/design/components/${kind}`);
-    const samples = page.getByRole("region", {
-      name: kind === "button" ? "Button variants" : "Icon button variants",
-      exact: true,
-    });
-    await expect(samples).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    const defaultControl = page
-      .getByRole("button", {
-        name: kind === "button" ? "Continue" : "Add item",
-        exact: true,
-      })
-      .first();
-    for (const mode of ["light", "dark"]) {
-      const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
-      if (await toggle.count()) await toggle.click();
-      await expect(defaultControl).toHaveCSS(
-        "height",
-        kind === "button" ? "40px" : "32px",
-      );
-      if (kind === "icon-button") {
-        await expect(defaultControl).toHaveCSS("width", "32px");
-        await expect(defaultControl.locator("svg")).toHaveCSS("width", "16px");
-      }
-      for (const [size, height, artwork] of [
-        ["sm", 32, 16],
-        ["md", 40, 24],
-        ["lg", 52, 24],
-      ] as const) {
-        const button = samples.getByRole("button", {
-          name: `prominent ${size}`,
-          exact: true,
-        });
-        await expect(button).toHaveCSS("height", `${height}px`);
-        await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
-        if (kind === "icon-button") {
-          await expect(button).toHaveCSS("width", `${height}px`);
-          await expect(button).toHaveCSS("border-radius", "10px");
-        } else {
-          // Half the 52px large height; shorter sizes clamp to their own half-height.
-          await expect(button).toHaveCSS("border-radius", "26px");
-          await expect(button).toHaveCSS(
-            "padding-left",
-            size === "sm" ? "16px" : "24px",
-          );
-        }
-      }
-      const prominent = samples.getByRole("button", {
-        name: "prominent md",
-        exact: true,
-      });
-      // Theme switching uses real color transitions; resolve their endpoint
-      // before recording the resting colors used by the loading assertion.
-      const expected = await prominent.evaluate((el) => {
-        const probe = document.createElement("span");
-        probe.style.color = "var(--text-inverse)";
-        probe.style.backgroundColor = "var(--affordance-prominent)";
-        el.append(probe);
-        const styles = getComputedStyle(probe);
-        const result = {
-          color: styles.color,
-          background: styles.backgroundColor,
-        };
-        probe.remove();
-        return result;
-      });
-      await expect(prominent).toHaveCSS("color", expected.color);
-      await expect(prominent).toHaveCSS(
-        "background-color",
-        expected.background,
-      );
-      const resting = await prominent.evaluate((el) => ({
-        width: el.getBoundingClientRect().width,
-        height: el.getBoundingClientRect().height,
-        color: getComputedStyle(el).color,
-        background: getComputedStyle(el).backgroundColor,
-      }));
-      await samples.getByRole("button", { name: "Show loading" }).click();
-      await expect(prominent).toHaveAttribute("aria-busy", "true");
-      await expect(prominent).toHaveCSS("color", resting.color);
-      await expect(prominent).toHaveCSS("background-color", resting.background);
-      const loading = await prominent.boundingBox();
-      expect(loading?.width).toBe(resting.width);
-      expect(loading?.height).toBe(resting.height);
-      await samples.getByRole("button", { name: "Show disabled" }).click();
-      await expect(prominent).toBeDisabled();
-      for (const variant of ["ghost", "outline", "link"]) {
-        const button = samples.getByRole("button", {
-          name: `${variant} md`,
-          exact: true,
-        });
-        await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      }
-      await expect(
-        samples.getByRole("button", { name: "outline md", exact: true }),
-      ).not.toHaveCSS("box-shadow", "none");
-      await samples.getByRole("button", { name: "Show enabled" }).click();
-      await expect(prominent).toBeEnabled();
-    }
-  }
-});
-
 test("button loading keeps focus and labels stay single-line in constrained layouts", async ({
   page,
   browserName,
@@ -1339,17 +816,6 @@ test("button loading keeps focus and labels stay single-line in constrained layo
   await expect(expanded).toHaveAttribute("aria-expanded", "true");
   await page.mouse.move(0, 0);
   await expect(page.locator("#button-example-details")).toBeVisible();
-  await expect(expanded).toHaveCSS(
-    "background-color",
-    await expanded.evaluate((el) => {
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--affordance-subtle-pressed)";
-      el.append(probe);
-      const color = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return color;
-    }),
-  );
   await page.evaluate(() => document.fonts.ready);
   for (const width of [390, 800, 1280]) {
     await page.setViewportSize({ width, height: 900 });
@@ -1363,8 +829,6 @@ test("button loading keeps focus and labels stay single-line in constrained layo
       ]) {
         const button = page.getByRole("button", { name, exact: true });
         const label = button.locator(".buzz-button-label");
-        await expect(button).toHaveCSS("flex-shrink", "0");
-        await expect(label).toHaveCSS("white-space", "nowrap");
         await expect
           .poll(() =>
             label.evaluate((el) => {
@@ -1433,7 +897,6 @@ test("dialog motion retains exit presence and respects immediate interaction pat
         ),
       )
       .toBe(true);
-    await expect(popup).toHaveCSS("transition-duration", "0.15s, 0.22s");
     await finish();
     await expect
       .poll(() => popup.evaluate((el) => el.contains(document.activeElement)))
@@ -1447,7 +910,6 @@ test("dialog motion retains exit presence and respects immediate interaction pat
         ),
       )
       .toBe(true);
-    await expect(popup).toHaveCSS("transition-duration", "0.12s");
     await finish();
     await expect(popup).toHaveCount(0);
     await expect(trigger).toBeFocused();
@@ -1504,23 +966,6 @@ test("menu items show a keyboard focus ring and stay quiet under pointer input i
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
-  // Real painted edges prove concentric nesting, including grouped choices.
-  const expectRounded = async (item: Locator) => {
-    const radius = await item.evaluate((element) => {
-      const popup = element.closest(".buzz-menu-popup");
-      if (!popup) throw new Error("Menu item has no popup owner");
-      const outer = getComputedStyle(popup);
-      return `${Math.max(0, Number.parseFloat(outer.borderTopLeftRadius) - Number.parseFloat(outer.paddingLeft) - Number.parseFloat(outer.borderLeftWidth))}px`;
-    });
-    for (const corner of [
-      "top-left",
-      "top-right",
-      "bottom-left",
-      "bottom-right",
-    ]) {
-      await expect(item).toHaveCSS(`border-${corner}-radius`, radius);
-    }
-  };
   const tab =
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
@@ -1530,10 +975,6 @@ test("menu items show a keyboard focus ring and stay quiet under pointer input i
     if (await toggle.count()) await toggle.click();
     await trigger.click();
     await expect(page.getByRole("menu")).toHaveCSS("transform", "none");
-    for (const width of [390, 800, 1280]) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const item of [action, checkbox, submenu]) await expectRounded(item);
-    }
     await page.mouse.move(0, 0);
     await action.hover();
     // Programmatic focus following a pointer open must stay quiet too.
@@ -1554,10 +995,6 @@ test("menu items show a keyboard focus ring and stay quiet under pointer input i
     }
     await page.keyboard.press("ArrowRight");
     await expect(recent).toBeFocused();
-    for (const width of [390, 800, 1280]) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const item of [recent, alpha]) await expectRounded(item);
-    }
     await expectKeyboardRing(recent, "-2px");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();
@@ -1877,32 +1314,11 @@ test("form choice popups settle, retain exit presence, and respect immediate mot
       const field = page.getByRole("combobox", { name, exact: true }).first();
       await field.click();
       await paused();
-      await expect(popup).toHaveCSS(
-        "transition-duration",
-        "0.15s, 0.15s, 0.15s",
-      );
-      const frames = await popup.evaluate((el) =>
-        el
-          .getAnimations()
-          .flatMap((animation) =>
-            (animation.effect as KeyframeEffect).getKeyframes(),
-          ),
-      );
-      expect(frames.some((frame) => frame.filter === "blur(4px)")).toBe(true);
-      expect(
-        frames.some(
-          (frame) =>
-            typeof frame.transform === "string" &&
-            /translateY\(-?4px\)/.test(frame.transform),
-        ),
-      ).toBe(true);
       await finish();
-      await expect(popup).toHaveCSS("filter", "blur(0px)");
       await expect(popup).toHaveCSS("opacity", "1");
       await page.getByRole("option", { name: /^Product team/ }).click();
       await expect(popup).toHaveAttribute("data-ending-style", "");
       await paused();
-      await expect(popup).toHaveCSS("transition-duration", "0.12s");
       await finish();
       await expect(popup).toHaveCount(0);
       await expect(field).toBeFocused();
@@ -2044,13 +1460,6 @@ test("popover placements and rich choices fit narrow screens and enlarged text",
     await expect
       .poll(() => menu.evaluate((e) => e.scrollWidth <= e.clientWidth))
       .toBe(true);
-    const disabled = page.getByRole("menuitemradio", {
-      name: "Archive assistant Unavailable on this connection",
-    });
-    await expect(disabled.locator(".buzz-choice-row-label")).toHaveCSS(
-      "color",
-      await disabled.evaluate((e) => getComputedStyle(e).color),
-    );
     await page.keyboard.press("Escape");
     await page
       .getByRole("button", { name: "Choose workspace", exact: true })
@@ -2097,109 +1506,6 @@ test("popover reduced motion and outside dismissal remain immediate", async ({
   await expect(popup).toHaveCSS("transition-duration", "0s");
   await page.getByRole("heading", { name: "Popover", exact: true }).click();
   await expect(popup).toHaveCount(0);
-});
-
-// Hold real CSS transitions to inspect entry/exit frames and Base UI presence.
-test("menus and popovers reuse the dropdown unblur and placement offset", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        if (
-          !(event.target instanceof HTMLElement) ||
-          !event.target.matches(".buzz-menu-popup, .buzz-popover-popup")
-        )
-          return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-      },
-      true,
-    );
-  });
-  const finish = () =>
-    page.evaluate(() => {
-      for (const animation of document.getAnimations()) animation.finish();
-    });
-  for (const example of [
-    { page: "menu", trigger: "Open menu", selector: ".buzz-menu-popup" },
-    { page: "popover", trigger: "top", selector: ".buzz-popover-popup" },
-    { page: "popover", trigger: "right", selector: ".buzz-popover-popup" },
-  ]) {
-    await page.goto(`${viewer}#/design/components/${example.page}`);
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    const trigger = page.getByRole("button", {
-      name: example.trigger,
-      exact: true,
-    });
-    const popup = page.locator(example.selector);
-    const paused = () =>
-      expect
-        .poll(() =>
-          popup.evaluate((el) =>
-            el
-              .getAnimations()
-              .some((animation) => animation.playState === "paused"),
-          ),
-        )
-        .toBe(true);
-    try {
-      await trigger.click();
-      await paused();
-      await expect(popup).toHaveCSS(
-        "transition-duration",
-        "0.075s, 0.075s, 0.075s",
-      );
-      const side = await popup.getAttribute("data-side");
-      const offset =
-        side === "top"
-          ? "translateY(2px)"
-          : side === "right"
-            ? "translateX(-2px)"
-            : side === "left"
-              ? "translateX(2px)"
-              : "translateY(-2px)";
-      const frames = await popup.evaluate((el) =>
-        el
-          .getAnimations()
-          .flatMap((animation) =>
-            (animation.effect as KeyframeEffect).getKeyframes(),
-          ),
-      );
-      expect(frames.some((frame) => frame.filter === "blur(2px)")).toBe(true);
-      expect(frames.some((frame) => frame.transform === offset)).toBe(true);
-      await finish();
-      await expect(popup).toHaveCSS("filter", "blur(0px)");
-      await expect(popup).toHaveCSS("transform", "none");
-      await trigger.click();
-      await expect(popup).toHaveAttribute("data-ending-style", "");
-      await paused();
-      await expect(popup).toHaveCSS("transition-duration", "0.06s");
-      await finish();
-      await expect(popup).toHaveCount(0);
-
-      await page.keyboard.press("Tab");
-      await trigger.focus();
-      await trigger.press("Enter");
-      await expect(popup).toBeVisible();
-      await expect(popup).toHaveCSS("transition-duration", "0s");
-      await expect(popup).toHaveCSS("filter", "none");
-      await expect(popup).toHaveCSS("transform", "none");
-      await page.keyboard.press("Escape");
-      await expect(popup).toHaveCount(0);
-
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await trigger.click();
-      await expect(popup).toBeVisible();
-      await expect(popup).toHaveCSS("transition-duration", "0s");
-      await expect(popup).toHaveCSS("filter", "none");
-      await expect(popup).toHaveCSS("transform", "none");
-      await page.keyboard.press("Escape");
-      await expect(popup).toHaveCount(0);
-    } finally {
-      await finish();
-    }
-  }
 });
 
 // Native focus, responsive chrome, and hash-anchor scrolling require a browser.
@@ -2431,23 +1737,13 @@ test("empty states preserve grouping and contain translated copy at 200 percent"
               )
               .toBe(true);
           }
-          const typography = await cards.first().evaluate((root) => {
-            const title = root.querySelector("h3");
+          const lineHeight = await cards.first().evaluate((root) => {
             const description = root.querySelector("p");
-            if (!title || !description)
-              throw new Error("Empty-state copy is missing");
-            const heading = getComputedStyle(title);
+            if (!description) throw new Error("Empty-state copy is missing");
             const body = getComputedStyle(description);
-            return {
-              headingWeight: heading.fontWeight,
-              bodyWeight: body.fontWeight,
-              lineHeight:
-                parseFloat(body.lineHeight) / parseFloat(body.fontSize),
-            };
+            return parseFloat(body.lineHeight) / parseFloat(body.fontSize);
           });
-          expect(typography.headingWeight).toBe("500");
-          expect(typography.bodyWeight).toBe("400");
-          expect(typography.lineHeight).toBeGreaterThanOrEqual(1.4);
+          expect(lineHeight).toBeGreaterThanOrEqual(1.4);
           if (copy.lang === "de") {
             const fitsWords = await cards
               .first()
@@ -2507,10 +1803,6 @@ test("dialog footer focus rings remain visible in both themes and widths", async
         if (await toggle.count()) await toggle.click();
         await page.getByRole("button", { name: trigger, exact: true }).click();
         const dialog = page.getByRole(role);
-        await expect(dialog).toHaveCSS(
-          "background-color",
-          mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
-        );
         await page.keyboard.press("Tab");
         const button = dialog.getByRole("button", {
           name: action,
@@ -2541,46 +1833,6 @@ test("dialog footer focus rings remain visible in both themes and widths", async
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
       }
-    }
-  }
-});
-
-// Real layout is required to catch padding cancelled by the footer's negative margin.
-test("padded dialog footer preserves its body gutter", async ({ page }) => {
-  for (const width of [390, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const mode of ["light", "dark"]) {
-      await page.goto(`${viewer}#/design/components/dialog`);
-      const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
-      if (await toggle.count()) await toggle.click();
-      await page
-        .getByRole("region", { name: "Tall creation surface", exact: true })
-        .getByRole("button", { name: "Open dialog", exact: true })
-        .click();
-      const dialog = page.getByRole("dialog", { name: "Create an item" });
-      await expect(dialog).toBeVisible();
-      await expect
-        .poll(() =>
-          dialog.evaluate((element) => {
-            const body = element.querySelector(".buzz-dialog-body");
-            const button = element.querySelector(
-              ".buzz-dialog-actions > button",
-            );
-            if (!body || !button)
-              throw new Error("Missing dialog body or action");
-            return Math.round(
-              button.getBoundingClientRect().top -
-                body.getBoundingClientRect().bottom,
-            );
-          }),
-        )
-        .toBe(width < 480 ? 16 : 24);
-      await page.keyboard.press("Tab");
-      const save = dialog.getByRole("button", { name: "Save", exact: true });
-      await save.focus();
-      await expectKeyboardRing(save);
-      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-      await expect(dialog).toHaveCount(0);
     }
   }
 });

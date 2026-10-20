@@ -1478,3 +1478,54 @@ it("retained dependency closure checks only live author edits of the exact addre
   });
   expect(rows(h)[0]?.preview).toBe("newest edit");
 });
+
+it.each(["edit", "delete"] as const)(
+  "settles a pending-metadata mention's %s before revealing ordinary history",
+  async (operation) => {
+    const h = setup();
+    const old = addressed(h, "OLD BODY", 20);
+    const update = signed(h.alice, {
+      kind: operation === "edit" ? 40003 : 5,
+      created_at: 21,
+      content: operation === "edit" ? "CURRENT BODY" : "",
+      tags: [
+        ["h", "room"],
+        ["e", old.id],
+      ],
+    });
+    const hold = deferred<RelayEvent[]>();
+    let overlayReads = 0;
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.kinds?.includes(9)) return [old];
+      if (filter?.["#e"]?.includes(old.id) && filter.until === undefined) {
+        overlayReads++;
+        return hold.promise;
+      }
+      return [];
+    });
+    h.live.receive([
+      roster(h.relay, "room", [h.viewer.pubkey, h.alice.pubkey]),
+    ]);
+    expect(h.session.channels.get?.("room")?.metadataPending).toBe(true);
+    const feed = h.session.inboxFeed;
+    const work = feed.ensure();
+    try {
+      await vi.waitFor(() => expect(overlayReads).toBe(1));
+      expect(feed.snapshot().incomplete).toContain(old.id);
+      hold.resolve([update]);
+      await work;
+      expect(feed.snapshot()).toMatchObject({
+        status: "ready",
+        incomplete: [],
+      });
+      // A complete feed must not reveal stale content when metadata arrives later.
+      h.live.receive([metadata(h.relay, "room", "Room")]);
+      expect(rows(h).map((item) => item.preview)).toEqual(
+        operation === "edit" ? ["CURRENT BODY"] : [],
+      );
+    } finally {
+      hold.resolve([]);
+      await work;
+    }
+  },
+);

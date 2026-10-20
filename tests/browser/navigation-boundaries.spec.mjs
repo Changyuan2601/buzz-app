@@ -1,16 +1,15 @@
-import { openPage, pageChoices } from "./navigation.mjs";
+import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
 
 async function expectPageChoice(page, name, count) {
-  const choices = await pageChoices(page);
-  await expect(
-    choices.getByRole("option", { name: "Settings", exact: true }),
-  ).toBeVisible();
-  await expect(choices.getByRole("option", { name, exact: true })).toHaveCount(
-    count,
-  );
+  const choices = await pageChoices(page, "Settings");
+  await expect(pageChoice(choices, "Settings")).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill(name);
+  await expect(pageChoice(choices, name)).toHaveCount(count);
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
@@ -73,15 +72,18 @@ test("Messages default resolution returns opened to cold and warm callers withou
       JSON.stringify({
         version: 1,
         kind: "page",
-        pluginId: "buzz.projects",
-        pageId: "projects",
+        pluginId: "buzz.repos",
+        pageId: "repos",
       }),
     )}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", {
+      name: "Destination no longer available",
+      exact: true,
+    }),
   ).toBeVisible();
-  await expectPageChoice(page, "Multiplayer", 1);
+  await expectPageChoice(page, "Messages", 1);
   for (const mode of ["cold", "warm"]) {
     const result = await page.evaluate(async () => {
       const nav = window.fixtureNavigation;
@@ -102,7 +104,10 @@ test("Messages default resolution returns opened to cold and warm callers withou
     ).toBeVisible();
     await page.getByRole("button", { name: "Go back", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", {
+        name: "Destination no longer available",
+        exact: true,
+      }),
     ).toBeVisible();
   }
 });
@@ -112,9 +117,12 @@ test("native Alt arrows preserve composer editing; deliberate history shortcuts 
   app,
 }) => {
   await open(page, app);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", {
+      name: "Workflows",
+      exact: true,
+    }),
   ).toBeVisible();
   await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {

@@ -82,6 +82,7 @@ const BUZZ_TOOLS: &[&str] = &[
     "buzz_tabs",
     "buzz_mem_get",
     "buzz_mem_set",
+    "buzz_shared_sessions",
 ];
 fn current<R: tauri::Runtime>(app: &tauri::AppHandle<R>, run: &Run) -> Result<(), String> {
     if run.callback.cancel.is_cancelled() {

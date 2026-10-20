@@ -348,6 +348,11 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   expect(names.filters).toEqual([
     { kinds: [39000], "#d": ["a", "b"], limit: 500 },
   ]);
+  expect(
+    queries.list().channels.map((channel) => channel.metadataPending),
+  ).toEqual([true, true]);
+  expect(queries.get?.("a")?.metadataPending).toBe(true);
+  expect(queries.get?.("b")?.metadataPending).toBe(true);
   names.respond([metadata(relay, "a", "Alpha")]);
   await flush();
   expect(queries.list()).toMatchObject({
@@ -357,6 +362,11 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
       { id: "b", name: "b" },
     ],
   });
+  expect(
+    queries.list().channels.every((channel) => !channel.metadataPending),
+  ).toBe(true);
+  expect(queries.get?.("a")?.metadataPending).toBeUndefined();
+  expect(queries.get?.("b")?.metadataPending).toBeUndefined();
   expect(queries.list().coverage).toBeUndefined();
   queries.prepare?.("a");
   next().respond(empty("a"));
@@ -378,6 +388,31 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   expect(queries.list().channels.map((c) => c.id)).toEqual(["a"]);
   expect(store.diagnostics().heads.entries).toBe(1);
   store.dispose();
+});
+
+it("keeps failed classification pending and releases it after an empty successful retry", async () => {
+  const { queries, store, next } = setup();
+  try {
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().fail(new Error("Metadata unavailable"));
+    await vi.waitFor(() => expect(queries.list().status).toBe("error"));
+    expect(queries.list().channels[0]?.metadataPending).toBe(true);
+    queries.refreshList?.();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().respond([]);
+    await vi.waitFor(() =>
+      expect(queries.list().channels[0]?.metadataPending).toBeUndefined(),
+    );
+    expect(queries.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "a" }],
+    });
+  } finally {
+    store.dispose();
+  }
 });
 
 it("keeps known membership and cached heads when a later roster page fails", async () => {

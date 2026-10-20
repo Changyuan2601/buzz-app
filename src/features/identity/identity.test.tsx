@@ -12,7 +12,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { createIdentity, nativeIdentityEnabled } from "./service";
+import { formatPublicKey } from "../../shared/identity/public-key";
+import {
+  createIdentity,
+  nativeIdentityEnabled,
+  type RecoveryResult,
+} from "./service";
 import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
@@ -54,6 +59,8 @@ it("keeps native titlebar actions available throughout identity setup without dr
   const imported = deferred<string>();
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return restored.promise;
+    if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "identity_import") return imported.promise;
     if (command === "title_bar_double_click") return Promise.resolve();
     throw new Error("Unexpected command");
@@ -110,6 +117,8 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
   const imported = deferred<string>();
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "identity_import") return imported.promise;
     throw new Error("Unexpected command");
   });
@@ -136,8 +145,466 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
   expect(await identity.ready).toBe(viewer);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+    "nsec_backup_available",
+    "identity_legacy_available",
     "identity_import",
   ]);
+  identity.dispose();
+});
+
+it("brings over installed old Buzz's identity only after an explicit click", async () => {
+  const imported = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "nsec_backup_available") return Promise.resolve(false);
+    if (command === "identity_legacy_available") return Promise.resolve(true);
+    if (command === "identity_import_legacy") return imported.promise;
+    throw new Error("Unexpected command");
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <IdentitySetup identity={identity}>
+      <p>Signed in</p>
+    </IdentitySetup>,
+  );
+  const bringOver = await screen.findByRole("button", {
+    name: "Continue with your Buzz identity",
+  });
+  expect(invoke).not.toHaveBeenCalledWith("identity_import_legacy", {});
+  await user.click(bringOver);
+  expect(invoke).toHaveBeenCalledWith("identity_import_legacy", {});
+  expect(
+    screen.getByRole("button", { name: "Create a new identity" }),
+  ).toBeDisabled();
+  await act(async () => {
+    imported.resolve(viewer);
+  });
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  identity.dispose();
+});
+
+const previousViewer = "cd".repeat(32);
+function mountRecovery(
+  result: RecoveryResult,
+  override?: (command: string) => Promise<unknown> | undefined,
+) {
+  vi.mocked(invoke).mockImplementation((command) => {
+    const overridden = override?.(command);
+    if (overridden) return overridden as ReturnType<typeof invoke>;
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "nsec_backup_available") return Promise.resolve(true);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
+    if (command === "nsec_restore_begin")
+      return Promise.resolve({ attempt: "attempt" });
+    if (command === "nsec_restore_wait") return Promise.resolve(result);
+    if (command === "nsec_restore_cancel") return Promise.resolve();
+    if (command === "nsec_restore_install" || command === "identity_create")
+      return Promise.resolve(viewer);
+    throw new Error("Unexpected fixture command");
+  });
+  const identity = createIdentity();
+  const view = render(
+    <IdentitySetup identity={identity}>Restored identity</IdentitySetup>,
+  );
+  return { identity, ...view };
+}
+const recovered: RecoveryResult = {
+  candidates: [
+    { handle: "previous", pubkey: previousViewer },
+    { handle: "current", pubkey: viewer },
+  ],
+  currentPubkey: viewer,
+  failedCount: 0,
+};
+
+it.each([false, "unavailable"])(
+  "hides backup restore when availability is %s",
+  async (availability) => {
+    const { identity } = mountRecovery(recovered, (command) =>
+      command === "nsec_backup_available"
+        ? availability === false
+          ? Promise.resolve(false)
+          : Promise.reject("unavailable")
+        : undefined,
+    );
+    await screen.findByRole("button", { name: "Create a new identity" });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("nsec_backup_available"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Restore from backup" }),
+    ).toBeNull();
+    identity.dispose();
+  },
+);
+
+it.each([
+  "Secure storage is locked",
+  "Secure storage is unavailable",
+  "Saved identity is corrupt",
+])("does not offer recovery or inspect availability when %s", async (error) => {
+  const { identity } = mountRecovery(recovered, (command) =>
+    command === "identity_restore" ? Promise.reject(error) : undefined,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(
+    screen.getByRole("button", { name: "Retry secure storage access" }),
+  ).toBeEnabled();
+  expect(invoke).toHaveBeenCalledTimes(1);
+  identity.dispose();
+});
+
+it("prefers the associated identity, waits for explicit consent and persistence before becoming ready", async () => {
+  const installed = deferred<string>();
+  const { identity } = mountRecovery(recovered, (command) =>
+    command === "nsec_restore_install" ? installed.promise : undefined,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  const restore = await screen.findByRole("button", {
+    name: "Restore this identity",
+  });
+  expect(
+    screen.getByRole("radio", { name: /^npub…/, checked: true }),
+  ).toHaveAccessibleDescription(/Current identity/);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "nsec_restore_install"),
+  ).toBe(false);
+  try {
+    await user.click(restore);
+    expect(invoke).toHaveBeenLastCalledWith("nsec_restore_install", {
+      attempt: "attempt",
+      handle: "current",
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Saving your identity securely",
+    );
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(identity.snapshot().status).toBe("missing");
+  } finally {
+    await act(async () => installed.resolve(viewer));
+  }
+  expect(await screen.findByText("Restored identity")).toBeVisible();
+  expect(await identity.ready).toBe(viewer);
+  identity.dispose();
+});
+
+it("describes a previous identity selection accurately when the current identity is also available", async () => {
+  const { identity } = mountRecovery(recovered, (command) =>
+    command === "nsec_restore_install"
+      ? Promise.resolve(previousViewer)
+      : undefined,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await user.click(
+    await screen.findByRole("radio", {
+      name: (label) => label === formatPublicKey(previousViewer),
+    }),
+  );
+  expect(
+    screen.getByText("Choose the Buzz identity to restore on this device."),
+  ).toBeVisible();
+  expect(
+    screen.getByText("This won’t change the identity linked to your account."),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt",
+    handle: "previous",
+  });
+  expect(await screen.findByText("Restored identity")).toBeVisible();
+  identity.dispose();
+});
+
+it("requires a historical identity choice when the associated key is absent and reports partial recovery", async () => {
+  const { identity } = mountRecovery({
+    ...recovered,
+    currentPubkey: "ef".repeat(32),
+    failedCount: 1,
+  });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  const restore = await screen.findByRole("button", {
+    name: "Restore this identity",
+  });
+  expect(restore).toBeDisabled();
+  expect(
+    screen.getByText(/Your current identity isn’t in these backups/),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Some backups couldn’t be recovered",
+  );
+  await user.click(
+    screen.getByRole("radio", {
+      name: (label) => label === formatPublicKey(viewer),
+    }),
+  );
+  expect(restore).toBeEnabled();
+  await user.click(restore);
+  expect(await screen.findByText("Restored identity")).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt",
+    handle: "current",
+  });
+  identity.dispose();
+});
+
+it.each([
+  [0, "No backups were found for this account."],
+  [2, "Your backups couldn’t be recovered. Try again."],
+])(
+  "distinguishes an empty recovery from failed backups (%s)",
+  async (failedCount, message) => {
+    const { identity } = mountRecovery({
+      candidates: [],
+      currentPubkey: null,
+      failedCount,
+    });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Restore from backup" }),
+    );
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Restore this identity" }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Try recovery again" }),
+    );
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === "nsec_restore_begin"),
+      ).toHaveLength(2),
+    );
+    identity.dispose();
+  },
+);
+
+it.each([
+  ["nsec_restore_begin", "Backup recovery is unavailable. Try again later."],
+  ["nsec_restore_wait", "Backup recovery is unavailable. Try again later."],
+  ["nsec_restore_wait", "Could not restore your identity. Try again."],
+  ["nsec_restore_wait", "Restore was canceled. Try again."],
+  ["nsec_restore_install", "Could not restore your identity. Try again."],
+])(
+  "keeps %s failures retryable without creating or adopting an identity",
+  async (operation, message) => {
+    const { identity } = mountRecovery(recovered, (command) =>
+      command === operation ? Promise.reject(message) : undefined,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Restore from backup" }),
+    );
+    if (operation === "nsec_restore_install")
+      await user.click(
+        await screen.findByRole("button", { name: "Restore this identity" }),
+      );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(
+      screen.getByRole("button", { name: "Try recovery again" }),
+    ).toBeEnabled();
+    expect(identity.snapshot().status).toBe("missing");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: "Use an existing key" }),
+    ).toBeEnabled();
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "identity_create"),
+    ).toBe(false);
+    identity.dispose();
+  },
+);
+
+it("keeps a failed cancellation visible and blocks key changes until Back succeeds", async () => {
+  let cancellations = 0;
+  const { identity } = mountRecovery(recovered, (command) => {
+    if (command === "nsec_restore_cancel" && ++cancellations === 1)
+      return Promise.reject(new Error("Synthetic IPC failure"));
+  });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await screen.findByRole("button", { name: "Restore this identity" });
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t cancel recovery. Try Back again.",
+  );
+  await identity.create();
+  await identity.importKey(key);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(
+        ([command]) =>
+          command === "identity_create" || command === "identity_import",
+      ),
+  ).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("button", { name: "Use an existing key" }),
+  ).toBeEnabled();
+  expect(cancellations).toBe(2);
+  identity.dispose();
+});
+
+it("retries a recovery error only after the prior attempt is canceled", async () => {
+  const canceled = deferred<void>();
+  let waits = 0;
+  const { identity } = mountRecovery(recovered, (command) => {
+    if (command === "nsec_restore_wait" && ++waits === 1)
+      return Promise.reject("Could not restore your identity. Try again.");
+    if (command === "nsec_restore_cancel") return canceled.promise;
+  });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await screen.findByRole("alert");
+  try {
+    await user.click(
+      screen.getByRole("button", { name: "Try recovery again" }),
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("nsec_restore_cancel", {
+        attempt: "attempt",
+      }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Canceling recovery");
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "nsec_restore_begin"),
+    ).toHaveLength(1);
+  } finally {
+    await act(async () => canceled.resolve());
+  }
+  expect(
+    await screen.findByRole("button", { name: "Restore this identity" }),
+  ).toBeEnabled();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "nsec_restore_begin"),
+  ).toHaveLength(2);
+  identity.dispose();
+});
+
+it("rejects an installed viewer that differs from the selected identity", async () => {
+  const { identity } = mountRecovery(recovered, (command) =>
+    command === "nsec_restore_install"
+      ? Promise.resolve(previousViewer)
+      : undefined,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Restore this identity" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The restored identity could not be verified. Restart the app.",
+  );
+  expect(identity.snapshot().status).toBe("missing");
+  expect(screen.queryByText("Restored identity")).toBeNull();
+  identity.dispose();
+});
+
+it("fences late recovery after cancellation before allowing creation", async () => {
+  const waiting = deferred<RecoveryResult>();
+  const cancelled = deferred<void>();
+  const { identity } = mountRecovery(recovered, (command) => {
+    if (command === "nsec_restore_wait") return waiting.promise;
+    if (command === "nsec_restore_cancel") return cancelled.promise;
+  });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await screen.findByText(/Sign in in your browser/);
+  try {
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("nsec_restore_cancel", {
+        attempt: "attempt",
+      }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Canceling recovery");
+    await identity.create();
+    await identity.importKey(key);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command]) =>
+            command === "identity_create" || command === "identity_import",
+        ),
+    ).toBe(false);
+    expect(
+      screen.queryByRole("button", { name: "Create a new identity" }),
+    ).toBeNull();
+    await act(async () => waiting.resolve(recovered));
+    expect(
+      screen.queryByRole("button", { name: "Restore this identity" }),
+    ).toBeNull();
+  } finally {
+    await act(async () => {
+      waiting.resolve(recovered);
+      cancelled.resolve();
+    });
+  }
+  await user.click(
+    await screen.findByRole("button", { name: "Create a new identity" }),
+  );
+  expect(await screen.findByText("Restored identity")).toBeVisible();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "nsec_restore_install"),
+  ).toBe(false);
+  identity.dispose();
+});
+
+it("retires a browser sign-in that starts after setup is unmounted", async () => {
+  const begun = deferred<{ attempt: string }>();
+  const { identity, unmount } = mountRecovery(recovered, (command) =>
+    command === "nsec_restore_begin" ? begun.promise : undefined,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  unmount();
+  await act(async () => begun.resolve({ attempt: "late-attempt" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("nsec_restore_cancel", {
+      attempt: "late-attempt",
+    }),
+  );
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "nsec_restore_wait"),
+  ).toBe(false);
   identity.dispose();
 });
 

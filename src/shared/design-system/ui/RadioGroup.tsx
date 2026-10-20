@@ -24,7 +24,7 @@ export function Radio({
 }: Omit<ComponentProps<typeof BaseRadio.Root>, "className" | "children"> & {
   label: ReactNode;
   description?: ReactNode;
-  variant?: "default" | "card";
+  variant?: "default" | "card" | "tile";
 }) {
   const generatedId = useId();
   const controlId = id ?? generatedId;
@@ -43,8 +43,11 @@ export function Radio({
           }
           data-buzz-ui=""
           className="buzz-radio"
+          data-variant={variant}
         >
-          <BaseRadio.Indicator className="buzz-radio-indicator" />
+          {variant !== "tile" && (
+            <BaseRadio.Indicator className="buzz-radio-indicator" />
+          )}
         </BaseRadio.Root>
         <span>
           <span id={`${controlId}-label`} className="buzz-choice-label">

@@ -130,7 +130,7 @@ test("account menu choices remain reachable across themes, widths and enlarged t
   await expect(menu).toHaveCount(0);
   await expect(page.getByRole("main")).toBeFocused();
   await expect(
-    page.getByRole("region", { name: "Plugins", exact: true }),
+    page.getByRole("region", { name: "Manage plugins", exact: true }),
   ).toBeVisible();
   await trigger.click();
   await menu.getByRole("menuitem", { name: /, edit profile$/ }).click();

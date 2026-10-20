@@ -1,10 +1,13 @@
-# Virtua 0.51.0 scroll correction boundaries
+# Virtua 0.53.5 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
-`src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller
-and store are patched; CommonJS, window scrolling, and other-framework exports
-are untouched.
-Keep the dependency pinned to 0.51.0 and review the patch plus version-coupled
+`src/features/messages/ChannelTimeline.tsx`. Only that entry is patched;
+CommonJS and other-framework exports are untouched. Its store and element driver
+carry the changes below. The resize and scroll observers that entry shares with
+its window and grid drivers carry the frame-deferred item sizes, whole-edge
+rounding, the 1px absolute end path and the momentum flag passed to the
+overflow callback; the grid driver keeps its momentum-only overflow policy.
+Keep the dependency pinned to 0.53.5 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
 
 ## Fractional end offsets
@@ -66,7 +69,7 @@ Instead, at each **nonzero automatic correction** on Mac WebKit:
 3. Restore the prior declaration value and priority in the next task.
 
 This extends the mechanism already used by
-[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.51.0/src/core/driver.ts#L203-L248),
+[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.53.5/src/core/driver.ts#L379-L391),
 without changing the iOS branch. Overlapping interventions cancel/restore their
 predecessor before capturing the original declaration. Disposal restores
 immediately; an observably changed later declaration is not overwritten.
@@ -128,9 +131,10 @@ correction. WebKit reports an integer `scrollTop`, which reads up to 1px short
 of a fractional end, so a reader at the bottom missed the end test there while
 Chromium's fractional offset met it.
 
-The element driver takes the absolute path when the target lies within 1px of
-the end, rounding outward as before, and when the last observed offset lies
-more than 1px beyond the new end, scrolling to the exact target. Interior
+Since 0.52.8 ([#984](https://github.com/inokawa/virtua/pull/984)) Virtua takes
+the absolute path when the last observed offset is at or beyond the new end,
+scrolling to the exact target. The patch also takes it when the target lies
+within 1px of the end, rounding outward as before. Interior
 corrections, growth and prepend shifts stay relative. The installed-driver
 regressions clamp the fake viewport like a browser and cover an integer offset
 at a fractional end and a shrink larger than the reader's gap to the end.
@@ -179,9 +183,10 @@ no pending jump cost a few milliseconds.
 The store moves the held range by the shift's item delta, so the rows it kept
 mounted stay mounted and the scroll event's live range is computed as before.
 A shift can also remove rows from the head, since the timeline reports one
-whenever the first row changes and the last does not; a removal past the held
-range's start would move the range above the list, so it then holds the same
-number of rows from the top instead. A partial removal holds a range wider
+whenever rows above the reader change and the rows from their first visible
+row to the end do not; a removal past the held range's start would move the
+range above the list, so it then holds the same number of rows from the top
+instead. A partial removal holds a range wider
 than the live one for that frame; a removal of every held row, which would
 otherwise leave an inverted range that renders no row, lands with the
 corrected offset at the top. Nothing changes when no jump is pending, for
@@ -202,7 +207,10 @@ sizes are still deferred.
 When the viewport size arrives, the driver also reads the native scroll offset
 first. A channel switch scrolls imperatively before its scroll event is
 dispatched; without that read, the first range is computed at the old offset
-and the correct rows render one frame later.
+and the correct rows render one frame later. Since 0.52.10
+([#986](https://github.com/inokawa/virtua/pull/986)) Virtua re-reads it only
+when a hidden viewport regains a size; the patch reuses that read whenever the
+native offset differs from the store's.
 
 Together these let the first rows of a warm channel switch paint one frame
 earlier (median three frames to two). On one Mac, the

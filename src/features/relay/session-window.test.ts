@@ -39,7 +39,11 @@ it("reads threaded replies inline and closes edits and deletions before publishi
   expect(page.cursor).toEqual({ createdAt: root.created_at, eventId: root.id });
   expect(page.hasMore).toBe(true);
   expect(read.mock.calls[0]?.[0]).toEqual([
-    { kinds: [9, 40002, 40008, 40099], "#h": ["work"], limit: 20 },
+    {
+      kinds: [9, 40002, 40008, 40099, 48100, 48103],
+      "#h": ["work"],
+      limit: 20,
+    },
   ]);
 });
 

@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, subscribeView, writeView } from "../../shared/view-state";
 
 type SidebarView = {
   collapsed: string[];
@@ -24,6 +24,15 @@ function restore(scope: string): SidebarView {
         : 0,
     location: typeof saved.location === "string" ? saved.location : undefined,
   };
+}
+
+/** Header creation shares the sidebar's durable section expansion. */
+export function expandSidebarSection(scope: string, key: string) {
+  const saved = readView<object>(scope, "channel-sidebar", {});
+  writeView(scope, "channel-sidebar", {
+    ...saved,
+    collapsed: restore(scope).collapsed.filter((id) => id !== key),
+  });
 }
 
 /**
@@ -85,6 +94,19 @@ export function useSidebarView(
   const intent = useRef(view);
   const list = useRef<HTMLElement>(null);
   const pending = useRef(true);
+  useLayoutEffect(
+    () =>
+      subscribeView(scope, () => {
+        const collapsed = restore(scope).collapsed;
+        if (
+          JSON.stringify(collapsed) === JSON.stringify(intent.current.collapsed)
+        )
+          return;
+        intent.current = { ...intent.current, collapsed };
+        setView(intent.current);
+      }),
+    [scope],
+  );
   // The destination waiting for its entry to render.
   const reveal = useRef<string | undefined>(undefined);
   // Until the first reveal or scroll, the saved destination keeps the
@@ -173,10 +195,17 @@ export function useSidebarView(
     };
   }, [scope]);
 
-  const update = useCallback((next: SidebarView) => {
-    intent.current = next;
-    setView(next);
-  }, []);
+  const update = useCallback(
+    (next: SidebarView) => {
+      intent.current = next;
+      setView(next);
+      writeView(scope, "channel-sidebar", {
+        ...readView<object>(scope, "channel-sidebar", {}),
+        ...next,
+      });
+    },
+    [scope],
+  );
   const toggle = useCallback(
     (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;

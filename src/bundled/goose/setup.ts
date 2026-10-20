@@ -3,7 +3,10 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
-import type { Models } from "../../features/agents/service";
+import type {
+  AgentProviderSnapshot,
+  Models,
+} from "../../features/agents/service";
 import { GooseProcess, type Choice, type Spawn } from "./goose";
 import { absolute } from "./sessions";
 
@@ -36,6 +39,23 @@ export type Providers = Readonly<{
 
 export type Tested = Readonly<{ ok: boolean; message: string }>;
 
+/** The thinking levels goose offers for a provider and model. */
+export type Efforts = Readonly<{
+  /** The level goose runs it on when none is chosen. */
+  current: string;
+  levels: readonly string[];
+}>;
+
+/** A session's settings, as `session/new` and `session/set_config_option`
+ * return them. */
+type ConfigOptions = {
+  configOptions?: {
+    category?: string | null;
+    currentValue?: string;
+    options?: { value: string }[];
+  }[];
+};
+
 type Entry = {
   providerId: string;
   providerName: string;
@@ -67,8 +87,119 @@ const TEST_TIMEOUT_MS = 60_000;
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
   private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
+  private readonly thinking = new Map<string, Promise<Efforts>>();
 
-  constructor(private readonly spawn: Spawn | undefined) {}
+  private state: AgentProviderSnapshot = { readiness: "checking" };
+  private readonly listeners = new Set<() => void>();
+  private checkedDefaults: string | undefined;
+  private checking: Promise<void> | undefined;
+
+  constructor(
+    private readonly spawn: Spawn | undefined,
+    private readonly defaultsChanged: () => void = () => {},
+  ) {}
+
+  snapshot = () => this.state;
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+  private update(state: AgentProviderSnapshot) {
+    this.state = {
+      ...state,
+      blocking: state.blocking ?? this.state.blocking ?? false,
+    };
+    for (const listener of this.listeners) listener();
+  }
+
+  /** A fresh read also notices changes made by `goose configure`. */
+  check = (): Promise<void> => {
+    if (this.checking) return this.checking;
+    this.listing = undefined;
+    this.live.clear();
+    this.thinking.clear();
+    this.update({ readiness: "checking" });
+    this.checking = this.providers()
+      .then(
+        ({ defaults, providers }) => {
+          const key = JSON.stringify(defaults);
+          if (
+            this.checkedDefaults !== undefined &&
+            this.checkedDefaults !== key
+          )
+            this.defaultsChanged();
+          this.checkedDefaults = key;
+          const ready = providers.some(
+            (provider) =>
+              provider.id === defaults.provider &&
+              provider.configured &&
+              Boolean(defaults.model?.trim()),
+          );
+          this.update(
+            ready
+              ? { readiness: "ready" }
+              : { readiness: "attention", attentionLabel: "Set up Goose" },
+          );
+        },
+        () =>
+          this.update({
+            readiness: "attention",
+            attentionLabel: "Check Goose setup",
+          }),
+      )
+      .finally(() => {
+        this.checking = undefined;
+      });
+    return this.checking;
+  };
+
+  /** Writes Goose's own defaults, never a parallel Buzz preference. */
+  async saveDefaults(
+    choice: Choice,
+    fields: Readonly<Record<string, string>> = {},
+  ) {
+    await this.checking;
+    this.update({ ...this.state, blocking: true });
+    try {
+      if (Object.keys(fields).length) await this.save(choice.provider, fields);
+      const providerId = choice.provider.trim();
+      const { defaults, providers } = await this.providers();
+      await this.with(async (goose) => {
+        let modelId =
+          choice.model.trim() ||
+          (providerId === defaults.provider ? defaults.model?.trim() : "");
+        if (!modelId) {
+          // Goose stores per-provider choices separately from catalog metadata.
+          const { value } = (await goose.request(
+            "_goose/unstable/config/read",
+            {
+              key: "providers",
+              isSecret: false,
+            },
+          )) as { value?: Record<string, { model?: unknown }> | null };
+          const stored = value?.[providerId]?.model;
+          modelId =
+            (typeof stored === "string" ? stored.trim() : "") ||
+            providers
+              .find((provider) => provider.id === providerId)
+              ?.defaultModel.trim();
+        }
+        if (!modelId)
+          throw new Error(
+            "Choose a default model with goose configure, then try again.",
+          );
+        await goose.request("_goose/unstable/defaults/save", {
+          providerId,
+          modelId,
+        });
+      });
+      this.defaultsChanged();
+      this.checkedDefaults = undefined;
+      await this.check();
+    } finally {
+      this.update({ ...this.state, blocking: false });
+    }
+  }
 
   /** The models an agent on `choice` can be asked to run a turn on: those of
    * its provider, or goose's config's, and the one it runs on without. */
@@ -126,14 +257,16 @@ export class GooseSetup {
     return this.listing;
   }
 
-  /** A provider's models: goose's catalog, or else what its API lists. */
+  /** Databricks catalogs can lag its endpoints and AI Gateway services;
+   * configured providers use live discovery for both Databricks versions. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
     const prefixes = PREFIXES[id];
     const models =
-      listed?.configured && (prefixes || !listed.models.length)
+      listed?.configured &&
+      (prefixes || id === "databricks_v2" || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes
@@ -159,6 +292,52 @@ export class GooseSetup {
     return models;
   }
 
+  /** The thinking levels goose offers on `choice`'s provider and model, as a
+   * session opened on them lists. goose without them offers none.
+   *
+   * ACP lists config options only per session, and only for the model the
+   * session is on, so this opens a throwaway session and moves it to the
+   * model to read them. */
+  efforts(choice: Choice): Promise<Efforts> {
+    const provider = choice.provider.trim();
+    const model = choice.model.trim();
+    const key = `${provider}\u0000${model}`;
+    let efforts = this.thinking.get(key);
+    if (!efforts) {
+      efforts = this.with(async (goose, cwd) => {
+        const opened = (await goose.request("session/new", {
+          cwd,
+          mcpServers: [],
+          _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
+        })) as ConfigOptions & { sessionId: string };
+        try {
+          const { configOptions = [] } = model
+            ? ((await goose.request("session/set_config_option", {
+                sessionId: opened.sessionId,
+                configId: "model",
+                value: model,
+              })) as ConfigOptions)
+            : opened;
+          const option = configOptions.find(
+            (item) => item.category === "thought_level",
+          );
+          return {
+            current: option?.currentValue ?? "",
+            levels: (option?.options ?? []).map(({ value }) => value),
+          };
+        } finally {
+          // goose keeps every session; this one is not worth keeping.
+          await goose
+            .request("session/delete", { sessionId: opened.sessionId })
+            .catch(() => undefined);
+        }
+      });
+      efforts.catch(() => this.thinking.delete(key));
+      this.thinking.set(key, efforts);
+    }
+    return efforts;
+  }
+
   /** Which of a provider's fields goose already holds. */
   saved(id: string): Promise<ReadonlySet<string>> {
     return this.with(async (goose) => {
@@ -182,6 +361,7 @@ export class GooseSetup {
     );
     this.listing = undefined;
     this.live.delete(id);
+    this.thinking.clear();
   }
 
   /** Asks the provider for one short reply, without tools. goose reports a

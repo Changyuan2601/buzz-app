@@ -16,9 +16,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
   ctx.settingsCards.register({
     id: "hosted",
-    title: "Hosted communities",
+    title: "Builderlab hosting",
     icon: GlobeIcon,
-    group: "Communities",
+    group: "Plugins",
     component: ({ active }) => <HostedCommunities api={api} active={active} />,
   });
 };

@@ -3,7 +3,7 @@ import { attestedOwner } from "../agents/owner-attestation";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
-import { isTransientFailure } from "./errors";
+import { isTransientFailure, readErrorKind } from "./errors";
 import { hasTag, newer, type RelayEvent } from "./events";
 import { openMetadata } from "./discovery";
 import {
@@ -70,7 +70,8 @@ export function createChannelLifecycle({
   let closed = false;
   let busy = false;
   let epoch = 0;
-  const controllers = new Set<AbortController>();
+  // Each in-flight operation and the channel it concerns; visibility reads have none.
+  const controllers = new Map<AbortController, string | undefined>();
   const listeners = new Set<() => void>();
   let snapshot: DmVisibility = Object.freeze({
     status: "idle",
@@ -88,13 +89,15 @@ export function createChannelLifecycle({
     if (!canAccess(id))
       throw new Error("Channel access unavailable; refresh membership");
   }
+  /** The channel an operation concerns, if any, and the caller's own signal. */
+  type Scope = { id?: string | undefined; caller?: AbortSignal | undefined };
   async function owned<T>(
+    { id, caller }: Scope,
     work: (signal: AbortSignal) => Promise<T>,
-    caller?: AbortSignal,
   ): Promise<T> {
     if (closed) throw new DOMException("Relay session closed", "AbortError");
     const controller = new AbortController();
-    controllers.add(controller);
+    controllers.set(controller, id);
     const signal = AbortSignal.any([
       controller.signal,
       AbortSignal.timeout(20_000),
@@ -208,12 +211,16 @@ export function createChannelLifecycle({
         }
       }
       return settings;
-    } catch {
+    } catch (error) {
       // Optional read failures affect only owner-agent actions. Cancellation and
       // access loss still invalidate the whole result, including late replies
       // from an old session. An archived channel has no Delete to retry.
       signal.throwIfAborted();
       assertAccess(id);
+      // A read the session retired, unlike the profile deadline, says nothing
+      // about ownership; surface it so the caller reads again.
+      if (!profileSignal.aborted && readErrorKind(error) === "cancelled")
+        throw error;
       return archived
         ? settings
         : Object.freeze({ ...settings, deleteUnavailable: true });
@@ -266,7 +273,7 @@ export function createChannelLifecycle({
       if (!reader || closed) return Promise.resolve();
       const started = epoch;
       emit({ status: "loading", hidden: snapshot.hidden });
-      const operation = owned(async (signal) => {
+      const operation = owned({}, async (signal) => {
         await readVisibility(signal);
       })
         .catch((error: unknown) => {
@@ -286,8 +293,22 @@ export function createChannelLifecycle({
       refresh = operation;
       return operation;
     },
-    load(value: string, signal?: AbortSignal) {
-      return owned((signal) => load(lifecycleChannelId(value), signal), signal);
+    async load(value: string, caller?: AbortSignal) {
+      const id = lifecycleChannelId(value);
+      return owned({ id, caller }, async (signal) => {
+        for (;;) {
+          try {
+            return await load(id, signal);
+          } catch (error) {
+            // Owner cancel/clear/dispose, the caller and the deadline all
+            // arrive through `signal`. Any other cancellation is the session
+            // retiring shared reads for another channel's access change,
+            // which is no evidence about this channel: read again.
+            if (signal.aborted || readErrorKind(error) !== "cancelled")
+              throw error;
+          }
+        }
+      });
     },
     async run(
       action: ChannelLifecycleCommand,
@@ -301,7 +322,7 @@ export function createChannelLifecycle({
       busy = true;
       let publicationStarted = false;
       try {
-        await owned(async (signal) => {
+        await owned({ id, caller }, async (signal) => {
           // Joining starts from a nonmember preview, so membership-based
           // settings cannot authorize it. Fresh signed metadata must still
           // say public; a current roster entry means there is nothing to send.
@@ -428,7 +449,7 @@ export function createChannelLifecycle({
           throw new Error(
             "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
           );
-        }, caller);
+        });
       } catch (error) {
         if (publicationStarted && !(error instanceof PublishRejected))
           throw new ChannelLifecycleUnconfirmed(error);
@@ -440,12 +461,14 @@ export function createChannelLifecycle({
   });
   return {
     capability,
-    cancel() {
-      for (const controller of controllers) controller.abort();
+    /** Abort work on `ids` and id-less visibility reads; without `ids`, everything. */
+    cancel(ids?: readonly string[]) {
+      for (const [controller, id] of controllers)
+        if (!ids || id === undefined || ids.includes(id)) controller.abort();
     },
     clear() {
       epoch++;
-      for (const controller of controllers) controller.abort();
+      for (const controller of controllers.keys()) controller.abort();
       refresh = undefined;
       visibility = undefined;
       emit({ status: "idle", hidden: Object.freeze([]) });
@@ -453,7 +476,7 @@ export function createChannelLifecycle({
     dispose() {
       closed = true;
       epoch++;
-      for (const controller of controllers) controller.abort();
+      for (const controller of controllers.keys()) controller.abort();
       listeners.clear();
     },
   };

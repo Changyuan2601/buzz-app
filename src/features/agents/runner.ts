@@ -26,7 +26,6 @@ import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
-  compileFilter,
   tagsAgent,
   watchMatches,
   type AttentionObject,
@@ -37,7 +36,6 @@ import {
   type TimerWatch,
 } from "./attention";
 import {
-  AttentionError,
   checkedWrite,
   interestIds,
   show,
@@ -56,7 +54,8 @@ import {
 } from "./classifier";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
-import type { AgentRecord } from "./store";
+import type { AgentRecord, TimerProgress } from "./store";
+import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -199,9 +198,7 @@ const classifications = (trigger: Trigger) =>
       ? trigger.events.length
       : 0;
 const sizeOf = (event: RelayEvent) => JSON.stringify(event).length;
-type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
-  filter?: ReturnType<typeof compileFilter>;
-};
+type CompiledWatch = Omit<WatchTrigger, "type" | "event">;
 /** One agent's runtime, for as long as its identity exists. Edits do not
  * replace it: each job reads the agent as it is when the job starts, and the
  * watches are recompiled only when its attention changes. */
@@ -298,12 +295,6 @@ type Pass = {
   failedAt?: number;
 };
 
-const EMPTY = Object.freeze({});
-const blank = (pubkey: string): AgentRecord => ({
-  pubkey,
-  attention: EMPTY,
-  config: undefined,
-});
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
@@ -335,10 +326,25 @@ export type RunnerHost = {
   saved(pubkey: string): AgentRecord | undefined;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(pubkey: string): AgentRecord;
-  /** Saves one record; throws when storage refuses it. */
-  write(record: AgentRecord): void;
+  /** Changes its record after the changes sent before it, from the newest
+   * saved record; settles with the saved record once it is saved, and
+   * rejects when `apply` throws or the save fails. */
+  change(
+    pubkey: string,
+    apply: (record: AgentRecord) => AgentRecord | Promise<AgentRecord>,
+  ): Promise<AgentRecord>;
+  /** Whether a change other than timer progress is waiting or saving. Its
+   * timers wait for it, since it may rearm, restart or remove one. */
+  changing(pubkey: string): boolean;
+  /** Its timers' run state, with progress still being saved. */
+  timers(pubkey: string): Readonly<Record<string, TimerState>>;
+  /** Saves a timer pass's progress. Its timers see it at once, and it stays
+   * in memory even if the save fails, so a timer does not run again at once. */
+  progress(pubkey: string, progress: TimerProgress): void;
   /** The team sections of its prompt; empty without a team. */
   team(pubkey: string): string;
+  /** What its next run starts with, from this device's storage only. */
+  start(agent: Agent): Start<unknown>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -369,6 +375,8 @@ export type RunnerHost = {
         | "release"
         | "publish"
         | "query"
+        | "searchProfiles"
+        | "audienceAuthority"
         | "upload"
         | "media"
         | "remember"
@@ -376,17 +384,25 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
-  /** Whether a mention in `channel` continues the agent's owner's Me chat,
+  /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
-  meChat(agent: Agent, channel: string, signal: AbortSignal): Promise<boolean>;
+  soloChat(
+    agent: Agent,
+    channel: string,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
+  /** A harness's title for the conversation a mention started; may name a Solo chat. */
+  named(agent: Agent, event: RelayEvent, title: string): void;
 };
 
 export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
+  /** The synced revisions each agent's current run started from. */
+  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -450,16 +466,48 @@ export class AgentRunners {
   }
   /** Wakes each runner, which starts any timer that is due. */
   tick() {
-    for (const runner of this.runners.values()) {
-      this.admit(runner);
-      void this.drain(runner);
-    }
+    for (const pubkey of this.runners.keys()) this.wake(pubkey);
+  }
+  /** Wakes the agent's runner, as when the changes its timers wait for are
+   * saved: one due meanwhile starts now, not at the next tick. */
+  wake(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    if (!runner) return;
+    this.admit(runner);
+    void this.drain(runner);
   }
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */
   runs(pubkey: string) {
     const runner = this.runners.get(pubkey);
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
+  }
+  /** The agent's handle outside any run, while this copy runs it with a
+   * type of `pluginId`, not changing it, and its community is live. Each
+   * call through the handle checks that again, so a kept handle stops
+   * working while it no longer holds, and for good once the agent's type
+   * or its plugin is replaced. */
+  handle(pubkey: string, pluginId: string) {
+    const held = () => {
+      const runner = this.runners.get(pubkey);
+      const agent = this.host.ready(pubkey);
+      return runner?.type?.pluginId === pluginId &&
+        !runner.transitioning &&
+        agent &&
+        this.runs(pubkey)
+        ? { runner, agent }
+        : undefined;
+    };
+    const now = held();
+    if (!now) return;
+    const { runner, agent } = now;
+    const { signal } = runner.controller;
+    return guarded(this.handleFor(runner, agent, signal), () => {
+      if (signal.aborted || held()?.runner !== runner)
+        throw new Error(
+          `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
+        );
+    });
   }
   /** Whether another copy of the app runs an agent this one could. */
   yielded(pubkey: string) {
@@ -563,7 +611,6 @@ export class AgentRunners {
         slug: object.slug,
         watch,
         ...(interest?.type === "interest" ? { interest } : {}),
-        ...(watch.filter ? { filter: compileFilter(watch.filter) } : {}),
       });
     }
     runner.compiled = { attention: agent.attention, watches };
@@ -1422,14 +1469,14 @@ export class AgentRunners {
         ? [{ type: "mention", event }]
         : [];
     if (!agent.attentionEnabled) return [];
-    const matches = this.watches(runner, agent).filter(({ watch, filter }) =>
-      watchMatches(watch, event, filter),
+    const matches = this.watches(runner, agent).filter(({ watch }) =>
+      watchMatches(watch, event),
     );
     if (!matches.length) return [];
     const member = this.host.member(agent, event);
     if (member === undefined) return "held";
     return member
-      ? matches.map(({ filter: _, ...match }) => ({
+      ? matches.map((match) => ({
           type: "watch",
           event,
           ...match,
@@ -1455,7 +1502,7 @@ export class AgentRunners {
         ({ slug }) => slug === trigger.slug,
       );
       const events = trigger.events.filter(
-        ({ event }) => match && watchMatches(match.watch, event, match.filter),
+        ({ event }) => match && watchMatches(match.watch, event),
       );
       if (!match || !events.length) return undefined;
       return {
@@ -1471,17 +1518,16 @@ export class AgentRunners {
       };
     }
     const match = this.watches(runner, agent).find(
-      ({ slug, watch, filter }) =>
-        slug === trigger.slug && watchMatches(watch, trigger.event, filter),
+      ({ slug, watch }) =>
+        slug === trigger.slug && watchMatches(watch, trigger.event),
     );
     if (!match) return undefined;
-    const { filter: _, ...rest } = match;
     return {
       ...job,
       trigger: {
         type: "watch",
         event: trigger.event,
-        ...rest,
+        ...match,
         ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
       },
     };
@@ -1522,10 +1568,12 @@ export class AgentRunners {
   ): Job | undefined {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
+    // A pending change may rearm, restart or remove a timer: a later tick
+    // runs from the record it saves.
+    if (this.host.changing(agent.pubkey)) return undefined;
     const now = seconds();
-    const record = this.host.saved(agent.pubkey) ?? blank(agent.pubkey);
-    const prior = record.timers ?? EMPTY;
-    let timers = prior;
+    const timers = this.host.timers(agent.pubkey);
+    let changed: TimerProgress = {};
     let next:
       | {
           slug: string;
@@ -1537,9 +1585,10 @@ export class AgentRunners {
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
       if (timer.type !== "timer" || !timer.enabled) continue;
-      const saved = agent.timers[object.slug];
+      const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
-      if (state !== saved) timers = { ...timers, [object.slug]: state };
+      if (state !== saved)
+        changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
@@ -1551,15 +1600,12 @@ export class AgentRunners {
       used: next.state.used + 1,
       nextDue: now + next.timer.interval_secs,
     };
-    if (next && ran) timers = { ...timers, [next.slug]: ran };
-    if (timers !== prior)
-      try {
-        this.host.write({ ...record, timers });
-      } catch (error) {
-        // Unsaved, it would run again at once; it waits for storage instead.
-        console.warn(`Agent ${agent.name} timer state was not saved`, error);
-        return undefined;
-      }
+    if (next && ran)
+      changed = {
+        ...changed,
+        [next.slug]: { seen: timers[next.slug], next: ran },
+      };
+    if (Object.keys(changed).length) this.host.progress(agent.pubkey, changed);
     if (!next || !ran) return undefined;
     const { slug, timer, object } = next;
     const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
@@ -1729,40 +1775,26 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle: AgentHandle = Object.freeze({
-      pubkey: agent.pubkey,
-      name: agent.name,
-      owner: agent.owner,
-      publish: (event: AgentEventTemplate) => this.publish(runner, event),
-      query: (filters: readonly object[]) =>
-        this.require().query(agent.pubkey, filters),
-      upload: (data: string, mime: string) =>
-        this.require().upload(agent.pubkey, data, mime),
-      media: (url: string) => this.require().media(agent.pubkey, url),
-      remember: async (slug: string, body: string, after: number) => {
-        const event = await this.require().remember(
-          agent.pubkey,
-          slug,
-          body,
-          after,
-        );
-        this.host.remembered(agent.pubkey, slug, body);
-        return event;
-      },
-      templates: () => this.host.templates(agent),
-      tabs: () => this.host.tabs(agent),
-      attention: this.attention(agent.pubkey),
-    });
+    const handle = this.handleFor(runner, agent, signal);
     const working = this.working(runner, job, agent);
+    const trigger = job.trigger;
+    const named =
+      trigger.type === "mention"
+        ? (title: string) => this.host.named(agent, trigger.event, title)
+        : undefined;
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
+      const start = this.host.start(agent);
+      if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.pubkey);
       signal.throwIfAborted();
+      this.started.start(agent.pubkey, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
-        config: agent.config,
+        config: start.config,
+        revisions: start.revisions,
         ...pick,
         ...(team ? { team } : {}),
         signal,
@@ -1770,6 +1802,9 @@ export class AgentRunners {
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
+        interruptible: (stop: () => Promise<void>) =>
+          job.work?.interruptible(stop),
+        ...(named ? { named } : {}),
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
@@ -1830,6 +1865,58 @@ export class AgentRunners {
     });
   }
 
+  /** The agent as `run` holds it; `signal` bounds its audience checks. */
+  private handleFor(
+    runner: Runner,
+    agent: Agent,
+    signal: AbortSignal,
+  ): AgentHandle {
+    return Object.freeze({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      owner: agent.owner,
+      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
+      query: async (filters: readonly object[]) =>
+        this.require().query(agent.pubkey, filters),
+      audienceAuthority: async (
+        destination: string,
+        sources: readonly string[],
+      ) => {
+        signal.throwIfAborted();
+        const native = this.require();
+        if (!native.audienceAuthority)
+          throw new Error(
+            "Current audience authority is unsupported by this host.",
+          );
+        const response = await native.audienceAuthority(
+          agent.pubkey,
+          destination,
+          sources,
+        );
+        signal.throwIfAborted();
+        return response;
+      },
+      searchProfiles: async (query: string, limit: number) =>
+        this.require().searchProfiles(agent.pubkey, query, limit),
+      upload: async (data: string, mime: string) =>
+        this.require().upload(agent.pubkey, data, mime),
+      media: async (url: string) => this.require().media(agent.pubkey, url),
+      remember: async (slug: string, body: string, after: number) => {
+        const event = await this.require().remember(
+          agent.pubkey,
+          slug,
+          body,
+          after,
+        );
+        this.host.remembered(agent.pubkey, slug, body);
+        return event;
+      },
+      templates: () => this.host.templates(agent),
+      tabs: () => this.host.tabs(agent),
+      attention: this.attention(agent.pubkey),
+    });
+  }
+
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
    * mention run is shown typing in its thread meanwhile, from its first
@@ -1851,7 +1938,7 @@ export class AgentRunners {
         // Straight to custody, so pulses stay out of what it wrote.
         async (pulse) => this.require().publish(runner.pubkey, pulse),
         // Where its turn answers, read the same way.
-        this.host.meChat(agent, channel, runner.controller.signal),
+        this.host.soloChat(agent, channel, runner.controller.signal),
         event,
         channel,
         runner.typing,
@@ -1954,7 +2041,7 @@ export class AgentRunners {
     return Object.freeze({
       enabled: () => record().attentionEnabled === true,
       classifier: () => this.host.classifier(),
-      show: (slug: string, interest?: string) =>
+      show: async (slug: string, interest?: string) =>
         show(record(), slug, seconds(), interest),
       interests: (search?: string) => interestIds(record(), search),
       watches: (filter: WatchFilter = {}) =>
@@ -1964,27 +2051,12 @@ export class AgentRunners {
         value: AttentionValue | null,
         options: WriteOptions,
       ) => {
-        // The token is checked against the record as it is when the write
-        // lands: a write that raced this one makes it check again, a few times.
-        for (let attempt = 0; ; attempt++) {
-          const before = record();
-          const after = await checkedWrite(
-            before,
-            slug,
-            value,
-            options,
-            seconds(),
-          );
-          if (record() !== before) {
-            if (attempt < 3) continue;
-            throw new AttentionError(
-              "conflict",
-              `${slug} is changing; show it again`,
-            );
-          }
-          this.host.write(after);
-          return show(after, slug, seconds());
-        }
+        // The token is checked against the newest saved record, in turn
+        // with the other changes to it, so no change lands between.
+        const after = await this.host.change(pubkey, (before) =>
+          checkedWrite(before, slug, value, options, seconds()),
+        );
+        return show(after, slug, seconds());
       },
     });
   }
@@ -1999,6 +2071,33 @@ export class AgentRunners {
     bounded(runner.wrote, signed.id);
     return signed;
   }
+}
+
+const AsyncFunction = (async () => {}).constructor;
+
+/** `target`, with `live()` checked before each of its calls, however deep:
+ * its async methods reject when it fails, and the others throw. */
+function guarded<T extends object>(target: T, live: () => void): T {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(target).map(([key, value]) => [
+        key,
+        typeof value !== "function"
+          ? value && typeof value === "object"
+            ? guarded(value, live)
+            : value
+          : value.constructor === AsyncFunction
+            ? async (...args: unknown[]) => {
+                live();
+                return value(...args);
+              }
+            : (...args: unknown[]) => {
+                live();
+                return value(...args);
+              },
+      ]),
+    ),
+  ) as T;
 }
 
 /** Runs a standalone turn with a signal that also aborts

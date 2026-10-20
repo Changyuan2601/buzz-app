@@ -1,17 +1,31 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useState,
-  type RefObject,
-  type DragEvent as ReactDragEvent,
-} from "react";
+import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 
-/** A pane must reject unclaimed files even while its composer is absent. */
-export function rejectUnhandledFileDrop(event: ReactDragEvent<HTMLElement>) {
-  if (!event.dataTransfer.types.includes("Files")) return;
-  if (!event.defaultPrevented) event.dataTransfer.dropEffect = "none";
-  event.preventDefault();
-  event.stopPropagation();
+/** An unclaimed file or link drop would navigate the webview to it, so the app rejects it. */
+export function useRejectUnclaimedDrops() {
+  useEffect(() => {
+    const reject = (event: DragEvent) => {
+      const { target, dataTransfer } = event;
+      if (!dataTransfer) return;
+      const files = dataTransfer.types.includes("Files");
+      if (!files && !dataTransfer.types.includes("text/uri-list")) return;
+      // The browser itself accepts files into a file input and links into editable text.
+      if (
+        target instanceof HTMLElement &&
+        (files
+          ? target instanceof HTMLInputElement && target.type === "file"
+          : target.isContentEditable || target.matches(":read-write"))
+      )
+        return;
+      if (!event.defaultPrevented) dataTransfer.dropEffect = "none";
+      event.preventDefault();
+    };
+    window.addEventListener("dragover", reject);
+    window.addEventListener("drop", reject);
+    return () => {
+      window.removeEventListener("dragover", reject);
+      window.removeEventListener("drop", reject);
+    };
+  }, []);
 }
 
 /** Route a file drop to this pane's composer, never another open conversation. */

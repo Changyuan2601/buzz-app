@@ -18,7 +18,7 @@ export type Pulses = Map<string, { turns: number; stop: () => void }>;
 
 /** Pulses typing, signed as the agent, where it answers `event` until the
  * returned function is called: in the channel itself when `topLevel` settles
- * true, for a chat in the owner's Me, which reads as one conversation. It waits
+ * true, for a Solo chat, which reads as one conversation. It waits
  * for that answer, as its turn does, so both place it alike; a turn that cannot
  * tell where to answer fails, and shows no typing. The pulse ends with it:
  * clients drop typing when the agent replies, or a few seconds after its last

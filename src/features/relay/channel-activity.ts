@@ -18,7 +18,7 @@ export function createChannelActivity(
   read: ChannelActivityReader | undefined,
   notify = (listener: () => void) => listener(),
 ) {
-  let values = new Map<string, number>();
+  let values = new Map<string, number | null>();
   let generation = 0;
   let revision = 0;
   let closed = false;
@@ -46,7 +46,8 @@ export function createChannelActivity(
   };
   return {
     status: () => status,
-    last: (channelId: string) => values.get(channelId),
+    last: (channelId: string) => values.get(channelId) ?? undefined,
+    known: (channelId: string) => values.has(channelId),
     revision: () => revision,
     subscribe(listener: () => void) {
       if (closed) return () => {};
@@ -96,8 +97,8 @@ export function createChannelActivity(
       const wanted = new Set(ids);
       const next = new Map(values);
       for (const id of ids) {
-        const displayed = values.get(id);
-        const started = atStart.get(id);
+        const displayed = values.get(id) ?? undefined;
+        const started = atStart.get(id) ?? undefined;
         const result = refreshed.get(id);
         const changedDuringRead = displayed !== started;
         if (
@@ -105,8 +106,8 @@ export function createChannelActivity(
           (result !== undefined ? displayed > result : changedDuringRead)
         )
           continue;
-        if (result === undefined) next.delete(id);
-        else next.set(id, result);
+        // Retain authoritative absence through later refreshes and failures.
+        next.set(id, result ?? null);
       }
       for (const id of next.keys()) if (!wanted.has(id)) next.delete(id);
       status = "ready";
@@ -121,6 +122,20 @@ export function createChannelActivity(
         status = "idle";
         publish();
       }
+    },
+    /** Access loss fences reads and drops only channels no longer readable;
+     * the others keep their values, so Recent sections keep their order. */
+    retain(readable: (channelId: string) => boolean) {
+      if (closed) return;
+      generation++;
+      active?.abort();
+      active = undefined;
+      const next = new Map([...values].filter(([id]) => readable(id)));
+      const nextStatus = status === "loading" ? "idle" : status;
+      if (next.size === values.size && nextStatus === status) return;
+      values = next;
+      status = nextStatus;
+      publish();
     },
     clear() {
       if (closed) return;

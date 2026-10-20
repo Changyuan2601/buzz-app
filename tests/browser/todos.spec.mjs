@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import {
   openPage,
   selectSettingsSection,
@@ -21,7 +22,7 @@ test.beforeEach(async ({ page }) => {
 
 // Configure the modeled session at its HTTP owner instead of proxying it through
 // route.fetch(), so session setup needs only the browser's original request.
-test.use({ sessionWriteKinds: [9, 9007, 40100] });
+test.use({ channelWriteKinds: [9, 9007, 40100] });
 
 // Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
@@ -66,7 +67,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const plugins = async () => {
     await button("Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
   };
   const messages = async () => {
     await settleShellToggle(page);
@@ -84,13 +85,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const launcher = button("Toggle channel todos");
   await expect(launcher).toHaveCount(0);
   await plugins();
-  const enabled = page.getByRole("switch", {
-    name: "Enable Todos",
-    exact: true,
-  });
-  await expect(enabled).not.toBeChecked();
+  const enabled = pluginAction(page, "Todos");
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
   await enabled.click();
-  await expect(enabled).toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Disable /);
   await messages();
   await launcher.click();
   const drawer = page.getByRole("region", {
@@ -184,7 +182,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   };
   // Channel-specific drawers stay off other pages, but returning to the same
   // channel can reopen its Canvas-backed content with a live launcher.
-  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const sidebar = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
+  });
   const pages = sidebar.getByRole("navigation", { name: "Pages" });
   for (const destination of ["Inbox", "Bestie"]) {
     await pages.getByRole("button", { name: destination, exact: true }).click();
@@ -244,7 +245,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   ).toBeChecked();
   await plugins();
   await enabled.click();
-  await expect(enabled).not.toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);

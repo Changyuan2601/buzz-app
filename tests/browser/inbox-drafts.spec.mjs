@@ -58,19 +58,10 @@ test("Draft and conversation previews share their plain layout and show real sel
       .click();
     await page.getByRole("menuitemradio", { name: label, exact: true }).click();
   };
-  await chooseActivity("Mentions");
-  await inbox
-    .getByRole("list", { name: "Inbox conversations" })
-    .getByRole("listitem")
-    .filter({ hasText: "Unread reply 1" })
-    .getByRole("button", { name: /^Open / })
-    .click();
   const styleOf = (frame) =>
     frame.evaluate((element) => {
       const style = getComputedStyle(element);
-      const detail = element.closest(
-        '[aria-label="Inbox detail"], [aria-label="Draft detail"]',
-      );
+      const detail = element.closest('[aria-label="Draft detail"]');
       const header = detail.querySelector("header");
       return {
         border: style.borderWidth,
@@ -82,30 +73,24 @@ test("Draft and conversation previews share their plain layout and show real sel
         headerMinHeight: getComputedStyle(header).minHeight,
       };
     });
-  const reference = inbox.getByRole("complementary", { name: "Thread" });
-  await expect(
-    reference.getByText("Thread root 1", { exact: true }),
-  ).toBeVisible();
   const mode = testInfo.project.name === "webkit" ? "dark" : "light";
   await page.evaluate((mode) => {
     document.documentElement.dataset.colorMode = mode;
   }, mode);
-  const inboxDetail = inbox.getByRole("region", { name: "Inbox detail" });
-  // Full splitter input/bounds are covered by Inbox; here prove shared preference.
-  await inboxDetail.getByRole("separator").press("Home");
-  const resizedWidth = (await inboxDetail.boundingBox()).width;
-  const expectedStyle = await styleOf(reference);
-  expect(expectedStyle).toMatchObject({
-    border: "0px",
-    radius: "0px",
-    shadow: "none",
-    headers: 1,
-    embeddedHeaders: 0,
-  });
-  await inbox
-    .getByRole("region", { name: "Inbox detail" })
-    .getByRole("button", { name: "Close detail" })
-    .click();
+  // Every draft preview shares the first one's plain, headerless frame.
+  let expectedStyle;
+  const expectPlain = async (frame) => {
+    const style = await styleOf(frame);
+    expectedStyle ??= style;
+    expect(style).toMatchObject({
+      border: "0px",
+      radius: "0px",
+      shadow: "none",
+      headers: 1,
+      embeddedHeaders: 0,
+    });
+    expect(style).toEqual(expectedStyle);
+  };
   await chooseActivity("Drafts");
   const draftList = inbox.getByRole("list", { name: "Drafts" });
   await expect(draftList.getByRole("listitem")).toHaveCount(3);
@@ -114,6 +99,10 @@ test("Draft and conversation previews share their plain layout and show real sel
     inbox.getByRole("button", { name: "Back to drafts" }),
   ).toHaveCount(0);
   const detail = inbox.getByRole("region", { name: "Draft detail" });
+  // The Drafts workspace inside the Inbox tab, not the page's tab workspace.
+  const workspace = inbox
+    .getByRole("tabpanel", { name: "Inbox", exact: true })
+    .locator('[class*="_workspace_"]');
   const readDraft = (key) =>
     page.evaluate(
       ({ scope, key }) =>
@@ -125,7 +114,7 @@ test("Draft and conversation previews share their plain layout and show real sel
   const selectDraft = async (label) => {
     // The outer Inbox surface includes its own border; collapse uses the
     // workspace's available content width, not that border or the viewport.
-    const available = await inbox.locator('[class*="workspace"]').boundingBox();
+    const available = await workspace.boundingBox();
     const collapsed = available.width <= 700;
     if (collapsed && (await detail.count())) {
       await expect(draftList).not.toBeVisible();
@@ -168,22 +157,23 @@ test("Draft and conversation previews share their plain layout and show real sel
       name: "Resize main and secondary panels",
     });
     if (width === 1280) {
-      await expect
-        .poll(async () => (await detail.boundingBox()).width)
-        .toBeCloseTo(resizedWidth, 0);
-      await handle.press("ArrowLeft");
-      await expect
-        .poll(async () => (await detail.boundingBox()).width)
-        .toBeCloseTo(resizedWidth + 16, 0);
-      await handle.press("Home");
       const halfWidth = await detail.evaluate(
         (element) => element.parentElement.clientWidth / 2,
       );
+      await handle.press("Home");
+      await expect
+        .poll(async () => (await detail.boundingBox()).width)
+        .toBeCloseTo(halfWidth, 0);
+      await handle.press("ArrowLeft");
+      await expect
+        .poll(async () => (await detail.boundingBox()).width)
+        .toBeCloseTo(halfWidth + 16, 0);
+      await handle.press("Home");
       await expect
         .poll(async () => (await detail.boundingBox()).width)
         .toBeCloseTo(halfWidth, 0);
       // Drafts now places its toolbar directly in the grid, unlike Inbox.
-      const toolbar = inbox.locator('[class*="toolbar"]');
+      const toolbar = workspace.locator('[class*="toolbar"]');
       const headerBox = await detail.locator("header").boundingBox();
       const toolbarBox = await toolbar.boundingBox();
       expect(headerBox.y + headerBox.height).toBeCloseTo(
@@ -200,7 +190,7 @@ test("Draft and conversation previews share their plain layout and show real sel
       history.getByText("Context line 15", { exact: true }),
     ).toBeInViewport();
     await settle(page, history);
-    expect(await styleOf(dm)).toEqual(expectedStyle);
+    await expectPlain(dm);
     await geometry(dm, history);
     await expect
       .poll(() =>
@@ -236,7 +226,7 @@ test("Draft and conversation previews share their plain layout and show real sel
       channelHistory.getByText(/primary beta message 0/),
     ).toBeInViewport();
     await geometry(channel, channelHistory);
-    expect(await styleOf(channel)).toEqual(expectedStyle);
+    await expectPlain(channel);
     await expect(
       channel.getByRole("textbox", { name: "Message #Beta" }),
     ).toContainText("Channel notes");
@@ -265,7 +255,7 @@ test("Draft and conversation previews share their plain layout and show real sel
       thread.getByRole("textbox", { name: "Reply to thread" }),
     ).toContainText("Thread notes");
     await geometry(thread, replies);
-    expect(await styleOf(thread)).toEqual(expectedStyle);
+    await expectPlain(thread);
     await expect(
       detail.locator("header").getByRole("button", { name: "Delete draft…" }),
     ).toHaveAttribute("data-size", "sm");
@@ -534,7 +524,8 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     // ResizeObserver must commit the new container width before the baseline.
     // A visible editor alone can still be using the prior viewport's split.
     const available = await inbox
-      .locator('[class*="workspace"]')
+      .getByRole("tabpanel", { name: "Inbox", exact: true })
+      .locator('[class*="_workspace_"]')
       .evaluate((element) => element.clientWidth);
     await expect(detail.locator("[data-panel-resize]")).toHaveAttribute(
       "aria-valuemax",

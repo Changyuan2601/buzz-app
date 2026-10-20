@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn } from "./goose-testing";
 import { GooseSetup, keyLabel } from "./setup";
@@ -31,6 +31,7 @@ const PROVIDERS = [
   {
     providerId: "ollama",
     providerName: "Ollama",
+    defaultModel: "qwen3",
     configured: true,
     visibleInSetup: true,
     configKeys: [{ name: "OLLAMA_HOST", required: true, secret: false }],
@@ -149,6 +150,43 @@ describe("GooseSetup", () => {
     ]);
   });
 
+  it("discovers Databricks V2 models despite a populated catalog and refreshes on check", async () => {
+    const supported = ["goose-gpt-6-1-sol", "workspace.models.gpt-6-astra"];
+    const { fake, setup: goose } = setup({
+      providers: [
+        {
+          providerId: "databricks_v2",
+          providerName: "Databricks AI Gateway",
+          configured: true,
+          visibleInSetup: true,
+          models: [{ id: "goose-gpt-5-5" }],
+        },
+      ],
+      defaults: { providerId: "databricks_v2", modelId: "goose-gpt-5-5" },
+      supported,
+    });
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual(
+      supported,
+    );
+    await goose.models("databricks_v2");
+    const requests = () =>
+      fake.geese
+        .flatMap((process) => process.received)
+        .filter(
+          (message) =>
+            message.method ===
+            "_goose/unstable/providers/supported-models/list",
+        );
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0]?.params).toEqual({ providerId: "databricks_v2" });
+    supported.push("goose-gpt-6-luna");
+    await goose.check();
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual(
+      supported,
+    );
+    expect(requests()).toHaveLength(2);
+  });
+
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
     await expect(
@@ -236,6 +274,54 @@ describe("GooseSetup", () => {
     expect(tested?.configured).toEqual([]);
   });
 
+  it("reads the thinking levels a session on the provider and model lists, once", async () => {
+    const { fake, setup: goose } = setup({
+      thinking: {
+        "": { current: "medium", levels: ["off", "low", "medium", "high"] },
+        "claude-haiku-5-5": { current: "off", levels: ["off"] },
+      },
+    });
+    expect(
+      await goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).toEqual({ current: "off", levels: ["off"] });
+    expect(await goose.efforts({ provider: "anthropic", model: " " })).toEqual({
+      current: "medium",
+      levels: ["off", "low", "medium", "high"],
+    });
+    await goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" });
+    expect(fake.geese).toHaveLength(2);
+    const [read] = fake.geese;
+    expect(read?.opened[0]).toMatchObject({
+      mcpServers: [],
+      _meta: { enabledExtensions: [], provider: "anthropic" },
+    });
+    // No turn runs, and goose keeps no session for it.
+    expect(read?.turns).toEqual([]);
+    expect(read?.deleted).toEqual(["session-1"]);
+    expect(read?.killed).toBe(true);
+  });
+
+  it("refreshes inherited thinking choices after saving defaults and rechecking", async () => {
+    const thinking = { "": { current: "low", levels: ["low"] } };
+    const { setup: goose } = setup({ thinking });
+    const inherited = { provider: "", model: "" };
+    expect((await goose.efforts(inherited)).levels).toEqual(["low"]);
+    thinking[""] = { current: "high", levels: ["high"] };
+    await goose.saveDefaults({ provider: "ollama", model: "qwen3" });
+    expect((await goose.efforts(inherited)).levels).toEqual(["high"]);
+    thinking[""] = { current: "off", levels: ["off"] };
+    await goose.check();
+    expect((await goose.efforts(inherited)).levels).toEqual(["off"]);
+  });
+
+  it("reads no thinking levels from a goose that lists none", async () => {
+    const { setup: goose } = setup();
+    expect(await goose.efforts({ provider: "", model: "" })).toEqual({
+      current: "",
+      levels: [],
+    });
+  });
+
   it("says when the bundled goose-acp is missing", async () => {
     const spawn: Spawn = async (id, options) => {
       if (id === "goose")
@@ -260,4 +346,171 @@ describe("keyLabel", () => {
     expect(keyLabel("AZURE_OPENAI_ENDPOINT_URL")).toBe("Openai endpoint URL");
     expect(keyLabel("TOKEN")).toBe("Token");
   });
+});
+
+it("checks Goose config readiness and writes defaults through Goose", async () => {
+  const { setup: goose, fake } = setup();
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("ready");
+  await goose.saveDefaults({ provider: "ollama", model: "llama4" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "llama4",
+  });
+  expect(goose.snapshot()).toMatchObject({
+    readiness: "ready",
+    blocking: false,
+  });
+  expect(fake.geese.every((process) => process.killed)).toBe(true);
+});
+
+it("requires a configured default provider and recovers after setup", async () => {
+  const { setup: goose } = setup({ defaults: {} });
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+  await goose.saveDefaults({ provider: "ollama", model: "" });
+  expect(goose.snapshot().readiness).toBe("ready");
+});
+
+it("reports unavailable Goose as needing attention", async () => {
+  const goose = new GooseSetup(undefined);
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+  await expect(
+    goose.saveDefaults({ provider: "ollama", model: "qwen3" }),
+  ).rejects.toThrow();
+  expect(goose.snapshot().blocking).toBe(false);
+});
+
+it("invalidates runtime defaults only after a successful save", async () => {
+  const fake = fakeSpawn({ providers: PROVIDERS });
+  const changed = vi.fn();
+  const goose = new GooseSetup(fake.spawn, changed);
+  await goose.check();
+  expect(changed).not.toHaveBeenCalled();
+  await goose.saveDefaults({ provider: "ollama", model: "qwen3" });
+  expect(changed).toHaveBeenCalledTimes(1);
+  const unavailable = new GooseSetup(undefined, changed);
+  await expect(
+    unavailable.saveDefaults({ provider: "ollama", model: "" }),
+  ).rejects.toThrow();
+  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it("blocks dismissal throughout credential persistence and clears blocking on failure", async () => {
+  const { setup: goose } = setup();
+  await goose.check();
+  let reject!: (reason: Error) => void;
+  const gate = new Promise<void>((_, fail) => {
+    reject = fail;
+  });
+  const save = vi.spyOn(goose, "save").mockReturnValue(gate);
+  const pending = goose.saveDefaults(
+    { provider: "ollama", model: "qwen3" },
+    { OLLAMA_HOST: "host" },
+  );
+  const result = expect(pending).rejects.toThrow("key failure");
+  try {
+    await Promise.resolve();
+    expect(save).toHaveBeenCalledOnce();
+    expect(goose.snapshot().blocking).toBe(true);
+  } finally {
+    reject(new Error("key failure"));
+  }
+  await result;
+  expect(goose.snapshot().blocking).toBe(false);
+});
+
+it("invalidates inherited sessions when a fresh check finds external defaults changes", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "ollama", modelId: "qwen3" },
+  });
+  const changed = vi.fn();
+  const goose = new GooseSetup(fake.spawn, changed);
+  await goose.check();
+  await new GooseSetup(fake.spawn).saveDefaults({
+    provider: "ollama",
+    model: "llama4",
+  });
+  await goose.check();
+  expect(changed).toHaveBeenCalledTimes(1);
+  await goose.check();
+  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it("retains the stored provider model when a defaults save omits the model", async () => {
+  const { setup: goose } = setup();
+  await goose.saveDefaults({ provider: "ollama", model: "llama4" });
+  await goose.saveDefaults({ provider: "ollama", model: "" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "llama4",
+  });
+});
+
+it("saves the catalog model when switching to a provider without a stored model", async () => {
+  const { setup: goose, fake } = setup({
+    providers: PROVIDERS.map((provider) => ({ ...provider, configured: true })),
+  });
+  await goose.saveDefaults({ provider: "anthropic", model: "" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "anthropic",
+    model: "claude-sonnet-5-5",
+  });
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .find((request) => request.method === "_goose/unstable/defaults/save")
+      ?.params,
+  ).toEqual({ providerId: "anthropic", modelId: "claude-sonnet-5-5" });
+  expect(goose.snapshot().readiness).toBe("ready");
+});
+
+it("does not report ready when a configured provider has no model", async () => {
+  const { setup: goose } = setup({ defaults: { providerId: "ollama" } });
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+});
+
+it("rejects a provider without a default model before changing defaults", async () => {
+  const { setup: goose, fake } = setup();
+  await expect(
+    goose.saveDefaults({ provider: "databricks", model: "" }),
+  ).rejects.toThrow("Choose a default model");
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .some((request) => request.method === "_goose/unstable/defaults/save"),
+  ).toBe(false);
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "qwen3",
+  });
+  expect(goose.snapshot().blocking).toBe(false);
+});
+
+it("preserves a provider's custom model when switching away and back after restart", async () => {
+  const { setup: goose, fake } = setup({
+    providers: PROVIDERS.map((provider) => ({ ...provider, configured: true })),
+    defaults: { providerId: "ollama", modelId: "custom-model" },
+  });
+  await goose.saveDefaults({ provider: "anthropic", model: "" });
+  const restarted = new GooseSetup(fake.spawn);
+  await restarted.saveDefaults({ provider: "ollama", model: "" });
+  expect((await restarted.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "custom-model",
+  });
+  expect(restarted.snapshot().readiness).toBe("ready");
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .filter((request) => request.method === "_goose/unstable/config/read")
+      .every(
+        (request) =>
+          request.params?.key === "providers" &&
+          request.params?.isSecret === false,
+      ),
+  ).toBe(true);
 });

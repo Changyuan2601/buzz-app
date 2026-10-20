@@ -74,7 +74,16 @@ export interface OutboxStorage {
   load(): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   save(operations: readonly OutgoingEvent[]): void | Promise<void>;
 }
-export class PublishRejected extends Error {}
+export class PublishRejected extends Error {
+  /** The relay's own refusal text, when it sent one; `message` stays the
+   * display summary. Bounded by the transport that read it. */
+  constructor(
+    message: string,
+    readonly reason?: string,
+  ) {
+    super(message);
+  }
+}
 
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");

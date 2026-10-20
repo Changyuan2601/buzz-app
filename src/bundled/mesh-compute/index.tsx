@@ -20,7 +20,7 @@ import styles from "./Compute.module.css";
 
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
-import { meChat } from "../../features/agents/me-chat";
+import { soloChat } from "../../features/agents/solo-chat";
 import { MeshHelpers } from "./MeshHelpers";
 import { MeshCreateSetup } from "./MeshCreateSetup";
 import {
@@ -209,7 +209,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           messages,
         }),
       meChat: (agent, channelId, signal) =>
-        meChat(
+        soloChat(
           () => agents.relay(agent.pubkey),
           agent.owner,
           channelId,

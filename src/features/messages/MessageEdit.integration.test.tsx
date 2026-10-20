@@ -21,7 +21,7 @@ import {
   roster,
   signed,
 } from "../relay/testing";
-import { SessionMessageTarget } from "../sessions/SessionMessageTarget";
+import { SoloMessageTarget } from "../solo/SoloMessageTarget";
 import type { PageNavigation } from "../navigation/service";
 import { MessageManagement } from "./MessageManagement";
 import { MessageComposer } from "./MessageComposer";
@@ -554,7 +554,7 @@ it.each(["thread", "exact"])(
 );
 
 it.each(["save", "changed", "deleted", "aborted"] as const)(
-  "exact session menu edit keeps current-row guards: %s",
+  "exact Solo chat menu edit keeps current-row guards: %s",
   async (outcome) => {
     const viewer = keypair();
     const original = message(viewer, "channel", "Exact own message", 10);
@@ -580,9 +580,9 @@ it.each(["save", "changed", "deleted", "aborted"] as const)(
       await authorize(owner);
       render(
         <MessageManagement session={owner.session} channelId="channel">
-          <SessionMessageTarget
+          <SoloMessageTarget
             session={owner.session}
-            scope="exact-session-edit"
+            scope="exact-solo-edit"
             channelId="channel"
             messageId={original.id}
             navigation={navigation}
@@ -592,10 +592,10 @@ it.each(["save", "changed", "deleted", "aborted"] as const)(
           />
           <MessageComposer
             session={owner.session}
-            scope="exact-session-edit"
+            scope="exact-solo-edit"
             channelId="channel"
-            channelName="Session"
-            sessionConversation
+            channelName="Solo chat"
+            soloConversation
           />
         </MessageManagement>,
         { reactStrictMode: true },

@@ -12,6 +12,8 @@ import type { WorkOutcome } from "../../src/features/agents/local-activity";
 export const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 let identities: AgentIdentity[] = [];
+/** Requests the owner stopped, in order. */
+const stopped: string[] = [];
 const pending: {
   id: string;
   handover(): void;
@@ -20,12 +22,18 @@ const pending: {
 }[] = [];
 const controls = {
   pending: () => pending.map((row) => row.id),
+  stopped: () => [...stopped],
   /** Hands over and, like a real harness, reports a first step. */
   handover(id: string) {
     const row = pending.find((row) => row.id === id);
     if (!row) throw new Error("No pending request");
     row.handover();
     row.step("Read", "notes.txt");
+  },
+  step(id: string, tool: string, target?: string) {
+    const row = pending.find((row) => row.id === id);
+    if (!row) throw new Error("No pending request");
+    row.step(tool, target);
   },
   finish(id: string, ok: boolean) {
     const row = pending.find((row) => row.id === id);
@@ -104,8 +112,14 @@ export const localAgentPlugin: BundledPlugin = {
           const transferred = new Promise<void>((resolve) => {
             handover = resolve;
           });
+          const id = delivery.trigger.event.id;
+          // Like a harness, the stop ends the turn as it settles.
+          delivery.interruptible?.(async () => {
+            stopped.push(id);
+            finish({ ok: true });
+          });
           pending.push({
-            id: delivery.trigger.event.id,
+            id,
             handover,
             step: (tool, target) => delivery.step?.(tool, target),
             finish,

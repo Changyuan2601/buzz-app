@@ -1,17 +1,9 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { Header, InlineHeader } from "../shared/design-system/ui/Header";
-import type { Identity } from "../features/identity/service";
-import { PrivateKey } from "../features/identity/PrivateKey";
-import { SignOutDialog } from "../features/identity/SignOut";
+import { Header } from "../shared/design-system/ui/Header";
 import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
-import { IconButton } from "../shared/design-system/ui/IconButton";
-import { CopyIcon } from "../shared/design-system/icons";
-import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
-import { Tooltip } from "../shared/design-system/ui/Tooltip";
-import { npubEncode } from "nostr-tools/nip19";
 import {
   useCallback,
   useEffect,
@@ -48,13 +40,9 @@ function isCurrentProfileSave(communities: Communities, generation: number) {
 export function ProfileSettings({
   communities,
   community,
-  identity,
-  active = true,
 }: {
   communities: Communities;
   community?: Membership | undefined;
-  identity?: Identity | undefined;
-  active?: boolean;
 }) {
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -86,7 +74,6 @@ export function ProfileSettings({
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(false);
@@ -97,11 +84,6 @@ export function ProfileSettings({
     };
   }, []);
   const [error, setError] = useState("");
-  const [copyStatus, setCopyStatus] = useState<{
-    message: string;
-    failed: boolean;
-  } | null>(null);
-  const copyAttempt = useRef(0);
   // loadAttempt is an explicit recovery trigger.
   useEffect(() => {
     void loadAttempt;
@@ -137,22 +119,6 @@ export function ProfileSettings({
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
   const hasChanges = draft !== null && !profilesEqual(draft, persisted);
-  const npub = client.viewer ? npubEncode(client.viewer) : "";
-  async function copyIdentity(value: string, label: string) {
-    const attempt = ++copyAttempt.current;
-    setCopyStatus(null);
-    try {
-      await navigator.clipboard.writeText(value);
-      if (attempt === copyAttempt.current)
-        setCopyStatus({ message: `${label} copied.`, failed: false });
-    } catch {
-      if (attempt === copyAttempt.current)
-        setCopyStatus({
-          message: `Couldn’t copy ${label.toLowerCase()}. Select it and copy manually.`,
-          failed: true,
-        });
-    }
-  }
   return (
     <section aria-labelledby="profile-settings-title">
       <Header
@@ -352,87 +318,6 @@ export function ProfileSettings({
               )}
             </form>
           </SettingsGroup>
-        )}
-        {client.viewer && (
-          <section
-            aria-labelledby="identity-settings-title"
-            className="mt-section-gap"
-          >
-            <InlineHeader
-              id="identity-settings-title"
-              title="Identity details"
-              subtitle="Your identity is shared across communities. Public keys are safe to share."
-            />
-            <SettingsGroup>
-              {(
-                [
-                  ["Public key (hex)", "Public key", client.viewer],
-                  ["Nostr address (npub)", "Nostr address", npub],
-                ] as const
-              ).map(([label, copyLabel, value]) => (
-                <PreferenceRow
-                  key={label}
-                  title={label}
-                  subtitle={
-                    <code className={`text-mono ${styles.identityValue}`}>
-                      {value}
-                    </code>
-                  }
-                  trailing={
-                    <Tooltip content={`Copy ${copyLabel.toLowerCase()}`}>
-                      <IconButton
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Copy ${copyLabel.toLowerCase()}`}
-                        icon={<CopyIcon aria-hidden="true" />}
-                        onClick={() => void copyIdentity(value, copyLabel)}
-                      />
-                    </Tooltip>
-                  }
-                />
-              ))}
-            </SettingsGroup>
-            {identity && active && (
-              <div className="mt-6">
-                <SettingsGroup layout="form">
-                  {/* One key widget at a time; the dialog brings its own. */}
-                  {!signingOut && <PrivateKey identity={identity} />}
-                </SettingsGroup>
-                <SettingsGroup>
-                  <PreferenceRow
-                    title="Sign out of Buzz"
-                    subtitle="Remove your private key from this device. Also ends Builderlab and hosted community logins."
-                    trailing={
-                      <Button type="button" onClick={() => setSigningOut(true)}>
-                        Sign out of Buzz
-                      </Button>
-                    }
-                  />
-                </SettingsGroup>
-                {signingOut && (
-                  <SignOutDialog
-                    identity={identity}
-                    onClose={() => setSigningOut(false)}
-                  />
-                )}
-              </div>
-            )}
-            {copyStatus && (
-              <ToastNotice
-                title={
-                  copyStatus.failed
-                    ? "Identity wasn’t copied"
-                    : copyStatus.message
-                }
-                {...(copyStatus.failed
-                  ? { description: copyStatus.message }
-                  : {})}
-                tone={copyStatus.failed ? "error" : "success"}
-                timeout={copyStatus.failed ? 0 : 5000}
-                onDismiss={() => setCopyStatus(null)}
-              />
-            )}
-          </section>
         )}
       </div>
     </section>

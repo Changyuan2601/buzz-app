@@ -3,7 +3,7 @@ import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({
-  sessionWriteKinds: [9, 9007, 40100],
+  channelWriteKinds: [9, 9007, 40100],
   historyCounts: { alpha: 2, beta: 1 },
 });
 

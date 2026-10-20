@@ -69,8 +69,11 @@ export function ComposerFormattingTools({
   activeFormats,
   toggleFormat,
   editLink,
+  trailing,
 }: {
   children: ReactNode;
+  /** Conversation controls that follow the tools on the same row. */
+  trailing?: ReactNode;
   disabled: boolean;
   singleRow?: boolean;
   activeFormats: readonly ComposerFormat[];
@@ -223,6 +226,7 @@ export function ComposerFormattingTools({
             >
               {formatToggle}
             </motion.div>
+            {trailing}
           </ToolGroup>
         )}
       </AnimatePresence>

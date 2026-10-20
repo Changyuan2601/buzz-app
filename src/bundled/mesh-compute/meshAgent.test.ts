@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Delivery } from "../../features/agents/service";
-import {
-  compileFilter,
-  watchMatches,
-  type EventWatch,
-} from "../../features/agents/attention";
+import { watchMatches, type EventWatch } from "../../features/agents/attention";
 import {
   conversationKey,
   instructions,
@@ -172,25 +168,20 @@ describe("Mesh agent runtime", () => {
       since: 1,
       channels: ["chan"],
       kinds: [9],
-      filter: `author == "${sender}"`,
+      authors: [sender],
     };
     const reply = delivery({
       ...inThread("e".repeat(64), 2),
       content: "I recommend a time-travel MUD with branching histories.",
     });
     if (reply.trigger.type !== "mention") throw new Error("Expected message");
-    const filter = compileFilter(watch.filter ?? "");
     expect(
-      watchMatches(
-        watch,
-        { ...reply.trigger.event, pubkey: "d".repeat(64) },
-        filter,
-      ),
+      watchMatches(watch, { ...reply.trigger.event, pubkey: "d".repeat(64) }),
     ).toBe(false);
-    expect(
-      watchMatches(watch, { ...reply.trigger.event, pubkey: AGENT }, filter),
-    ).toBe(false);
-    expect(watchMatches(watch, reply.trigger.event, filter)).toBe(true);
+    expect(watchMatches(watch, { ...reply.trigger.event, pubkey: AGENT })).toBe(
+      false,
+    );
+    expect(watchMatches(watch, reply.trigger.event)).toBe(true);
     await runtime.run({
       ...reply,
       trigger: {

@@ -18,11 +18,12 @@ import {
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import {
   communityFromScope,
   gifMarkdown,
-  relaySupportsKlipy,
+  relayGifRequests,
+  type GifRequests,
 } from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
 import { GifPicker } from "./GifPicker";
@@ -41,13 +42,15 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  gifRequests = relayGifRequests,
   externalTrigger,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
   reaction?: boolean;
+  gifRequests?: GifRequests | undefined;
   externalTrigger?: {
     ref: RefObject<HTMLButtonElement | null>;
     id: string;
@@ -78,6 +81,7 @@ export function EmojiPicker({
   const onInsert = useRef(insert);
   onInsert.current = insert;
   const accepted = useRef(false);
+  const escapeFocus = useRef<HTMLElement | false>(false);
   const community = reaction ? undefined : communityFromScope(scope);
   const gifs = community
     ? gifAvailability?.community === community
@@ -146,7 +150,7 @@ export function EmojiPicker({
     )
       return;
     const controller = new AbortController();
-    void relaySupportsKlipy(community, controller.signal).then(
+    void gifRequests.supports(community, controller.signal).then(
       (supported) => {
         if (!controller.signal.aborted) {
           setGifAvailability({ community, supported });
@@ -165,7 +169,7 @@ export function EmojiPicker({
       },
     );
     return () => controller.abort();
-  }, [community, gifDiscoveryRequested, gifAvailability]);
+  }, [community, gifDiscoveryRequested, gifAvailability, gifRequests]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host || !perLine) return;
@@ -233,6 +237,7 @@ export function EmojiPicker({
   const gifContent = community && (
     <GifPicker
       community={community}
+      search={gifRequests.search}
       initialQuery={search.current}
       onQueryChange={(value) => {
         search.current = value;
@@ -315,7 +320,10 @@ export function EmojiPicker({
           const target = externalTrigger
             ? externalTrigger.finalFocus()
             : trigger.current;
-          if (target) target.focus();
+          // An external toolbar stays hidden until the popup closes. Use the
+          // shared return-focus path; ordinary composer focus stays immediate.
+          if (externalTrigger) escapeFocus.current = target ?? false;
+          else if (target) target.focus();
           // Keyboard dismissal is immediate; release the external trigger before
           // another Enter can arrive, rather than waiting for exit completion.
           externalTrigger?.close();
@@ -349,7 +357,7 @@ export function EmojiPicker({
         }}
         finalFocus={
           externalTrigger
-            ? externalTrigger.finalFocus
+            ? () => escapeFocus.current || externalTrigger.finalFocus()
             : !accepted.current || !!reaction
         }
       >
@@ -367,6 +375,7 @@ export function EmojiPicker({
         setOpen(next);
         if (next) {
           accepted.current = false;
+          escapeFocus.current = false;
           void session.emoji.ensure();
           if (gifs !== true && gifAvailability?.community === community)
             setGifAvailability(undefined);

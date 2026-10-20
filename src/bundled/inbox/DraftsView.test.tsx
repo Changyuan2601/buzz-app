@@ -1,6 +1,7 @@
 const emptyPanels: never[] = [];
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
+import { huddleDescription } from "../../features/huddle/lifecycle";
 import { readView, writeView } from "../../shared/view-state";
 import { useAttachmentDraft } from "../../features/messages/attachment-draft";
 import "@testing-library/jest-dom/vitest";
@@ -17,6 +18,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
 import { ChannelPreview } from "./ChannelPreview";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
@@ -285,6 +287,15 @@ function fixture(
     clearCache: owner.clearCache,
   };
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  const host = {
+    relay,
+    navigation: { open },
+    panels: {
+      subscribe: () => () => {},
+      snapshot: () => emptyPanels,
+      resolve: () => undefined,
+    },
+  } as unknown as ConversationHostServices;
   return {
     owner,
     relay,
@@ -361,6 +372,7 @@ function fixture(
       };
     },
     releaseProfiles,
+    relayKey,
     alice,
     viewer,
     emit,
@@ -373,17 +385,8 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
-          host={
-            {
-              relay,
-              navigation: { open },
-              panels: {
-                subscribe: () => () => {},
-                snapshot: () => emptyPanels,
-                resolve: () => undefined,
-              },
-            } as unknown as ConversationHostServices
-          }
+          host={host}
+          tabs={(props) => <PageTabs {...props} host={host} />}
           relay={relay}
           navigator={{ open } as unknown as Navigation}
         />
@@ -1531,3 +1534,133 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
     text: "@Alice ",
   });
 });
+
+it.each([true, false])(
+  "retires an excluded draft with focus owned=%s and preserves storage",
+  async (ownedFocus) => {
+    const h = fixture({ withWriter: true });
+    writeView(h.owner.session.scope, "draft:room", "Private draft text");
+    render(
+      <>
+        <button type="button">Outside draft</button>
+        {h.view}
+      </>,
+    );
+    await screen.findByText("Please review this");
+    await chooseFilter("Drafts");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open draft for #Design" }),
+    );
+    await screen.findByRole("region", { name: "Draft detail" });
+    const outside = screen.getByRole("button", { name: "Outside draft" });
+    (ownedFocus
+      ? screen.getByRole("button", { name: "Close detail" })
+      : outside
+    ).focus();
+    await act(async () =>
+      h.emit([
+        metadata(h.relayKey, "room", "Huddle", 100, [
+          ["private"],
+          ["P", h.viewer.pubkey],
+          ["about", huddleDescription("00000000-0000-4000-8000-000000000001")],
+        ]),
+        signed(h.viewer, {
+          kind: 9007,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", "room"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            [
+              "about",
+              huddleDescription("00000000-0000-4000-8000-000000000001"),
+            ],
+          ],
+        }),
+      ]),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Draft detail" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Private draft text")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Open draft for/ }),
+    ).not.toBeInTheDocument();
+    expect(readView(h.owner.session.scope, "draft:room", "")).toBe(
+      "Private draft text",
+    );
+    await waitFor(() =>
+      expect(
+        ownedFocus
+          ? screen.getByRole("button", { name: "Inbox filters" })
+          : outside,
+      ).toHaveFocus(),
+    );
+    await act(async () =>
+      h.emit([metadata(h.relayKey, "room", "Restored", 101)]),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Draft detail" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("withholds drafts with pending metadata and restores ordinary destinations after discovery", async () => {
+  const h = fixture();
+  writeView(h.owner.session.scope, "draft:pending", "Unclassified draft");
+  render(h.view);
+  await screen.findByText("Please review this");
+  await act(async () =>
+    h.emit([roster(h.relayKey, "pending", [h.viewer.pubkey], 100)]),
+  );
+  await chooseFilter("Drafts");
+  expect(screen.queryByText("Unclassified draft")).not.toBeInTheDocument();
+  await act(async () =>
+    h.emit([metadata(h.relayKey, "pending", "Resolved", 101)]),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Open draft for #Resolved" }),
+  ).toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:pending", "")).toBe(
+    "Unclassified draft",
+  );
+});
+
+it.each([false, true])(
+  "discovers and reopens a card-only saved draft (thread: %s)",
+  async (thread) => {
+    const h = fixture({ withWriter: true });
+    const key = thread ? `draft:room:thread:${h.mention.id}` : "draft:room";
+    const link = "[Session: Fix](buzz://channel/session-id)";
+    writeView(h.owner.session.scope, key, {
+      text: "",
+      recipients: [],
+      sessionCards: [link],
+    });
+    render(h.view);
+    await screen.findByText("Please review this");
+    await chooseFilter("Drafts");
+    const list = screen.getByRole("list", { name: "Drafts" });
+    expect(list).toHaveTextContent("Session attachment");
+    await userEvent
+      .setup()
+      .click(
+        within(list).getByRole("button", { name: "Open draft for #Design" }),
+      );
+    const detail = await screen.findByRole("region", { name: "Draft detail" });
+    await waitFor(() =>
+      expect(
+        within(detail).getByRole("button", {
+          name: "Remove session attachment 1",
+        }),
+      ).toBeVisible(),
+    );
+    expect(within(detail).getByRole("textbox")).toHaveValue("");
+    expect(readView(h.owner.session.scope, key, null)).toMatchObject({
+      sessionCards: [link],
+    });
+  },
+);

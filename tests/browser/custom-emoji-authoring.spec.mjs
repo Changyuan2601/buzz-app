@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
@@ -365,7 +366,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await draft.fill("");
 
     // Reaction with it.
-    await row.hover();
+    await hoverMessage(row);
     await row
       .getByRole("button", { name: "Add reaction", exact: true })
       .click();

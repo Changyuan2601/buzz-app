@@ -30,8 +30,8 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/channels"),
     },
     {
-      manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
-      module: await import("../bundled/projects"),
+      manifest: { id: "buzz.repos", name: "Repositories", apiVersion: 1 },
+      module: await import("../bundled/repos"),
     },
     {
       manifest: { id: "buzz.profiles", name: "Profiles", apiVersion: 1 },
@@ -162,7 +162,7 @@ it("opens Plugins from the account menu and switches back to profile settings", 
   const settings = await screen.findByRole("region", { name: "Settings" });
   expect(
     await within(settings).findByRole("region", {
-      name: "Plugins",
+      name: "Manage plugins",
     }),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Your profile" }));

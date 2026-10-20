@@ -93,10 +93,11 @@ const serializer = new DOMSerializer(
     ],
     list_item: () => ["li", 0],
     hard_break: () => ["br"],
-    text: (node) => node.text ?? "",
     token: (node) => {
       const link = tokenLink(node);
-      return link ? ["a", { href: link.href }, link.label] : node.attrs.source;
+      return link
+        ? ["a", { href: link.href }, link.label]
+        : ["span", node.attrs.source];
     },
   },
   {

@@ -313,10 +313,11 @@ test.describe("reaction control rendering", () => {
     page,
   }) => {
     await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
-    const row = page
+    const message = page
       .locator("[data-message-id]")
       .filter({ hasText: "Historic" })
-      .getByTestId("reaction-row");
+      .locator("[data-layout]");
+    const row = message.getByTestId("reaction-row");
     const plus = row.getByRole("button", { name: "Add reaction" });
     const emoji = row.locator('button[data-reaction="👍"]');
     await expect(plus).toBeVisible();
@@ -324,6 +325,14 @@ test.describe("reaction control rendering", () => {
     await row.evaluate((el) => {
       el.style.translate = "0 0.25px";
     });
+    // Stay inside the reaction area so the message hover highlight is absent
+    // before, during, and after neighboring emoji motion.
+    const rest = { x: 2, y: (await row.boundingBox()).height / 2 };
+    await row.hover({ position: rest });
+    await expect(message).not.toHaveAttribute("data-actions-revealed", "");
+    await expect
+      .poll(() => plus.evaluate((el) => el.matches(":hover")))
+      .toBe(false);
     const bounds = await plus.boundingBox();
     const original = await plus.screenshot();
     await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
@@ -359,7 +368,7 @@ test.describe("reaction control rendering", () => {
         for (const animation of el.getAnimations()) animation.finish();
       });
     }
-    await page.mouse.move(0, 0);
+    await row.hover({ position: rest });
     await expect(emoji.locator("[data-reaction-glyph]")).toHaveCSS(
       "transform",
       "none",

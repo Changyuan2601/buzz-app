@@ -148,3 +148,82 @@ it("does not infer provider deletion from absence in an unrecognized account", a
   );
   expect(h.request).toHaveBeenCalledOnce();
 });
+
+const place = {
+  community: "wss://agent.example",
+  channelId: "channel-1",
+  threadRootId: "root-1",
+};
+const interruption = { pubkey, ...place, signal: provision.signal };
+const listing = response({
+  status: 1,
+  agents: [
+    {
+      agent_id: "provider-id",
+      agent_pubkey: pubkey,
+      agent_name: "Helper",
+      status: 2,
+    },
+  ],
+});
+
+it("stops a turn with the agent ID saved when it was provisioned", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce(response(registration));
+  await h.remote.provision(provision);
+  h.request.mockResolvedValueOnce(response({ status: 1 }));
+  expect(await h.remote.interrupt?.(interruption)).toBe(true);
+  expect(h.request).toHaveBeenCalledTimes(2);
+  expect(h.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: expect.stringContaining("/cancel-agent-turn"),
+      body: JSON.stringify({
+        agent_id: "provider-id",
+        community: "agent.example",
+        channel_id: "channel-1",
+        thread_root_event_id: "root-1",
+      }),
+    }),
+  );
+});
+
+it("looks up an agent from another device to stop its turn", async () => {
+  const h = await fixture();
+  h.request
+    .mockResolvedValueOnce(listing)
+    .mockResolvedValueOnce(response({ status: 2 }));
+  expect(await h.remote.interrupt?.(interruption)).toBe(false);
+  expect(h.request).toHaveBeenCalledTimes(2);
+  expect(h.bodies()[1]).toMatchObject({ agent_id: "provider-id" });
+  // The ID is remembered, so a second stop needs no lookup.
+  h.request.mockResolvedValueOnce(response({ status: 1 }));
+  expect(await h.remote.interrupt?.(interruption)).toBe(true);
+  expect(h.request).toHaveBeenCalledTimes(3);
+});
+
+it("does not stop a turn for an agent outside the signed-in account", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce(response({ status: 1, agents: [] }));
+  await expect(h.remote.interrupt?.(interruption)).rejects.toThrow(
+    "not found in this Builderlab account",
+  );
+  expect(h.request).toHaveBeenCalledOnce();
+});
+
+it("rejects a stop at once when signed out, without signing in or reaching Builderlab", async () => {
+  const acquire = vi.fn(async () => ({
+    value: "credential",
+    account: { subject: "account-a", email: "a@example.com" },
+  }));
+  const session = createOAuthSession(acquire);
+  const request = vi.fn<Host["request"]>();
+  const client = createAgentClient({ runCommand: vi.fn(), request }, session);
+  const remote = builderlabType(client, session).remote;
+  if (!remote?.interrupt) throw new Error("Missing hosted adapter");
+  await expect(remote.interrupt(interruption)).rejects.toThrow(
+    "Sign in to Builderlab first.",
+  );
+  expect(acquire).not.toHaveBeenCalled();
+  expect(session.snapshot().status).toBe("signed-out");
+  expect(request).not.toHaveBeenCalled();
+});

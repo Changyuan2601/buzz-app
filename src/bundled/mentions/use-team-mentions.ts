@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import type { RelaySession } from "../../features/relay/session";
+import {
+  fullSession,
+  type ComposerSession,
+} from "../../features/messages/composer-session";
 import type { useMentionChoices } from "./use-mention-choices";
 import { mentionCandidates } from "./mention-candidates";
 import { extendsName, normalizeName } from "../../features/search/person-match";
@@ -11,7 +14,7 @@ const snapshotNone = () => empty;
 
 /** Saved teams are shortcuts to exact individual recipients, never new identities. */
 export function useTeamMentions(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   inviteAgents: boolean | undefined,
   query: string,
@@ -19,7 +22,7 @@ export function useTeamMentions(
   open = true,
 ) {
   const roster = model.roster;
-  const kit = session.channelKit;
+  const kit = fullSession(session)?.channelKit;
   const catalog = useSyncExternalStore(
     kit?.subscribe ?? subscribeNone,
     kit?.snapshot ?? snapshotNone,
@@ -45,7 +48,7 @@ export function useTeamMentions(
   }, [session, hasTeams]);
   const key = JSON.stringify([channelId, inviteAgents, query, open, !!roster]);
   const [installed, install] = useState<{
-    session: RelaySession;
+    session: ComposerSession;
     key: string;
     teams: ((typeof teams)[number] & { members: readonly string[] })[];
   }>();
@@ -131,7 +134,7 @@ export function useTeamMentions(
           : channel?.channelType === "dm"
             ? `${outside} not in DM · Will not be notified`
             : inviteAgents
-              ? `Adds ${outside} to session${channel && (channel.channelType !== "session" || channel.parentChannelId) ? " and parent channel" : ""} when you send`
+              ? `Adds ${outside} to ${channel && channel.channelType !== "solo" ? "channel" : "chat"} when you send`
               : `${outside} not in channel · Choose whether to add when you send`;
         return {
           id: `team:${value.id}`,

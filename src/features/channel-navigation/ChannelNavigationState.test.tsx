@@ -100,7 +100,6 @@ it("resets transient handoffs and rejects retired callbacks on session replaceme
   const view = mount(h.relay);
   act(() => {
     view.result.current?.prepareDm(["peer"]);
-    view.result.current?.updateDraftParents(() => ["parent"]);
     view.result.current.openLifecycle(
       { id: "channel", name: "Channel" },
       "leave",
@@ -124,14 +123,11 @@ it("resets transient handoffs and rejects retired callbacks on session replaceme
   expect(view.result.current.lifecycleDialog).toBeUndefined();
   expect(view.result.current.activityThread.current).toBeUndefined();
   expect(view.result.current.activityAgent.current).toBeUndefined();
-  expect(view.result.current.draftParents).toEqual(["parent"]);
   act(() => {
     retired.prepareDm(["late"]);
-    retired.updateDraftParents(() => ["late"]);
     retired.openLifecycle({ id: "late", name: "Late" }, "leave");
   });
   expect(view.result.current.preparingDm).toBeUndefined();
-  expect(view.result.current.draftParents).toEqual(["parent"]);
   expect(view.result.current.lifecycleDialog).toBeUndefined();
 });
 

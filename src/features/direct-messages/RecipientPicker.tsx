@@ -17,6 +17,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
+import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -61,32 +62,10 @@ export function RecipientPicker({
   );
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
-  const existing = new Set<string>();
-  const dms = new Map<string, string>();
-  const interacted = new Set<string>();
-  const shared = new Set<string>();
-  for (const channel of session.channels.list().channels) {
-    for (const pubkey of channel.members ?? []) shared.add(pubkey);
-    if (channel.channelType !== "dm") continue;
-    for (const pubkey of channel.participants ?? []) interacted.add(pubkey);
-    if (channel.participants?.length === 1) {
-      const pubkey = channel.participants[0];
-      if (pubkey) {
-        existing.add(pubkey);
-        dms.set(pubkey, channel.id);
-      }
-    }
-  }
-  const relationshipRank = (person: Recipient) =>
-    existing.has(person.pubkey)
-      ? 0
-      : interacted.has(person.pubkey)
-        ? 1
-        : controlled.has(person.pubkey)
-          ? 2
-          : shared.has(person.pubkey)
-            ? 3
-            : 4;
+  const relationships = peopleRelationships(
+    session.channels.list().channels,
+    controlled,
+  );
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
   // The shared name rule, the same as mentions: whole name, start of name,
@@ -154,13 +133,13 @@ export function RecipientPicker({
   const order = (person: Recipient) => {
     if (!needle) return 0;
     const key = personKey(person.pubkey);
-    const dm = dms.get(person.pubkey);
+    const dm = relationships.dm(person.pubkey);
     return searchOrder(usage, picked, {
       key,
       rank: Math.min(
         ...namesOf(person).map((name) => matchPerson(name, needle)?.tier ?? 3),
       ),
-      band: relationshipRank(person),
+      band: relationships.rank(person.pubkey),
       usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
     });
   };

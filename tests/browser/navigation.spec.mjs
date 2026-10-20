@@ -1,3 +1,4 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -39,12 +40,10 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const sections = page.getByRole("navigation", { name: "Settings sections" });
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
-  const pairingEnabled = page.getByRole("switch", {
-    name: "Enable Pair mobile",
-    exact: true,
-  });
-  if (!(await pairingEnabled.isChecked())) await pairingEnabled.click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  await setPluginEnabled(page, "Pair mobile", true);
   const pairing = sections.getByRole("button", {
     name: "Pair mobile",
     exact: true,
@@ -52,8 +51,10 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await expect(pairing).toBeVisible();
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
-  await pairingEnabled.click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  await setPluginEnabled(page, "Pair mobile", false);
   await expect(pairing).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(

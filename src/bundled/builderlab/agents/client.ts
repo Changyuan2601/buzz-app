@@ -216,7 +216,10 @@ export function createAgentClient(
       throw new Error("Set up your Buzz identity before creating an agent.");
     const credential = session.credential();
     const bound = boundKey(await identityRequest("current", {}, signal));
-    if (bound === key) return;
+    if (bound === key) {
+      backupLinkedIdentity();
+      return;
+    }
     // Never replace another key's binding; unlinking is the account owner's choice.
     if (bound) throw new Error(LINK_ERRORS.identity_already_bound);
     const challenge = await identityRequest(
@@ -247,6 +250,13 @@ export function createAgentClient(
     );
     if (boundKey(verified) !== key)
       throw new Error("Builderlab did not confirm your Buzz identity link.");
+    backupLinkedIdentity();
+  }
+  function backupLinkedIdentity() {
+    if (nativeIdentityEnabled())
+      void invoke("nsec_backup_retry", { source: "builderlab" }).catch(
+        () => {},
+      );
   }
   async function activate(
     pubkey: string,
@@ -312,6 +322,37 @@ export function createAgentClient(
         [2, "DISABLED"].includes(status)
           ? "Agent deletion is disabled on this server."
           : "Agent deletion was not confirmed. Retry Delete.",
+      );
+    },
+    /** Stops the agent's turn in one conversation. False when nothing there
+     * was running. */
+    async cancelTurn(
+      agent: Pick<RemoteAgent, "id">,
+      place: Readonly<{
+        community: string;
+        channelId: string;
+        threadRootId: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<boolean> {
+      const result = await request(
+        "cancel-agent-turn",
+        {
+          agent_id: agent.id,
+          // Beekeeper keys conversations by the community's host.
+          community: new URL(place.community).host,
+          channel_id: place.channelId,
+          thread_root_event_id: place.threadRootId,
+        },
+        signal,
+      );
+      const status = resultStatus(result.status);
+      if ([1, "CANCELLING"].includes(status)) return true;
+      if ([2, "RUNNING", 3, "FOUND"].includes(status)) return false;
+      throw new Error(
+        typeof result.message === "string" && result.message
+          ? result.message
+          : "Builderlab did not stop the agent. Try again.",
       );
     },
     async register(

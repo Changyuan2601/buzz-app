@@ -1,5 +1,5 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { knownAgentPubkeys } from "../../features/agents/known";
 import {
@@ -31,7 +31,7 @@ export function outsideMentionDetail(
 
 /** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
 export function mentionCandidates(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],

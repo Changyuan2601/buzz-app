@@ -270,6 +270,57 @@ it.each([
   if (error) await expect(deleting).rejects.toThrow(error);
   else await expect(deleting).resolves.toBeUndefined();
 });
+const turn = {
+  community: "wss://agent.example:4443",
+  channelId: "channel-1",
+  threadRootId: "root-1",
+};
+it("asks Builderlab to cancel the agent's turn in one conversation by its community host", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(response({ status: 1 }));
+  await h.client.cancelTurn(remoteAgent, turn, h.signal);
+  expect(h.host.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/cancel-agent-turn",
+      method: "POST",
+      body: JSON.stringify({
+        agent_id: row.agent_id,
+        community: "agent.example:4443",
+        channel_id: "channel-1",
+        thread_root_event_id: "root-1",
+      }),
+    }),
+  );
+});
+it.each([
+  [1, true],
+  ["CANCEL_AGENT_TURN_STATUS_CANCELLING", true],
+  [2, false],
+  ["CANCEL_AGENT_TURN_STATUS_NOTHING_RUNNING", false],
+  [3, false],
+  ["CANCEL_AGENT_TURN_STATUS_NOT_FOUND", false],
+])(
+  "reports whether a turn was running for cancel status %s",
+  async (status, running) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValue(response({ status }));
+    expect(await h.client.cancelTurn(remoteAgent, turn, h.signal)).toBe(
+      running,
+    );
+  },
+);
+it.each([
+  [{ status: 4, message: "Provider is busy." }, "Provider is busy."],
+  [{ status: "CANCEL_AGENT_TURN_STATUS_FAILED" }, "did not stop the agent"],
+  [{ status: 0, message: "" }, "did not stop the agent"],
+  [{}, "did not stop the agent"],
+])("fails to cancel a turn for response %j", async (result, error) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(response(result));
+  await expect(
+    h.client.cancelTurn(remoteAgent, turn, h.signal),
+  ).rejects.toThrow(error);
+});
 it("registers with a saved UUID and submits the supplied owner proof", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)

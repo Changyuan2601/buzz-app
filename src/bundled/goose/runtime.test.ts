@@ -55,15 +55,16 @@ const message = (
 /** A runtime for one agent of Alice's in `channel`, with fake goose. */
 function setup(
   options: Readonly<{
-    /** Channels filed in the owner's Me; the owner is the viewer. */
-    me?: Set<string>;
-    channelType?: "stream" | "session";
+    /** Channels that are the owner's own Solo chats; the owner is the viewer. */
+    solo?: Set<string>;
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
     scope?: "thread" | "channel";
     /** The agent's `core` memory as the host keeps it. */
     core?: string | null;
+    /** The channel's Canvas. */
+    canvas?: string;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -91,8 +92,7 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType:
-              options.channelType ?? (options.me ? "session" : "stream"),
+            channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
           },
         ],
@@ -103,18 +103,31 @@ function setup(
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
     },
-    mePlacement: {
-      state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.mePlacement.state,
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => !!options.me?.has(id),
+    canvas: {
+      available: options.canvas !== undefined,
+      read: vi.fn(async () =>
+        options.canvas === undefined
+          ? null
+          : {
+              pubkey: alice,
+              kind: 40100,
+              created_at: 1,
+              tags: [],
+              content: options.canvas,
+            },
+      ),
     },
   };
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
-  const runtime = new GooseRuntime(host, () => relay, core);
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const runtime = new GooseRuntime(host, () => relay, core, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -161,13 +174,12 @@ function setup(
     published,
     read,
     runtime,
-    placement: session.mePlacement,
     memoryOpen: session.agentMemories.open,
   };
 }
 
 describe("GooseRuntime", () => {
-  it("continues an owner's Me chat as one channel session posted at the top level", async () => {
+  it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
     const earlier = message("1", "Earlier in the chat", {
       tags: [["h", channel]],
     });
@@ -181,7 +193,7 @@ describe("GooseRuntime", () => {
       ],
     });
     const { agent, deliver, goose, published, read } = setup({
-      me: new Set([channel]),
+      solo: new Set([channel]),
       hold: true,
       thread: [earlier],
     });
@@ -226,6 +238,33 @@ describe("GooseRuntime", () => {
         ["p", alice],
       ],
     ]);
+  });
+
+  it("hands the host a stopper that cancels the mention's running turn", async () => {
+    const { deliver, goose } = setup({ hold: true });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await deliver(message("1", "@Gander hi"), { interruptible });
+    await flush(100);
+    expect(interruptible).toHaveBeenCalledTimes(1);
+    const process = goose();
+    expect(process?.cancelled).toEqual([]);
+    await interruptible.mock.calls[0]?.[0]();
+    await flush(100);
+    expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
+  });
+
+  it("tells a subscriber when a new conversation's first turn starts working", async () => {
+    const { deliver, goose, runtime } = setup({ hold: true });
+    // As a view does: each notification reads the snapshot again.
+    runtime.subscribe(() => void runtime.sessions(self));
+    expect(runtime.sessions(self)).toEqual([]);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect(goose()?.turns).toHaveLength(1);
+    expect(runtime.sessions(self)).toMatchObject([{ busy: true }]);
+    goose()?.turns[0]?.finish();
+    await flush(100);
+    expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
   });
 
   it("posts a channel session's burst once, in the latest message's thread", async () => {
@@ -278,7 +317,7 @@ describe("GooseRuntime", () => {
     expect(memoryOpen).not.toHaveBeenCalled();
   });
 
-  it("posts goose's own text in the thread, or at a Me chat's top level", async () => {
+  it("posts goose's own text in the thread, or at a Solo chat's top level", async () => {
     const plain = setup({ reply: "Plain answer" });
     await plain.deliver(message("1", "@Gander hi"));
     await flush(100);
@@ -288,10 +327,12 @@ describe("GooseRuntime", () => {
         ["e", "1".repeat(64), "", "reply"],
       ],
     ]);
-    const me = setup({ reply: "Plain answer", me: new Set([channel]) });
-    await me.deliver(message("1", "@Gander hi"));
+    const solo = setup({ reply: "Plain answer", solo: new Set([channel]) });
+    await solo.deliver(message("1", "@Gander hi"));
     await flush(100);
-    expect(me.published.map((event) => event.tags)).toEqual([[["h", channel]]]);
+    expect(solo.published.map((event) => event.tags)).toEqual([
+      [["h", channel]],
+    ]);
   });
 
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
@@ -301,26 +342,6 @@ describe("GooseRuntime", () => {
     ).resolves.toEqual({ ok: true });
     expect(goose()?.turns.map((turn) => turn.text)).toEqual([
       standalonePrompt(self, "Post the daily summary."),
-    ]);
-  });
-
-  it("keeps a converted stream threaded despite the owner's retained Me entry", async () => {
-    const { deliver, goose, placement, published } = setup({
-      me: new Set([channel]),
-      channelType: "stream",
-      reply: "Converted answer",
-    });
-    // Verified ordinary metadata does not depend on private filing reads.
-    placement.state = { status: "error", error: "Recipe read failed" };
-    await deliver(message("1", "@Gander converted"));
-    await flush(100);
-    expect(goose()?.turns[0]?.text).toContain("Scope: thread");
-    expect(placement.refresh).not.toHaveBeenCalled();
-    expect(published.map((event) => event.tags)).toEqual([
-      [
-        ["h", channel],
-        ["e", "1".repeat(64), "", "reply"],
-      ],
     ]);
   });
 
@@ -354,6 +375,48 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it.each(["", "openai"])(
+    "refreshes inherited defaults without replacing explicit provider %s",
+    async (provider) => {
+      const { agent, deliver, fake, runtime } = setup();
+      runtime.sync([
+        {
+          ...agent,
+          config: { ...DEFAULT_CONFIG, provider },
+        } as unknown as Agent,
+      ]);
+      const first = message("1", "@Gander first");
+      await deliver(first);
+      await flush(100);
+      runtime.defaultsChanged();
+      await deliver(
+        message("2", "@Gander next", {
+          tags: [
+            ["h", channel],
+            ["e", first.id, "", "reply"],
+            ["p", self],
+          ],
+        }),
+      );
+      await flush(100);
+      expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+        "session-1",
+        provider ? "session-1" : "session-2",
+      ]);
+    },
+  );
+
+  it("runs a mention on the agent's thinking level", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander think"), {
+      config: { ...DEFAULT_CONFIG, effort: "max" },
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=max",
+    ]);
+  });
+
   it("runs a mention on the model its owner picked", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander hi"), {
@@ -385,19 +448,6 @@ describe("GooseRuntime", () => {
     await flush(30);
     expect(goose?.killed).toBe(true);
     expect(fake.geese).toHaveLength(1);
-  });
-
-  it("fails a session mention it cannot place until the placement can be read", async () => {
-    const { deliver, fake, placement, published } = setup({
-      channelType: "session",
-    });
-    placement.state = { status: "error", error: "Recipe read failed" };
-    await expect(deliver(message("1", "@Gander hi"))).rejects.toThrow(
-      "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
-    );
-    expect(placement.refresh).toHaveBeenCalledOnce();
-    expect(fake.geese).toEqual([]);
-    expect(published).toEqual([]);
   });
 });
 
@@ -510,3 +560,24 @@ function slowMemories(viewer: string) {
     () => true,
   ).capability;
 }
+
+it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+  const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
+  await solo.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(solo.goose()?.turns[0]?.text).toContain(
+    "<workspace-canvas>\nThis Solo chat's Canvas",
+  );
+  expect(solo.goose()?.turns[0]?.text).toContain("Use tokens.");
+  // A cleared Canvas replaces it with an explicit "none".
+  const cleared = setup({ solo: new Set([channel]), canvas: "" });
+  await cleared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(cleared.goose()?.turns[0]?.text).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+  const shared = setup({ canvas: "Steer me" });
+  await shared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});

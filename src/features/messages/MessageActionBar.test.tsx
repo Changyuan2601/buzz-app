@@ -22,6 +22,9 @@ import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboa
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
 import { MessageActionBar } from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { createPortal } from "react-dom";
+import { MessageLink } from "../conversation/MessageLink";
+import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -32,6 +35,13 @@ function Row(props: ComponentProps<typeof MessageActionBar>) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
+      <span>Message author</span>
+      <div data-message-action-anchor>
+        <span>Message bubble</span>
+      </div>
+      <div data-message-attachments>
+        <span>Message attachment</span>
+      </div>
       <MessageActionBar {...props} rowRef={rowRef} />
     </div>
   );
@@ -43,6 +53,13 @@ function KeyboardModality({ children }: { children: ReactNode }) {
 }
 
 function pointerMedia(matches = true) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const listeners = new Set<() => void>();
   const query = {
     matches,
@@ -58,6 +75,76 @@ function pointerMedia(matches = true) {
       for (const listener of listeners) listener();
     });
 }
+
+it("leaves portalled message content outside its context-menu target", () => {
+  render(
+    <MessageActionBar copyText={() => "Message"}>
+      <div>
+        <button type="button">Expand coordination</button>
+        {createPortal(
+          <button type="button">Viewer content</button>,
+          document.body,
+        )}
+      </div>
+    </MessageActionBar>,
+  );
+  const viewer = screen.getByRole("button", { name: "Viewer content" });
+  expect(
+    fireEvent.contextMenu(viewer, { clientX: 20, clientY: 20, button: 2 }),
+  ).toBe(true);
+  fireEvent.keyDown(viewer, { key: "F10", shiftKey: true });
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it.each([
+  ["external", "{Shift>}{F10}{/Shift}"],
+  ["external", "{ContextMenu}"],
+  ["thread", "{Shift>}{F10}{/Shift}"],
+  ["thread", "{ContextMenu}"],
+])(
+  "leaves a nested %s link's %s menu to the link owner",
+  async (kind, keys) => {
+    const user = userEvent.setup();
+    render(
+      <LinkThreadTabContext value={() => true}>
+        <MessageActionBar copyText={() => "Message"}>
+          <div>
+            <button type="button">Coordination</button>
+            <MessageLink
+              url={
+                kind === "external"
+                  ? "https://example.com/context"
+                  : `buzz://message?channel=alpha&id=${"a".repeat(64)}`
+              }
+              label="Nested destination"
+              registry={undefined}
+              onOpenLink={() => true}
+            />
+          </div>
+        </MessageActionBar>
+      </LinkThreadTabContext>,
+    );
+    const link = screen.getByRole("link", { name: "Nested destination" });
+    link.focus();
+    await user.keyboard(keys);
+    await screen.findByRole("menuitem", {
+      name: kind === "external" ? "Open in browser" : "Open link",
+    });
+    expect(screen.getAllByRole("menu", { hidden: true })).toHaveLength(1);
+    expect(screen.queryByRole("menuitem", { name: "Copy message" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(link));
+    const row = screen.getByRole("button", { name: "Coordination" });
+    row.focus();
+    await user.keyboard(keys);
+    await screen.findByRole("menuitem", { name: "Copy message" });
+    expect(screen.getAllByRole("menu", { hidden: true })).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  },
+);
 
 it("defers desktop controls until row interaction and retains them after leaving", () => {
   pointerMedia();
@@ -81,6 +168,110 @@ it("defers desktop controls until row interaction and retains them after leaving
   expect(
     screen.getByRole("button", { name: "More message actions", hidden: true }),
   ).toBe(trigger);
+});
+
+it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
+  pointerMedia();
+  render(
+    <StrictMode>
+      <Row copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  const row = screen.getByTestId("message");
+  // First entry prepares the lazy controls without revealing them over whitespace.
+  fireEvent.pointerEnter(row);
+  const bar = screen.getByRole("group", { hidden: true });
+  fireEvent.pointerLeave(row);
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerOver(row);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  for (const content of ["Message bubble", "Message attachment"]) {
+    const target = screen.getByText(content);
+    fireEvent.pointerOver(target, { relatedTarget: row });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.pointerOut(target, { relatedTarget: bar });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.pointerOver(bar, { relatedTarget: target });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.pointerOut(bar, { relatedTarget: row });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  }
+  fireEvent.pointerOver(screen.getByText("Message author"));
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+});
+
+it("keeps reaction hover separate from message actions without losing keyboard access", async () => {
+  pointerMedia();
+  function ReactionRow() {
+    const rowRef = useRef<HTMLDivElement>(null);
+    return (
+      <div ref={rowRef} data-testid="message">
+        <span data-message-action-anchor>Message body</span>
+        <MessageActionBar rowRef={rowRef} copyText={() => "Message body"} />
+        <div data-message-reactions>
+          <button type="button">Existing reaction</button>
+          <button type="button">Add reaction</button>
+        </div>
+        <div>
+          <span data-message-reactions>
+            <button type="button">First reaction</button>
+          </span>
+          <span>Unused reaction space</span>
+        </div>
+      </div>
+    );
+  }
+  render(<ReactionRow />);
+  const row = screen.getByTestId("message");
+  const body = screen.getByText("Message body");
+  const reaction = screen.getByRole("button", { name: "Existing reaction" });
+  const plus = screen.getByRole("button", { name: "Add reaction" });
+  // The first entry mounts deferred controls; jsdom cannot retain native :hover.
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerOver(body);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(body, { relatedTarget: reaction });
+  fireEvent.pointerOver(reaction, { relatedTarget: body });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOut(reaction, { relatedTarget: plus });
+  fireEvent.pointerOver(plus, { relatedTarget: reaction });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOut(plus, { relatedTarget: body });
+  fireEvent.pointerOver(body, { relatedTarget: plus });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  const actions = screen.getByRole("group", { hidden: true });
+  fireEvent.pointerOut(body, { relatedTarget: actions });
+  fireEvent.pointerOver(actions, { relatedTarget: body });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(actions, { relatedTarget: document.body });
+  fireEvent.pointerLeave(row);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerOver(reaction);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOver(screen.getByRole("button", { name: "First reaction" }));
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOver(screen.getByText("Unused reaction space"));
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOver(reaction);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  document.documentElement.setAttribute("data-keyboard-navigation", "");
+  try {
+    act(() => reaction.focus());
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More message actions",
+        hidden: true,
+      }),
+    );
+    await screen.findByRole("menu");
+    fireEvent.pointerOver(reaction);
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  } finally {
+    document.documentElement.removeAttribute("data-keyboard-navigation");
+  }
 });
 
 it("prepares untouched rows synchronously for Tab navigation and leaves new pointer rows deferred", () => {

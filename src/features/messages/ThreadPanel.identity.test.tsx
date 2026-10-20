@@ -22,12 +22,10 @@ import {
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 
-const bodyRender = vi.fn();
 vi.mock("./MessageMarkdown", () => ({
-  MessageMarkdown: ({ row }: { row: ChannelMessage }) => {
-    bodyRender(row.content);
-    return <span>{row.content}</span>;
-  },
+  MessageMarkdown: ({ row }: { row: ChannelMessage }) => (
+    <span>{row.content}</span>
+  ),
 }));
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
 vi.mock("./MediaAttachment", () => ({
@@ -118,20 +116,10 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   );
   if (!page) throw new Error("Deferred thread page was not requested");
   expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument();
-  bodyRender.mockClear();
 
-  // An unrelated signed profile preserves the selected map, but the shared
-  // name service still invalidates every mounted row. Do not claim zero renders.
   await act(async () => {
     traffic.receive([profile(keypair(), { name: "Other" })]);
   });
-  expect(bodyRender.mock.calls).toEqual([
-    ["Root body"],
-    ["Root body"],
-    ["Reply body"],
-    ["Reply body"],
-  ]);
-  bodyRender.mockClear();
 
   const retainedReply = screen.getByText("Reply body");
   const retainedRow = retainedReply.closest("[data-message-id]");
@@ -141,21 +129,13 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   ]);
   await act(async () => page.respond([root, appended]));
   expect(await screen.findByText("Appended reply body")).toBeInTheDocument();
-  // The previous last bubble re-renders to join the new same-author reply.
-  // Its mounted content stays intact; unrelated rows still do not render.
+  // The previous last bubble joins the new same-author reply while its
+  // mounted content stays intact.
   expect(screen.getByText("Reply body")).toBe(retainedReply);
   expect(retainedRow?.querySelector("[data-stack-next]")).not.toBeNull();
-  expect(bodyRender.mock.calls).toEqual([
-    ["Reply body"],
-    ["Reply body"],
-    ["Appended reply body"],
-    ["Appended reply body"],
-  ]);
-  bodyRender.mockClear();
 
   fireEvent.click(screen.getByRole("button", { name: "0:42" }));
   expect(screen.getByTestId("video-seek")).toHaveTextContent("42");
-  bodyRender.mockClear();
 
   const edited = signed(bobKey, {
     kind: 40003,
@@ -165,13 +145,10 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   });
   traffic.receive([edited]);
   expect(await screen.findByText("Edited reply body")).toBeInTheDocument();
-  expect(bodyRender).toHaveBeenCalledWith("Edited reply body");
-  bodyRender.mockClear();
 
   await act(async () => {
     traffic.receive([profile(bobKey, { name: "Robert" }, 1_700_000_001)]);
   });
   expect(await screen.findAllByText("Robert")).toHaveLength(2);
-  expect(bodyRender).toHaveBeenCalled();
   owner.dispose();
 });

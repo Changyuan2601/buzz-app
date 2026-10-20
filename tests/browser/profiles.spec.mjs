@@ -528,7 +528,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     name: /^Open profile for Viewer/,
     includeHidden: true,
   });
-  const memberRow = row.locator("xpath=ancestor::li");
+  const memberRow = row.locator("xpath=ancestor::li[1]");
   const name = memberRow.getByText("Viewer (you)", { exact: true });
   await expect(name).toBeVisible();
   const npub = memberRow.locator('[aria-hidden="true"].text-mono');

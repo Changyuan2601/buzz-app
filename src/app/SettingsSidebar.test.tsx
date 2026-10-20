@@ -26,7 +26,7 @@ vi.stubGlobal(
   },
 );
 
-it("keeps Administration separate and uses each card's navigation icon", () => {
+it("keeps Community admin separate and uses each card's navigation icon", () => {
   const client = {
     selected: "primary",
     memberships: [{ id: "primary", name: "Primary" }],
@@ -89,7 +89,7 @@ it("keeps Administration separate and uses each card's navigation icon", () => {
 
   const membership = screen.getByRole("button", { name: "Membership" });
   expect(membership).toHaveAttribute("aria-current", "page");
-  expect(membership.closest("section")).toHaveTextContent("Administration");
+  expect(membership.closest("section")).toHaveTextContent("Community admin");
   expect(membership.closest("section")).not.toHaveTextContent("Primary");
   expect(membership.querySelector("svg")).toHaveClass("tabler-icon-copy");
   expect(
@@ -139,7 +139,7 @@ it.each([null, "primary"])(
     });
     expect(profile).toHaveAttribute("aria-current", "page");
     expect(profile.closest("section")).toHaveTextContent(
-      selected ? "Primary" : "App",
+      selected ? "Primary" : "Personal space",
     );
     await userEvent.setup().click(profile);
     expect(onSection).toHaveBeenCalledWith("profile");

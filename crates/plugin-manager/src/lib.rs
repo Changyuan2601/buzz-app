@@ -229,6 +229,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/mesh-compute/manifest.json"
         ))
         .expect("mesh manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
+            .expect("huddles manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
@@ -236,6 +238,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/mermaid/manifest.json"))
+            .expect("bundled mermaid manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
@@ -260,21 +264,17 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/channel-usage/manifest.json"
-        ))
-        .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/me/manifest.json"))
-            .expect("Me manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
+        serde_json::from_str(include_str!("../../../src/bundled/usage/manifest.json"))
+            .expect("usage manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
@@ -290,8 +290,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
-            .expect("sessions manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/hosted-communities/manifest.json"
         ))
@@ -314,27 +312,26 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.mesh-compute"
             | "buzz.feedback"
             | "buzz.diffs"
+            | "buzz.mermaid"
             | "buzz.identity-naming"
             | "buzz.agent-activity"
-            | "buzz.channel-usage"
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"
             | "buzz.mentions"
             | "buzz.voice-notes"
+            | "buzz.huddles"
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
-            | "buzz.me"
             | "buzz.inbox"
             | "buzz.reminders"
-            | "buzz.projects"
+            | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "buzz.sessions"
             | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
@@ -884,9 +881,21 @@ impl Manager {
         self.catalog()
     }
     pub fn reload(&self, id: &str) -> Result<Catalog> {
-        self.reload_with_commit_hook(id, || {})
+        self.reload_with_commit_hook(id, false, || {})
     }
-    fn reload_with_commit_hook(&self, id: &str, before_commit: impl FnOnce()) -> Result<Catalog> {
+    /// Reload a folder installation without changing its enabled state.
+    /// An enabled plugin is replaced by the app's catalog observer.
+    /// Changed host access is accepted without review, so this is for the
+    /// operator's CLI; Settings uses `reload`, which keeps the review step.
+    pub fn reload_live(&self, id: &str) -> Result<Catalog> {
+        self.reload_with_commit_hook(id, true, || {})
+    }
+    fn reload_with_commit_hook(
+        &self,
+        id: &str,
+        live: bool,
+        before_commit: impl FnOnce(),
+    ) -> Result<Catalog> {
         valid_id(id)?;
         if is_bundled(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
@@ -898,7 +907,7 @@ impl Manager {
                 .installed
                 .get(id)
                 .ok_or("Plugin is not installed")?;
-            if plugin.enabled {
+            if plugin.enabled && !live {
                 return Err("Disable the plugin before reloading it from disk".into());
             }
             let source = plugin
@@ -932,8 +941,9 @@ impl Manager {
             }
             grants
         };
-        if effective_grants(manifest.host.clone().unwrap_or_default())
-            != effective_grants(snapshot.3)
+        if !live
+            && effective_grants(manifest.host.clone().unwrap_or_default())
+                != effective_grants(snapshot.3)
         {
             return Err("Host access changed; use Load from folder to review it".into());
         }
@@ -946,7 +956,7 @@ impl Manager {
                 .installed
                 .get_mut(id)
                 .ok_or("Plugin is not installed")?;
-            if plugin.enabled {
+            if plugin.enabled && !live {
                 return Err("Disable the plugin before reloading it from disk".into());
             }
             if plugin.current != snapshot.0 || plugin.current_source.as_ref() != Some(&snapshot.1) {
@@ -1945,6 +1955,26 @@ mod tests {
     }
 
     #[test]
+    fn huddles_are_available_on_desktop_and_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "huddles-test", false).unwrap();
+        let huddles = || {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.huddles")
+                .expect("Desktop must expose the Huddles plugin")
+        };
+        assert!(huddles().enabled);
+        manager.change("disable", "buzz.huddles").unwrap();
+        assert!(!huddles().enabled);
+        manager.change("enable", "buzz.huddles").unwrap();
+        assert!(huddles().enabled);
+    }
+
+    #[test]
     fn optional_plugins_default_off_and_preserve_explicit_overrides() {
         let id = "buzz.todos";
         let temp = tempfile::tempdir().unwrap();
@@ -2113,7 +2143,7 @@ mod tests {
             .clone();
         fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
 
-        let error = match manager.reload_with_commit_hook("example.page", || {
+        let error = match manager.reload_with_commit_hook("example.page", false, || {
             manager.change("enable", "example.page").unwrap();
         }) {
             Ok(_) => panic!("reload should reject an enabled plugin at commit"),

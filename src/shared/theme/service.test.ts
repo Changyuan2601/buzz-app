@@ -1,4 +1,10 @@
-import { BUBBLE_COLOR_KEY, BUBBLE_COLORS } from "./bubble-color";
+import {
+  ACCENTS,
+  ACCENT_KEY,
+  COLOR_LEVELS,
+  COLOR_LEVEL_KEY,
+  LEGACY_BUBBLE_KEY,
+} from "./accent";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
@@ -106,8 +112,10 @@ it.each([
       error: null,
       fontScale: 1,
       fontError: null,
-      bubbleColor: "neutral",
-      bubbleError: null,
+      accent: "chartreuse",
+      accentError: null,
+      colorLevel: "touch",
+      colorLevelError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -283,51 +291,120 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
   expect(app.snapshot().fontScale).toBe(1);
 });
 
-it.each<[string, string]>([
-  ...BUBBLE_COLORS.map((color): [string, string] => [color, color]),
-  ["cyan", "blue"],
-  ["indigo", "blue"],
-  ["red", "pink"],
-  ["purple", "lilac"],
-  ["invalid", "neutral"],
-  ["#ffffff", "neutral"],
+it.each<[string, string | null, string]>([
+  ...ACCENTS.map((color): [string, null, string] => [color, null, color]),
+  ["invalid", null, "chartreuse"],
+  ["purple", null, "chartreuse"],
+  ["neutral", null, "chartreuse"],
+  // The saved accent wins over the former bubble color.
+  ["iris", "blue", "iris"],
 ])(
-  "restores bubble color %s as %s before and after startup",
-  (value, expected) => {
+  "restores accent %s (bubble %s) as %s before and after startup",
+  (value, bubble, expected) => {
     const b = browser();
-    b.values.set(BUBBLE_COLOR_KEY, value);
+    b.values.set(ACCENT_KEY, value);
+    if (bubble) b.values.set(LEGACY_BUBBLE_KEY, bubble);
     runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
       localStorage: b.storage,
       document: b.host.document,
       matchMedia: b.host.matchMedia,
     });
-    const initial = b.root.dataset.bubbleColor;
+    const initial = b.root.dataset.accent;
     const app = createAppearance(b.host);
     expect(initial).toBe(expected);
-    expect(app.snapshot().bubbleColor).toBe(expected);
-    expect(b.root.dataset.bubbleColor).toBe(initial);
+    expect(app.snapshot().accent).toBe(expected);
+    expect(b.root.dataset.accent).toBe(initial);
     app.dispose();
   },
 );
-it("saves bubble color, recovers from denied storage, synchronizes reset, and disposes", () => {
+it.each<[string | null, string]>([
+  [null, "chartreuse"],
+  ["blue", "cobalt"],
+  ["cyan", "cobalt"],
+  ["indigo", "cobalt"],
+  ["green", "jade"],
+  ["orange", "flame"],
+  ["pink", "magenta"],
+  ["red", "magenta"],
+  ["lilac", "iris"],
+  ["purple", "iris"],
+  // The former "Default" bubble now means the new default accent.
+  ["neutral", "chartreuse"],
+  ["#ffffff", "chartreuse"],
+])("carries a former bubble color %s over as accent %s", (bubble, expected) => {
+  const b = browser();
+  if (bubble) b.values.set(LEGACY_BUBBLE_KEY, bubble);
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  const initial = b.root.dataset.accent;
+  const app = createAppearance(b.host);
+  expect(initial).toBe(expected);
+  expect(app.snapshot().accent).toBe(expected);
+  app.dispose();
+});
+it("saves the accent, recovers from denied storage, synchronizes reset, and disposes", () => {
   const b = browser();
   const app = createAppearance(b.host);
   b.storage.setItem.mockImplementationOnce(() => {
     throw new Error("denied");
   });
-  app.setBubbleColor("blue");
-  expect(b.root.dataset.bubbleColor).toBe("blue");
-  expect(app.snapshot().bubbleError).not.toBeNull();
-  app.setBubbleColor("blue");
-  expect(b.values.get(BUBBLE_COLOR_KEY)).toBe("blue");
-  expect(app.snapshot().bubbleError).toBeNull();
-  b.values.set(BUBBLE_COLOR_KEY, "purple");
-  b.change(BUBBLE_COLOR_KEY);
-  expect(app.snapshot().bubbleColor).toBe("lilac");
-  b.values.delete(BUBBLE_COLOR_KEY);
+  app.setAccent("cobalt");
+  expect(b.root.dataset.accent).toBe("cobalt");
+  expect(app.snapshot().accentError).not.toBeNull();
+  app.setAccent("cobalt");
+  expect(b.values.get(ACCENT_KEY)).toBe("cobalt");
+  expect(app.snapshot().accentError).toBeNull();
+  b.values.set(ACCENT_KEY, "iris");
+  b.change(ACCENT_KEY);
+  expect(app.snapshot().accent).toBe("iris");
+  b.values.delete(ACCENT_KEY);
   b.change(null);
-  expect(app.snapshot().bubbleColor).toBe("neutral");
+  expect(app.snapshot().accent).toBe("chartreuse");
   app.dispose();
-  app.setBubbleColor("pink");
-  expect(b.root.dataset.bubbleColor).toBe("neutral");
+  app.setAccent("magenta");
+  expect(b.root.dataset.accent).toBe("chartreuse");
+});
+
+it.each<[string | null, string]>([
+  ...COLOR_LEVELS.map((level): [string, string] => [level, level]),
+  [null, "touch"],
+  ["loud", "touch"],
+])(
+  "restores color amount %s as %s before and after startup",
+  (value, expected) => {
+    const b = browser();
+    if (value) b.values.set(COLOR_LEVEL_KEY, value);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    expect(b.root.dataset.colorLevel).toBe(expected);
+    const app = createAppearance(b.host);
+    expect(app.snapshot().colorLevel).toBe(expected);
+    expect(b.root.dataset.colorLevel).toBe(expected);
+    app.dispose();
+  },
+);
+it("saves the color amount, recovers from denied storage, and follows other windows", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("denied");
+  });
+  app.setColorLevel("full");
+  expect(b.root.dataset.colorLevel).toBe("full");
+  expect(app.snapshot().colorLevelError).not.toBeNull();
+  app.setColorLevel("full");
+  expect(b.values.get(COLOR_LEVEL_KEY)).toBe("full");
+  expect(app.snapshot().colorLevelError).toBeNull();
+  b.values.set(COLOR_LEVEL_KEY, "touch");
+  b.change(COLOR_LEVEL_KEY);
+  expect(b.root.dataset.colorLevel).toBe("touch");
+  app.dispose();
+  app.setColorLevel("full");
+  expect(b.root.dataset.colorLevel).toBe("touch");
 });

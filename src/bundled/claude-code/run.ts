@@ -1,5 +1,6 @@
 // The part of the Claude agent type that runs agents, without its views: the
 // desktop app registers it with its tabs, and a standalone host runs it alone.
+import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 import type { AgentType } from "../../features/agents/service";
 import type { ClaudeRuntime, Config } from "./runtime";
 
@@ -12,7 +13,10 @@ const HANDOVER_MS = 2 * 60_000;
 export const claudeRun = (
   runtime: ClaudeRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+> => ({
   models: (agent) => runtime.models(agent.pubkey),
   run: async (delivery) => {
     await ready?.(delivery.signal);
@@ -23,4 +27,8 @@ export const claudeRun = (
     return runtime.runOnce(turn);
   },
   timeoutMs: HANDOVER_MS,
+  syncedSettings: {
+    schema: syncedSettingsSchema,
+    withSynced: withSyncedSettings,
+  },
 });

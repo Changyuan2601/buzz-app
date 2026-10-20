@@ -74,3 +74,22 @@ it.each(["inline", "compact", "preference"] as const)(
     );
   },
 );
+
+it("keeps the setting label available while disabling a preference control", () => {
+  render(
+    <Select
+      label="Model"
+      variant="preference"
+      value="one"
+      disabled
+      groups={[{ label: "", options: [{ value: "one", label: "One" }] }]}
+      onValueChange={() => {}}
+    />,
+  );
+  const trigger = screen.getByRole("combobox", { name: "Model" });
+  expect(trigger).toBeDisabled();
+  const row = trigger.closest(".buzz-preference-row");
+  expect(row).not.toBeNull();
+  expect(row).not.toHaveAttribute("data-disabled");
+  expect(row?.querySelector(".buzz-preference-row-label")).toBeVisible();
+});

@@ -61,21 +61,50 @@ test("editable composer renders links and mentions while preserving source and n
         (locator) =>
           locator.evaluate((element) => {
             const style = getComputedStyle(element);
+            const role = (value, property) => {
+              const probe = document.createElement("span");
+              probe.style[property] = value;
+              element.parentElement?.append(probe);
+              const resolved = getComputedStyle(probe)[property];
+              probe.remove();
+              return resolved;
+            };
             return {
               color: style.color,
+              background: style.backgroundColor,
+              ink: role("var(--text-mention)", "color"),
+              tint: role("var(--affordance-mention)", "backgroundColor"),
               paddingBlock: [style.paddingTop, style.paddingBottom],
               height: element.getBoundingClientRect().height,
             };
           }),
       ),
     );
+    // Mentions are people, not destinations: ink on a neutral chip, with the
+    // same inline geometry as the link beside them.
     for (const mentionStyle of inlineStyles.slice(1)) {
-      expect(mentionStyle.color).toBe(inlineStyles[0].color);
+      expect(mentionStyle.color).toBe(mentionStyle.ink);
+      expect(mentionStyle.background).toBe(mentionStyle.tint);
+      expect(mentionStyle.color).not.toBe(inlineStyles[0].color);
       expect(mentionStyle.paddingBlock).toEqual(inlineStyles[0].paddingBlock);
       expect(
         Math.abs(mentionStyle.height - inlineStyles[0].height),
       ).toBeLessThan(1);
     }
+    // The resting chip fill must not mask the shared hover fill.
+    const hovered = deliveredMentions.nth(0);
+    const hoverFill = await hovered.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--affordance-mention-hover)";
+      element.parentElement?.append(probe);
+      const resolved = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return resolved;
+    });
+    expect(hoverFill).not.toBe(inlineStyles[1].background);
+    await hovered.hover();
+    await expect(hovered).toHaveCSS("background-color", hoverFill);
+    await page.mouse.move(0, 0);
     await expect(preview.getByRole("link")).toHaveCount(0);
     await expect(preview.getByRole("button")).toHaveCount(0);
 

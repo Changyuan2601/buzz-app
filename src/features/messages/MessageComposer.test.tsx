@@ -70,9 +70,9 @@ import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
-import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
-import { entityHref } from "../projects/routes";
-import type { Entity, ProjectHome } from "../projects/destinations";
+import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
+import { entityHref } from "../repos/routes";
+import type { Entity, RepositoryHome } from "../repos/destinations";
 
 composerDOMFixture();
 
@@ -80,6 +80,17 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+/** The mounted channel listed as a Solo chat. */
+const soloList = {
+  status: "ready" as const,
+  channels: [
+    {
+      id: "channel",
+      channelType: "solo" as const,
+      members: [first.pubkey, second.pubkey],
+    },
+  ],
+};
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -219,6 +230,8 @@ function mount(
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
   const rawSession = {
+    // Full-session fixture; the detached editor intentionally omits this capability.
+    unread: undefined,
     viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -306,25 +319,26 @@ function mount(
       },
     },
   ];
-  let props: MessageComposerProps = {
-    session,
-    onSend,
-    scope: "scope",
-    channelId: "channel",
-    channelName: "General",
-    extensions: {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => inline, subscribe: () => () => {} },
-      completions: {
-        snapshot: () => completions,
-        subscribe(listener) {
-          completionListeners.add(listener);
-          return () => completionListeners.delete(listener);
+  let props: Omit<MessageComposerProps, "session"> & { session: RelaySession } =
+    {
+      session,
+      onSend,
+      scope: "scope",
+      channelId: "channel",
+      channelName: "General",
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => inline, subscribe: () => () => {} },
+        completions: {
+          snapshot: () => completions,
+          subscribe(listener) {
+            completionListeners.add(listener);
+            return () => completionListeners.delete(listener);
+          },
         },
       },
-    },
-    ...options,
-  };
+      ...options,
+    } as Omit<MessageComposerProps, "session"> & { session: RelaySession };
   const bindChoices = () => {
     const library = props.session.agentLibrary;
     props = {
@@ -407,7 +421,11 @@ function mount(
         for (const listener of completionListeners) listener();
       });
     },
-    retarget(next: Partial<MessageComposerProps>) {
+    retarget(
+      next: Partial<
+        Omit<MessageComposerProps, "session"> & { session: RelaySession }
+      >,
+    ) {
       const changedSession =
         (next.session !== undefined && next.session !== props.session) ||
         (next.scope !== undefined && next.scope !== props.scope);
@@ -421,9 +439,12 @@ function mount(
         for (const listener of profileListeners) listener();
       });
     },
-    setLibrary(identities: AgentLibrarySnapshot["identities"]) {
+    setLibrary(
+      identities: AgentLibrarySnapshot["identities"],
+      status: AgentLibrarySnapshot["status"] = "ready",
+    ) {
       act(() => {
-        library = { ...library, identities };
+        library = { ...library, identities, status };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -520,6 +541,23 @@ it("shows a local draft in the cached composer without completion, typing or tra
   }
 });
 
+it("an explicit focus request resumes after the draft's retained mention", () => {
+  writeView("scope", "draft:channel", {
+    text: "@Honey existing prose",
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount({ autoFocus: false });
+  act(() => h.input().setSelectionRange(0, 0));
+  h.retarget({ focusRequest: 1 });
+  expect(h.input()).toHaveFocus();
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([21, 21]);
+  act(() => h.input().setSelectionRange(7, 7));
+  h.retarget({ channelName: "Renamed" });
+  expect(h.input().selectionStart).toBe(7);
+  h.retarget({ focusRequest: 2 });
+  expect(h.input().selectionStart).toBe(21);
+});
+
 it("autofocuses each selected conversation once without stealing focus on updates", () => {
   const h = mount({ autoFocus: true });
   expect(h.input()).toHaveFocus();
@@ -537,6 +575,47 @@ it("autofocuses each selected conversation once without stealing focus on update
   } finally {
     other.remove();
   }
+});
+
+it("defers initial focus until a loading conversation enables its composer", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("does not redo initial focus when a focused composer is disabled and enabled again", () => {
+  writeView("scope", "draft:channel", "Saved draft");
+  const h = mount({ autoFocus: true });
+  act(() => h.input().setSelectionRange(1, 4));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(4);
+});
+
+it("does not take focus when the composer is enabled after another control takes it", () => {
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    other.focus();
+    h.retarget({ disabled: false });
+    expect(other).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("does not take focus when the composer is enabled after a control that took focus unmounts", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  const other = document.createElement("button");
+  document.body.append(other);
+  other.focus();
+  other.remove();
+  expect(document.activeElement).toBe(document.body);
+  h.retarget({ disabled: false });
+  expect(h.input()).not.toHaveFocus();
 });
 
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
@@ -564,6 +643,23 @@ it("does not reclaim startup focus after another control takes it", async () => 
   } finally {
     document.body.removeAttribute("inert");
     other.remove();
+  }
+});
+
+it("does not reclaim startup focus after a control that took focus unmounts", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    other.remove();
+    expect(document.activeElement).toBe(document.body);
+    document.body.removeAttribute("inert");
+    await act(async () => {}); // Observer callback runs as a microtask.
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
   }
 });
 
@@ -597,6 +693,20 @@ it.each([
     expect(owner).toHaveFocus();
   } finally {
     owner.remove();
+  }
+});
+
+it("takes focus from a row whose hover preview is open when the conversation mounts", () => {
+  const row = document.createElement("button");
+  row.setAttribute("data-popup-open", "");
+  row.setAttribute("data-popup-preview", "");
+  document.body.append(row);
+  try {
+    row.focus();
+    const h = mount({ autoFocus: true });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    row.remove();
   }
 });
 
@@ -975,12 +1085,15 @@ async function mountUploadComposer(
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
+    profiles?: readonly RelayEvent[];
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
     agents?: Agents;
     /** Channel members besides the viewer; only members can be mentioned. */
     members?: readonly string[];
+    defaultMention?: MessageComposerProps["defaultMention"];
+    requireMention?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1017,6 +1130,8 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return [...(options.profiles ?? [])];
         if (
           filters.some((filter) => filter.kinds?.includes(30030)) &&
           options.emojiRead
@@ -1071,6 +1186,8 @@ async function mountUploadComposer(
         scope={scope}
         channelId="channel"
         channelName="General"
+        defaultMention={options.defaultMention}
+        requireMention={options.requireMention}
         {...(options.extensions ? { extensions: options.extensions } : {})}
         {...(options.threadRootId
           ? { threadRootId: options.threadRootId }
@@ -1192,42 +1309,60 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
 
-it("restores a failed background upload into the composer with Desktop's toast", async () => {
-  const h = await mountUploadComposer();
-  attachByPaste(h.input(), attachmentFile("metadata.txt"));
-  await waitFor(() =>
-    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
-  );
-  await userEvent.type(h.input(), "caption");
+it.each([false, true])(
+  "restores failed background upload before inserting any next-draft default (default=%s)",
+  async (tagged) => {
+    const agent = { pubkey: "b".repeat(64), name: "Honey" };
+    const h = await mountUploadComposer(
+      tagged
+        ? {
+            members: [agent.pubkey],
+            defaultMention: agent,
+            requireMention: true,
+          }
+        : {},
+    );
+    if (tagged) await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    attachByPaste(h.input(), attachmentFile("metadata.txt"));
+    await waitFor(() =>
+      expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+    );
+    // jsdom cannot place a pointer caret around the inserted chip. Exercise
+    // keyboard continuation at the editor's own end without a synthetic click.
+    const editor = screen.getByRole<ComposerInputElement>("textbox");
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await userEvent.type(h.input(), "caption", { skipClick: true });
 
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  await act(async () => {
-    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
-  });
-  await waitFor(() =>
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+    });
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").map((node) => node.textContent),
+      ).toEqual([UPLOAD_FAILURES.metadata]),
+    );
     expect(
-      screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([UPLOAD_FAILURES.metadata]),
-  );
-  expect(
-    screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
-  ).toBeVisible();
-  expect(h.input()).toHaveValue("caption");
-  expect(h.publish).not.toHaveBeenCalled();
+      screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue(tagged ? "@Honey caption" : "caption");
+    expect(h.publish).not.toHaveBeenCalled();
 
-  fireEvent.keyDown(
-    screen.getByRole("button", { name: "Retry metadata.txt" }),
-    { key: "Delete" },
-  );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Retry metadata.txt" }),
+      { key: "Delete" },
+    );
 
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(
-      within(h.form()).queryByText("metadata.txt"),
-    ).not.toBeInTheDocument(),
-  );
-});
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(h.form()).queryByText("metadata.txt"),
+      ).not.toBeInTheDocument(),
+    );
+  },
+);
 
 // Remounting after the failure covers the usual leave-and-return case: the
 // recovery lands with no mounted listener and must wait for the composer.
@@ -2765,25 +2900,6 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
-it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
-  const h = mount();
-  await h.user.type(h.input(), "```");
-  expect(h.input().querySelector("pre > code")).not.toBeNull();
-  expect(h.input()).toHaveValue("");
-  expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
-  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
-  await h.user.keyboard("{Enter}");
-  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
-    "channel",
-    "```\nconst answer = 42;\nanswer\n```",
-    [],
-    [],
-  );
-  expect(h.input()).toHaveValue("");
-  expect(h.input().querySelector("pre")).toBeNull();
-});
-
 it.each([
   ["- ", "ul", "- first\n- second"],
   ["3. ", "ol", "3. first\n4. second"],
@@ -3070,16 +3186,6 @@ it("subscribes to emoji changes and releases the subscription when unmounted", (
   expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(0);
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
-});
-
-it("enlarges Unicode-only drafts and restores normal text presentation", () => {
-  const h = mount();
-  for (const draft of ["😀", "😀 🙏 👏", "😀 🙏 👏 😄"]) {
-    h.fill(draft);
-    expect(h.input()).toHaveAttribute("data-single-emoji", "true");
-    h.fill(`${draft} hello`);
-    expect(h.input()).not.toHaveAttribute("data-single-emoji");
-  }
 });
 
 it.each([undefined, "root"])(
@@ -3776,7 +3882,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
       archives: { state: () => "not-archived" },
-      workSessions: {
+      channelWrites: {
         refreshMembership: vi.fn(async () => {
           if (operations[0]?.delivery === "accepted")
             channel.members = [...channel.members, first.pubkey];
@@ -3886,7 +3992,7 @@ it.each([false, true])(
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
       archives: { state: () => "not-archived" },
-      workSessions: { refreshMembership: async () => list.channels[0] },
+      channelWrites: { refreshMembership: async () => list.channels[0] },
       outbox: {
         supports: () => true,
         send: add,
@@ -3928,27 +4034,16 @@ it.each([false, true])(
   },
 );
 
-it.each(
-  ["send", "unmount", "disabled", "denied"].flatMap((outcome) =>
-    ["mention", "text-and-mention"].flatMap((recipient) =>
-      [true, false].map((parent) => ({
-        outcome,
-        recipient,
-        parent,
-      })),
-    ),
-  ),
-)(
-  "waits for agent admission before saved session messages: $recipient / $outcome / parent=$parent",
-  async ({ outcome, recipient, parent }) => {
+it.each(["send", "unmount", "disabled", "denied"])(
+  "waits for agent admission before saved Solo chat messages: %s",
+  async (outcome) => {
     const view = mount();
     const list = {
       status: "ready",
       channels: [
         {
           id: "channel",
-          channelType: "session",
-          ...(parent ? { parentChannelId: "parent" } : {}),
+          channelType: "solo",
           members: [] as string[],
         },
       ],
@@ -3976,25 +4071,16 @@ it.each(
         refresh: async () => {},
         retain: () => () => {},
       },
-      workSessions: {
+      channelWrites: {
         addAgents,
         refreshMembership: vi.fn(async () => list.channels[0]),
       },
     } as unknown as RelaySession;
-    view.retarget({ session, sessionConversation: true });
+    view.retarget({ session, soloConversation: true });
     expect(view.commands().inviteAgents).toBe(true);
-    if (recipient === "mention") {
-      await view.user.click(
-        screen.getByRole("button", { name: "First Honey" }),
-      );
-    } else {
-      await view.user.type(view.input(), "Hello Honey ");
-      await view.user.click(
-        screen.getByRole("button", { name: "First Honey" }),
-      );
-    }
+    await view.user.click(screen.getByRole("button", { name: "First Honey" }));
     expect(addAgents).not.toHaveBeenCalled();
-    expect(session.workSessions.refreshMembership).not.toHaveBeenCalled();
+    expect(session.channelWrites.refreshMembership).not.toHaveBeenCalled();
     expect(view.messages.send).not.toHaveBeenCalled();
     view.submit();
     await waitFor(() =>
@@ -4026,12 +4112,12 @@ it.each(
     [false, true].map((removeMention) => ({ root, removeMention })),
   ),
 )(
-  "resolves a sole session agent before send/reply: root=$root, removed=$removeMention",
+  "resolves a sole Solo chat agent before send/reply: root=$root, removed=$removeMention",
   async ({ root, removeMention }) => {
     const view = mount();
     const channel = {
       id: "channel",
-      channelType: "session" as const,
+      channelType: "solo" as const,
       members: [first.pubkey],
     };
     const list = { status: "ready" as const, channels: [channel] };
@@ -4049,14 +4135,14 @@ it.each(
         subscribe: () => () => {},
         refresh: vi.fn(async () => {}),
       },
-      workSessions: {
+      channelWrites: {
         refreshMembership: vi.fn(async () => channel),
         addAgents: vi.fn(async () => {}),
       },
     } as unknown as RelaySession;
     view.retarget({
       session,
-      sessionConversation: true,
+      soloConversation: true,
       ...(root ? { threadRootId: root } : {}),
     });
     view.fill("Keep going ");
@@ -4072,7 +4158,7 @@ it.each(
         "Remove explicit mention of Honey (aaaaaaaa)",
       );
       await view.user.click(remove);
-      expect(view.input()).toHaveValue("Keep going @Honey ");
+      expect(view.input()).toHaveValue("@Honey Keep going ");
       expect(view.input().querySelector(".inline-chip")).toBeNull();
       expect(
         screen.queryByRole("region", { name: "Explicit mentions" }),
@@ -4088,29 +4174,29 @@ it.each(
       expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
         "channel",
         root,
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );
-    expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+    expect(session.channelWrites.addAgents).not.toHaveBeenCalled();
   },
 );
 
-it("requires explicit recipients when an ordinary session has multiple agents", async () => {
+it("requires explicit recipients when an ordinary Solo chat has multiple agents", async () => {
   const view = mount();
   const list = {
     status: "ready",
     channels: [
       {
         id: "channel",
-        channelType: "session",
+        channelType: "solo",
         members: [first.pubkey, second.pubkey],
       },
     ],
@@ -4118,12 +4204,12 @@ it("requires explicit recipients when an ordinary session has multiple agents", 
   const session = {
     ...view.session,
     channels: { list: () => list, subscribeList: () => () => {} },
-    workSessions: {
+    channelWrites: {
       refreshMembership: vi.fn(async () => list.channels[0]),
       addAgents: vi.fn(async () => {}),
     },
   } as unknown as RelaySession;
-  view.retarget({ session, sessionConversation: true });
+  view.retarget({ session, soloConversation: true });
   expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
   await view.user.click(screen.getByRole("button", { name: "First Honey" }));
   view.submit();
@@ -4135,7 +4221,7 @@ it("requires explicit recipients when an ordinary session has multiple agents", 
       [],
     ),
   );
-  expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+  expect(session.channelWrites.addAgents).not.toHaveBeenCalled();
 });
 
 it.each(["ready", "failed", "unmounted"])(
@@ -4144,7 +4230,7 @@ it.each(["ready", "failed", "unmounted"])(
     const view = mount();
     const channel = {
       id: "channel",
-      channelType: "session",
+      channelType: "solo",
       members: [first.pubkey],
     };
     const list = { status: "ready", channels: [channel] };
@@ -4164,9 +4250,9 @@ it.each(["ready", "failed", "unmounted"])(
       ...view.session,
       channels: { list: () => list, subscribeList: () => () => {} },
       agentLibrary: { snapshot: () => library, subscribe: () => () => {} },
-      workSessions: { refreshMembership, addAgents },
+      channelWrites: { refreshMembership, addAgents },
     } as unknown as RelaySession;
-    view.retarget({ session, sessionConversation: true });
+    view.retarget({ session, soloConversation: true });
     await view.user.click(screen.getByRole("button", { name: "First Honey" }));
     view.submit();
     await waitFor(() =>
@@ -4189,11 +4275,11 @@ it.each(["ready", "failed", "unmounted"])(
   },
 );
 
-it("keeps retry submission available while a new-session draft is locked", () => {
+it("keeps retry submission available while a new Solo draft is locked", () => {
   const submit = vi.fn();
   const h = mount({
     submission: {
-      draftKey: "session-retry",
+      draftKey: "solo-retry",
       initialDraft: "Keep this operation",
       locked: true,
       disabled: false,
@@ -4205,10 +4291,13 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   const send = screen.getByRole("button", { name: "Send message" });
   expect(send).toBeEnabled();
   fireEvent.click(send);
-  expect(submit).toHaveBeenCalledWith({
-    text: "Keep this operation",
-    recipients: [],
-  });
+  expect(submit).toHaveBeenCalledWith(
+    {
+      text: "Keep this operation",
+      recipients: [],
+    },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+  );
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
@@ -4292,11 +4381,19 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   expect(h.input()).toHaveValue("");
 });
 
-it("uses Me's selected assistant for plain follow-ups while explicit mentions override it", async () => {
+it("tags a Berd draft with the default agent once and needs a tag to send", async () => {
+  const submit = vi.fn();
   const h = mount({
-    personalConversation: true,
-    sessionConversation: true,
-    selectedAgent: second.pubkey,
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit,
+    },
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    defaultMention: { pubkey: second.pubkey, name: "Selected" },
   });
   h.setLibrary([
     { pubkey: first.pubkey, name: "Explicit" },
@@ -4308,59 +4405,39 @@ it("uses Me's selected assistant for plain follow-ups while explicit mentions ov
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  const channel = {
-    id: "channel",
-    channelType: "session" as const,
-    members: [first.pubkey, second.pubkey],
-  };
+  // A Solo chat: personal sends are admitted while its label holds.
   Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => channel),
-      addAgents: vi.fn(async () => {}),
+    channels: {
+      ...h.session.channels,
+      list: () => soloList,
     },
   });
-
-  h.fill("plain follow-up");
+  // The default agent arrives in the empty draft as an ordinary tag.
+  await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
+  const send = screen.getByRole("button", { name: "Send message" });
+  // Removing the tag is respected: no re-tag, and Enter explains even an empty draft.
+  h.fill("");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
+  h.fill("no agent here");
+  expect(h.input()).toHaveValue("no agent here");
+  // Enter and native form submission obey the same rule, not just the button.
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
   h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
-  expect(h.input()).toHaveValue("");
-
-  h.fill("override");
+  expect(submit).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("no agent here");
+  // Still focusable, so its tooltip explains why.
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await userEvent.hover(send);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Tag an agent to send",
+  );
+  await userEvent.unhover(send);
   act(() => {
     h.commands().insertMention(first);
   });
-  h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
-  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
-  expect(h.input()).toHaveValue("");
-});
-
-it("keeps a Me draft when its selected assistant is unavailable", async () => {
-  const h = mount({
-    personalConversation: true,
-    sessionConversation: true,
-    selectedAgent: second.pubkey,
-  });
-  Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => ({
-        id: "channel",
-        channelType: "session" as const,
-        members: [],
-      })),
-      addAgents: vi.fn(async () => {}),
-    },
-  });
-  h.fill("keep this draft");
-  h.submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "selected assistant is no longer available",
-  );
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("keep this draft");
+  expect(send).not.toHaveAttribute("aria-disabled");
 });
 
 it.each([
@@ -5412,14 +5489,14 @@ it("sends someone outside a DM as a reference without asking", async () => {
   expect(add).not.toHaveBeenCalled();
 });
 
-it("does not ask about outside recipients in a session media-comment composer", async () => {
-  // Media comments mount the composer with a thread root but without session
-  // mode, so the session rule must come from the channel type.
+it("does not ask about outside recipients in a Solo chat media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without Solo
+  // mode, so the Solo rule must come from the channel type.
   const h = mount({ threadRootId: "f".repeat(64) });
   const add = vi.fn();
   const channel = {
     id: "channel",
-    channelType: "session",
+    channelType: "solo",
     members: [first.pubkey, second.pubkey],
   };
   const list = { status: "ready", channels: [channel] };
@@ -5432,7 +5509,7 @@ it("does not ask about outside recipients in a session media-comment composer", 
     h.commands().insertMention(first);
     h.commands().insertMention(second);
   });
-  // The first person leaves the session after being named.
+  // The first person leaves the chat after being named.
   channel.members = [second.pubkey];
   fireEvent.submit(screen.getByRole("form"));
   await act(async () => {});
@@ -5792,7 +5869,7 @@ it("sends a resource between mentions and keeps both after a failed send", () =>
   ]);
 });
 
-describe("project resource picker", () => {
+describe("repository resource picker", () => {
   const empty: readonly never[] = [];
   const repository = {
     type: "repo",
@@ -5802,13 +5879,6 @@ describe("project resource picker", () => {
     name: "Game repo",
     description: "",
     event: {} as never,
-  } satisfies Entity;
-  const project = {
-    ...repository,
-    type: "project",
-    dtag: "proj",
-    address: `30621:${resourceOwner}:proj`,
-    name: "Proj",
   } satisfies Entity;
   const item = {
     id: resourceRoute.id,
@@ -5824,9 +5894,9 @@ describe("project resource picker", () => {
   const row = /^Fix login, Issue in Game repo$/;
   function picker(
     home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
-      Promise.resolve({ status: "home", project }),
+      Promise.resolve({ status: "home", repositories: [repository] }),
     issues: readonly (typeof item)[] = [item],
-    cached?: ProjectHome,
+    cached?: RepositoryHome,
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -5834,10 +5904,9 @@ describe("project resource picker", () => {
     const validations: AbortSignal[] = [];
     const load = vi.fn(
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
-        if (route.type === "project")
+        if (route.type === "repo")
           return Promise.resolve({
             items: route.tab === "prs" ? [] : issues,
-            repositories: [repository],
             truncated: route.tab === "prs",
           });
         validations.push(signal);
@@ -5849,7 +5918,7 @@ describe("project resource picker", () => {
     );
     const homes = vi.fn(home);
     Object.assign(h.session as object, {
-      projects: {
+      repositories: {
         home: homes,
         load,
         peekHome: (channelId: string) =>
@@ -5859,8 +5928,8 @@ describe("project resource picker", () => {
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "resources",
-        key: "projects/resources",
-        pluginId: "projects",
+        key: "repos/resources",
+        pluginId: "repos",
         revision: "1",
         title: "Issues and pull requests",
         component: ResourcePicker,
@@ -5876,6 +5945,7 @@ describe("project resource picker", () => {
     return {
       h,
       homes,
+      load,
       validations,
       release: async () => {
         await act(async () => {
@@ -5897,6 +5967,26 @@ describe("project resource picker", () => {
       },
     };
   }
+
+  it("searches every channel repository and deduplicates shared items", async () => {
+    const second = {
+      ...repository,
+      dtag: "other",
+      address: `30617:${resourceOwner}:other`,
+    };
+    const p = picker(
+      () =>
+        Promise.resolve({ status: "home", repositories: [repository, second] }),
+      [{ ...item, tags: [...item.tags, ["a", second.address]] }],
+    );
+    await p.open();
+    await screen.findByRole("button", { name: row });
+    expect(screen.getAllByRole("button", { name: row })).toHaveLength(1);
+    expect(
+      p.load.mock.calls.filter(([route]) => route.type === "repo"),
+    ).toHaveLength(4);
+    expect(p.homes).toHaveBeenCalledWith("channel", expect.any(AbortSignal));
+  });
 
   it("validates the chosen row, inserts it, closes and leaves focus in the draft", async () => {
     const p = picker();
@@ -6133,7 +6223,7 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
-  it("does not show a PR action while checking a new channel's project", async () => {
+  it("does not show a PR action while checking a new channel's repository", async () => {
     const pending: {
       channelId: string;
       resolve(value: unknown): void;
@@ -6153,25 +6243,30 @@ describe("project resource picker", () => {
     };
     try {
       await waitFor(() => expect(p.homes).toHaveBeenCalled());
-      expect(screen.getByText("Loading project…")).toBeInTheDocument();
+      expect(screen.getByText("Loading repositories…")).toBeInTheDocument();
       expect(trigger()).toBeNull();
-      await finish("channel", { status: "home", project });
+      await finish("channel", { status: "home", repositories: [repository] });
       expect(trigger()).toBeEnabled();
-      p.h.retarget({ channelId: "no-project", channelName: "Other" });
+      p.h.retarget({ channelId: "no-repository", channelName: "Other" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "no-project")).toBe(
+        expect(pending.some((read) => read.channelId === "no-repository")).toBe(
           true,
         ),
       );
       expect(trigger()).toBeNull();
-      await finish("no-project", { status: "none" });
+      await finish("no-repository", { status: "none" });
       expect(trigger()).toBeNull();
-      p.h.retarget({ channelId: "project", channelName: "Project" });
+      p.h.retarget({ channelId: "repository", channelName: "Repository" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "project")).toBe(true),
+        expect(pending.some((read) => read.channelId === "repository")).toBe(
+          true,
+        ),
       );
       expect(trigger()).toBeNull();
-      await finish("project", { status: "home", project });
+      await finish("repository", {
+        status: "home",
+        repositories: [repository],
+      });
       expect(trigger()).toBeEnabled();
     } finally {
       await act(async () => {
@@ -6180,7 +6275,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("keeps a chat without a project free of the PR button after closing formatting", async () => {
+  it("keeps a chat without a repository free of the PR button after closing formatting", async () => {
     const pending: ((value: unknown) => void)[] = [];
     const p = picker(() => new Promise((resolve) => pending.push(resolve)));
     await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6220,7 +6315,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
+  it("hides only for no repository, and explains failure with a retry", async () => {
     const none = picker(() => Promise.resolve({ status: "none" }));
     await waitFor(() => expect(none.homes).toHaveBeenCalled());
     await act(async () => {});
@@ -6234,28 +6329,34 @@ describe("project resource picker", () => {
         ? new Promise((resolve) => {
             resolveHome = resolve;
           })
-        : Promise.resolve({ status: "ambiguous" }),
+        : Promise.reject(new Error("offline")),
     );
     await ambiguous.open();
     expect(
-      await screen.findByText(/belongs to more than one project/),
+      await screen.findByText(/Could not load this channel’s repositories/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: row })).toBeNull();
-    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    // Failure is recoverable: once the connection is restored, retry rereads.
     resolveHome = () => {};
     await ambiguous.h.user.click(
-      screen.getByRole("button", { name: "Retry project" }),
+      screen.getByRole("button", { name: "Retry repositories" }),
     );
-    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Loading repositories…"),
+    ).toBeInTheDocument();
     await act(async () => {
-      resolveHome?.({ status: "home", project });
+      resolveHome?.({ status: "home", repositories: [repository] });
     });
     expect(await screen.findByRole("button", { name: row })).toBeVisible();
-    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
+    expect(
+      screen.queryByText(/Could not load this channel’s repositories/),
+    ).toBeNull();
     cleanup();
     const failed = picker(() => Promise.reject(new Error("offline")));
     await failed.open();
-    const retry = await screen.findByRole("button", { name: "Retry project" });
+    const retry = await screen.findByRole("button", {
+      name: "Retry repositories",
+    });
     const reads = failed.homes.mock.calls.length;
     await failed.h.user.click(retry);
     await waitFor(() =>
@@ -6264,17 +6365,17 @@ describe("project resource picker", () => {
   });
 
   it.each(["formatting", "channel"])(
-    "keeps a known project visible but unusable after %s remount, then preserves ambiguity and retry",
+    "keeps a known repository visible but unusable after %s remount, then preserves failure and retry",
     async (action) => {
-      const reads: ReturnType<typeof deferred<ProjectHome>>[] = [];
+      const reads: ReturnType<typeof deferred<RepositoryHome>>[] = [];
       const p = picker(
         () => {
-          const read = deferred<ProjectHome>();
+          const read = deferred<RepositoryHome>();
           reads.push(read);
           return read.promise;
         },
         undefined,
-        { status: "home", project },
+        { status: "home", repositories: [repository] },
       );
       const trigger = () =>
         screen.getByRole("button", { name: "Add issue or pull request" });
@@ -6283,7 +6384,8 @@ describe("project resource picker", () => {
         expect(trigger()).toBeVisible();
         expect(trigger()).toBeDisabled();
         await act(async () => {
-          for (const read of reads) read.resolve({ status: "home", project });
+          for (const read of reads)
+            read.resolve({ status: "home", repositories: [repository] });
         });
         expect(trigger()).toBeEnabled();
         if (action === "formatting") {
@@ -6325,20 +6427,20 @@ describe("project resource picker", () => {
         expect(
           screen.queryByRole("dialog", { name: "Add issue or pull request" }),
         ).toBeNull();
-        await act(async () => reads.at(-1)?.resolve({ status: "ambiguous" }));
+        await act(async () => reads.at(-1)?.reject(new Error("offline")));
         await p.open();
         expect(
-          await screen.findByText(/belongs to more than one project/),
+          await screen.findByText(/Could not load this channel’s repositories/),
         ).toBeVisible();
         expect(screen.queryByRole("button", { name: row })).toBeNull();
         await p.h.user.click(
-          screen.getByRole("button", { name: "Retry project" }),
+          screen.getByRole("button", { name: "Retry repositories" }),
         );
         expect(
           screen.queryByRole("button", { name: "Add issue or pull request" }),
         ).toBeNull();
         await act(async () =>
-          reads.at(-1)?.resolve({ status: "home", project }),
+          reads.at(-1)?.resolve({ status: "home", repositories: [repository] }),
         );
         expect(await screen.findByRole("button", { name: row })).toBeVisible();
         p.h.retarget({ channelId: "other" });
@@ -6356,13 +6458,13 @@ describe("project resource picker", () => {
     },
   );
 
-  it.each(["none", "ambiguous", "error"] as const)(
-    "a warm project is replaced by the completed %s state",
+  it.each(["none", "error"] as const)(
+    "a warm repository is replaced by the completed %s state",
     async (outcome) => {
-      const read = deferred<ProjectHome>();
+      const read = deferred<RepositoryHome>();
       const p = picker(() => read.promise, undefined, {
         status: "home",
-        project,
+        repositories: [repository],
       });
       try {
         await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6380,14 +6482,10 @@ describe("project resource picker", () => {
         } else {
           await p.open();
           expect(
-            screen.getByText(
-              outcome === "ambiguous"
-                ? /belongs to more than one project/
-                : /Could not load this channel's project/,
-            ),
+            screen.getByText(/Could not load this channel’s repositories/),
           ).toBeVisible();
           expect(
-            screen.getByRole("button", { name: "Retry project" }),
+            screen.getByRole("button", { name: "Retry repositories" }),
           ).toBeEnabled();
           expect(screen.queryByRole("button", { name: row })).toBeNull();
         }
@@ -6712,7 +6810,7 @@ it.each([false, true])(
       );
       expect(localStorage.getItem(key)).toBeNull();
       expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
-      // Failed absence-only cleanup must not leave a session recovery lock.
+      // Failed absence-only cleanup must not leave a Solo draft recovery lock.
       h.retarget({ channelId: "other" });
       h.retarget({ channelId: "channel" });
       h.fill("After remount");
@@ -6905,30 +7003,33 @@ it("does not apply ordinary draft reconciliation to submission-owned recovery", 
   const submit = vi.fn();
   const h = mount({
     submission: {
-      draftKey: "session-retry",
+      draftKey: "solo-retry",
       recoveredDraft: { text: "Durable operation", recipients: [] },
       locked: true,
       disabled: false,
       submit,
     },
   });
-  act(() => writeView("scope", "session-retry", "Disposable view state"));
+  act(() => writeView("scope", "solo-retry", "Disposable view state"));
   expect(h.input()).toHaveValue("Durable operation");
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  expect(submit).toHaveBeenCalledExactlyOnceWith({
-    text: "Durable operation",
-    recipients: [],
-  });
+  expect(submit).toHaveBeenCalledExactlyOnceWith(
+    {
+      text: "Durable operation",
+      recipients: [],
+    },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+  );
   expect(
     screen.queryByRole("button", { name: "Load saved draft" }),
   ).not.toBeInTheDocument();
 });
 
-it("rechecks the saved revision after held session admission before submitting", async () => {
+it("rechecks the saved revision after held Solo chat admission before submitting", async () => {
   const h = mount();
   const channel = {
     id: "channel",
-    channelType: "session",
+    channelType: "solo",
     members: [first.pubkey],
   };
   const list = { status: "ready", channels: [channel] };
@@ -6941,7 +7042,7 @@ it("rechecks the saved revision after held session admission before submitting",
       }),
   );
   h.retarget({
-    sessionConversation: true,
+    soloConversation: true,
     session: {
       ...h.session,
       channels: { list: () => list, subscribeList: () => () => {} },
@@ -6949,7 +7050,7 @@ it("rechecks the saved revision after held session admission before submitting",
         snapshot: () => library,
         subscribe: () => () => {},
       },
-      workSessions: { refreshMembership, addAgents: vi.fn() },
+      channelWrites: { refreshMembership, addAgents: vi.fn() },
     } as unknown as RelaySession,
   });
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
@@ -7048,42 +7149,6 @@ it.each(["disabled", "retarget", "unmount"])(
   },
 );
 
-it("rechecks session setup before publishing after a background upload", async () => {
-  const channelId = "22222222-2222-4222-8222-222222222222";
-  const h = mount({ channelId });
-  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
-  const upload = vi.fn(() => gate.promise);
-  h.rerender(
-    <ToastProvider>
-      <MessageComposer
-        session={{ ...h.session, attachments: { upload } }}
-        scope="scope"
-        channelId={channelId}
-        channelName="General"
-      />
-    </ToastProvider>,
-  );
-  h.fill("Keep this draft");
-  fireEvent.change(screen.getByLabelText("Choose attachments"), {
-    target: { files: [new NodeFile(["notes"], "notes.txt")] },
-  });
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Send a message to General" }),
-  );
-  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
-  writeView("scope", "sessions:section:work:pending", {
-    id: channelId,
-    text: "Original start",
-    creationId: "c".repeat(64),
-    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
-  });
-  await act(async () => gate.resolve(uploadDescriptor()));
-  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.messages.reply).not.toHaveBeenCalled();
-  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
-});
-
 it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
   const empty: readonly never[] = [];
   const tools: readonly Contribution<ComposerTool>[] = [
@@ -7169,59 +7234,36 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("marks the composer for conversation controls only while they render", () => {
-  const h = mount(
-    { trailingTool: <button type="button">Tool</button> },
-    undefined,
-    first.pubkey,
-  );
-  const form = () => h.container.querySelector("form");
-  expect(form()).toHaveAttribute("data-conversation-controls");
-  h.setRows([editableMessage()]);
-  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-  expect(form()).toHaveAttribute("data-editing");
-  expect(form()).not.toHaveAttribute("data-conversation-controls");
-  h.unmount();
-});
-
-it("marks the leading tools while explicit recipients are shown", async () => {
-  const h = mount();
-  expect(h.container.querySelector("[data-recipients]")).toBeNull();
-  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  const region = screen.getByRole("region", { name: "Explicit mentions" });
-  const tools = region.parentElement;
-  expect(tools).toHaveAttribute("data-recipients");
-  await h.user.click(
-    within(region).getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
-  expect(
-    screen.queryByRole("region", { name: "Explicit mentions" }),
-  ).not.toBeInTheDocument();
-  expect(tools).not.toHaveAttribute("data-recipients");
-  h.unmount();
-});
-
-it("marks the composer with attachments until the emptied section has animated out", async () => {
-  // jsdom applies no CSS module styles, so the gap/padding this attribute
-  // drives cannot be measured here; the attribute's timeline is asserted.
-  const h = await mountUploadComposer();
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("notes.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  const section = screen.getByRole("region", { name: "Attachments" });
-  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
-  // The list is empty but the section is still exiting: keep the mark.
-  expect(section).toBeInTheDocument();
-  expect(h.form()).toHaveAttribute("data-attachments");
-  await waitFor(() => expect(section).not.toBeInTheDocument());
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("again.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
-});
+it.each([false, true])(
+  "retains a companion draft until owner admission settles (reject=%s)",
+  async (reject) => {
+    const h = mount();
+    const gate = deferred<string>();
+    Reflect.deleteProperty(h.session, "unread");
+    const send = vi.fn(() => gate.promise);
+    Object.assign(h.session.messages, { send });
+    h.fill("Keep until acknowledged");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(h.input()).toHaveValue("Keep until acknowledged");
+    expect(h.onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () => {
+      if (reject) gate.reject(new Error("Owner rejected this send"));
+      else gate.resolve("admitted");
+    });
+    if (reject) {
+      expect(h.input()).toHaveValue("Keep until acknowledged");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Owner rejected this send",
+      );
+      expect(h.onSend).not.toHaveBeenCalled();
+    } else {
+      expect(h.input()).toHaveValue("");
+      expect(h.onSend).toHaveBeenCalledWith("admitted");
+    }
+  },
+);
 
 it("drops the attachments mark while a row-requested edit holds pending items", async () => {
   // Arrow-up refuses to edit over pending items; the row's Edit action does not.
@@ -7263,4 +7305,369 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   expect(form).not.toHaveAttribute("data-editing");
   expect(form).toHaveAttribute("data-attachments");
   expect(within(view.container).getByText("pending.txt")).toBeVisible();
+});
+
+it("stages session cards above an ordinary caption editor, persists them, and sends both", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  const region = screen.getByRole("region", { name: "Session attachments" });
+  expect(region).toHaveTextContent("Session:");
+  expect(h.input()).toHaveValue("");
+  expect(
+    region.compareDocumentPosition(h.input()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.type(h.input(), "please review");
+  expect(h.input()).not.toHaveTextContent("Session:");
+  expect(
+    readView<{ sessionCards: string[] } | null>("scope", "draft:channel", null)
+      ?.sessionCards,
+  ).toEqual([link]);
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey please review`,
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    {},
+    ["session-id"],
+  );
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+});
+
+it("stages pasted session links, restores them on remount, and removes them without changing the caption", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  const h = mount();
+  act(() => h.input().insertText(`${link} Caption`));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  expect(h.input()).toHaveValue(" Caption");
+  h.unmount();
+  const restored = mount();
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  await restored.user.click(
+    screen.getByRole("button", { name: "Remove session attachment 1" }),
+  );
+  expect(restored.input()).toHaveValue(" Caption");
+  expect(document.activeElement).toBe(restored.input());
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+  await restored.user.click(
+    screen.getByRole("button", { name: "Send message" }),
+  );
+  expect(restored.messages.send).toHaveBeenCalledWith(
+    "channel",
+    " Caption",
+    [],
+    [],
+  );
+});
+
+it("sends a staged session without a caption", async () => {
+  const link = "[Session: 12345678](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    link,
+    [],
+    [],
+    undefined,
+    [],
+    {},
+    ["session-id"],
+  );
+});
+
+it("retains a new card-only followup when a background upload fails", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const link = "[Session: New work](buzz://channel/session-id)";
+  act(() => (h.input() as ComposerInputElement).insertText(link));
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("New work");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    sessionCards: [link],
+  });
+  expect(
+    await screen.findByText(/Failed send was kept because this draft changed/),
+  ).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("restores and sends an older session-link draft with its selected mention intact", async () => {
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", {
+    text: `@Honey ${link}`,
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount();
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("Fix");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey `,
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    {},
+    ["session-id"],
+  );
+});
+
+it("does not publish an unchanged inline session edit, including reverting a caption change", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const content =
+    "please review [Session: Fix](buzz://channel/session-id) before merge";
+  h.setRows([editableMessage({ content })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const caption = h.input().textContent ?? "";
+  h.fill("Changed caption");
+  h.fill(caption);
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("marks staged session cards in thread replies", async () => {
+  const link = "[Session: Work](buzz://channel/session-id)";
+  const h = mount();
+  h.retarget({ threadRootId: "root" });
+  act(() => h.input().insertText(link));
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.reply).toHaveBeenCalledWith(
+    "channel",
+    "root",
+    link,
+    [],
+    [],
+    undefined,
+    [],
+    {},
+    ["session-id"],
+  );
+});
+
+it.each(["A ||hidden|| caption", "Use `a || b` here"])(
+  "sends staged cards with an unrecognized caption without a marker: %s",
+  async (caption) => {
+    const link = "[Session: Work](buzz://channel/session-id)";
+    writeView("scope", "draft:channel", link);
+    const h = mount();
+    await h.user.type(h.input(), caption);
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      `${link}\n\n${caption}`,
+      [],
+      [],
+    );
+  },
+);
+
+it("does not take focus when a default recipient arrives after mount", () => {
+  const h = mount();
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    h.retarget({ defaultMention: second });
+    expect(h.input()).toHaveValue(`@${second.name} `);
+    expect(outside).toHaveFocus();
+  } finally {
+    outside.remove();
+  }
+});
+
+it("edits the last message from an untouched automatic tag and restores that tag on cancel", () => {
+  const h = mount({ defaultMention: second }, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  h.fill("my own draft");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+});
+
+it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
+  const key = keypair();
+  const agent = { pubkey: key.pubkey, name: "Honey" };
+  const h = await mountUploadComposer({
+    members: [agent.pubkey],
+    profiles: [
+      signed(key, {
+        kind: 0,
+        content: JSON.stringify({ name: "Honey", is_agent: true }),
+        tags: [],
+      }),
+    ],
+    defaultMention: agent,
+    requireMention: true,
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  await act(() => h.owner.session.profiles.ensure([agent.pubkey]));
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  const editor = screen.getByRole<ComposerInputElement>("textbox");
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+  await userEvent.type(editor, "next", { skipClick: true });
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+    });
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(outside).toHaveFocus();
+    expect(h.input()).toHaveValue("@Honey next");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "p",
+      agent.pubkey,
+    ]);
+  } finally {
+    outside.remove();
+  }
+});
+
+it.each(["thread", "solo"])(
+  "%s follow-ups retain every selected agent, honor removal and share the opt-out",
+  async (surface) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setLibrary([first, second]);
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: first.name, isAgent: true }],
+        [second.pubkey, { name: second.name, isAgent: true }],
+      ]),
+    );
+    const personal = surface === "solo";
+    h.retarget({
+      ...(personal
+        ? { ownSoloConversation: true, requireMention: true }
+        : { threadRootId: "root" }),
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          list: () => soloList,
+        },
+        channelWrites: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: [first.pubkey, second.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+      h.commands().insertText("hello");
+    });
+    h.submit();
+    const send = personal ? h.messages.send : h.messages.reply;
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
+    if (personal) {
+      h.setRows([editableMessage()]);
+      fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      fireEvent.keyDown(h.input(), { key: "Escape" });
+      expect(h.input()).toHaveValue("@Honey @Honey ");
+    }
+    // Keep only the second agent for the next send.
+    act(() => {
+      h.input().removeRecipient(first.pubkey);
+      h.commands().insertText("next");
+    });
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    expect(send.mock.calls.at(-1)?.[personal ? 2 : 3]).toEqual([second.pubkey]);
+    setRememberAgentsPreference(false);
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+    setRememberAgentsPreference(true);
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it("withholds recording tools while a message edit cannot take attachments", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) =>
+        capture ? <button type="button">Start recording</button> : null,
+    },
+  ];
+  const extensions = {
+    tools: { snapshot: () => tools, subscribe: () => () => {} },
+    inline: { snapshot: () => empty, subscribe: () => () => {} },
+    completions: { snapshot: () => empty, subscribe: () => () => {} },
+  };
+  const h = await mountUploadComposer({ editable: true, extensions });
+  h.unmount();
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const view = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      extensions={extensions}
+      editMessages={[editableMessage({ authorId: viewer })]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = within(view.container).getByRole("textbox");
+  expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
+  fireEvent.keyDown(input, { key: "ArrowUp" });
+  expect(input).toHaveAccessibleName("Edit message");
+  expect(screen.queryByRole("button", { name: "Start recording" })).toBeNull();
+  fireEvent.click(
+    within(view.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
 });

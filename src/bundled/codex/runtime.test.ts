@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -54,6 +55,8 @@ function fixture(
   const sent: Wire[] = [];
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
+  /** Methods the server answers only once their promise settles. */
+  const held = new Map<string, Promise<void>>();
   const toolCalls = new Map<
     number | string,
     { threadId: string | undefined; turnId: string; callId: string }
@@ -82,6 +85,7 @@ function fixture(
         return;
       }
       if (request.id == null) return;
+      await held.get(request.method ?? "");
       if (request.method && failing.has(request.method)) {
         emit({
           id: request.id,
@@ -165,6 +169,7 @@ function fixture(
   let closed = false;
   let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
+  const adopted: string[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
     // The plugin starts the app server as a step of Buzz's `codex.sh`.
     const appServer =
@@ -188,6 +193,10 @@ function fixture(
         kill: async () => catalogExit.resolve(null),
         exited: catalogExit.promise,
       };
+    }
+    if (_id === "adopt") {
+      adopted.push(value?.args?.[0] ?? "");
+      return { ...process, exited: Promise.resolve(0) };
     }
     if (_id === "workspace") {
       value?.onStdout?.("/home/test/.buzz\n");
@@ -234,8 +243,8 @@ function fixture(
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
-  // The owner's view, with no channel filed in Me unless a test does so.
-  const personal = new Set<string>();
+  // The owner's view, with no channel an own Solo chat unless a test does so.
+  const soloChannels = new Set<string>();
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
@@ -252,24 +261,38 @@ function fixture(
       agentMemories: { open: memoryOpen, read: memoryRead },
       channels: {
         list: () => ({
-          channels: [{ id: "channel", name: "test", channelType: "stream" }],
+          status: "ready",
+          channels: [
+            {
+              id: "channel",
+              name: "test",
+              channelType: soloChannels.has("channel") ? "solo" : "stream",
+            },
+          ],
         }),
       },
-      mePlacement: {
-        state: { status: "ready" } as { status: string; error?: string },
-        snapshot: () => snapshot.session.mePlacement.state,
-        refresh: vi.fn(async () => {}),
-        has: (id: string) => personal.has(id),
+      canvas: {
+        available: false,
+        read: vi.fn(
+          async (): Promise<{
+            pubkey: string;
+            kind: number;
+            created_at: number;
+            tags: string[][];
+            content: string;
+          } | null> => null,
+        ),
       },
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  const store = {
+  const local = {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => {
       storage.set(key, value);
     },
   } as Storage;
+  const store = localStore(local);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -319,7 +342,12 @@ function fixture(
     type: mime,
   }));
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
-  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
+  const media = vi.fn(async () => ({
+    path: "/cache/shot.png",
+    type: "image/png",
+    size: 6,
+    data: btoa("\x89PNG\r\n"),
+  }));
   /** The owner's attention switch, and the objects the host holds. */
   const attention = { on: false };
   const objects = new Map<string, Record<string, unknown>>();
@@ -396,7 +424,7 @@ function fixture(
     runtime.run(delivery);
   let pluginDispose = () => {};
   if (plugin) {
-    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       host: { spawn },
@@ -520,9 +548,11 @@ function fixture(
       }),
     pluginDispose: () => pluginDispose(),
     spawn,
+    adopted,
     process,
     sent,
     failing,
+    held,
     emit,
     publish,
     read,
@@ -533,7 +563,7 @@ function fixture(
     complete,
     interrupt,
     snapshot,
-    personal,
+    soloChannels,
     exits,
   };
 }
@@ -1093,6 +1123,20 @@ it("steers a mid-turn message whose pick matches the running turn, or has none",
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.starts()).toHaveLength(1);
 });
+it("dates a binding by the latest message it took in or turn it ended", async () => {
+  let now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const f = fixture();
+  const at = () => f.runtime.conversations(pubkey)[0]?.at;
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(at()).toBe(1_000));
+  now = 2_000;
+  await f.runtime.run(f.delivery("steered"));
+  await vi.waitFor(() => expect(at()).toBe(2_000));
+  now = 3_000;
+  f.complete();
+  await vi.waitFor(() => expect(at()).toBe(3_000));
+});
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));
@@ -1211,6 +1255,7 @@ it.each([
   async ({ channelType, scope, whole }) => {
     const f = fixture();
     vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+      status: "ready",
       channels: [{ id: "channel", name: "test", channelType }],
     });
     const otherRoot = "e".repeat(64);
@@ -1276,6 +1321,230 @@ it("cleans background terminals on server interruption and permits same-thread r
     1,
   );
 });
+it("registers a stopper that interrupts the turn it is running", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  await interruptible.mock.calls[0]?.[0]();
+  const sent = f.sent.filter((wire) => wire.method === "turn/interrupt");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.params).toEqual({
+    threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId,
+    turnId: "turn-1",
+  });
+});
+
+it("refuses to stop a request still waiting for its turn, and leaves the running turn alone", async () => {
+  const f = fixture();
+  const running = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("first"), interruptible: running });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // Another model cannot be steered in, so it waits for the turn to end.
+  await f.runtime.run({
+    ...f.delivery("deeper"),
+    model: "deep-model",
+    interruptible: waiting,
+  });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  // The turn it did not stop ends as any other.
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "FIRST" });
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("refuses to stop a request queued behind a finished turn that is still cleaning up", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", cleanup.promise);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+      true,
+    ),
+  );
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("second"), interruptible: waiting });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  // The request it did not stop runs once the finished turn lets go.
+  cleanup.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("sends one interrupt for stops pressed together, and settles each with it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stop = interruptible.mock.calls[0]?.[0];
+  const first = stop?.();
+  const second = stop?.();
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "turn/interrupt"),
+    ).toHaveLength(1),
+  );
+  accepted.resolve();
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("runs a message sent while a stopped turn is ending as the next turn, not steered into it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stopping = interruptible.mock.calls[0]?.[0]();
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true),
+  );
+  await f.runtime.run(f.delivery("after"));
+  // It waits for the stopped turn to end, as a turn of its own.
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting"),
+  );
+  accepted.resolve();
+  await stopping;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2), {
+    timeout: 3_000,
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(false);
+  expect(inputText(f.starts()[1])).toContain("after");
+  f.complete(1, "AFTER");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "AFTER" });
+});
+
+it("rejects a stop Codex does not take, and still reports the turn's interruption", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.failing.add("turn/interrupt");
+  await expect(interruptible.mock.calls[0]?.[0]()).rejects.toThrow(
+    "turn/interrupt failed",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  // The turn is interrupted anyway, without the owner having stopped it.
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("turn was interrupted"),
+  });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "Codex’s turn was interrupted",
+  });
+});
+
+it("sends nothing when asked to stop a request whose turn has finished", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "DONE");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+});
+
+it("ends a turn the owner stopped as stopped, not as an interruption failure", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  for (const method of [
+    "thread/backgroundTerminals/clean",
+    "thread/backgroundTerminals/list",
+  ])
+    expect(f.sent.some((wire) => wire.method === method)).toBe(true);
+  expect(f.publish).not.toHaveBeenCalled();
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it("keeps looking for shells for a moment after a stopped turn, and ends one that shows up late", async () => {
+  const late: unknown[] = [];
+  const f = fixture(late, Promise.resolve());
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  const terminates = () =>
+    f.sent.filter(
+      (wire) => wire.method === "thread/backgroundTerminals/terminate",
+    );
+  // Codex hands the shell over only after the turn has ended.
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/backgroundTerminals/list")
+        .length,
+    ).toBeGreaterThan(0),
+  );
+  expect(f.runtime.sessions(pubkey)[0]?.status).not.toBe("Stopped");
+  late.push({ processId: "77" });
+  await vi.waitFor(() => expect(terminates()).toHaveLength(1));
+  expect(terminates()[0]?.params).toMatchObject({ processId: "77" });
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
 it("closes a native process returned after runtime disposal", async () => {
   const f = fixture();
   const gate = deferred<Awaited<ReturnType<typeof f.spawn>>>();
@@ -1427,7 +1696,10 @@ it("starts no work when the agent stops while its channel is read", async () => 
       );
     },
     async () => undefined,
-    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+    localStore({
+      getItem: () => null,
+      setItem: () => {},
+    } as unknown as Storage),
   );
   runtimes.push(runtime);
   runtime.sync([{ pubkey } as Agent]);
@@ -1906,6 +2178,45 @@ it("leaves a failed first startup unbound so the next mention can start fresh", 
   });
 });
 
+it("continues a saved thread copied from the user's Codex home", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const write = f.process.write;
+  let resumes = 0;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "thread/resume" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    // Missing until Buzz copies it into its own home.
+    if (resumes++ === 0 || !f.adopted.includes("thread-1"))
+      f.emit({
+        id: wire.id,
+        error: {
+          code: -32600,
+          message: "no rollout found for thread id thread-1",
+        },
+      });
+    else
+      f.emit({
+        id: wire.id,
+        result: { thread: { id: "thread-1", cwd: "/home/test/.buzz" } },
+      });
+  });
+  await f.runtime.run(f.delivery("follow-up"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+  expect(f.adopted).toEqual(["thread-1"]);
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    2,
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+});
+
 it.each([
   ["no rollout found for thread id thread-1", true],
   ["Permission denied reading saved thread", false],
@@ -2115,6 +2426,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
       {
         type: "inputImage",
         imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+      {
+        type: "inputText",
+        text: "Saved /cache/shot.png (image/png, 6 bytes).",
       },
     ],
   });
@@ -2970,22 +3285,19 @@ describe("programs", () => {
   });
 });
 
-/** Files the fixture's channel in its owner's Me. */
-function inMe(f: ReturnType<typeof fixture>) {
-  f.snapshot.session.channels.list = () => ({
-    channels: [{ id: "channel", name: "test", channelType: "session" }],
-  });
-  f.personal.add("channel");
-  return f.personal;
+/** Labels the fixture's channel a Solo chat; deleting it converts the chat. */
+function asSoloChat(f: ReturnType<typeof fixture>) {
+  f.soloChannels.add("channel");
+  return f.soloChannels;
 }
 const inputText = (wire: Wire | undefined) =>
   JSON.stringify((wire?.params as { input?: unknown } | undefined)?.input);
 const tagsOf = (f: ReturnType<typeof fixture>) =>
   f.publish.mock.calls.map(([event]) => (event as EventData).tags);
 
-it("continues an owner's Me chat as one channel conversation posted at the top level", async () => {
+it("continues an owner's Solo chat as one channel conversation posted at the top level", async () => {
   const f = fixture();
-  inMe(f);
+  asSoloChat(f);
   const first = f.delivery("@Codex first", root);
   const activity = {
     step: vi.fn(),
@@ -3056,18 +3368,18 @@ it("continues an owner's Me chat as one channel conversation posted at the top l
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
-  const personal = inMe(f);
+  const soloChannels = asSoloChat(f);
   const channelScope = (delivery: Delivery) => ({
     ...delivery,
     config: { ...(delivery.config as object), scope: "channel" },
   });
   await f.runtime.run(channelScope(f.delivery("@Codex first")));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  personal.delete("channel");
+  soloChannels.delete("channel");
   await f.runtime.run(channelScope(f.delivery("@Codex after share")));
-  // The shared chat's request waits for the Me turn instead of steering in.
+  // The converted chat's request waits for the Solo turn instead of steering in.
   await f.tool("send", { audience: "everyone", text: "Progress" });
   expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
   expect(f.starts()).toHaveLength(1);
@@ -3086,21 +3398,20 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   ]);
 });
 
-it("fails a session mention it cannot place until the placement can be read", async () => {
+it("fails a mention in a channel it cannot see yet until the channel list loads", async () => {
   const f = fixture();
+  const ready = f.snapshot.session.channels.list;
   f.snapshot.session.channels.list = () => ({
-    channels: [{ id: "channel", name: "test", channelType: "session" }],
+    status: "loading",
+    channels: [],
   });
-  const placement = f.snapshot.session.mePlacement;
-  placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
-    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read this community's channels to tell where to answer (not loaded). Try again.",
   );
-  expect(placement.refresh).toHaveBeenCalledOnce();
   expect(f.starts()).toEqual([]);
   expect(f.workingUntil).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
-  placement.state = { status: "ready" };
+  f.snapshot.session.channels.list = ready;
   await f.runtime.run(f.delivery("@Codex again"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(inputText(f.starts()[0])).toContain("reply_to");
@@ -3109,9 +3420,9 @@ it("fails a session mention it cannot place until the placement can be read", as
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
 
-it("keeps Messages routing for a channel filed in someone else's Me", async () => {
+it("keeps Messages routing for a channel someone else's Solo chat", async () => {
   const f = fixture();
-  inMe(f);
+  asSoloChat(f);
   Object.assign(f.snapshot, { viewer: "9".repeat(64) });
   await f.runtime.run(f.delivery("@Codex hi"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -3121,13 +3432,117 @@ it("keeps Messages routing for a channel filed in someone else's Me", async () =
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
 
-it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
+it("method calls: a thread and a turn make no relay-session call beyond the turn's message-context reads (launch-boundary.test.ts runs the real service path)", async () => {
   const f = fixture();
-  f.personal.add("channel");
-  await f.runtime.run(f.delivery("@Codex converted"));
+  const session = f.snapshot.session;
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "agentMemories.open": f.memoryOpen,
+    "memoryView.refresh": f.memoryView.refresh,
+    "profiles.ensure": session.profiles.ensure,
+    publish: f.publish,
+    query: f.query,
+    upload: f.upload,
+    media: f.media,
+    remember: f.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .map(([name, fn]) => [name, fn.mock.calls.length] as const)
+        .filter(([, count]) => count > 0),
+    );
+  // The core-memory cache is seeded, so starts need no memory read.
+  f.core.mockResolvedValue("seeded");
+  await f.runtime.run(f.delivery("@Codex first"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(inputText(f.starts()[0])).toContain("reply_to");
+  const started = made();
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  // A thread/start and its first turn: only the deliberate message-context
+  // read of the triggering conversation.
+  expect(Object.keys(started)).toEqual(
+    Object.keys(started).filter((name) => name === "session.read"),
+  );
+  // Those reads are message history in the triggering channel, nothing else.
+  const context = () =>
+    (f.read.mock.calls as unknown as [readonly Record<string, unknown>[]][])
+      .flatMap(([filters]) => filters)
+      .every(
+        (filter) =>
+          JSON.stringify(filter.kinds) === "[9,40002]" &&
+          JSON.stringify(filter["#h"]) === '["channel"]',
+      );
+  expect(context()).toBe(true);
+  // The counter counts: the agent's own read tool during the turn is seen.
+  await f.tool("read", {});
+  expect(Object.values(made()).reduce((a, b) => a + b, 0)).toBeGreaterThan(
+    Object.values(started).reduce((a, b) => a + b, 0),
+  );
+  await f.complete(0, "FIRST");
+  // A second turn on the same thread: again no request but context reads.
+  const before = made();
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turn = Object.fromEntries(
+    Object.entries(made()).map(([name, count]) => [
+      name,
+      count - (before[name] ?? 0),
+    ]),
+  );
+  expect(
+    Object.entries(turn).filter(
+      ([name, count]) => count > 0 && name !== "session.read",
+    ),
+  ).toEqual([]);
+  expect(context()).toBe(true);
+  expect(f.core).toHaveBeenCalled();
+});
+
+it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+  const f = fixture();
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("Use tokens."));
+  await f.runtime.run(f.delivery("@Codex shared", root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).not.toContain("workspace-canvas");
+  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
   await f.complete(0, "DONE");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
-  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+
+  const solo = fixture();
+  asSoloChat(solo);
+  solo.snapshot.session.canvas.available = true;
+  solo.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Use tokens."),
+  );
+  await solo.runtime.run(solo.delivery("@Codex solo", root));
+  await vi.waitFor(() => expect(solo.starts()).toHaveLength(1));
+  expect(inputText(solo.starts()[0])).toContain("<workspace-canvas>");
+  expect(inputText(solo.starts()[0])).toContain("Use tokens.");
+  await solo.complete(0, "DONE");
+  await vi.waitFor(() =>
+    expect(solo.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Someone else's edit replaces it with an explicit "none".
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  solo.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Steer me", "b".repeat(64)),
+  );
+  await solo.runtime.run(solo.delivery("@Codex again", root));
+  await vi.waitFor(() => expect(solo.starts()).toHaveLength(2));
+  expect(inputText(solo.starts()[1])).not.toContain("Steer me");
+  expect(inputText(solo.starts()[1])).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+});
+
+const canvasHead = (content: string, author = owner) => ({
+  pubkey: author,
+  kind: 40100,
+  created_at: 1,
+  tags: [],
+  content,
 });

@@ -13,6 +13,7 @@ import {
   type ChannelDetailsDraft,
 } from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
+import { SOLO_NAMED_LABEL, soloLabels } from "../solo/labels";
 
 export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;
@@ -169,8 +170,27 @@ export function createChannelDetails({
         throw new Error("Channel editing is unavailable on this connection.");
       if (attempts.has(id))
         throw new Error("Check the previous change before saving again.");
-      const draft = Object.freeze({ ...input });
-      validateDetailsDraft(draft, base);
+      validateDetailsDraft(input);
+      // Renaming a Solo chat records that its title is chosen, not automatic.
+      const chosenName =
+        soloLabels(base.labels) &&
+        soloLabels(input.labels ?? base.labels) &&
+        input.name !== base.name;
+      if (chosenName && !labels) throw channelIdentityUnsupported();
+      const draft = Object.freeze({
+        ...input,
+        ...(chosenName && labels
+          ? {
+              labels: [
+                ...new Set([
+                  ...(input.labels ?? base.labels ?? []),
+                  SOLO_NAMED_LABEL,
+                ]),
+              ],
+            }
+          : {}),
+      });
+      validateDetailsDraft(draft);
       if (
         !labels &&
         draft.labels !== undefined &&

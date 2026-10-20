@@ -13,16 +13,16 @@ import {
 } from "@testing-library/react";
 import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { SessionsPage } from "../../bundled/sessions/SessionsPage";
+import { ChannelsPage } from "../../bundled/channels/ChannelsPage";
 import type { PageNavigation } from "../navigation/service";
-import { meTarget } from "../../bundled/me/routes";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import { conversationTarget } from "../channel-navigation/routes";
+import { SOLO_LABEL } from "../solo/labels";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { composerDOMFixture } from "./composer-testing";
-import { useFileDrop } from "./use-file-drop";
+import { useFileDrop, useRejectUnclaimedDrops } from "./use-file-drop";
 
 composerDOMFixture();
 
@@ -85,7 +85,7 @@ async function fixture(archived = false) {
       ["name", "Work"],
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
       ...(archived ? [["archived", "true"]] : []),
     ],
   });
@@ -161,6 +161,7 @@ function OuterComposer({
 }) {
   const ref = useRef<HTMLFormElement>(null);
   useFileDrop(ref, true, attach);
+  useRejectUnclaimedDrops();
   return (
     <div data-attachment-drop-zone="">
       <form ref={ref} aria-label="Other composer" />
@@ -184,26 +185,16 @@ function drop(target: HTMLElement, type: "drop" | "dragOver" = "drop") {
 }
 
 it.each([false, true])(
-  "the production Sessions timeline owns drops and rejects an unavailable composer (archived=%s)",
+  "the production Solo timeline owns drops and rejects an unavailable composer (archived=%s)",
   async (archived) => {
     const h = await fixture(archived);
-    const placement = {
-      ...h.owner.session.mePlacement.snapshot(),
-      status: "ready" as const,
-    };
-    const relaySnapshot = h.relayData.snapshot();
-    const session = {
-      ...relaySnapshot.session,
-      mePlacement: {
-        ...relaySnapshot.session.mePlacement,
-        snapshot: () => placement,
-      },
-    };
-    const snapshot = { ...relaySnapshot, session };
-    const relayData = { ...h.relayData, snapshot: () => snapshot };
+    const relayData = h.relayData;
     const navigation: PageNavigation = {
       entryId: "visit",
-      target: meTarget(h.scope, "11111111-1111-4111-8111-111111111111"),
+      target: conversationTarget(
+        h.scope,
+        "11111111-1111-4111-8111-111111111111",
+      ),
       signal: new AbortController().signal,
       forSession: () => navigation,
       complete: () => true,
@@ -213,7 +204,7 @@ it.each([false, true])(
     render(
       <StrictMode>
         <OuterComposer attach={other}>
-          <SessionsPage
+          <ChannelsPage
             panels={{
               snapshot: () => empty,
               subscribe: () => () => {},

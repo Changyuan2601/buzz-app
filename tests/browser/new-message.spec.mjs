@@ -298,7 +298,7 @@ async function startNewMessage(page) {
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await startNewMessage(page);
 }
 
@@ -413,7 +413,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       (filter) => filter.kinds?.includes(0) && filter.page && !filter.search,
     ).length;
   const beforeReopen = directoryReads();
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await openPage(page, "Messages");
   await startNewMessage(page);
   await expect(page.getByRole("option")).toHaveCount(34);
@@ -622,7 +622,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     page.getByRole("region", { name: "New message", exact: true }),
   ).toBeVisible();
   const sidebarDm = page
-    .getByRole("complementary", { name: "Channel sidebar" })
+    .getByRole("complementary", { name: "Sidebar", exact: true })
     .getByRole("button", { name: "Avery Chen", exact: true });
   await expect(sidebarDm).toHaveCount(0);
   const firstSend = app.publications.find((event) => event.kind === 9);
@@ -711,7 +711,10 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
   await page.goto(app.origin);
   await openPage(page, "Messages");
-  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const sidebar = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
+  });
   const general = sidebar.locator(
     '[data-channel-id="22222222-2222-4222-8222-222222222222"]',
   );
@@ -743,7 +746,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await sidebarDm.click({ button: "right" });
   await page
     .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Remove from Multiplayer", exact: true })
+    .getByRole("menuitem", { name: "Remove from Team", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();

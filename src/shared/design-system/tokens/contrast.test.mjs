@@ -115,6 +115,93 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it.each([
+    [
+      "wrong dark ink",
+      "--accent-contrast-dark: #ffffff;",
+      "--accent-contrast-dark: #000000;",
+      "magenta/neutral/dark",
+    ],
+    [
+      "unresolved ink",
+      "--accent-contrast-light: #ffffff;",
+      "--accent-contrast-light: var(--missing-ink);",
+      "magenta/neutral/light: unresolved accent pair",
+    ],
+    [
+      "faint insertion line",
+      "--accent-11-light: #a32e65;",
+      "--accent-11-light: #feedf3;",
+      "magenta/neutral/light: --border-accent",
+    ],
+  ])(
+    "rejects a non-default accent family's %s",
+    (_name, from, to, evidence) => {
+      const start = tokens.indexOf('[data-accent="magenta"] {');
+      expect(start).toBeGreaterThan(0);
+      const end = tokens.indexOf("}", start);
+      const family = tokens.slice(start, end);
+      expect(family).toContain(from);
+      const result = check(
+        tokens.slice(0, start) + family.replace(from, to) + tokens.slice(end),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(evidence);
+    },
+  );
+
+  it("checks shared color groups at every applicable level", () => {
+    const from = "--text-subtle: var(--accent-11);";
+    expect(tokens).toContain(from);
+    const result = check(
+      tokens.replaceAll(from, "--text-subtle: var(--accent-6);"),
+    );
+    expect(result.status, result.output).toBe(1);
+    for (const level of ["full"])
+      expect(result.output).toContain(
+        `chartreuse/${level}/light --text-subtle`,
+      );
+  });
+
+  it("rejects a gray role left on an accent ground", () => {
+    const from = "--text-chrome-subtle: var(--accent-11);";
+    expect(tokens).toContain(from);
+    const result = check(
+      tokens.replaceAll(from, "--text-chrome-subtle: var(--neutral-10);"),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      "chartreuse/full/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
+    );
+  });
+
+  it.each([
+    ["#000000", false],
+    ["#262626", false],
+    ["#404040", true],
+  ])(
+    "distinguishes black ink %s from gray on the brand-filled selection",
+    (ink, gray) => {
+      const from = "--text-row-selected-subtle: var(--accent-contrast);";
+      expect(tokens).toContain(from);
+      const result = check(
+        tokens.replace(from, `--text-row-selected-subtle: ${ink};`),
+      );
+      if (gray) {
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain(
+          `chartreuse/touch/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
+        );
+      } else {
+        // A literal ink applies to every family, so saturated accents may fail
+        // contrast; only the gray verdict is under test here.
+        expect(result.output).not.toContain(
+          "is gray on --affordance-navigation-selected",
+        );
+      }
+    },
+  );
+
   it("rejects a shell color that hides navigation text", () => {
     const result = check(
       tokens.replace(
@@ -129,7 +216,7 @@ describe("semantic contrast contract", () => {
   it("checks other text roles without a link exception", () => {
     const result = check(
       tokens.replaceAll(
-        "--text-accent: var(--purple-12);",
+        "--text-accent: var(--accent-11);",
         "--text-accent: var(--blue-9);",
       ),
     );
@@ -148,8 +235,8 @@ describe("semantic contrast contract", () => {
     ],
     [
       "accent hover",
-      "--purple-10: #975acc;",
-      "--purple-10: #9a5cd0;",
+      "--accent-10-light: #2343d4;",
+      "--accent-10-light: #9a5cd0;",
       "--text-on-accent",
     ],
   ])(
@@ -258,15 +345,18 @@ describe("semantic contrast contract", () => {
   it.each(["warning", "success", "accent"])(
     "checks %s text against its semantic fill, not only the palette",
     (role) => {
-      const hue = { warning: "amber", success: "green", accent: "purple" }[
-        role
-      ];
-      const result = check(
-        tokens.replaceAll(
-          `--affordance-${role}: var(--${hue}-3);`,
-          `--affordance-${role}: var(--${hue}-9);`,
-        ),
-      );
+      const [from, to] =
+        role === "accent"
+          ? [
+              "--affordance-accent: var(--accent-3);",
+              "--affordance-accent: var(--accent-9);",
+            ]
+          : [
+              `--affordance-${role}: var(--${role === "warning" ? "amber" : "green"}-3);`,
+              `--affordance-${role}: var(--${role === "warning" ? "amber" : "green"}-9);`,
+            ];
+      expect(tokens).toContain(from);
+      const result = check(tokens.replaceAll(from, to));
       expect(result.status, result.output).toBe(1);
       expect(result.output).toContain(`--text-${role}`);
       expect(result.output).toContain(`on --affordance-${role}`);

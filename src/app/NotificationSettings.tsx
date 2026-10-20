@@ -185,7 +185,7 @@ export function NotificationSettings({
             ))}
           </SettingsGroup>
         </section>
-        <section aria-label="Desktop delivery">
+        <section id="setting-delivery" aria-label="Desktop delivery">
           <InlineHeader title="Delivery" />
           <SettingsGroup>
             <SwitchPreferenceRow
@@ -243,6 +243,7 @@ export function NotificationSettings({
             {desktopAlertsEnabled && (
               <div className={styles.nestedPreferences}>
                 <SwitchPreferenceRow
+                  id="setting-viewing"
                   label="Notify while viewing"
                   description="Include direct messages in the conversation you’re viewing."
                   checked={preferences.notifyWhileViewing}
@@ -251,6 +252,7 @@ export function NotificationSettings({
                   }
                 />
                 <SwitchPreferenceRow
+                  id="setting-sound"
                   label="Sound"
                   description="Choose a sound to preview it."
                   checked={preferences.sound}

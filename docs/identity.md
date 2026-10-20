@@ -30,12 +30,63 @@ Neither Windows Credential Manager nor Secret Service supplies per-app access
 isolation from other programs running as the same OS user.
 
 There is no file/environment fallback, automatic legacy migration or human key
-replacement. The human key is deleted from this device only by
+replacement. When installed old Buzz's data folder (`xyz.block.buzz.app`) exists,
+setup also offers **Continue with your Buzz identity**. Only that click reads old
+Buzz's `buzz-desktop`/`secrets` item, so any OS access prompt follows it; the
+offer itself checks only the folder. It takes the item's `identity` entry and
+saves it exactly as a pasted import would: validated, create-only, never over a
+saved key, and never writing the old item. The offer returns after Sign out while
+old Buzz's data remains. The human key is deleted from this device only by
 [Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
 delete it. Agents' bring-over (`app_agent_port`) may read only the selected
 old Buzz service/account and copy the selected agent key into this app's separate
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
+
+## Automatic backup and optional recovery
+
+Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
+`BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
+automatic-backup choice, Builderlab or Hosted communities login, and matching key
+binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
+requests, including retries. These are paired
+native build-process inputs; unset leaves the feature disabled. The service URL
+includes its API prefix and must use HTTPS. Existing login credentials are accepted
+only for the matching trusted build origin. Without a qualifying login, backup
+defers without opening a browser or delaying identity readiness.
+
+The native host validates enrollment and seals with the reviewed HPKE v1 protocol.
+Only encrypted pending bytes and public completion metadata are saved in the OS
+account's `.buzz-foundation/nsec-backups/<human credential service>` folder, scoped
+separately for debug and release. A shared lock serializes cooperating
+copies. Pending bytes and IDs survive restart; later login/binding/key-install
+events retry them, including a coalesced follow-up when an event arrives during an
+active pass. Upload success requires a matching stored receipt. Backup
+failure never replaces or deletes the local identity.
+
+When secure storage confirms absence, native recovery commands support explicit
+browser sign-in. The session and recovered keys remain native; the renderer sees
+only validated public identities and attempt-scoped handles. Recovery prefers the
+account's current associated identity. A previous identity requires explicit
+selection and does not change the account association. Failed mapping requests,
+unavailable endpoints, failed backups and an empty successful result remain distinct.
+Installation uses the existing create-only secure store; cancel, reload, signout
+or a competing create/import prevents stale installation.
+Remembering recovered completion is best effort; retry-file failure does not block
+secure-store installation. Pending uploads still require durable ciphertext before sending.
+Plain signout retains backup records; Sign out and erase removes this credential
+service's records through the existing resumable wipe before clearing its marker.
+
+Rollout requires the backend backup/recovery endpoints, private-organization
+authorization, database migration, and configured KMS recipient/permissions. The
+client inputs must match that service's namespace. Synthetic HTTP/storage tests
+do not establish live sign-in, KMS or installed-app
+secure-storage acceptance. No backend provisioning or activation is part of this change.
+
+Identity setup offers Restore when secure storage confirms that no local key is present.
+The existing restore UI presents the current identity and explicit previous-identity
+selection. Restoring a key does not enable automatic backup or change its saved
+consent; no consent selection UI is added in this stack.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
 after one read. For this one human key, one cached item retains that read-once benefit without
@@ -46,9 +97,9 @@ Consent, app signing and update behavior require attended native verification.
 ## UI and sensitive data
 
 Settings exposes Profile in Personal space as well as in a selected community.
-Identity details remains available if the community profile cannot load. The full
-npub and hex public key can be copied. The nsec is absent from the rendered field
-until Reveal; Copy can fetch it without revealing it. Hide, leaving Profile,
+Identity details are separate under **Buzz → Identity**, so they remain available
+if the community profile cannot load. The full npub and hex public key can be
+copied. The nsec is absent from the rendered field until Reveal; Copy can fetch it without revealing it. Hide, leaving Identity,
 window blur and document hiding retire pending reveals and clear the displayed
 secret. Failed private-key actions report fixed errors. Copy deliberately leaves
 the key on the OS clipboard; the UI warns about that.
@@ -65,7 +116,7 @@ command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
 
-Settings → Profile → **Sign out of Buzz** removes the private key from this
+Settings → Buzz → Identity → **Sign out of Buzz** removes the private key from this
 device only; the npub and its history stay on relays. The dialog presents two
 layers: the key always goes, and settings, agents and other Buzz data stay unless
 the user erases them. It embeds the private-key controls above. Confirm stays
@@ -185,6 +236,33 @@ with the same key finds it. Builderlab and hosted-community logins live only in
 memory and end with the restart. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
+## Automatic backup consent hooks
+
+The native identity service exposes `getBackupChoice()` and
+`setBackupChoice(pubkey, automatic)`. These APIs expose public metadata and do not
+change identity readiness. Reading a choice does not contact a server; saving
+automatic backup wakes the existing native uploader if a session is connected.
+No onboarding
+or settings selection is added here. A future selection must disclose that Block
+can recover the key, including an imported key used elsewhere, before saving
+`automatic: true`. Account sign-in and key creation/import do not imply consent.
+
+The choice is bound to the current public key and trusted build-configured backup
+service and namespace. Missing or mismatched metadata returns no choice;
+unreadable metadata fails closed. An unavailable build rejects choice writes.
+Debug and release use their existing separate key-custody namespaces. Only the
+main WebView can read or save the choice.
+Plain sign-out retains the choice; sign-out and erase removes it through the
+existing resumable wipe, without erasing the other key-custody namespace.
+
+The native uploader consumes `nsec_backup_choice::read` before any
+backup request and retain its returned value through the upload. Its shared file
+lease prevents a successful choice change from racing an admitted upload across
+app copies. Saving a choice reports busy while such a lease is held. Disabling
+automatic backup governs future uploads and does not delete existing backups.
+The consent hooks are the base of the draft stack:
+#1137 consent hooks → #1106 gated uploader → #1107 recovery → #1101 restore UI.
+
 ## Packaged connection
 
 A public native viewer hydrates the existing public-key-scoped local profile and
@@ -217,7 +295,7 @@ expected relay, admin origin and signer before signing, and caps each response.
 When there is a selected identity and relay and the relay advertises a valid
 admin host, opening Settings sends one signed role check (`probe`, `GET
 /api/admin/v1/probe`, empty body) to that host without a further click, so the
-Relay admin entries show only to staff (a relay with admin auth off shows its
+Moderation entries show only to staff (a relay with admin auth off shows its
 read-only entries to everyone). Every member who opens Settings sends it, not
 only staff, because only the answer says who is staff. It goes to whatever
 admin host the relay advertises, which can differ from the community's

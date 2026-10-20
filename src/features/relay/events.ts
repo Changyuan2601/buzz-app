@@ -22,6 +22,10 @@ export type ReadFilter = Readonly<{
   authors?: readonly string[];
   /** Read from the writer when resolving uncertain publication or admission. */
   consistency?: "strong";
+  /** NIP-AR artifact reads: current heads only, or a `d`'s revision history. */
+  artifact?: "current" | "history";
+  /** NIP-AR artifact page offset (≤ 10,000). */
+  offset?: number;
   until?: number;
   since?: number;
   "#h"?: readonly string[];
@@ -35,6 +39,8 @@ export type ReadFilter = Readonly<{
   /** HTTP bridge finite search, home-feed, and thread traversal extensions. */
   search?: string;
   search_mode?: "prefix" | "fulltext";
+  /** Only for relays advertising `buzz-search-sort`. */
+  search_sort?: "newest";
   page?: number;
   feed_types?: readonly string[];
   thread_window?: boolean;

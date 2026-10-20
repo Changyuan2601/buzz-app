@@ -1,5 +1,6 @@
 import type { EventTemplate } from "nostr-tools";
-import { sessionMetadata } from "../sessions/metadata.ts";
+import { soloLabels } from "../solo/labels.ts";
+import { channelIdentity } from "../relay/channel-labels.ts";
 import type { RelayEvent } from "../relay/events.ts";
 import {
   channelTypeTag,
@@ -42,7 +43,7 @@ export function memberAuthority(
   const type = channelTypeTag(metadata);
   const archived = exactLifecycleTag(metadata, "archived");
   if (
-    !["stream", "forum", "dm"].includes(type ?? "") ||
+    !["stream", "forum", "dm", "system"].includes(type ?? "") ||
     (archived !== undefined && archived !== "true" && archived !== "false")
   )
     throw new Error("Malformed channel state");
@@ -91,7 +92,7 @@ export function memberAuthority(
   const activeChannel =
     type !== "dm" &&
     archived !== "true" &&
-    !sessionMetadata(exactLifecycleTag(metadata, "about"));
+    !soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
     canManage: activeChannel && elevated.has(viewer),

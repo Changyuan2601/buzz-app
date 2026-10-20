@@ -14,6 +14,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
+import { useNamePrompt } from "./useNamePrompt";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -59,6 +60,7 @@ export function AgentCreateDialog({
   const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
   const avatarNavigation = useRef<{ back(): void }>(null);
   const nameField = useRef<HTMLInputElement>(null);
+  const namePrompt = useNamePrompt(nameField);
   const form = useId();
   const Create = type?.Create;
   const Model = type?.CreateModel;
@@ -74,7 +76,11 @@ export function AgentCreateDialog({
     if (item && key !== type?.key) chooseModel(item, startingConfig(item));
   };
   const create = async () => {
-    if (!type || !name.trim() || pending) return;
+    if (!type || pending) return;
+    if (!name.trim()) {
+      namePrompt.prompt();
+      return;
+    }
     setPending(true);
     setError("");
     try {
@@ -128,11 +134,6 @@ export function AgentCreateDialog({
       actions={
         <>
           <div ref={setAvatarAction} hidden={!avatarActive} />
-          {!avatarActive && !name.trim() && (
-            <p className="m-0 text-body-sm text-secondary">
-              Name your agent to continue
-            </p>
-          )}
           {!avatarActive && (
             <Button
               variant="primary"
@@ -140,7 +141,7 @@ export function AgentCreateDialog({
               type="submit"
               form={form}
               loading={pending}
-              disabled={avatarBusy || !type || !name.trim() || pending}
+              disabled={avatarBusy || !type || pending}
             >
               Create agent
             </Button>
@@ -165,12 +166,23 @@ export function AgentCreateDialog({
           community={community}
           onBusyChange={setAvatarBusy}
           onChange={(patch) => {
-            if (patch.name !== undefined) setName(patch.name);
+            if (patch.name !== undefined) {
+              setName(patch.name);
+              namePrompt.named(patch.name);
+            }
             if (patch.picture !== undefined) setPicture(patch.picture);
             setDirty(true);
             setError("");
           }}
           nameRef={nameField}
+          nameError={
+            namePrompt.attempts
+              ? {
+                  message: "Add a name to create your agent",
+                  attempt: namePrompt.attempts,
+                }
+              : undefined
+          }
           details={null}
           editing={false}
           avatarNavigationRef={avatarNavigation}

@@ -2,10 +2,11 @@ import {
   entityTarget,
   parseEntityLink,
   type EntityRoute,
-} from "../projects/routes";
+} from "../repos/routes";
 import { parseOpenTarget, type NavigationScope } from "./targets";
 
 type BuzzLink =
+  | { format: "removed" }
   | { format: "entity"; route: EntityRoute }
   | {
       format: "legacy";
@@ -38,6 +39,11 @@ export function parseBuzzLink(href: string): BuzzLink | null {
       url.hash
     )
       return null;
+    if (
+      url.hostname === "project" &&
+      (url.pathname === "" || url.pathname === "/")
+    )
+      return { format: "removed" };
     const entity = parseEntityLink(url);
     if (entity) return { format: "entity", route: entity };
     const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
@@ -98,7 +104,7 @@ export function parseBuzzLink(href: string): BuzzLink | null {
 export function buzzLinkKind(href: string) {
   const link = parseBuzzLink(href);
   if (!link) return null;
-  if (link.format === "entity") return "buzz";
+  if (link.format !== "legacy") return "buzz";
   return link.threadRootId ? "thread" : link.messageId ? "message" : "channel";
 }
 
@@ -106,6 +112,14 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
   const link = parseBuzzLink(href);
   if (!link) return null;
   if (link.format === "entity") return entityTarget(link.route, scope);
+  if (link.format === "removed")
+    return {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.repos",
+      pageId: "repos",
+      scope,
+    } as const;
   const { format: _format, ...destination } = link;
   return parseOpenTarget({
     version: 1,

@@ -8,7 +8,9 @@ bin/pnpm test:browser:install # once per pinned browser version
 bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
-`--scenario all` is the default. `--cpu` sets Chromium's CPU slowdown factor
+`--scenario all` is the default. A case name runs only that case; a group
+(`channel-open` or `scroll-paging`) runs every case whose name it prefixes, so
+`scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
@@ -22,9 +24,10 @@ There is no comparison engine, second checkout or prescribed optimization target
 
 ## Measurements
 
-Each sample reports Chromium `Performance.getMetrics` deltas, in milliseconds,
-from immediately before the action until the timeline has visible rows and
-unchanged visible geometry for at least 200ms across at least three samples:
+The operation runs from immediately before the action until the timeline has
+visible rows and unchanged visible geometry for at least 200ms across at least
+three samples. Each sample reports Chromium `Performance.getMetrics` deltas and
+browser timings, in milliseconds:
 
 | Metric | Meaning |
 | --- | --- |
@@ -33,17 +36,41 @@ unchanged visible geometry for at least 200ms across at least three samples:
 | `styleMs` | `RecalcStyleDuration`: style recalculation |
 | `taskMs` | `TaskDuration`: main-thread task time |
 | `durationMs` | Browser wall time through the settling barrier |
+| `loafBlockingMs` | Sum of browser-reported long-animation-frame blocking, from frames overlapping the operation, including settling |
 | `firstRowsMs` | Captured browser click event to visible target rows across two rendering updates |
 
 The first-rows endpoint gives the browser a paint opportunity; it is not a
 compositor screenshot or proof that every pixel finished painting. The settle
 barrier observes row IDs/positions/heights and scroll geometry, not arbitrary
-future async work. A ten-second deadline fails the sample instead of reporting
-an unfinished operation as a win. Counter windows also include measurement
+future async work. A ten-second deadline (60 seconds for paging through history)
+fails the sample instead of reporting an unfinished operation as a win.
+Counter windows also include measurement
 overhead and protocol dispatch around the action. Measured actions use browser
 input: JavaScript invoked directly through the automation protocol can be absent
 from `ScriptDuration`, even when included in `TaskDuration`. Categories overlap: do not
 sum them or interpret them as CPU percentages. No forced GC is performed.
+
+`loafBlockingMs` uses Chromium's [Long Animation Frames API](https://developer.chrome.com/docs/web-platform/long-animation-frames).
+Its `blockingDuration` accumulates blocking beyond the 50ms task budget, with
+rendering included in the longest task. It is not simply frame duration minus
+50ms, a frame count, or an FPS measure. The observer begins at measurement start;
+unsupported browsers fail explicitly rather than reporting zero. Raw
+`recording.longAnimationFrames` retains intersecting entries as `startMs`
+(relative to recording start), `durationMs` and `blockingDurationMs`.
+
+Every frame overlapping the operation contributes its entire blocking duration,
+including a frame that starts before measurement or finishes after the endpoint.
+This avoids reporting zero when a busy opening frame starts just before the
+recording marker. It is frame attribution, not exact clipping: boundary frames
+can include hover/setup work before the marker or work after the endpoint.
+Frames entirely outside the operation do not contribute.
+The API's aggregate cannot be split accurately. After counters stop, collection
+allows two further rendering opportunities and a queued task for late LoAF
+delivery. This bounded drain retains the final frame in our Chromium regression
+probe, but is not a presentation acknowledgement: unusually delayed presentation
+feedback can still omit a trailing entry. The drain is outside the existing
+duration and counter windows. Recorder overhead remains included; no subtraction
+is applied.
 
 `channel-open` measures two independent cases with fresh state:
 
@@ -52,11 +79,14 @@ sum them or interpret them as CPU percentages. No forced GC is performed.
 - `channel-open-hover` gives the same unopened channel a 150ms hover head start,
   then clicks whether preparation is finished or still running. CPU throttling
   applies during hover too. There is no response-completion or idle wait.
+- `channel-open-cold-markdown` repeats the cold case with the
+  [Markdown corpus](#corpus-variants).
 
-Both cases measure click-to-first-rows and browser work during opening plus
+Every case measures click-to-first-rows and browser work during opening plus
 settling. Work completed before the click earns the hover case a head start;
-remaining preparation can contribute to the measured work. Hover work is outside
-these metric windows. `work.hoverMs` records the requested lead and raw
+remaining preparation can contribute to the measured work. Browser-counter
+windows exclude pre-measurement hover work; LoAF totals include whole overlapping
+boundary frames as described above. `work.hoverMs` records the requested lead and raw
 `recording.hoverLeadMs` records the actual browser hover-to-click interval, which
 can exceed 150ms due to browser scheduling and protocol dispatch. Head-read counts
 before and during opening are diagnostic evidence; hover does not require zero
@@ -73,44 +103,109 @@ collect a new baseline rather than comparing them as equivalent.
 ```sh
 bin/pnpm perf --scenario scroll-short --repeat 5 --cpu 4
 bin/pnpm perf --scenario scroll-long --repeat 5 --cpu 4
+bin/pnpm perf --scenario scroll-paging --repeat 5 --cpu 4
 ```
 
-Both scenarios use the same observer, counters, fresh contexts and result format:
+All scroll scenarios use the same observer, counters, fresh contexts and result format:
 
 | Scenario | Workload |
 | --- | --- |
 | `scroll-short` | 800px upward at 1600px/s within the loaded head of a 120-message channel |
 | `scroll-long` | 12,000px upward at 4000px/s across a 360-message channel, fully loaded before measuring |
+| `scroll-paging-fast` | Repeated 2500px upward gestures at 25,000px/s through 640 mixed-height messages, with 100ms added older-response delay, until the oldest message is visible |
+| `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
+| `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
+| `scroll-paging-fast-markdown` | `scroll-paging-fast` through the [Markdown corpus](#corpus-variants) |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
 page processing to finish, rejects the history-limit notice, then settles geometry.
-Neither window permits older-page reads. This isolates rendering from pagination;
-network-bound scrolling should be a separate future scenario.
+Neither short nor long windows permit older-page reads. They isolate rendering
+from pagination.
 
-Real Chromium wheel gestures must produce wheel events, scroll-offset movement
+Wheel input lands in the timeline gutter, away from message hover. Setup reaches
+Messages through palette arrow keys, which set `html[data-keyboard-navigation]`;
+in that state the app prepares each newly mounted row's full action bar. Every scroll
+case except `scroll-paging-fast-keyboard` therefore ends setup with a real
+pointer press at the gutter point. The press clears keyboard modality and
+focuses the message list, as clicking into a conversation does, so the reading
+observer runs during the gesture. `scroll-paging-fast-keyboard` only moves the
+pointer there, keeping keyboard modality and focus outside the list as after
+palette navigation. Each sample asserts its modality and focus before measuring
+and records `work.modality`. Scroll results recorded before the pointer press
+ran in keyboard modality, like `scroll-paging-fast-keyboard`; rerun baselines
+before comparing them.
+
+The short and long Chromium gestures must produce wheel events, scroll-offset movement
 of at least 80% of the request, multiple visible messages and changed visible IDs.
 Raw frames and work receipts record the requested distance/speed, history size,
 released pages, wheel count and observed rows. `scrollTopRangePx` is the observed
 offset range, including virtualizer corrections; it is not physical input distance.
 
+`--scenario scroll-paging` runs every paging case; so does the default `all`.
+Use a full case name to isolate one. Each case has its own samples and
+summary; the runner never pools their metrics. The same `--cpu` setting applies
+to all. There is no delay parameter or implicit CPU matrix.
+
+Paging cases start with only the head loaded. The modeled HTTP broker adds the named
+delay to each older-page response; there are no page-completion or idle waits
+between gestures. Arrivals compete with scrolling and pending virtualizer
+corrections, the workload behind [the held-range prepend fix](https://github.com/block/buzz-app/pull/1066).
+The existing installed-Virtua tests protect that correction's correctness; these
+scenarios measure its browser cost. They use normal-height text, unlike the
+taller short/long corpus. Fast retains pressure from closely spaced arrivals;
+delayed exercises more waiting while the user keeps scrolling. These are
+repeatable modeled conditions, not production latency percentiles or a guarantee
+that every run hits a particular scheduling race. The delay starts after the
+fixture computes its response; browser queueing, transport and verification add
+to it. `work.olderReleaseDelaysMs` records actual server-side release delays.
+
+Paging measures a complete traversal, not however many pages fit a fixed time:
+input continues until the oldest message is visibly in the viewport, with a
+200-gesture safety bound and a 60-second recording deadline. Those bounds allow
+for the intentional per-page waits in the delayed variant. Successful samples
+require real wheels, multiple older reads, all expected older fixture IDs in
+released responses, and the oldest message still visible after settling. Work receipts record gesture/page counts, unique older rows
+received and the endpoint ID. A stalled traversal fails; it cannot win by doing
+less work. There is no mount-count target or automatic performance verdict.
+
+These variants replace the experimental zero-delay `scroll-paging` workload;
+collect new baselines rather than treating those old results as equivalent.
+
 `rafMaxGapMs`, `rafP95GapMs` and `rafGapsOver50` describe animation-frame callback
 cadence during the gesture. Raw `gestureStartMs` and `gestureEndMs` timestamps
 are relative to the recording start: the first observed wheel event and the
-browser marker after Chromium reports the synthetic gesture complete. The end
-includes that marker's protocol dispatch. Gaps are clipped to those boundaries,
+browser marker after Chromium reports the synthetic gesture complete. For paging,
+that marker follows the last gesture and its visible-oldest check; gaps between
+successive gestures remain inside the cadence window. The end includes the
+marker's protocol dispatch. Gaps are clipped to those boundaries,
 including partial gaps before the first and after the last callback inside the
 window. All callbacks count, including stalls when the scroll offset is unchanged.
 The settling tail after the end marker is excluded from cadence only:
-`scriptMs`, `layoutMs`, `styleMs`, `taskMs` and `durationMs` still cover scrolling
+`scriptMs`, `layoutMs`, `styleMs`, `taskMs`, `durationMs` and `loafBlockingMs` cover scrolling
 plus settling, with the same measurement overhead.
 
 Recordings without these gesture timestamps used whole-operation cadence,
 including the settling tail. Their cadence values are not comparable with the
-new definition; rerun baselines before comparing. No summary metrics were added.
+new definition; rerun baselines before comparing. That cadence change added no
+summary metrics.
 Callback gaps expose main-thread stalls, not compositor FPS or a measured
 dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
 inferred from them.
+
+## Corpus variants
+
+The default corpus is inert prose: an identifying line plus repeated sentences,
+authored by the viewer. An opt-in fixture option changes one property of it, so a
+variant differs from its base case only there.
+
+`markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
+chat content after the same height-varying text: colon prose, a second
+paragraph, a bare URL and a Markdown link, an `@mention` bound to a fixture
+profile, a nested bullet list with inline code and emphasis, a fenced code block,
+or a quote with emphasis and strikethrough. The eighth row stays inert prose.
+Lists are bullets only, because browser helpers find the timeline through its
+single ordered list.
 
 ## Results and iteration
 
@@ -135,8 +230,10 @@ alternate baseline/candidate runs when making a performance claim. Comparing
 different CPU settings, browsers, fixtures or concurrent host loads is not a
 controlled comparison. The runner does not decide which tradeoffs are acceptable.
 
-This is Chromium-local evidence with modeled immediate backend responses,
-HTTP interception (which disables HTTP cache), preloaded fonts and text content.
+This is Chromium-local evidence with modeled backend responses (immediate except
+for the named paging delays),
+HTTP interception (which disables HTTP cache), preloaded fonts and text content
+from one author.
 It does not measure production network latency, media, native hosting, WebKit,
 long-session memory growth or application startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.

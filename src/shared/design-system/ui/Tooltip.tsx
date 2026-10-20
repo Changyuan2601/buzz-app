@@ -62,6 +62,9 @@ export function Tooltip({
         <BaseTooltip.Positioner
           side={side}
           sideOffset={4}
+          // Fixed hints never add page scroll width, even while WebKit keeps
+          // one open across a resize.
+          positionMethod="fixed"
           className="buzz-tooltip-positioner"
         >
           <BaseTooltip.Popup

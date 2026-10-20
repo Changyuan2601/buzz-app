@@ -806,6 +806,8 @@ it("refuses a label lookup without sending it when the relay does not advertise 
 it("finds one creator's labeled channels oldest first and admits only relay-proven matches", async () => {
   const h = setup({}, { channelIdentity: true });
   h.channels.ensureList();
+  // A NIP-CL pass reads the viewer's system channels first.
+  (await h.next(39002)).respond([]);
   await h.rosters(0);
   await h.settled();
   const creator = keypair().pubkey;
@@ -905,4 +907,50 @@ it("finds one creator's labeled channels oldest first and admits only relay-prov
   await expect(
     h.channels.findLabeled?.({ creator: "nope", label: "for-you" }),
   ).rejects.toThrow(/creator/);
+});
+
+it("finds a labeled system channel whose roster arrived before its metadata", async () => {
+  const h = setup({}, { channelIdentity: true });
+  h.channels.ensureList();
+  const creator = keypair().pubkey;
+  const id = "30000000-0000-4000-8000-000000000001";
+  // The full pass reads the viewer's system rosters first, then names later.
+  (await h.next(39002)).respond([
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      tags: [
+        ["d", id],
+        ["t", "system"],
+        ["p", viewer.pubkey],
+      ],
+    }),
+  ]);
+  await h.rosters(0);
+  const names = await h.next(39000);
+  expect(names.filters[0]?.["#d"]).toEqual([id]);
+  // The roster alone admits the channel, so it already reads as system.
+  expect(h.channels.get?.(id)?.channelType).toBe("system");
+  const labeled = metadata(relay, id, "Records", 1_700_000_000, [
+    ["private"],
+    ["hidden"],
+    ["t", "system"],
+    ["t", "for-you"],
+    ["P", creator],
+  ]);
+  const done = h.channels.findLabeled?.({ creator, label: "for-you" });
+  assert.exists(done);
+  const lookup = await h.next(39000);
+  expect(lookup.filters[0]?.["#P"]).toEqual([creator]);
+  lookup.respond([labeled]);
+  // Answer an exact confirmation if the lookup sends one.
+  const found = await Promise.race([
+    done,
+    h.next(39000).then((exact) => {
+      exact.respond([labeled]);
+      return done;
+    }),
+  ]);
+  names.respond([labeled]);
+  expect(found.map((channel) => channel.id)).toEqual([id]);
 });

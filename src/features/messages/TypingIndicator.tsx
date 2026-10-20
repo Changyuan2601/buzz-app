@@ -22,6 +22,7 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -33,7 +34,7 @@ const noRows: readonly never[] = [];
 
 /** Agents working in one conversation, over existing stores; no reads or capture. */
 function useConversationAgents(
-  session: RelaySession,
+  session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>,
   channelId: string,
   threadRootId: string | undefined,
 ) {
@@ -73,7 +74,7 @@ export function TypingIndicator({
   openActivity,
 }: {
   clickOpensPanel?: boolean | undefined;
-  session: RelaySession;
+  session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>;
   channelId: string;
   threadRootId?: string | undefined;
   canOpenActivity?: ((target: string) => boolean) | undefined;
@@ -98,7 +99,8 @@ export function TypingIndicator({
   const subscribeRows = useCallback(
     (listener: () => void) =>
       needsRows
-        ? session.channels.subscribeWindow(channelId, listener)
+        ? (session.channels.subscribeWindow?.(channelId, listener) ??
+          (() => {}))
         : () => {},
     [session, channelId, needsRows],
   );

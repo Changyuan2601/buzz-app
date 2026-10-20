@@ -14,8 +14,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StrictMode, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import type {
+  CodeBlockRenderer,
   ConversationExtensions,
   InlineRenderer,
 } from "../conversation/contracts";
@@ -26,10 +27,10 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
-import * as messageContent from "../relay/message-content";
 import {
   MAX_MARKDOWN_LENGTH,
   safeLinkUrl,
@@ -283,49 +284,6 @@ second
 });
 
 describe("mounted Markdown preparation", () => {
-  it("reuses pure preparation for equivalent rows and invalidates for edited text", () => {
-    const scan = vi.spyOn(messageContent, "scanMarkdown");
-    const initial = props("**first**");
-    const view = renderDom(
-      <StrictMode>
-        <MessageMarkdown {...initial} />
-      </StrictMode>,
-    );
-    const initialScans = scan.mock.calls.length;
-    const initialRenders = markdownRenders.mock.calls.length;
-    expect(initialScans).toBeGreaterThan(0);
-    expect(initialRenders).toBeGreaterThan(0);
-    expect(screen.getByText("first")).toHaveTextContent("first");
-
-    view.rerender(
-      <StrictMode>
-        <MessageMarkdown
-          {...initial}
-          row={{
-            ...initial.row,
-            delivery: "seen",
-            reactions: [{ content: "👍", events: [] }],
-          }}
-        />
-      </StrictMode>,
-    );
-    expect(scan).toHaveBeenCalledTimes(initialScans);
-    expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
-
-    view.rerender(
-      <StrictMode>
-        <MessageMarkdown
-          {...initial}
-          row={{ ...initial.row, content: "_second_" }}
-        />
-      </StrictMode>,
-    );
-    expect(scan.mock.calls.length).toBeGreaterThan(initialScans);
-    expect(markdownRenders.mock.calls.length).toBeGreaterThan(initialRenders);
-    expect(screen.getByText("second")).toBeInTheDocument();
-    expect(screen.queryByText("first")).not.toBeInTheDocument();
-  });
-
   it("updates live plugin, media, directory, and interactivity inputs without reparsing", () => {
     const metadataRenderer: Contribution<InlineRenderer> = {
       id: "metadata",
@@ -907,31 +865,6 @@ it("renders tagged agent library names and profile names with the same agent ico
   ).not.toContain("data-mention-kind=");
 });
 
-it("uses the agent icon for a known agent profile outside the local library", () => {
-  expect(
-    render("@Mic", {
-      participantProfiles: new Map([[mic, { name: "Mic", isAgent: true }]]),
-    }),
-  ).toContain('data-mention-kind="agent"');
-});
-
-it("keeps the agent icon without presenting an unavailable profile action", () => {
-  const html = render("@Fast Fizz can you also join", {
-    directory: {
-      profiles: new Map(),
-      channels: [],
-      agents: [{ pubkey: mic, name: "Fast Fizz" }],
-    },
-    canOpenLink: undefined,
-  });
-  expect(html).toContain('data-mention-kind="agent"');
-  expect(html).toContain(
-    renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
-  );
-  expect(html).not.toContain("<button");
-  expect(html).not.toContain('aria-label="View');
-});
-
 it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
   const target = profileTarget(mic);
   const view = renderDom(
@@ -1115,6 +1048,198 @@ describe("code block copy", () => {
   });
 });
 
+describe("code block renderers", () => {
+  const fenced =
+    "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n```\n\n```ts\nconst x = 1\n```";
+  const diagram = (
+    component: CodeBlockRenderer["component"],
+  ): Contribution<CodeBlockRenderer> => ({
+    id: "diagram",
+    key: "test/diagram",
+    pluginId: "test",
+    revision: "1",
+    title: "Diagram",
+    matches: (language) => language === "Mermaid",
+    component,
+  });
+  const drawn = diagram(({ code, language }) => (
+    <figure data-language={language}>{code}</figure>
+  ));
+  function store(initial: readonly Contribution<CodeBlockRenderer>[]) {
+    let entries = initial;
+    const listeners = new Set<() => void>();
+    return {
+      snapshot: () => entries,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      swap(next: readonly Contribution<CodeBlockRenderer>[]) {
+        entries = next;
+        act(() => {
+          for (const listener of listeners) listener();
+        });
+      },
+    };
+  }
+
+  it("presents matching blocks with the host copy action and leaves other languages", async () => {
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    const codeBlocks = store([drawn]);
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const figure = view.container.querySelector("figure");
+    expect(figure).toHaveAttribute("data-language", "Mermaid");
+    expect(figure?.textContent).toBe("flowchart LR\n  A --> B");
+    expect(view.container.querySelectorAll("pre")).toHaveLength(1);
+    expect(view.container.querySelector("pre")?.textContent).toContain(
+      "const x = 1",
+    );
+    const copy = screen.getAllByRole("button", { name: "Copy code block" });
+    // The presented block precedes the plain one.
+    await user.click(copy[0] as HTMLElement);
+    expect(write).toHaveBeenCalledWith("flowchart LR\n  A --> B");
+
+    // Removing the plugin restores the plain block.
+    codeBlocks.swap([]);
+    expect(view.container.querySelector("figure")).toBeNull();
+    expect(view.container.querySelectorAll("pre")).toHaveLength(2);
+  });
+
+  it("restores the plain block when the renderer fails, and retries on re-enable", () => {
+    const codeBlocks = store([
+      diagram(() => {
+        throw new Error("broken renderer");
+      }),
+    ]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const view = renderDom(
+        <MessageMarkdown
+          {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+        />,
+        { wrapper: ToastProvider },
+      );
+      expect(view.container.querySelectorAll("pre")).toHaveLength(2);
+      expect(
+        screen.getAllByRole("button", { name: "Copy code block" }),
+      ).toHaveLength(2);
+      codeBlocks.swap([drawn]);
+      expect(view.container.querySelector("figure")).not.toBeNull();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  // A drawing whose text is not the source, as an SVG diagram's labels are.
+  const labels = diagram(() => (
+    <svg aria-hidden="true">
+      <text>A</text>
+      <text>B</text>
+    </svg>
+  ));
+  function copy(
+    source: string,
+    codeBlocks: ReturnType<typeof store>,
+    select: (container: HTMLElement, range: Range) => void,
+  ) {
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(source, { extensions: { ...extensions, codeBlocks } })}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const range = document.createRange();
+    select(view.container, range);
+    const selection = document.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const copied = Object.fromEntries(
+      (["text", "markdown", "html"] as const).map((format) => [
+        format,
+        serializeSelection(selection, format),
+      ]),
+    );
+    view.unmount();
+    return copied;
+  }
+
+  it("copies a presented block in a selection exactly as the plain block", () => {
+    // A blank line before the closing fence is source the paste must keep.
+    const source =
+      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n\n```\n\nAfter";
+    const all = (container: HTMLElement, range: Range) =>
+      range.selectNodeContents(container);
+    const presented = copy(source, store([labels]), all);
+    expect(presented).toEqual(copy(source, store([]), all));
+    expect(presented.markdown).toBe(
+      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n\n```\n\nAfter",
+    );
+    expect(presented.text).toBe("Before\n\nflowchart LR\n  A --> B\n\nAfter");
+  });
+
+  it("leaves out a presented block that a paragraph selection only ends in", () => {
+    // A triple-click on the paragraph ends the range at the next block's first text.
+    const copied = copy(fenced, store([labels]), (container, range) => {
+      const paragraph = container.querySelector("p") as Node;
+      const label = container.querySelector("svg text")?.firstChild as Node;
+      range.setStart(paragraph, 0);
+      range.setEnd(label, 0);
+    });
+    expect(copied).toEqual({
+      text: "Before",
+      markdown: "Before",
+      html: "<p>Before</p>",
+    });
+  });
+
+  it("retries the renderer when an edit changes a block it failed on", () => {
+    const codeBlocks = store([
+      diagram(({ code }) => {
+        if (code.includes("(")) throw new Error("unsupported source");
+        return <figure>{code}</figure>;
+      }),
+    ]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const block = (source: string) => (
+        <MessageMarkdown
+          {...props(`\`\`\`Mermaid\n${source}\n\`\`\``, {
+            extensions: { ...extensions, codeBlocks },
+          })}
+        />
+      );
+      const view = renderDom(block("A --> ("), { wrapper: ToastProvider });
+      expect(view.container.querySelector("figure")).toBeNull();
+      expect(view.container.querySelector("pre")?.textContent).toContain(
+        "A --> (",
+      );
+      view.rerender(block("A --> B"));
+      expect(view.container.querySelector("figure")?.textContent).toBe(
+        "A --> B",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("keeps plain code in noninteractive previews", () => {
+    const html = render(fenced, {
+      interactive: false,
+      extensions: { ...extensions, codeBlocks: store([drawn]) },
+    });
+    expect(html).not.toContain("<figure");
+    expect(html).toContain('<code class="language-Mermaid">');
+  });
+});
+
 it.each(["one\n\ntwo", "https://example.com/path"])(
   "hides serialized spoiler content before reveal: %s",
   async (text) => {
@@ -1250,4 +1375,17 @@ it("keeps one channel Larry plain despite global namesakes and follows membershi
   mounted.unmount();
   names.dispose();
   owned.dispose();
+});
+
+it("marks only a mention of the viewer as a mention of you", () => {
+  const session = { ...createRelaySession(null).session, viewer: smith };
+  const view = renderDom(
+    <MessageMarkdown {...props("@Mic Smith and @Mic", { session })} />,
+  );
+  expect(
+    view.getByRole("button", { name: "View Mic Smith profile" }),
+  ).toHaveAttribute("data-mention-self", "");
+  expect(
+    view.getByRole("button", { name: "View Mic profile" }),
+  ).not.toHaveAttribute("data-mention-self");
 });

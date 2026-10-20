@@ -26,6 +26,8 @@ vi.mock("virtua", async () => {
     ) {
       useImperativeHandle(ref, () => ({
         cache: undefined,
+        findItemIndex: () => 0,
+        getItemOffset: () => 0,
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
@@ -697,3 +699,118 @@ it.each([
     expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
   },
 );
+
+it("reads through the last message when a Huddle card is newest, with no plugin renderer", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 500),
+  );
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 800, 500),
+  ] as unknown as DOMRectList);
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  const catchUp = vi.fn(async () => {}),
+    observe = vi.fn(async () => {});
+  const sync = {
+    ...owner.session.unread.sync(),
+    capability: "frontier-sync" as const,
+  };
+  const session = {
+    ...owner.session,
+    unread: {
+      ...owner.session.unread,
+      sync: () => sync,
+      reading: () => ({ view: () => {}, dispose: () => {}, observe, catchUp }),
+    },
+  };
+  const base = {
+    channelId: "c",
+    authorId: "a".repeat(64),
+    content: "Message",
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  };
+  try {
+    render(
+      <ChannelTimeline
+        channelId="c"
+        scope="read-huddle"
+        queries={session}
+        window={{
+          channelId: "c",
+          status: "ready",
+          freshness: "verified",
+          error: undefined,
+          hasMore: false,
+          loadingOlder: false,
+          rows: [
+            { ...base, id: "message" },
+            {
+              ...base,
+              id: "card",
+              content: "",
+              createdAt: 2,
+              huddle: { room: "room", state: "started" },
+            },
+          ],
+        }}
+        onOpenLink={() => false}
+      />,
+    );
+    await frame();
+    await frame();
+    const history = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    await act(async () => {
+      history.focus();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(catchUp).toHaveBeenCalledWith("message", undefined);
+    expect(observe).toHaveBeenCalledWith(["message"]);
+    expect(
+      history
+        .querySelector('[data-message-id="card"]')
+        ?.hasAttribute("data-huddle-row"),
+    ).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("scroll completion saves row geometry measured after the last scroll event", async () => {
+  const h = mount();
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let rowY = 42;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+    },
+  );
+  fireEvent.wheel(region, { deltaY: -900 });
+  region.scrollTop = 0;
+  fireEvent.scroll(region);
+  // Virtual rows finish measuring at the top without changing scrollTop again.
+  rowY = 142;
+  fireEvent(region, new Event("scrollend"));
+  h.unmount();
+  expect(readView("scope", "scroll:c", null)).toEqual({
+    offset: 0,
+    bottom: false,
+    anchor: { id: h.saved.anchor.id, y: 142 },
+  });
+});

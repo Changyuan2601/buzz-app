@@ -28,6 +28,7 @@ function setup({
   strict = false,
   latestMessageId = undefined as string | undefined,
   rootId = undefined as string | undefined,
+  enabled = true,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
 } = {}) {
   vi.useFakeTimers();
@@ -112,6 +113,7 @@ function setup({
       settled: position,
       latestMessageId,
       rootId,
+      enabled,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -155,6 +157,7 @@ function setup({
         settled: position,
         latestMessageId,
         rootId,
+        enabled,
       }),
     unmount: view.unmount,
   };
@@ -163,6 +166,7 @@ function row(id: string, top: number, bottom: number) {
   const element = document.createElement("div");
   element.dataset.messageId = id;
   if (id === "membership") element.dataset.membershipRow = "";
+  if (id === "huddle") element.dataset.huddleRow = "";
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, top, 400, bottom - top),
   );
@@ -175,6 +179,12 @@ it("reports only fully visible settled evidence after dwell, not mounted oversca
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it("a disabled list marks nothing read, not even its visible bottom", async () => {
+  const h = setup({ enabled: false, latestMessageId: "visible" });
+  h.mutation();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(h.reading).not.toHaveBeenCalled();
 });
 it.each([
   { focused: false },
@@ -396,15 +406,18 @@ it("the viewing validity callback rechecks focus and settled positioning synchro
   expect(visible()).toBe(false);
 });
 
-it("membership activity cannot abort acknowledgment of a visible message below it", () => {
-  const h = setup();
-  h.setRows([row("membership", 10, 50), row("conversation", 100, 200)]);
-  h.mutation();
-  vi.advanceTimersByTime(300);
-  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
-    "conversation",
-  ]);
-});
+it.each(["membership", "huddle"])(
+  "%s activity cannot abort acknowledgment of a visible message below it",
+  (kind) => {
+    const h = setup();
+    h.setRows([row(kind, 10, 50), row("conversation", 100, 200)]);
+    h.mutation();
+    vi.advanceTimersByTime(300);
+    expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
+      "conversation",
+    ]);
+  },
+);
 
 it("releases the old channel and session on rerender and only observes the current lease", () => {
   const h = setup();

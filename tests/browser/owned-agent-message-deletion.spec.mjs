@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -36,7 +37,7 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
   );
   await expect(row).toBeVisible();
   await row.scrollIntoViewIfNeeded();
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "More message actions" }).click();
   const action = page.getByRole("menuitem", {
     name: "Delete message",

@@ -176,13 +176,7 @@ createRoot(root).render(
             session={first}
             working={false}
             selected={undefined}
-            collapsed
-            onToggle={() => {}}
-            draft={false}
-            draftSelected={false}
-            sessions={[]}
             onSelect={() => {}}
-            onNewSession={() => {}}
             onOpenThread={() => {}}
           />
         </section>
@@ -203,7 +197,9 @@ createRoot(root).render(
                 id: name,
                 channelId: "status-dm",
                 authorId: authorId,
-                content: "A message",
+                // Wider than the byline, so the hover toolbar above the
+                // bubble's end corner leaves the status reachable.
+                content: "A message that runs past its byline",
                 createdAt: remoteTime,
                 mentions: [],
                 participants: [],

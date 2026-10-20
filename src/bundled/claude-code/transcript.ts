@@ -256,20 +256,103 @@ export function startedFor(file: string, conversation: Conversation) {
  * session when it cannot resume one, e.g. in another build of the app, which
  * keeps its own saved sessions. */
 async function otherSessions(spawn: Spawn, project: string, pattern: string) {
+  return (await searchProject(spawn, project, pattern)).filter((name) =>
+    /^[^/]+\.jsonl$/.test(name),
+  );
+}
+
+/** Paths of the project's `.jsonl` files, subagents' included, containing
+ * `pattern`. A failed search finds what it found before failing, unless
+ * `exhaustive`, when it rejects. */
+export async function searchProject(
+  spawn: Spawn,
+  project: string,
+  pattern: string,
+  exhaustive = false,
+) {
   let output = "";
+  let errors = "";
   const process = await spawn("find", {
     args: [pattern, "."],
     cwd: `~/.claude/projects/${project}`,
     onStdout: (data) => {
       output += data;
     },
+    onStderr: (data) => {
+      errors += data;
+    },
   });
-  // No match exits 1; a failed search leaves just the saved session.
-  await process.exited;
+  const code = await process.exited;
+  // No match exits 1.
+  if (exhaustive && code !== 0 && code !== 1)
+    throw new Error(
+      `Couldn’t search the Claude Code history: ${errors.trim() || `exit ${code}`}`,
+    );
   return output
     .split("\n")
     .map((line) => line.trim().replace(/^\.\//, ""))
-    .filter((name) => /^[^/]+\.jsonl$/.test(name));
+    .filter(Boolean);
+}
+
+/** The Claude Code project directory name for the agent's workspace, or
+ * undefined when it is too long to be one. */
+export async function workspaceProject(
+  spawn: Spawn,
+  workspace: string,
+  signal: AbortSignal,
+) {
+  let directory = "";
+  const process = await spawn("workspace", {
+    cwd: workspace,
+    onStdout: (data) => {
+      directory += data;
+    },
+  });
+  if ((await process.exited) !== 0)
+    throw new Error("Could not find the agent's workspace");
+  signal.throwIfAborted();
+  const project = projectName(directory.trim());
+  return project.length > PROJECT_NAME_LIMIT ? undefined : project;
+}
+
+/** The title Claude Code generated for a session (its latest `ai-title`
+ * record), or undefined before it has one. */
+export async function readSessionTitle(
+  spawn: Spawn,
+  workspace: string,
+  sessionId: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const project = await workspaceProject(spawn, workspace, signal);
+  if (!project || !/^[\w-]+$/.test(sessionId)) return undefined;
+  let file: string;
+  try {
+    file = new TextDecoder().decode(
+      await readFile(
+        spawn,
+        "~/.claude/projects",
+        `./${project}/${sessionId}.jsonl`,
+        signal,
+      ),
+    );
+  } catch (error) {
+    signal.throwIfAborted();
+    if (/no such file/i.test(error instanceof Error ? error.message : ""))
+      return undefined;
+    throw error;
+  }
+  let title: string | undefined;
+  for (const line of file.split("\n")) {
+    if (!line.includes('"ai-title"')) continue;
+    try {
+      const record = object(JSON.parse(line));
+      const value = str(record?.aiTitle).trim();
+      if (record?.type === "ai-title" && value) title = value;
+    } catch {
+      // A partial last line is still being written.
+    }
+  }
+  return title;
 }
 
 /** The conversation's transcript across its sessions, or undefined when this
@@ -282,18 +365,8 @@ export async function readTranscript(
   working: boolean,
   signal: AbortSignal,
 ): Promise<(Transcript & { more: boolean }) | undefined> {
-  let directory = "";
-  const process = await spawn("workspace", {
-    cwd: workspace,
-    onStdout: (data) => {
-      directory += data;
-    },
-  });
-  if ((await process.exited) !== 0)
-    throw new Error("Could not find the agent's workspace");
-  signal.throwIfAborted();
-  const project = projectName(directory.trim());
-  if (project.length > PROJECT_NAME_LIMIT) return undefined;
+  const project = await workspaceProject(spawn, workspace, signal);
+  if (!project) return undefined;
   const saved = conversation.sessionId && `${conversation.sessionId}.jsonl`;
   const names = new Set([
     ...(saved ? [saved] : []),

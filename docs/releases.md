@@ -142,6 +142,26 @@ again. The age window is measured from publication, not promotion. Actions build
 artifacts have a separate seven-day retention policy and do not control GitHub
 release retention.
 
+## Release tags
+
+Release builds outside this repository's preview workflow consume immutable
+`desktop-vX.Y.Z` or `desktop-vX.Y.Z-beta.N` tags, never a branch or commit.
+Run **Desktop release tag** from `main` with the version and a full commit SHA
+in `main` history. It publishes an annotated tag through the release GitHub App
+and fails before writing unless an active tag ruleset includes
+`refs/tags/desktop-v*`, has no exclusions, restricts creation, update, deletion
+and non-fast-forward, and lets the App bypass it. A published tag is never
+moved or reused; cut a new version instead.
+
+Setup, by a repository admin:
+
+- Install the release App and create a `desktop-release-tag` environment that
+  deploys only from `main`. Put the `BUZZ_RELEASE_TAGGER_CLIENT_ID` variable and
+  `BUZZ_RELEASE_TAGGER_PRIVATE_KEY` secret in that environment, not the repository.
+- Create the ruleset with the App as its only bypass actor, in `always` mode. The
+  workflow cannot see the bypass list, so confirm it before the first tag and
+  after any ruleset change.
+
 ## Prerequisites
 
 Deploy [the signing infrastructure](https://github.com/squareup/tf-mobuild-workers/pull/1398)

@@ -57,6 +57,7 @@ export function createProfileDirectory(
       if (
         old?.name === value.name &&
         old?.nameIsFallback === value.nameIsFallback &&
+        old?.username === value.username &&
         old?.picture === value.picture &&
         old?.about === value.about &&
         old?.nip05 === value.nip05 &&

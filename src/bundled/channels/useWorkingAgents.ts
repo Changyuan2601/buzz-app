@@ -8,7 +8,7 @@ const noSubscribe = () => () => {};
 const noAgents: readonly string[] = [];
 const noProfiles = new Map<string, Profile>();
 
-/** Shared observer/owned-typing signal for Messages and Me sidebar rows. */
+/** Shared observer/owned-typing signal for Messages and Solo sidebar rows. */
 export function useWorkingAgents(
   session: RelaySession,
   channelId: string,

@@ -604,6 +604,10 @@ test("decoded image resizing preserves reading and bottom following across remou
         ),
       ).toBe(true);
       await expect(latestImage).toHaveCSS("visibility", "hidden");
+      // A loaded image must retain its learned frame while the new DOM node's
+      // decode is pending. Otherwise eviction restores the 320px placeholder
+      // and feeds another geometry correction back into the virtualizer.
+      await expect(latestImage).toHaveCSS("height", "10px");
       await settle(page, feed);
       const completed = await page.evaluate(() =>
         window.imageTest.completed("58"),

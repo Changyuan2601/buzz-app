@@ -50,3 +50,8 @@
     animation-delay: 0.4s;
   }
 }
+
+.dots[data-size="small"] > span {
+  width: calc(var(--space-1) - 1px);
+  height: calc(var(--space-1) - 1px);
+}

@@ -1,23 +1,23 @@
 import type { ChannelSummary } from "../relay/contracts";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { MentionRecipient } from "./mention-draft";
 import { archiveHides } from "../relay/identity-archives";
 
 /** The shared archive discovery rule applied to mention recipients. */
-export function archivedMention(session: RelaySession, pubkey: string) {
+export function archivedMention(session: ComposerSession, pubkey: string) {
   return archiveHides(session.archives, pubkey, session.viewer);
 }
 
 /**
  * Whether a destination can name people outside it from the community
- * directory. A session cannot: its mentions admit agents through the session
+ * directory. A Solo chat cannot: its mentions admit agents through the Solo chat
  * choice policy. This follows the channel type, not composer props, because
- * some session composers (media comments, edits) do not carry session mode.
+ * some Solo chat composers (media comments, edits) do not carry Solo mode.
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
 ) {
-  return !!channel && channel.channelType !== "session";
+  return !!channel && channel.channelType !== "solo";
 }
 
 /**
@@ -27,7 +27,7 @@ export function allowsOutsideMentions(
  * addressing outside people.
  */
 export function mentionAdmission(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
@@ -56,7 +56,7 @@ export function mentionAdmission(
  * stays display-only, as the chooser would not offer it.
  */
 export function pastedMentionRecipient(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   pubkey: string,
   inviteAgents = false,

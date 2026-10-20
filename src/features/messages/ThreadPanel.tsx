@@ -35,9 +35,9 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
-import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -50,8 +50,8 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
-  sessionConversation?: boolean | undefined;
-  personalConversation?: boolean | undefined;
+  soloConversation?: boolean | undefined;
+  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -66,8 +66,12 @@ export type ThreadPanelProps = {
   /** Retry a failed routed opening with fresh navigation authority. */
   onRetryNavigation?: (() => void) | undefined;
   replyRequest?: number | undefined;
+  /** Each new value focuses the reply box, keeping its target. */
+  focusRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
+  /** With revealSelected: each new value reveals the selected message again. */
+  revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
@@ -105,8 +109,6 @@ export function ThreadPanel(props: ThreadPanelProps) {
       }
       data-attachment-drop-zone=""
       data-reading-surface=""
-      onDragOver={rejectUnhandledFileDrop}
-      onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
         // Portalled viewers bubble here through React but own their Escape.
@@ -176,6 +178,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     view: ThreadView;
     messageId: string;
     navigation: PageNavigation | undefined;
+    revealRequest: number | undefined;
     revision: number;
   };
   const current = useRef<Opening | undefined>(undefined);
@@ -195,8 +198,15 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   );
   const differentThread = useRef(props.onDifferentThread);
   differentThread.current = props.onDifferentThread;
-  const { session, channelId, messageId, navigation, onRetryNavigation } =
-    props;
+  const {
+    session,
+    channelId,
+    messageId,
+    navigation,
+    onRetryNavigation,
+    revealSelected,
+    revealRequest,
+  } = props;
   const retryNavigation = useCallback(() => {
     retrying.current = true;
     setPending(true);
@@ -227,6 +237,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         prior &&
         !navigation &&
         prior.messageId === messageId &&
+        prior.revealRequest === revealRequest &&
         !retrying.current
       ) {
         const next = { ...prior, navigation: undefined };
@@ -238,7 +249,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         const result = await prior.view.retarget(messageId, signal);
         if (signal.aborted || current.current !== prior) return;
         if (result === "selected") {
-          const next = { ...prior, messageId, navigation };
+          const next = { ...prior, messageId, navigation, revealRequest };
           current.current = next;
           setOpening(next);
           settle();
@@ -263,8 +274,9 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       }
       try {
         const exact =
-          navigation?.target.kind === "conversation" &&
-          navigation.target.threadRootId !== messageId;
+          revealSelected ||
+          (navigation?.target.kind === "conversation" &&
+            navigation.target.threadRootId !== messageId);
         const view = session.thread(
           channelId,
           messageId,
@@ -275,6 +287,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           view,
           messageId,
           navigation,
+          revealRequest,
           revision: (prior?.revision ?? 0) + 1,
         };
         current.current = next;
@@ -290,7 +303,15 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     }
     void select();
     return () => request.abort();
-  }, [session, channelId, messageId, navigation, attempt]);
+  }, [
+    session,
+    channelId,
+    messageId,
+    navigation,
+    revealSelected,
+    revealRequest,
+    attempt,
+  ]);
   return (
     <>
       {error && !opening && (
@@ -308,6 +329,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           view={opening.view}
           messageId={opening.messageId}
           navigation={opening.navigation}
+          revealRequest={opening.revealRequest}
           selectionFailure={
             failure && { ...failure, pending, retry: retryNavigation }
           }
@@ -329,11 +351,12 @@ function OwnedThreadPanel({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
-  sessionConversation,
-  personalConversation,
+  soloConversation,
+  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active = true,
   revealSelected,
   requireReadyRoot,
@@ -389,8 +412,8 @@ function OwnedThreadPanel({
     </div>
   ) : view ? (
     <ThreadMessages
-      sessionConversation={sessionConversation}
-      personalConversation={personalConversation}
+      soloConversation={soloConversation}
+      ownSoloConversation={ownSoloConversation}
       activityClickOpensPanel={activityClickOpensPanel}
       disabled={disabled}
       extensions={extensions}
@@ -402,6 +425,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      focusRequest={focusRequest}
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
@@ -426,13 +450,15 @@ function ThreadMessages({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
-  sessionConversation,
-  personalConversation,
+  soloConversation,
+  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active,
   revealSelected,
+  revealRequest,
   requireReadyRoot,
   onDraftSaved,
   selectionFailure,
@@ -441,8 +467,8 @@ function ThreadMessages({
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
-  sessionConversation?: boolean | undefined;
-  personalConversation?: boolean | undefined;
+  soloConversation?: boolean | undefined;
+  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -453,8 +479,10 @@ function ThreadMessages({
   messageId: string;
   view: ThreadView;
   replyRequest?: number | undefined;
+  focusRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
+  revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   navigation?: PageNavigation | undefined;
@@ -630,7 +658,7 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
     targetAnchor.current = undefined;
-  }, [messageId, navigation?.signal]);
+  }, [messageId, navigation?.signal, revealRequest]);
   const selectedRow = useCallback(
     () =>
       [
@@ -732,12 +760,13 @@ function ThreadMessages({
     (!navigation || rootTarget) &&
     snapshot.status !== "error";
   const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
   useEffect(() => {
     if (!revealSelected) return;
     const request = new AbortController();
     setInlineReveal(request.signal);
     return () => request.abort();
-  }, [revealSelected]);
+  }, [revealSelected, revealRequest]);
   const revealSignal =
     inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
@@ -781,6 +810,10 @@ function ThreadMessages({
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
+  useEffect(() => {
+    if (focusRequest) setReplyFocus((value) => value + 1);
+  }, [focusRequest]);
+  const pendingReplyFocus = usePendingRequest(replyFocus);
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
@@ -1142,6 +1175,7 @@ function ThreadMessages({
         : undefined;
       const message = (
         <MessageRow
+          viewer={session.viewer}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -1254,12 +1288,6 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  // Match the channel's relay summary total. Without a positive total,
-  // stay neutral: visible rows and reader state cannot prove empty history.
-  const replyCount = snapshot.root?.replyCount ?? 0;
-  const replyLabel = replyCount
-    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
-    : "Replies";
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1386,6 +1414,7 @@ function ThreadMessages({
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
             <MessageRow
+              viewer={session.viewer}
               extensions={extensions}
               session={session}
               scope={scope}
@@ -1414,11 +1443,6 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          {snapshot.root && snapshot.replies.length > 0 && (
-            <div className={styles.replyDivider}>
-              <span>{replyLabel}</span>
-            </div>
-          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
@@ -1495,8 +1519,8 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
-          sessionConversation={sessionConversation}
-          personalConversation={personalConversation}
+          soloConversation={soloConversation}
+          ownSoloConversation={ownSoloConversation}
           activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
@@ -1539,7 +1563,7 @@ function ThreadMessages({
             )
           }
           editMessages={rows}
-          focusRequest={replyFocus}
+          focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}

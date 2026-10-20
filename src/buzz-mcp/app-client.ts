@@ -1,3 +1,4 @@
+import { parseAudienceAuthority } from "../features/sessions/audience-authority";
 // The Buzz tools' client inside the app: the agent's native-held key signs and
 // reads through its Agents handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
@@ -15,6 +16,9 @@ export function appClient(
   agent: AgentHandle,
   options: Readonly<{
     spawn: Spawn;
+    relayAuthor?: string | undefined;
+    signingAuthority?: string | undefined;
+    audienceAuthorityCommunity?: string | undefined;
     /** Where relative paths start: the agent's working directory. */
     cwd: string;
     memories(slug?: string): Promise<Memories>;
@@ -35,12 +39,41 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
+  const authority = agent.audienceAuthority;
+  const authorityCommunity = options.audienceAuthorityCommunity;
   return {
     pubkey: agent.pubkey,
+    relayAuthor: options.relayAuthor,
+    signingAuthority: options.signingAuthority,
     attention: agent.attention,
-    query: (filters) => {
+    ...(authority && authorityCommunity
+      ? {
+          authorizeAudience: async (
+            destination: string,
+            sources: readonly string[],
+          ) => {
+            check();
+            const response = await authority(destination, sources);
+            check();
+            return parseAudienceAuthority(
+              response,
+              agent.pubkey,
+              authorityCommunity,
+              destination,
+              sources,
+            );
+          },
+        }
+      : {}),
+    query: async (filters) => {
       check();
-      return agent.query(filters);
+      const events = await agent.query(filters);
+      check();
+      return events;
+    },
+    searchProfiles: (query, limit) => {
+      check();
+      return agent.searchProfiles(query, limit);
     },
     publish: (event) => {
       check();

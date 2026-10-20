@@ -1,3 +1,4 @@
+import { selectCommunity } from "./navigation.mjs";
 import { test, expect, historySize } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
 
@@ -124,7 +125,7 @@ readingTest(
       await button(page, "Alpha").click();
       await settle(page);
       await expectAnchor(page, saved);
-      await button(page, "Switch to Secondary").click();
+      await selectCommunity(page, "Secondary");
       await composer(page, "Alpha").waitFor();
       await expect(composer(page, "Alpha")).toHaveJSProperty(
         "value",
@@ -145,7 +146,7 @@ readingTest(
       });
       expect(persisted?.anchor?.id).toBe(saved.id);
       await composer(page, "Alpha").fill("B draft");
-      await button(page, "Switch to Primary").click();
+      await selectCommunity(page, "Primary");
       await expect(composer(page, "Alpha")).toHaveJSProperty(
         "value",
         "A draft",

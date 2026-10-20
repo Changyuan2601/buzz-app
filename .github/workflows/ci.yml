@@ -69,6 +69,8 @@ jobs:
         with:
           key: native
           save-if: ${{ github.event_name == 'push' }}
+      - name: Dependency policy
+        run: ./bin/cargo-deny --locked check
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
       - name: Rust lint
@@ -174,15 +176,15 @@ jobs:
           save-if: ${{ github.event_name == 'push' }}
       - name: Build native browser fixture
         timeout-minutes: 8
-        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --target-dir target/browser-fixture
+        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture
       - name: Package same-revision native fixture
         run: |
           mkdir -p target/browser-artifact
-          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-artifact/
+          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-fixture/debug/buzzodz target/browser-artifact/
           git rev-parse HEAD > target/browser-artifact/revision
           cd target/browser-artifact
-          sha256sum fixture-bridge > SHA256SUMS
-          tar -cf ../browser-fixture.tar fixture-bridge revision SHA256SUMS
+          sha256sum fixture-bridge buzzodz > SHA256SUMS
+          tar -cf ../browser-fixture.tar fixture-bridge buzzodz revision SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: fixture-upload
         with:
@@ -239,6 +241,7 @@ jobs:
           test "$(cat revision)" = "$(git rev-parse HEAD)"
           sha256sum --check SHA256SUMS
           test -x fixture-bridge
+          test -x buzzodz
       # CI required enforces measurement success. --no-deps avoids repeating
       # measurements here; the matrix covers both engines on separate runners.
       - name: Functional journeys
@@ -305,11 +308,15 @@ jobs:
         run: ./bin/node scripts/flake-check.mjs select HEAD^1 HEAD
 
   flake_vitest:
-    name: Flake check (Vitest)
+    name: Flake check (Vitest, ${{ matrix.batch }}/2)
     needs: [flake_select]
     if: needs.flake_select.outputs.vitest != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [1, 2]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -320,12 +327,14 @@ jobs:
           # Match the JavaScript lane's worker contention.
           BUZZ_TEST_WORKERS: "2"
           SELECTED: ${{ needs.flake_select.outputs.vitest }}
-        run: ./bin/node scripts/flake-check.mjs vitest $SELECTED
+        # Keep ten independent repetitions without serial setup consuming
+        # the job budget; each batch retains two-worker contention.
+        run: ./bin/node scripts/flake-check.mjs vitest --iterations=5 $SELECTED
       - name: Vitest iteration reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: flake-vitest
+          name: flake-vitest-${{ matrix.batch }}
           path: test-results/flake
           retention-days: 7
 
@@ -373,6 +382,7 @@ jobs:
           test "$(cat revision)" = "$(git rev-parse HEAD)"
           sha256sum --check SHA256SUMS
           test -x fixture-bridge
+          test -x buzzodz
       # retries stay 0, so every failed repetition reports as unexpected.
       - name: Repeat changed journeys
         env:

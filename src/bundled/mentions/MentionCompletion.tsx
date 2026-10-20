@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery } from "./mention-query";
@@ -11,7 +11,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
-const demands = new WeakMap<RelaySession, Set<string>>();
+const demands = new WeakMap<ComposerSession, Set<string>>();
 export function MentionCompletion({
   session,
   scope,
@@ -47,14 +47,14 @@ export function MentionCompletion({
   );
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
-  const parentAdmission =
-    !!channel &&
-    (channel.channelType !== "session" || !!channel.parentChannelId);
+  const parentAdmission = !!channel && channel.channelType !== "solo";
   // The shared budget is append-only for this query, including late teams and
   // directory people. Neither source may displace an already displayed choice.
-  const shown = useRef<{ session: RelaySession; key: string; ids: string[] }>(
-    undefined,
-  );
+  const shown = useRef<{
+    session: ComposerSession;
+    key: string;
+    ids: string[];
+  }>(undefined);
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -118,7 +118,7 @@ export function MentionCompletion({
           (members.includes(recipient.pubkey)
             ? recipient.pubkey
             : inviteAgents
-              ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+              ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
               : outsideMentionDetail(channel)),
         preview: (
           <Avatar

@@ -10,6 +10,11 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+vi.mock("@tauri-apps/api/core", async (original) => ({
+  ...(await original<typeof import("@tauri-apps/api/core")>()),
+  invoke: vi.fn(async () => {}),
+}));
 import * as imageCopy from "./image-copy";
 import * as nativeImageCopy from "./native-image-copy";
 import { ImageReviewStage } from "./ImageReviewStage";
@@ -832,3 +837,40 @@ it.each(["pointerCancel", "lostPointerCapture"] as const)(
     expect(percent()).toBe("200%");
   },
 );
+
+it("sends the selected image filename with its authenticated native download source", () => {
+  const url = `https://relay.example/media/${"a".repeat(64)}.png`;
+  const source = `http://buzz-media.localhost/${encodeURIComponent(url)}`;
+  render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image", name: "photo.png" }]}
+      selectedUrl={url}
+      media={() => source}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Download image" }));
+  expect(invoke).toHaveBeenCalledWith("media_download", {
+    source,
+    name: "photo.png",
+  });
+});
+
+it("hides Copy when the host does not provide image clipboard access", () => {
+  stubImageCopy();
+  render(
+    <ImageReviewStage
+      attachments={[{ url: "https://fixture.test/photo.png", kind: "image" }]}
+      selectedUrl="https://fixture.test/photo.png"
+      media={(url) => url}
+      select={() => {}}
+      onOpenLink={() => false}
+      allowCopy={false}
+    />,
+  );
+  expect(screen.getByRole("img")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
+});

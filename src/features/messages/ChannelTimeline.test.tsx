@@ -225,6 +225,8 @@ function setup({
     scrollSize: 3649.5,
     viewportSize: 668,
     cache: [],
+    findItemIndex: () => 0,
+    getItemOffset: () => 0,
     scrollTo: vi.fn(),
     scrollToIndex: vi.fn(),
   };
@@ -1760,7 +1762,7 @@ it.each([false, true])(
   },
 );
 
-it("pages session history on scroll without an initial button and keeps error recovery", () => {
+it("pages Solo chat history on scroll without an initial button and keeps error recovery", () => {
   const h = setup({ hasMore: true, historyControl: "scroll" });
   expect(h.hasHistoryButton()).toBe(false);
   h.scroll();

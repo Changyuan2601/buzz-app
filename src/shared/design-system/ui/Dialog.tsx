@@ -18,6 +18,8 @@ export type DialogProps = {
     typeof BaseDialog.Root
   >["onOpenChangeComplete"];
   title: ReactNode;
+  /** Search palettes keep an accessible title without visible header chrome. */
+  presentation?: "default" | "search";
   description?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
@@ -56,6 +58,7 @@ export function Dialog({
   onOpenChange,
   onOpenChangeComplete,
   title,
+  presentation = "default",
   description,
   children,
   actions,
@@ -83,44 +86,59 @@ export function Dialog({
     motion === "none" || (!open && instantClose) ? "none" : "default";
   const contents = (
     <>
-      <header
-        className="buzz-dialog-header"
-        data-chrome-spacing={chromeSpacing}
-      >
-        <div className="buzz-dialog-heading">
-          {step ? (
-            <div className="text-label" aria-hidden="true">
-              {title}
-            </div>
-          ) : (
-            <BaseDialog.Title className="text-label">{title}</BaseDialog.Title>
+      {presentation === "search" ? (
+        <>
+          {!step && (
+            <BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>
           )}
-          {description &&
-            (step ? (
-              <p className="buzz-dialog-description" aria-hidden="true">
-                {description}
-              </p>
+          {description && !step && (
+            <BaseDialog.Description className="sr-only">
+              {description}
+            </BaseDialog.Description>
+          )}
+        </>
+      ) : (
+        <header
+          className="buzz-dialog-header"
+          data-chrome-spacing={chromeSpacing}
+        >
+          <div className="buzz-dialog-heading">
+            {step ? (
+              <div className="text-label" aria-hidden="true">
+                {title}
+              </div>
             ) : (
-              <BaseDialog.Description className="buzz-dialog-description">
-                {description}
-              </BaseDialog.Description>
-            ))}
-        </div>
-        <div className="buzz-dialog-header-actions">
-          {headerActions}
-          <BaseDialog.Close
-            disabled={preventClose}
-            render={
-              <IconButton
-                aria-label={closeLabel}
-                disabled={preventClose}
-                size="compact"
-                icon={<XIcon size={16} aria-hidden="true" />}
-              />
-            }
-          />
-        </div>
-      </header>
+              <BaseDialog.Title className="text-label">
+                {title}
+              </BaseDialog.Title>
+            )}
+            {description &&
+              (step ? (
+                <p className="buzz-dialog-description" aria-hidden="true">
+                  {description}
+                </p>
+              ) : (
+                <BaseDialog.Description className="buzz-dialog-description">
+                  {description}
+                </BaseDialog.Description>
+              ))}
+          </div>
+          <div className="buzz-dialog-header-actions">
+            {headerActions}
+            <BaseDialog.Close
+              disabled={preventClose}
+              render={
+                <IconButton
+                  aria-label={closeLabel}
+                  disabled={preventClose}
+                  size="compact"
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              }
+            />
+          </div>
+        </header>
+      )}
       <div
         className="buzz-dialog-body buzz-dialog-content"
         data-chrome-spacing={chromeSpacing}
@@ -173,6 +191,7 @@ export function Dialog({
           data-buzz-ui=""
           className="buzz-dialog gap-0"
           data-placement={placement}
+          data-presentation={presentation}
           data-height={height}
           data-body-layout={bodyLayout}
           data-stepped={step ? "" : undefined}

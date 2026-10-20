@@ -97,7 +97,10 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     (id) => window.localAgentFixture.finish(id, false),
     second.id,
   );
-  await expect(waiting).toContainText("Could not finish");
+  await expect(waiting).toContainText("1 failed");
+  await expect(waiting).toHaveAccessibleName(
+    /Local tester, Fixture provider unavailable/,
+  );
   await expect(sidebar).toHaveCount(0);
   await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
   for (const colorScheme of ["light", "dark"]) {
@@ -140,8 +143,181 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(page.locator("body")).not.toBeFocused();
 });
 
-// Real host composition: dedup is about two mounted presentations, not two agents.
-test("a message bubble replaces duplicate thread dots without hiding work on another reply", async ({
+test("Stop in a message's activity ends its local work quietly", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const rootRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  await rootRow.hover();
+  await rootRow.getByRole("button", { name: /^View thread:/ }).click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const event = app.sign({
+    kind: 9,
+    content: "Request to stop",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", localAgentKey],
+    ],
+  });
+  app.relay.publish("primary", event);
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  await page.evaluate((id) => window.localAgentFixture.handover(id), event.id);
+  const activity = thread
+    .locator(`[data-message-id="${event.id}"]`)
+    .getByRole("button", { name: /^View agent activity:/ });
+  await expect(activity).toHaveAccessibleName(/Local tester/);
+  // A long step stays on one line and ends in an ellipsis.
+  await page.evaluate(
+    (id) =>
+      window.localAgentFixture.step(
+        id,
+        "Read",
+        "src/features/agents/a-very-long-path/with-many-segments/notes-for-the-stop-button.txt",
+      ),
+    event.id,
+  );
+  await activity.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Agent activity",
+    exact: true,
+  });
+  const stop = popup.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(stop).toBeVisible();
+  await expect(stop).toHaveText("Stop");
+  // Its leading icon sits as close to the edge as to the top.
+  const padding = await stop.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.paddingInlineStart, style.paddingTop];
+  });
+  expect(padding[0]).toBe(padding[1]);
+  await expect(popup).not.toHaveAttribute("data-starting-style", "");
+  const preview = popup.getByText(/^Reading /);
+  await expect(preview).toBeVisible();
+  const line = await preview.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+      clipped: element.scrollWidth > element.clientWidth,
+      ellipsis: style.textOverflow,
+    };
+  });
+  expect(line.height).toBeLessThan(line.lineHeight * 1.5);
+  expect(line.clipped).toBe(true);
+  expect(line.ellipsis).toBe("ellipsis");
+  // Stop stays inside the popup, after its row's preview.
+  const [box, frame, text] = await Promise.all([
+    stop.boundingBox(),
+    popup.boundingBox(),
+    preview.boundingBox(),
+  ]);
+  expect(box.x).toBeGreaterThanOrEqual(text.x + text.width);
+  expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width);
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const around = await row.boundingBox();
+  const left = Math.min(frame.x, around.x) - 16;
+  const top = Math.min(frame.y, around.y) - 16;
+  await page.screenshot({
+    path: testInfo.outputPath("local-activity-stop.png"),
+    clip: {
+      x: Math.max(0, left),
+      y: Math.max(0, top),
+      width:
+        Math.max(frame.x + frame.width, around.x + around.width) + 16 - left,
+      height:
+        Math.max(frame.y + frame.height, around.y + around.height) + 16 - top,
+    },
+  });
+  await stop.click();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+    .toEqual([event.id]);
+  // Stopped work is neither finished nor failed: its activity just goes, and a
+  // toast confirms the stop.
+  await expect(activity).toHaveCount(0);
+  await expect(
+    page.getByText("Stopped Local tester", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-channel-id="alpha"] [data-channel-working]'),
+  ).toHaveCount(0);
+});
+
+// The channel's thread summary is host-owned; its activity popup offers Stop.
+test("Stop in a thread summary's activity stops its work", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const request = app.sign({
+    kind: 9,
+    content: "Stop this from the channel",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["p", localAgentKey],
+    ],
+  });
+  app.relay.publish("primary", request);
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  await page.evaluate(
+    (id) => window.localAgentFixture.handover(id),
+    request.id,
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${request.id}"]`,
+  );
+  const summary = row.getByRole("button", { name: /^View thread:/ });
+  await expect(summary).toBeVisible();
+  await expect(row.getByRole("button", { name: /^Stop/ })).toHaveCount(0);
+  await summary.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Agent activity",
+    exact: true,
+  });
+  const stop = popup.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(stop).toBeVisible();
+  await expect(popup).not.toHaveAttribute("data-starting-style", "");
+  await stop.click();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+    .toEqual([request.id]);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(
+    page.getByText("Stopped Local tester", { exact: true }),
+  ).toBeVisible();
+});
+
+// Real host composition: one summary combines replies and exact-message work.
+test("one thread summary retains reply navigation and work on another reply", async ({
   page,
   app,
 }) => {
@@ -163,14 +339,14 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const bubble = row.getByRole("button", { name: /^Open thread:/ });
-  await expect(bubble).toBeVisible();
-  await expect(row.locator("[data-thread-working]")).toHaveCount(0);
-  // Existing replies keep their navigation even while the bubble owns work here.
-  app.threadSummary(request.id, [agent], 1);
   const summary = row.getByRole("button", { name: /^View thread:/ });
+  await expect(summary).toBeVisible();
+  await expect(row.locator("[data-thread-summary]")).toHaveCount(1);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+  // Existing replies share navigation with the message's live work.
+  app.threadSummary(request.id, [agent], 1);
   await expect(summary).toContainText("1 reply");
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
   await page.evaluate(
     (id) => window.localAgentFixture.handover(id),
     request.id,
@@ -190,32 +366,25 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
     .toBe(2);
-  await expect(bubble).toBeVisible();
-  // Same agent, different request: the thread summary still indicates that work.
-  await expect(summary.locator("[data-thread-working]")).toBeVisible();
-  // Ending work keeps the same bubble through its exit: removing and
-  // re-adding it would collapse and regrow the row mid-handoff.
-  await row.evaluate((element) => {
-    const changes = [];
-    window.bubbleChanges = changes;
-    const bubbles = (node) =>
-      node.nodeType === 1 &&
-      (node.matches("section") || !!node.querySelector("section"));
-    new MutationObserver((records) => {
-      for (const { addedNodes, removedNodes } of records) {
-        for (const node of addedNodes) if (bubbles(node)) changes.push("add");
-        for (const node of removedNodes)
-          if (bubbles(node)) changes.push("remove");
-      }
-    }).observe(element, { subtree: true, childList: true });
+  await expect(summary).toBeVisible();
+  // Same agent, different requests: render one working indicator, then retain
+  // the mounted summary and its reply navigation when the first request ends.
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+  await expect(summary.locator('[data-state="working"]')).toBeVisible();
+  await summary.evaluate((element) => {
+    window.activitySummary = element;
   });
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     request.id,
   );
-  await expect(bubble).toHaveCount(0);
-  await expect(row.locator("section")).toHaveCount(0);
-  expect(await page.evaluate(() => window.bubbleChanges)).toEqual(["remove"]);
+  // The surviving request has no first step: waiting proves the completed
+  // request has left the activity projection before checking DOM continuity.
+  await expect(summary.locator('[data-state="waiting"]')).toBeVisible();
+  await expect(summary).toContainText("1 reply");
+  expect(
+    await summary.evaluate((element) => element === window.activitySummary),
+  ).toBe(true);
   await expect(summary.locator("[data-thread-working]")).toBeVisible();
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
@@ -249,7 +418,7 @@ test("opens an active message's empty thread without losing its activity preview
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const trigger = row.getByRole("button", { name: /^Open thread:/ });
+  const trigger = row.getByRole("button", { name: /^View thread:/ });
   await expect(trigger).toBeVisible();
   await trigger.hover();
   const preview = page.getByRole("dialog", {
@@ -389,3 +558,61 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
     await expect(section).toHaveCount(0);
   });
 }
+
+// Real browser focus must survive removal of the decorated host button/portal.
+test("finishing a zero-reply summary hands focus back only when it owns focus", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  for (const focusOn of ["summary", "popup", "composer"]) {
+    // Exercise immediate popup removal without depending on an exit animation.
+    await page.emulateMedia({
+      reducedMotion: focusOn === "popup" ? "reduce" : "no-preference",
+    });
+    const request = app.sign({
+      kind: 9,
+      content: `Finish zero-reply activity: ${focusOn}`,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["h", "alpha"],
+        ["p", localAgentKey],
+      ],
+    });
+    app.relay.publish("primary", request);
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${request.id}"]`,
+    );
+    const summary = row.getByRole("button", { name: /^View thread:/ });
+    const popup = page.getByRole("dialog", {
+      name: "Agent activity",
+      exact: true,
+    });
+    await expect(summary).toBeVisible();
+    if (focusOn === "popup") {
+      await summary.hover();
+      await popup
+        .getByRole("button", { name: "View activity for Local tester" })
+        .focus();
+    } else if (focusOn === "summary") await summary.focus();
+    else await composer.focus();
+    await page.evaluate(
+      (id) => window.localAgentFixture.finish(id, true),
+      request.id,
+    );
+    await expect(summary).toHaveCount(0);
+    await expect(popup).toHaveCount(0);
+    await expect(
+      focusOn === "composer"
+        ? composer
+        : row.getByRole("button", { name: "More message actions" }),
+    ).toBeFocused();
+  }
+});

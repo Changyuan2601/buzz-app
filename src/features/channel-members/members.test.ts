@@ -119,7 +119,7 @@ function setup(type = "stream") {
       loseReceipt = value;
     },
     profileAdd: (active = () => true) =>
-      owner.session.workSessions.addAgents(id, [person.pubkey], active),
+      owner.session.channelWrites.addAgents(id, [person.pubkey], active),
     setSaveFailure: (value: boolean) => {
       failSave = value;
     },
@@ -233,6 +233,23 @@ it.each(["dm", "unknown"])("never expands a %s conversation", async (type) => {
   await expect(t.add()).rejects.toThrow(/cannot add/);
   expect(t.publish).not.toHaveBeenCalled();
 });
+it("adds a member to a system channel through the session, which plugins use", async () => {
+  const t = setup("system");
+  await t.ready();
+  expect(t.session.channels.list().channels).toEqual([]);
+  await t.session.channels.resolve?.([t.id]);
+  expect(t.session.channels.get?.(t.id)?.channelType).toBe("system");
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.publish.mock.calls[0]?.[0].tags).toEqual(
+    expect.arrayContaining([
+      ["h", t.id],
+      ["p", t.person.pubkey],
+    ]),
+  );
+  expect(t.session.channels.get?.(t.id)?.members).toContain(t.person.pubkey);
+  expect(t.session.channels.list().channels).toEqual([]);
+});
 it("cancellation before intent and session disposal never publish", async () => {
   const t = setup();
   await t.ready();
@@ -276,7 +293,7 @@ it.each(["rejected", "unknown", "unconfirmed"])(
     expect(t.session.outbox?.snapshot()).toEqual([]);
     expect(t.session.memberAdditions.snapshot()).toEqual([]);
     t.removePerson();
-    await t.session.workSessions.refreshMembership(t.id);
+    await t.session.channelWrites.refreshMembership(t.id);
     expect(t.publish).toHaveBeenCalledOnce();
     if (failure !== "unconfirmed")
       t.setFail("Failed re-add", failure === "unknown");

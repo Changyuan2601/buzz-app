@@ -1,5 +1,4 @@
 import type { EventTemplate } from "nostr-tools";
-import { sessionMetadata } from "../sessions/metadata.ts";
 import type { RelayEvent } from "./events.ts";
 import {
   exactLifecycleTag,
@@ -64,8 +63,8 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
       typeof draft.description !== "string" ||
       [...draft.description].length > 1000
         ? "Use a description of at most 1,000 characters."
-        : draft.description.includes("Buzz session (")
-          ? 'Remove "Buzz session (" from the description; that text is used by Buzz for work sessions.'
+        : draft.description.includes("Buzz Huddle (")
+          ? 'Remove "Buzz Huddle (" from the description; that text is used by Buzz for Huddles.'
           : undefined,
     lifetime:
       draft?.ttlSeconds !== undefined &&
@@ -103,26 +102,7 @@ export function sameLabels(a: readonly string[], b: readonly string[]) {
   );
 }
 
-export function validateDetailsDraft(
-  draft: ChannelDetailsDraft,
-  base?: ChannelDetailsDraft,
-): void {
-  const metadata = sessionMetadata(base?.description);
-  if (metadata && !metadata.parentId && draft.description !== "") {
-    const next = sessionMetadata(draft.description);
-    if (
-      !next ||
-      next.parentId ||
-      draft.visibility !== base?.visibility ||
-      draft.description !== base?.description ||
-      (draft.labels !== undefined &&
-        !sameLabels(draft.labels, base.labels ?? []))
-    )
-      throw new Error(
-        "Only the name and lifetime of a session can be changed here.",
-      );
-    draft = { ...draft, description: "" };
-  }
+export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
   const errors = detailsDraftErrors(draft);
   const error =
     errors.name ??
@@ -166,7 +146,6 @@ export function detailsSettings(
     canEdit:
       authority.channelType !== "dm" &&
       exactLifecycleTag(metadata, "archived") !== "true" &&
-      !sessionMetadata(description)?.parentId &&
       (role === "owner" || role === "admin"),
   });
   return { details, metadata };
@@ -177,25 +156,7 @@ export function detailsTemplate(
   draft: ChannelDetailsDraft,
   base: ChannelDetailsDraft,
 ): EventTemplate {
-  validateDetailsDraft(draft, base);
-  if (sessionMetadata(base.description) && sessionMetadata(draft.description))
-    return {
-      kind: 9002,
-      created_at: Math.floor(Date.now() / 1000),
-      content: "",
-      tags: [
-        ["h", lifecycleChannelId(id)],
-        ["name", draft.name],
-        ...(draft.ttlSeconds !== base.ttlSeconds
-          ? [
-              [
-                "ttl",
-                draft.ttlSeconds === undefined ? "" : String(draft.ttlSeconds),
-              ],
-            ]
-          : []),
-      ],
-    };
+  validateDetailsDraft(draft);
   return {
     kind: 9002,
     created_at: Math.floor(Date.now() / 1000),
@@ -242,6 +203,15 @@ function detailsLabels(tags: readonly (readonly string[])[]): string[] {
   return values;
 }
 
+/** Display-only TTL for summaries; malformed metadata shows no lifetime instead of failing the list. */
+export function channelTtl(event: RelayEvent): number | undefined {
+  try {
+    return parseDetailsTtl(exactLifecycleTag(event, "ttl"));
+  } catch {
+    return undefined;
+  }
+}
+
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -256,33 +226,6 @@ function parseDetailsTtl(value: string | undefined): number | undefined {
 
 /** Separate from lifecycle and outbox admission. Admits only explicit open/private visibility. */
 export function validateDetailsTemplate(event: EventTemplate): void {
-  if (
-    event?.kind === 9002 &&
-    event.content === "" &&
-    Number.isSafeInteger(event.created_at) &&
-    event.created_at >= 0 &&
-    Array.isArray(event.tags) &&
-    [2, 3].includes(event.tags.length) &&
-    event.tags.every(
-      (tag, index) =>
-        Array.isArray(tag) &&
-        tag.length === 2 &&
-        tag[0] === ["h", "name", "ttl"][index] &&
-        typeof tag[1] === "string",
-    )
-  ) {
-    lifecycleChannelId(event.tags[0]?.[1] ?? "");
-    validateDetailsDraft({
-      name: event.tags[1]?.[1] ?? "",
-      description: "",
-      visibility: "private",
-      ttlSeconds:
-        event.tags[2]?.[1] === ""
-          ? undefined
-          : parseDetailsTtl(event.tags[2]?.[1]),
-    });
-    return;
-  }
   if (
     event?.kind !== 9002 ||
     event.content !== "" ||

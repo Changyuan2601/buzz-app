@@ -37,7 +37,7 @@ import {
   detailsDraftErrors,
 } from "../../features/relay/channel-details-protocol";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
+import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
 import styles from "./CreateChannelDialog.module.css";
 
 export type CreateChannelInput = ChannelCreationInput;
