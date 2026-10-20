@@ -6,6 +6,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  MAX_MARKDOWN_LENGTH,
+  safeLinkUrl,
+  scanMarkdown,
+} from "../../features/relay/message-content";
+import markdownStyles from "../../features/messages/Messages.module.css";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -25,6 +33,38 @@ import styles from "./ChannelTemplates.module.css";
 import panelStyles from "./Canvas.module.css";
 
 type Draft = { content: string; base: string | null };
+const markdownComponents: Components = {
+  a: ({ href, children }) =>
+    href ? (
+      <a href={href} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    ) : (
+      children
+    ),
+  img: ({ alt }) => alt ?? null,
+};
+
+function CanvasPreview({ content }: { content: string }) {
+  const plain =
+    content.length > MAX_MARKDOWN_LENGTH || scanMarkdown(content).tooDeep;
+  return (
+    <div className={plain ? markdownStyles.plainText : markdownStyles.text}>
+      {plain ? (
+        content
+      ) : (
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+          urlTransform={(url) => safeLinkUrl(url) ?? ""}
+        >
+          {content}
+        </Markdown>
+      )}
+    </div>
+  );
+}
+
 export function CanvasEditor({
   canvas,
   profiles,
@@ -40,6 +80,9 @@ export function CanvasEditor({
 }) {
   const panelId = useId();
   const [tab, setTab] = useState<"edit" | "history">("edit");
+  const [preview, setPreview] = useState(false);
+  const previewButton = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
   const key = `canvas-draft-v1:${channelId}`;
   const draftRevision = useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
@@ -81,10 +124,11 @@ export function CanvasEditor({
     handoff.current = null;
     if (
       previous === document.activeElement ||
-      (!previous.isConnected && document.activeElement === document.body)
+      (document.activeElement === document.body &&
+        (!previous.isConnected || previous === saveButton.current))
     )
-      editor.current?.focus();
-  }, [loaded, busy]);
+      (preview ? previewButton.current : editor.current)?.focus();
+  }, [loaded, busy, preview]);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
   useEffect(
@@ -191,6 +235,7 @@ export function CanvasEditor({
   };
   const save = async () => {
     if (readOnly) return;
+    handoff.current = document.activeElement;
     const generation = ++operation.current;
     // Keep a clean snapshot stable if another editor opens during this write.
     if (viewRevision(scope, key) === "null")
@@ -217,6 +262,13 @@ export function CanvasEditor({
   const actions =
     tab === "edit" ? (
       <>
+        <Button
+          ref={previewButton}
+          disabled={!loaded || busy}
+          onClick={() => setPreview(!preview)}
+        >
+          {preview ? "Edit" : "Preview"}
+        </Button>
         {(error || recovering) && (
           <Button
             ref={recovery}
@@ -230,11 +282,14 @@ export function CanvasEditor({
           </Button>
         )}
         <Button
+          ref={saveButton}
           variant="prominent"
           loading={busy}
+          title={loaded && !dirty && !busy ? "No changes to save" : undefined}
           disabled={
             readOnly ||
             !loaded ||
+            !dirty ||
             !canvas.available ||
             (head?.id ?? null) !== base
           }
@@ -280,20 +335,39 @@ export function CanvasEditor({
               versions.
             </p>
           )}
-          <Textarea
-            ref={editor}
-            data-tab-focus
-            readOnly={readOnly || busy}
-            aria-label="Canvas Markdown"
-            variant="code"
-            rows={16}
-            value={draft}
-            disabled={!loaded}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              writeView(scope, key, { content: e.target.value, base });
-            }}
-          />
+          <div className={panelStyles.document}>
+            <Textarea
+              ref={editor}
+              data-tab-focus
+              readOnly={readOnly || busy}
+              hidden={preview}
+              aria-label="Canvas Markdown"
+              aria-describedby={`${panelId}-status`}
+              variant="code"
+              rows={16}
+              value={draft}
+              disabled={!loaded}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                writeView(scope, key, { content: e.target.value, base });
+              }}
+            />
+            {preview && (
+              <section
+                className={panelStyles.preview}
+                aria-label="Canvas preview"
+              >
+                <CanvasPreview content={draft} />
+              </section>
+            )}
+            <div
+              id={`${panelId}-status`}
+              role="status"
+              className={panelStyles.status}
+            >
+              {loaded && dirty ? "Unsaved changes" : ""}
+            </div>
+          </div>
           {error && (
             <p role="alert" className={styles.error}>
               {error}
@@ -329,7 +403,9 @@ export function CanvasEditor({
         dismissOnOutsideClick
         initialFocus={cancelReload}
         // A reload that lands before this closes has removed its button.
-        finalFocus={() => recovery.current ?? editor.current}
+        finalFocus={() =>
+          recovery.current ?? (preview ? previewButton.current : editor.current)
+        }
         title="Reload saved Canvas?"
         actions={
           <>

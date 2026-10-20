@@ -23,10 +23,32 @@
 .edit[hidden] {
   display: none;
 }
+.document {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
 /* A filling editor cannot be dragged smaller, so it has no resize grip. */
-.edit > textarea {
+.document > textarea {
   flex: 1 0 auto;
   resize: none;
+}
+.document > textarea[hidden] {
+  display: none;
+}
+.preview {
+  flex: 1 0 auto;
+  min-width: 0;
+}
+.status {
+  min-height: 1lh;
+  text-align: end;
+  color: var(--text-metadata);
+  font-size: var(--text-caption);
+  font-weight: var(--text-caption--font-weight);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 .footer {
   display: flex;

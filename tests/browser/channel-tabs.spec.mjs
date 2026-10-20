@@ -510,20 +510,48 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   const text = workspace.getByRole("textbox", { name: "Canvas Markdown" });
   await expect(canvas).toHaveAttribute("aria-selected", "true");
   await expect(text).toBeEnabled();
-  // The editor fills the pane down to the footer's inset.
-  const footer = workspace
-    .getByRole("region", { name: "Channel Canvas" })
-    .locator("footer");
+  const canvasRegion = workspace.getByRole("region", {
+    name: "Channel Canvas",
+  });
+  const status = canvasRegion.getByRole("status");
+  const footer = canvasRegion.locator("footer");
+  // The editor and reserved status line fill the pane down to its footer.
   await expect
     .poll(async () => {
       const [box, end] = await Promise.all([
-        text.boundingBox(),
+        status.boundingBox(),
         footer.boundingBox(),
       ]);
       return Math.round(end.y - box.y - box.height);
     })
     .toBe(20);
+  await settlePanelMotion(page);
+  const cleanBox = await text.boundingBox();
+  await expect(
+    canvasRegion.getByRole("button", { name: "Save Canvas" }),
+  ).toBeDisabled();
+  await canvasRegion.getByRole("button", { name: "Save Canvas" }).hover();
+  await expect(page.getByRole("tooltip")).toHaveText("No changes to save");
   await text.fill("Channel-scoped draft");
+  await expect(status).toHaveText("Unsaved changes");
+  await expect(
+    canvasRegion.getByRole("button", { name: "Save Canvas" }),
+  ).toBeEnabled();
+  await expect.poll(() => text.boundingBox()).toEqual(cleanBox);
+  const toggle = canvasRegion.getByRole("button", {
+    name: "Preview",
+    exact: true,
+  });
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    canvasRegion.getByRole("region", { name: "Canvas preview" }),
+  ).toHaveText("Channel-scoped draft");
+  const edit = canvasRegion.getByRole("button", { name: "Edit", exact: true });
+  await expect(edit).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(text).toBeVisible();
+  await expect.poll(() => text.boundingBox()).toEqual(cleanBox);
   await thread.click();
   await expect(text).toBeHidden();
   await viewCanvas();
