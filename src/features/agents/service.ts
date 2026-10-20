@@ -90,6 +90,7 @@ import {
   type AgentMedia,
   type AgentUpload,
   type GitAuth,
+  type OldRuntime,
   type OldTeam,
   type PortableAgents,
   type PortSource,
@@ -536,8 +537,9 @@ export type AgentType<Config = unknown> = {
   /** A brought-over agent's config: `config` from `defaults` with whatever of
    * `carry` the type has a place for. Without it, all of `carry` stays behind. */
   adopt?(carry: Carry, config: Config): Config;
-  /** Recognize a published catalog runtime and seed this type's import draft.
-   * Return undefined when its runtime/provider cannot be preserved by this type. */
+  /** Recognize a published catalog runtime, or the one old Buzz ran an
+   * imported agent on, and seed this type's config with it. Return undefined
+   * when its runtime/provider cannot be preserved by this type. */
   importShared?(source: {
     runtime?: string;
     provider?: string;
@@ -812,7 +814,9 @@ export type Agents = {
   /** Imports one as an agent of `type` in the selected community: an identity
    * from `portable` keeps its key, name and picture, and a shared agent gets a
    * new key with its name and picture. Either keeps whatever of its
-   * instructions and workspace the type adopts; its other settings stay behind. */
+   * instructions and workspace the type adopts, and one from old Buzz its
+   * runtime, provider and model if the type recognizes them; its other
+   * settings stay behind. */
   port(input: PortInput): Promise<Ported>;
   /** Imports an old Buzz team from `portable`, as read now, into the selected
    * community: each member not here yet as an agent of `type`, then the team's
@@ -1900,15 +1904,18 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Saves a new identity of `type` in the selected community, or `binding`'s,
-   * with the type's default settings, or the `config` it was made with,
-   * adopting what a brought-over one carried. */
+   * with the type's default settings, the `config` it was made with, or the
+   * one its type seeds from what old Buzz ran it on, adopting what a
+   * brought-over one carried. */
   private async add(
     type: string,
     save: (
       native: AgentsNative,
       destination: string,
       owner: string,
-    ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
+    ) => Promise<
+      Readonly<{ agent: AgentIdentity; carry?: Carry; runtime?: OldRuntime }>
+    >,
     made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
     given?: Binding,
   ) {
@@ -1920,15 +1927,19 @@ export class AgentsService extends Service implements Agents {
     if (kind.remote)
       throw new Error("A hosted agent's key stays with its provider");
     const settings = defaults("", kind);
-    const { agent: identity, carry } = await save(
-      native,
-      relayOrigin(binding.origin),
-      binding.viewer,
-    );
+    const {
+      agent: identity,
+      carry,
+      runtime,
+    } = await save(native, relayOrigin(binding.origin), binding.viewer);
     let record = { ...settings, pubkey: identity.pubkey };
     try {
-      if (made.config !== undefined)
-        record = { ...record, config: made.config };
+      const seeded =
+        made.config !== undefined
+          ? made.config
+          : runtime &&
+            kind.importShared?.({ ...runtime, model: runtime.model ?? "" });
+      if (seeded !== undefined) record = { ...record, config: seeded };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
       await this.change(identity.pubkey, () => record);

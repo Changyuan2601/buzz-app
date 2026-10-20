@@ -96,6 +96,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 about: None,
                 relay: "wss://relay.example".into(),
                 carry: Carry::default(),
+                runtime: None,
             },
             Portable {
                 source: PortSource::Installed,
@@ -105,6 +106,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 about: None,
                 relay: "wss://old.example".into(),
                 carry: Carry::default(),
+                runtime: None,
             },
             Portable {
                 source: PortSource::Development,
@@ -114,6 +116,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 about: None,
                 relay: String::new(),
                 carry: Carry::default(),
+                runtime: None,
             },
         ]
     );
@@ -174,6 +177,75 @@ fn carries_each_stores_own_instructions_and_the_harness_workspace() {
     assert!(!serde_json::to_string(&stores(dir.path()).list())
         .unwrap()
         .contains("Review PRs"));
+}
+
+#[test]
+fn carries_old_buzz_runtime_provider_and_model_as_old_buzz_resolved_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys: Vec<_> = (0..6).map(|_| key()).collect();
+    write(
+        stores(dir.path()).harness,
+        json!({"agents": [{
+            "pubkey": keys[0].pubkey(), "relayUrl": "wss://relay.example", "name": "Harness",
+            "runtime": "goose", "provider": "anthropic", "model": "claude",
+        }]}),
+    );
+    legacy(
+        dir.path(),
+        LegacySource::Installed,
+        json!([
+            {"pubkey": keys[1].pubkey(), "name": "Own", "runtime": "goose",
+             "provider": " openrouter ", "model": "claude-sonnet"},
+            // A linked agent runs its definition's provider and model.
+            {"pubkey": "", "slug": "reviewer", "runtime": "codex", "provider": "openai", "model": "gpt"},
+            {"pubkey": keys[2].pubkey(), "name": "Linked", "persona_id": "reviewer",
+             "runtime": "codex", "provider": "stale", "model": "stale"},
+            {"pubkey": keys[3].pubkey(), "name": "Orphan", "persona_id": "missing",
+             "runtime": "goose", "provider": "anthropic", "model": ""},
+            {"pubkey": keys[4].pubkey(), "name": "Blank", "provider": " ", "model": null},
+            {"pubkey": keys[5].pubkey(), "name": "Mesh", "runtime": "goose",
+             "provider": "relay-mesh", "model": "mesh-model"},
+        ]),
+    );
+    let found: BTreeMap<_, _> = stores(dir.path())
+        .list()
+        .agents
+        .into_iter()
+        .map(|agent| (agent.name, agent.runtime))
+        .collect();
+    let runtime = |runtime: &str, provider: &str, model: Option<&str>| {
+        Some(OldRuntime {
+            runtime: Some(runtime.into()),
+            provider: Some(provider.into()),
+            model: model.map(Into::into),
+        })
+    };
+    assert_eq!(
+        found,
+        BTreeMap::from([
+            // This app's harness kept its own settings, not old Buzz's.
+            ("Harness".into(), None),
+            (
+                "Own".into(),
+                runtime("goose", "openrouter", Some("claude-sonnet"))
+            ),
+            ("Linked".into(), runtime("codex", "openai", Some("gpt"))),
+            ("Orphan".into(), runtime("goose", "anthropic", None)),
+            ("Blank".into(), None),
+            // Old Buzz's own mesh provider runs nowhere else.
+            (
+                "Mesh".into(),
+                Some(OldRuntime {
+                    runtime: Some("goose".into()),
+                    ..OldRuntime::default()
+                })
+            ),
+        ])
+    );
+    // Listing never shows them; only taking the agent over does.
+    assert!(!serde_json::to_string(&stores(dir.path()).list())
+        .unwrap()
+        .contains("openrouter"));
 }
 
 #[test]

@@ -53,6 +53,12 @@ export type Carry = Readonly<{
   /** Its working directory, absolute or `~/…`. */
   workspace?: string;
 }>;
+/** The harness, provider and model old Buzz ran an agent on. */
+export type OldRuntime = Readonly<{
+  runtime?: string;
+  provider?: string;
+  model?: string;
+}>;
 export type PortableAgents = Readonly<{
   agents: readonly PortableAgent[];
   /** Old Buzz's teams with a member, built-in ones left out. */
@@ -98,7 +104,7 @@ export type AgentsNative = {
   /** Earlier agent systems' identities on this machine. */
   portable(): Promise<PortableAgents>;
   /** Takes one over with its key, name and picture, as `create` does, with
-   * what it kept there for its new type. */
+   * what it kept there for its new type and, from old Buzz, what it ran on. */
   port(
     source: PortSource,
     pubkey: string,
@@ -106,7 +112,12 @@ export type AgentsNative = {
     owner: string,
     type: string,
   ): Promise<
-    Readonly<{ agent: AgentIdentity; carry: Carry; notes?: readonly string[] }>
+    Readonly<{
+      agent: AgentIdentity;
+      carry: Carry;
+      runtime?: OldRuntime;
+      notes?: readonly string[];
+    }>
   >;
   rename(pubkey: string, name: string): Promise<void>;
   /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */

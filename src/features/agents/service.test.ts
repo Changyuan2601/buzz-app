@@ -128,6 +128,8 @@ async function setup({
     title: "Echo",
     timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
+    importShared: ({ runtime, provider, model }) =>
+      runtime === "echo" ? { reply: `${provider}/${model}` } : undefined,
     carry: ({ reply }) => ({ instructions: reply, workspace: "~/echo" }),
     describeMigration: () => [
       { id: "model", label: "Model", isOverride: true },
@@ -354,6 +356,37 @@ it("passes on what native says did not come over", async () => {
   });
   expect(notes).toEqual(["Older came over without its picture."]);
 });
+
+it.each([
+  ["seeds its config", "echo", undefined, "acme/deep"],
+  ["leaves another harness's settings behind", "other", undefined, "ok"],
+  ["adopts what it carried on top", "echo", "Triage.", "Triage."],
+])(
+  "imports a Buzz 0.X agent whose type recognizes its runtime: %s",
+  async (_, runtime, instructions, reply) => {
+    const { service, native } = await setup();
+    native.port.mockImplementationOnce(
+      async (_, pubkey, destination, owner, type) => ({
+        agent: {
+          pubkey,
+          relay: destination,
+          owner,
+          type,
+          name: "Older",
+          deleted: false,
+        },
+        carry: instructions ? { instructions } : {},
+        runtime: { runtime, provider: "acme", model: "deep" },
+      }),
+    );
+    const { agent } = await service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    });
+    expect(agent.config).toEqual({ reply });
+  },
+);
 
 it("imports a shared agent as a new identity with its name and picture, adopting its instructions", async () => {
   const { service, native } = await setup();

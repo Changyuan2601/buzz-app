@@ -318,7 +318,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
         destination: string,
         owner: string,
         type: string,
-      ) => {
+      ): ReturnType<AgentsNative["port"]> => {
         const identity = {
           pubkey,
           relay: destination.replace(/^https:/, "wss:"),

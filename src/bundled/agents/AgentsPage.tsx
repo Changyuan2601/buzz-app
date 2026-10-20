@@ -1220,9 +1220,11 @@ function ImportAgents({
   return (
     <div className="flex flex-col gap-4">
       <p className="m-0 text-body-sm text-secondary">
-        {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
-          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
+        {chosen?.adopt && chosen.importShared
+          ? `Keeps each agent's key, name, picture and instructions in this community. One that ran on ${chosen.title} in Buzz 0.X keeps its provider and model too. Other settings stay behind; choose them after importing.`
+          : chosen?.adopt
+            ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+            : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
         An archived agent is unarchived here. Stop it where it runs now first,
         or both will answer.
       </p>

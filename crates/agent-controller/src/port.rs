@@ -1,9 +1,10 @@
 //! Agent identities an earlier agent system saved on this machine, which Agents
 //! can take over: the harness controller's library and old Buzz's. The identity
 //! and its public name, picture and description move, with its instructions
-//! and workspace as a `Carry` for the new type to adopt; other harness settings
-//! and memberships stay behind. Old Buzz's teams are listed apart, each with its
-//! members, for the app to rebuild. Neither store is ever written.
+//! and workspace as a `Carry` for the new type to adopt, and old Buzz's runtime,
+//! provider and model for a type that runs the same harness; other harness
+//! settings and memberships stay behind. Old Buzz's teams are listed apart,
+//! each with its members, for the app to rebuild. Neither store is ever written.
 use crate::config::{agent_id, canonical_key, canonical_relay, MAX_AGENTS};
 use crate::import::read_json;
 use crate::{Credentials, LegacySource, Result, Secret};
@@ -49,6 +50,9 @@ pub struct Portable {
     /// Settings any type may adopt. Only taking the agent over reports them.
     #[serde(skip)]
     pub carry: Carry,
+    /// What old Buzz ran it on. Only taking the agent over reports it.
+    #[serde(skip)]
+    pub runtime: Option<OldRuntime>,
 }
 
 /// An old Buzz team as old Buzz last saved it, keyed by its old ID.
@@ -79,6 +83,18 @@ pub struct Carry {
     /// Its working directory, absolute or `~/…`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+}
+
+/// The harness, provider and model old Buzz ran an agent on, as it saved them.
+/// A type that runs the same harness may keep them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct OldRuntime {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -380,6 +396,7 @@ fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Po
                 // Old Buzz saved no workspace.
                 workspace: harness.then(|| present(text("workspace"))).flatten(),
             },
+            runtime: (!harness).then(|| old_runtime(record, records)).flatten(),
         },
         credential,
     ))
@@ -400,14 +417,40 @@ fn description(source: PortSource, record: &Value, records: &[Value]) -> Option<
             &saved["description"]
         }
     } else if let Some(persona) = record["persona_id"].as_str() {
-        &records.iter().find(|definition| {
-            definition["pubkey"].as_str().unwrap_or("").is_empty()
-                && definition["slug"].as_str() == Some(persona)
-        })?["description"]
+        &definition(records, persona)?["description"]
     } else {
         &record["description"]
     };
     present(value.as_str()?)
+}
+
+/// As old Buzz resolves it: a linked agent runs its definition's provider and
+/// model, never its own stale copy; its runtime is its own, else the
+/// definition's. An unlinked one runs its own, and an orphan's own copy is the
+/// best left. Old Buzz's own relay mesh provider, and its models, run nowhere
+/// else, so they stay behind.
+fn old_runtime(record: &Value, records: &[Value]) -> Option<OldRuntime> {
+    let linked = record["persona_id"]
+        .as_str()
+        .and_then(|persona| definition(records, persona));
+    let owner = linked.unwrap_or(record);
+    let text = |value: &Value, key: &str| value[key].as_str().and_then(present);
+    let provider = text(owner, "provider");
+    let mesh = provider.as_deref() == Some("relay-mesh");
+    let runtime = OldRuntime {
+        runtime: text(record, "runtime").or_else(|| linked.and_then(|d| text(d, "runtime"))),
+        provider: provider.filter(|_| !mesh),
+        model: text(owner, "model").filter(|_| !mesh),
+    };
+    (runtime != OldRuntime::default()).then_some(runtime)
+}
+
+/// Old Buzz's keyless definition record for a persona slug.
+fn definition<'a>(records: &'a [Value], persona: &str) -> Option<&'a Value> {
+    records.iter().find(|definition| {
+        definition["pubkey"].as_str().unwrap_or("").is_empty()
+            && definition["slug"].as_str() == Some(persona)
+    })
 }
 
 fn present(text: &str) -> Option<String> {
