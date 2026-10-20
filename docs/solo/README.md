@@ -265,7 +265,8 @@ Synthetic signed create/rename/readback coverage is not live cross-version-clien
 acceptance.
 
 Generated sharing messages use `[Chat: <chosen name or short ID>](buzz://channel/<id>)`.
-Only names carrying `buzz.session.named` replace the ID. Existing signed messages
+The chat's current name, including its starting title from the first prompt,
+replaces the ID. Existing signed messages
 and recovery receipts keep their original bytes, including legacy `Session ·` labels;
 retry matching uses the original chat destination rather than regenerating the
 current name. Authorized viewers can see the current chosen name in the card.
@@ -312,7 +313,7 @@ it can be removed, changed, or supplemented, and is sent exactly as authored. No
 permanent origin field, extra source paragraph, automatic source access or
 transcript copy remains. The shortcut uses ordinary Solo creation; it needs no new
 relay capability. The chat stays private until it is shared through the existing
-Share flow.
+Share flow. A leading source link is not used for the chat's starting title.
 
 Source permissions still apply when an agent follows the ordinary link; seeing a
 link does not mean it can read or post in that source. Rendered, live

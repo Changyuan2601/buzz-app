@@ -26,12 +26,7 @@ export function ownSolo(
   );
 }
 
-export function soloChatLinkName(channel: {
-  id: string;
-  name: string;
-  labels?: readonly string[] | undefined;
-}) {
-  return channel.labels?.includes(SOLO_NAMED_LABEL) && channel.name.trim()
-    ? channel.name
-    : channel.id.slice(0, 8);
+export function soloChatLinkName(channel: { id: string; name: string }) {
+  // Unnamed chats still carry their starting title from the first prompt.
+  return channel.name.trim() || channel.id.slice(0, 8);
 }

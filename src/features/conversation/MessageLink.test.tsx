@@ -408,8 +408,9 @@ it("a signed chosen rename repaints the session card without changing authored l
         {label}
       </MessageLink>,
     );
+    // An unnamed chat shows its starting title, not the authored short ID.
     const anchor = screen.getByRole("link", {
-      name: `Open Chat: ${id.slice(0, 8)}`,
+      name: "Open Chat: First prompt",
     });
     anchor.focus();
     const base = await owner.session.channelDetails.load(id);

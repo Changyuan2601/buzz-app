@@ -2,6 +2,7 @@ import { stageSessionCards } from "../messages/composer-session-cards";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import { isBuzzLink } from "../navigation/buzz-links";
 
 /** Remove only structured leading recipient tags; literal @ text remains title content. */
 export function startingChatTitle(value: MentionDraft | string): string {
@@ -26,15 +27,28 @@ export function startingChatTitle(value: MentionDraft | string): string {
     start += leading + tag.length;
     draftStart = recipient.end;
   }
+  const body = text.slice(start).trim();
   return (
     canonicalDetailsName(
       [
         ...(
-          text.slice(start).trim() || (draft.sessionCards ?? []).join("\n\n")
+          withoutLeadingBuzzLinks(body) ||
+          body ||
+          (draft.sessionCards ?? []).join("\n\n")
         ).replace(/\s+/g, " "),
       ]
         .slice(0, 80)
         .join(""),
     ) || "Chat"
   );
+}
+
+/** A starting source link, as from Start Solo chat, is context rather than title. */
+function withoutLeadingBuzzLinks(text: string) {
+  let rest = text;
+  for (;;) {
+    const [token = ""] = rest.split(/\s/, 1);
+    if (!token || !isBuzzLink(token)) return rest;
+    rest = rest.slice(token.length).trim();
+  }
 }

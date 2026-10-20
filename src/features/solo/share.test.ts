@@ -210,7 +210,8 @@ it("grants exact Solo chat membership, confirms its signed roster, then posts on
       ["s", chatId],
     ]),
   );
-  expect(t.published[1]?.content).toBe(soloChatLinkMessage(chatId));
+  // An unnamed chat's starting title names the card.
+  expect(t.published[1]?.content).toBe(soloChatLinkMessage(chatId, "Work"));
 });
 
 it("Everyone snapshots the destination's signed roster including agents, freezes it for retry, and only grants access", async () => {
