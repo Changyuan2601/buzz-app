@@ -288,3 +288,72 @@ async fn a_community_outside_the_organization_gets_no_assertion() {
     f.agent.relay = "wss://elsewhere.example".into();
     assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_none());
 }
+
+fn refused_grant() -> (u16, serde_json::Value) {
+    (401, serde_json::json!({ "error": "invalid_grant" }))
+}
+
+#[tokio::test]
+async fn a_refused_grant_is_replaced_once_then_the_agent_stops() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let owner = "b".repeat(64);
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        (200, enrolled(&owner)),
+        (200, issued(&probe, serde_json::json!({}))),
+    ])
+    .await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+    assert!(f.tokens.evidence(&f.agent, &f.key).await.unwrap().is_some());
+    let seen = served.await.unwrap();
+    assert!(seen[2].target.contains("agent-grant"), "re-enrolled once");
+    assert_eq!(f.grants.0.lock().unwrap().len(), 1);
+
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        (200, enrolled(&owner)),
+        refused_grant(),
+    ])
+    .await;
+    let f = fixture(base);
+    assert_eq!(
+        f.tokens.evidence(&f.agent, &f.key).await.err().as_deref(),
+        Some(STOPPED)
+    );
+    // Stopped: no further enrollment or mint is attempted.
+    assert_eq!(
+        f.tokens.evidence(&f.agent, &f.key).await.err().as_deref(),
+        Some(STOPPED)
+    );
+    assert_eq!(served.await.unwrap().len(), 4);
+    assert!(
+        f.grants.0.lock().unwrap().is_empty(),
+        "no refused grant is kept"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_refusals_share_the_one_re_enrollment() {
+    let owner = "b".repeat(64);
+    let (base, served) = issuer(vec![
+        (200, enrolled(&owner)),
+        refused_grant(),
+        (200, enrolled(&owner)),
+        refused_grant(),
+    ])
+    .await;
+    let f = fixture(base);
+    let (a, b) = tokio::join!(
+        f.tokens.evidence(&f.agent, &f.key),
+        f.tokens.evidence(&f.agent, &f.key)
+    );
+    assert_eq!(a.err().as_deref(), Some(STOPPED));
+    assert_eq!(b.err().as_deref(), Some(STOPPED));
+    assert_eq!(served.await.unwrap().len(), 4);
+}

@@ -26,6 +26,8 @@ const GRANT_PATH: &str = "/v1/nip-fi/agent-grant";
 const ASSERTION_PATH: &str = "/v1/nip-fi/agent-assertion";
 const GRANT_TOKEN_TYPE: &str = "urn:builderlab:params:oauth:token-type:nip-fi-agent-grant";
 const SIGN_IN: &str = "Sign in to your organization to enroll this agent";
+const STOPPED: &str =
+    "Your organization no longer accepts this agent; sign in again to re-enroll it";
 const CHANGED: &str = "Your organization sign-in changed; try again";
 
 #[derive(Clone)]
@@ -39,6 +41,9 @@ struct Inner {
 #[derive(Default)]
 struct Slot {
     assertion: Option<Cached>,
+    /// Its grant was refused and the one re-enrollment failed: it stays
+    /// stopped, without retrying, until the owner signs in again.
+    stopped: bool,
 }
 /// One minted assertion, reused until shortly before it expires.
 struct Cached {
@@ -113,12 +118,33 @@ impl AgentTokens {
                 return Ok(Some(cached.header.clone()));
             }
         }
+        if slot.stopped {
+            return Err(STOPPED.into());
+        }
         slot.assertion = None;
         let grant = self.grant(agent, key).await?;
-        let cached = self
-            .mint(agent, key, &grant, relay)
-            .await
-            .map_err(|failure| refused(failure.code))?;
+        let cached = match self.mint(agent, key, &grant, relay.clone()).await {
+            Err(failure) if failure.code == "grant-refused" => {
+                // Retire the refused grant for good, then enroll once more.
+                drop(grant);
+                self.retire(agent).await?;
+                slot.stopped = true;
+                let grant = self.grant(agent, key).await.map_err(|_| STOPPED)?;
+                match self.mint(agent, key, &grant, relay).await {
+                    Ok(cached) => {
+                        slot.stopped = false;
+                        cached
+                    }
+                    Err(failure) => {
+                        if failure.code == "grant-refused" {
+                            self.retire(agent).await?;
+                        }
+                        return Err(STOPPED.into());
+                    }
+                }
+            }
+            minted => minted.map_err(|failure| refused(failure.code))?,
+        };
         let header = cached.header.clone();
         slot.assertion = Some(cached);
         Ok(Some(header))
@@ -170,13 +196,15 @@ impl AgentTokens {
         validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
         Ok(Cached {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
-            refresh_at: if issued.expires_at - now > 30 {
-                issued.expires_at - 30
-            } else {
-                issued.expires_at
-            },
+            // One with 30s or less to live is used once, never reused.
+            refresh_at: issued.expires_at.saturating_sub(30),
             relay,
         })
+    }
+
+    async fn retire(&self, agent: &AppAgent) -> Result<(), String> {
+        let at = self.grant_key(agent);
+        self.storage(move |store| store.delete(&at)).await
     }
 
     /// The agent's grant, enrolling it on first use: new agents and ones made
