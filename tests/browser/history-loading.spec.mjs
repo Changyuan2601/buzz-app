@@ -269,19 +269,35 @@ test.describe("pages inside one second", () => {
         window;
       const held = new Map();
       let id = 0;
+      let finish;
+      const schedule = (id) =>
+        request((time) => {
+          const callback = held.get(id);
+          held.delete(id);
+          callback?.call(window, time);
+          if (!held.size) finish();
+        });
       window.requestAnimationFrame = (callback) => {
         held.set(--id, callback);
+        if (finish) schedule(id);
         return id;
       };
       window.cancelAnimationFrame = (id) =>
         id < 0 ? held.delete(id) : cancel(id);
-      window.releaseFrames = () => {
-        Object.assign(window, {
-          requestAnimationFrame: request,
-          cancelAnimationFrame: cancel,
+      // Keep native frame ordering and cancellation until the held work and
+      // its follow-up frames finish. Stable geometry alone cannot prove that.
+      window.releaseFrames = () =>
+        new Promise((resolve) => {
+          finish = () => {
+            Object.assign(window, {
+              requestAnimationFrame: request,
+              cancelAnimationFrame: cancel,
+            });
+            resolve();
+          };
+          if (!held.size) finish();
+          else for (const id of held.keys()) schedule(id);
         });
-        for (const callback of held.values()) request(callback);
-      };
     });
   }
 
