@@ -484,6 +484,66 @@ pub(crate) fn huddle_pcm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Huddle membership and publication send exactly the issued assertion to
+    /// a community that requires NIP-FI, and nothing to one that does not.
+    fn authority(community: &crate::federated_identity::testing::Community) -> String {
+        community.origin.as_str().trim_end_matches('/').into()
+    }
+    async fn membership(required: bool) {
+        use crate::federated_identity::testing::{community, reply};
+        let community = community(required).await;
+        let relay = format!(r#"{{"self":"{}"}}"#, "a".repeat(64));
+        let server = community.serve(vec![reply("200 OK", &relay), reply("200 OK", "[]")]);
+        let call = Call {
+            id: uuid::Uuid::new_v4().to_string(),
+            community: authority(&community),
+            viewer: community.host.viewer().await.unwrap(),
+            parent: uuid::Uuid::new_v4().to_string(),
+            room: None,
+        };
+        let _ = admit_membership(&community.host, &community.fi, &call).await;
+        let heads = server.await.unwrap();
+        assert!(heads[0].starts_with("GET / "), "{}", heads[0]);
+        assert!(!heads[0].contains(crate::federated_identity::assertion::HEADER));
+        assert!(heads[1].starts_with("POST /query "), "{}", heads[1]);
+        community.assert_carried(&heads[1]);
+    }
+    #[tokio::test]
+    async fn membership_attaches_for_required_discovery() {
+        membership(true).await;
+    }
+    #[tokio::test]
+    async fn membership_omits_for_ordinary_discovery() {
+        membership(false).await;
+    }
+
+    async fn publication(required: bool) {
+        use crate::federated_identity::testing::{community, reply};
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "{}")]);
+        let viewer = community.host.viewer().await.unwrap();
+        let event = confirm_member(&uuid::Uuid::new_v4().to_string(), &viewer);
+        let _ = publish(
+            &community.host,
+            &community.fi,
+            &authority(&community),
+            event,
+            &viewer,
+        )
+        .await;
+        let heads = server.await.unwrap();
+        assert!(heads[0].starts_with("POST /events "), "{}", heads[0]);
+        community.assert_carried(&heads[0]);
+    }
+    #[tokio::test]
+    async fn publish_attaches_for_required_discovery() {
+        publication(true).await;
+    }
+    #[tokio::test]
+    async fn publish_omits_for_ordinary_discovery() {
+        publication(false).await;
+    }
     #[test]
     fn document_teardown_stops_the_owned_call() {
         let (stop, cancelled) = watch::channel(false);

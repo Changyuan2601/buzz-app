@@ -437,34 +437,7 @@ pub(crate) async fn relay_agent_memories_read(
                 page["until"] = json!(until);
                 page["before_id"] = json!(before_id);
             }
-            let url = url.clone();
-            let host = host.inner();
-            let fi = fi.inner();
-            async move {
-                let response = send(
-                    host,
-                    Some(fi),
-                    url,
-                    "POST",
-                    Some(json!([page]).to_string()),
-                    true,
-                    MEMORY_RESPONSE_BYTES,
-                )
-                .await?;
-                if response.status == 429 {
-                    return Ok(MemoryPage::Limited);
-                }
-                if response.status == 401 || response.status == 403 {
-                    return Err("MemoryDenied".into());
-                }
-                if response.status != 200 || response.body.len() > MEMORY_RESPONSE_BYTES {
-                    return Err("Memory read failed".into());
-                }
-                Ok(MemoryPage::Records(
-                    memory_wire_records(&response.body)?,
-                    response.body.len(),
-                ))
-            }
+            memory_page(host.inner(), fi.inner(), url.clone(), page)
         },
         decode,
     )
@@ -475,6 +448,39 @@ pub(crate) async fn relay_agent_memories_read(
         }
     }
     Ok(listing)
+}
+
+/// One page of the memory listing at `url`, sent with the community's
+/// assertion when it requires NIP-FI.
+async fn memory_page(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    url: url::Url,
+    page: Value,
+) -> Result<MemoryPage> {
+    let response = send(
+        host,
+        Some(fi),
+        url,
+        "POST",
+        Some(json!([page]).to_string()),
+        true,
+        MEMORY_RESPONSE_BYTES,
+    )
+    .await?;
+    if response.status == 429 {
+        return Ok(MemoryPage::Limited);
+    }
+    if response.status == 401 || response.status == 403 {
+        return Err("MemoryDenied".into());
+    }
+    if response.status != 200 || response.body.len() > MEMORY_RESPONSE_BYTES {
+        return Err("Memory read failed".into());
+    }
+    Ok(MemoryPage::Records(
+        memory_wire_records(&response.body)?,
+        response.body.len(),
+    ))
 }
 
 type MemoryDecoding = std::sync::Arc<std::sync::Mutex<MemoryDecoder>>;
@@ -921,6 +927,30 @@ fn read_agent_library(path: PathBuf) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A memory page sends exactly the issued assertion to a community that
+    /// requires NIP-FI, and nothing to one that does not.
+    async fn memory(required: bool) {
+        use crate::federated_identity::testing::{community, reply};
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "[]")]);
+        let _ = memory_page(
+            &community.host,
+            &community.fi,
+            community.origin.join("/query").unwrap(),
+            json!({"kinds": [30078], "limit": 1}),
+        )
+        .await;
+        community.assert_carried(&server.await.unwrap()[0]);
+    }
+    #[tokio::test]
+    async fn memory_page_attaches_for_required_discovery() {
+        memory(true).await;
+    }
+    #[tokio::test]
+    async fn memory_page_omits_for_ordinary_discovery() {
+        memory(false).await;
+    }
 
     fn fixture() -> ([u8; 32], String) {
         let secret = [1; 32];

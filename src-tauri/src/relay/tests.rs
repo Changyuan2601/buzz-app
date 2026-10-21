@@ -3778,3 +3778,122 @@ async fn artifact_signing_through_ipc_admits_a_maximum_config_event_and_bounds_t
         serde_json::json!("Relay event is too large")
     );
 }
+
+/// Each native HTTP transport sends exactly the issued assertion to a
+/// community that requires NIP-FI, discovered through its real `/info`,
+/// and nothing to one that does not.
+mod federated_header {
+    use super::*;
+    use crate::federated_identity::testing::{community, reply};
+
+    async fn http(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "[]")]);
+        let response = send(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/query").unwrap(),
+            "POST",
+            Some("[]".into()),
+            true,
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status, 200);
+        community.assert_carried(&server.await.unwrap()[0]);
+    }
+    #[tokio::test]
+    async fn http_attaches_for_required_discovery() {
+        http(true).await;
+    }
+    #[tokio::test]
+    async fn http_omits_for_ordinary_discovery() {
+        http(false).await;
+    }
+
+    async fn uploads(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "{}")]);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source");
+        std::fs::write(&path, b"PNG fixture bytes").unwrap();
+        let hash = upload_spool::hash_file(&path).unwrap();
+        let response = upload_file(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/upload").unwrap(),
+            Some("image/png"),
+            path,
+            hash,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status, 200);
+        community.assert_carried(&server.await.unwrap()[0]);
+    }
+    #[tokio::test]
+    async fn upload_attaches_for_required_discovery() {
+        uploads(true).await;
+    }
+    #[tokio::test]
+    async fn upload_omits_for_ordinary_discovery() {
+        uploads(false).await;
+    }
+
+    fn media_reply() -> String {
+        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!".into()
+    }
+    fn media_url(community: &crate::federated_identity::testing::Community) -> Url {
+        community
+            .origin
+            .join(&format!("/media/{}.png", "a".repeat(64)))
+            .unwrap()
+    }
+    async fn download(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![media_reply()]);
+        let response = fetch_media(
+            &community.host,
+            Some(&community.fi),
+            media_url(&community),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), 200);
+        community.assert_carried(&server.await.unwrap()[0]);
+    }
+    #[tokio::test]
+    async fn media_download_attaches_for_required_discovery() {
+        download(true).await;
+    }
+    #[tokio::test]
+    async fn media_download_omits_for_ordinary_discovery() {
+        download(false).await;
+    }
+
+    async fn stream_block(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![media_reply()]);
+        let _ = media_blocks::read(
+            &community.host,
+            Some(&community.fi),
+            &media_url(&community),
+            0,
+            3,
+            MAX_MEDIA as u64,
+        )
+        .await;
+        community.assert_carried(&server.await.unwrap()[0]);
+    }
+    #[tokio::test]
+    async fn media_stream_attaches_for_required_discovery() {
+        stream_block(true).await;
+    }
+    #[tokio::test]
+    async fn media_stream_omits_for_ordinary_discovery() {
+        stream_block(false).await;
+    }
+}

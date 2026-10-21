@@ -17,12 +17,14 @@ pub(crate) fn expiry(value: &str) -> Result<i64, &'static str> {
         .map_err(|_| "invalid-expiry")
 }
 pub(crate) fn client() -> Result<Client, &'static str> {
-    Client::builder()
+    let builder = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(DEADLINE)
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|_| "network-unavailable")
+        .connect_timeout(Duration::from_secs(10));
+    // Tests' loopback communities use one self-signed root.
+    #[cfg(test)]
+    let builder = builder.tls_certs_only([super::testing::trusted_root()]);
+    builder.build().map_err(|_| "network-unavailable")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

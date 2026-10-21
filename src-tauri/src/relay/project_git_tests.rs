@@ -528,3 +528,36 @@ async fn cancelled_reads_remove_repositories_held_by_descendants() {
         "a cancelled read left its repository behind"
     );
 }
+
+/// Git's own requests carry exactly the issued assertion to a community that
+/// requires NIP-FI, and nothing to one that does not.
+async fn federated_read(required: bool) {
+    use crate::federated_identity::testing::{community, reply};
+    let community = community(required).await;
+    let server = community.serve(vec![reply("404 Not Found", "{}")]);
+    let url = community
+        .origin
+        .join(&format!("/git/{OWNER}/repo.git"))
+        .unwrap();
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (_cancel, cancelled) = oneshot::channel();
+    let _ = read_repository(
+        &community.host,
+        &community.fi,
+        url.as_str(),
+        &read,
+        cancelled,
+    )
+    .await;
+    let heads = server.await.unwrap();
+    assert!(heads[0].contains("/info/refs"), "{}", heads[0]);
+    community.assert_carried(&heads[0]);
+}
+#[tokio::test]
+async fn git_read_attaches_for_required_discovery() {
+    federated_read(true).await;
+}
+#[tokio::test]
+async fn git_read_omits_for_ordinary_discovery() {
+    federated_read(false).await;
+}
