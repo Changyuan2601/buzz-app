@@ -9,6 +9,14 @@ test("shared navigation preserves drafts and history across Solo and header page
   page,
   app,
 }) => {
+  // A returning user: with a default agent, New chat opens a draft, not Get started.
+  await page.addInitScript((viewer) => {
+    const scope = `https://primary.example:${viewer}`;
+    localStorage.setItem(
+      `buzz-view.v1:${JSON.stringify([scope, "solo:default-agent"])}`,
+      JSON.stringify("cd".repeat(32)),
+    );
+  }, app.viewer);
   await page.goto(app.origin);
   await openPage(page, "Messages");
   const composer = page.getByRole("textbox", {
