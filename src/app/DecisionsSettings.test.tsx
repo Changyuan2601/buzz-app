@@ -12,7 +12,8 @@ import { DecisionsSettings } from "./DecisionsSettings";
 afterEach(cleanup);
 
 /** The decisions service as Settings uses it, choosing as the service does:
- * the saved choice, else the first ready provider, else the first. */
+ * the saved choice, else the default, which here is the first entry. A
+ * choice that is not registered answers nothing. */
 function fake(
   entries: ({
     key: string;
@@ -42,9 +43,8 @@ function fake(
     ...(entry.readStatus ? { status: entry.readStatus } : {}),
   }));
   const backend = () =>
-    providers.find((provider) => provider.key === chosen)?.key ??
-    providers.find((provider) => provider.status() === "ready")?.key ??
-    providers[0]?.key;
+    providers.find((provider) => provider.key === (chosen ?? entries[0]?.key))
+      ?.key;
   return {
     providers: () => providers,
     backend,

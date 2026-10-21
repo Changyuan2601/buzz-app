@@ -1451,12 +1451,14 @@ the reply. An answer of the wrong type, an unknown choice, a value outside 0 to
 that were not asked are dropped.
 
 The user chooses the provider in Settings > Decisions API, and the choice is
-kept on this device. Until they choose, or while their choice is not on, the
-first `ready` provider answers; with none ready, the first one does (lowest
-`order`, then key). `ctx.decisions.backend()` is the answering provider's key
-(`<plugin id>/<provider id>`), and `ctx.decisions.status()` its status.
-Plugins cannot choose the provider. `state` and every question go to the
-provider, so send only what the decision needs.
+kept on this device. Until they choose, TypeSafe (`buzz.typesafe/typesafe`)
+answers. Decision text can include private messages, so no other provider gets
+it without that choice: while the chosen provider is not on, decisions are
+`unavailable` and are not sent to another provider. `ctx.decisions.backend()`
+is the answering provider's key (`<plugin id>/<provider id>`), or undefined
+when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
+no way to choose the provider. `state` and every question go to the provider,
+so send only what the decision needs.
 
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|

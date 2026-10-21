@@ -153,8 +153,8 @@ export interface Decisions {
   /** That provider's status, or `unavailable` when there is none. */
   status(): DecisionProviderStatus | "unavailable";
   subscribe(listener: () => void): () => void;
-  /** Offers a provider while the calling plugin runs. Plugins cannot choose
-   * the provider; the user does in Settings. */
+  /** Offers a provider while the calling plugin runs. `Decisions` exposes no
+   * way to choose the provider; the user does in Settings. */
   registerProvider(provider: DecisionProvider): void;
 }
 declare module "@deepseek-ai/cordis" {
@@ -188,9 +188,13 @@ export const statusOf = (
   }
 };
 
-/** Answers come from the provider the user chose. Until they choose, or
- * while their choice is not registered, the first ready provider answers;
- * with none ready, the first one does. */
+/** The provider that answers until the user chooses one in Settings. */
+export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
+
+/** Answers come from the provider the user chose, or TypeSafe until they
+ * choose. Decision text can include private messages, so no other provider
+ * gets it without that choice: while the chosen provider is not registered,
+ * decisions are unavailable rather than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
   /** The user's choice in Settings; undefined until they make one. */
@@ -249,12 +253,8 @@ export class DecisionsService extends Service implements Decisions {
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
   private current(): RegisteredProvider | undefined {
-    const providers = this.sorted;
-    return (
-      providers.find((provider) => provider.key === this.chosen) ??
-      providers.find((provider) => statusOf(provider) === "ready") ??
-      providers[0]
-    );
+    const wanted = this.chosen ?? DEFAULT_DECISION_PROVIDER;
+    return this.sorted.find((provider) => provider.key === wanted);
   }
   // Bound, so a caller can pass these on, as React's external stores do.
   backend = (): string | undefined => this.current()?.key;

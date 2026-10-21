@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { flush } from "../relay/testing";
 import {
   DECISION_BACKEND_KEY,
+  DEFAULT_DECISION_PROVIDER,
   DecisionsService,
   type DecisionProvider,
   type DecisionProviderStatus,
@@ -130,39 +131,67 @@ it("lists only providers of active plugin revisions", async () => {
   expect(service.providers()).toHaveLength(1);
 });
 
-it("prefers the user's choice, then a ready provider, then the first", async () => {
+it("uses TypeSafe until the user chooses, even when another provider is ready first", async () => {
   const storage = memory();
   const { service, plugin } = setup(storage);
-  const first = settable("needs-setup");
-  const second = settable("needs-setup");
-  await plugin("a", { ...first, order: 0 });
-  await plugin("b", { ...second, order: 1 });
-  expect(service.backend()).toBe("a/main");
+  const typesafe = settable("needs-setup");
+  // Sorts ahead of TypeSafe, by order and by key, and is ready.
+  await plugin("acme.helper", { id: "p", order: -1 });
+  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status()).toBe("needs-setup");
   const listener = vi.fn();
   // Unbound, as React's useSyncExternalStore calls it.
   const { subscribe } = service;
   subscribe(listener);
-  second.set("ready");
-  expect(service.backend()).toBe("b/main");
+  typesafe.set("ready");
   expect(service.status()).toBe("ready");
   expect(listener).toHaveBeenCalled();
-  service.setBackend("a/main");
-  expect(service.backend()).toBe("a/main");
-  expect(storage.values.get(DECISION_BACKEND_KEY)).toBe("a/main");
+  await expect(service.decide(request)).resolves.toMatchObject({
+    backend: DEFAULT_DECISION_PROVIDER,
+  });
+  // Only an explicit choice moves decisions to another provider.
+  service.setBackend("acme.helper/p");
+  expect(service.backend()).toBe("acme.helper/p");
+  expect(storage.values.get(DECISION_BACKEND_KEY)).toBe("acme.helper/p");
   // A choice that is not a registered provider changes nothing.
   listener.mockClear();
   service.setBackend("other/main");
-  expect(service.backend()).toBe("a/main");
+  expect(service.backend()).toBe("acme.helper/p");
   expect(listener).not.toHaveBeenCalled();
+});
+
+it("never sends decisions elsewhere while the chosen provider is missing", async () => {
+  const decide = vi.fn<DecisionProvider["decide"]>(async () => reply);
+  // The user chose TypeSafe, and its plugin is off or not registered yet.
+  const { service, plugin } = setup(
+    memory({ [DECISION_BACKEND_KEY]: DEFAULT_DECISION_PROVIDER }),
+  );
+  await plugin("zzz.other", { id: "p", decide });
+  expect(service.backend()).toBeUndefined();
+  expect(service.status()).toBe("unavailable");
+  await expect(service.decide(request)).resolves.toEqual({
+    outcome: "failed",
+    backend: undefined,
+    reason: "unavailable",
+  });
+  // With no choice, TypeSafe is the choice, so the same holds.
+  const fresh = setup();
+  await fresh.plugin("zzz.other", { id: "p", decide });
+  expect(fresh.service.status()).toBe("unavailable");
+  await expect(fresh.service.decide(request)).resolves.toMatchObject({
+    reason: "unavailable",
+  });
+  expect(decide).not.toHaveBeenCalled();
 });
 
 it("restores a saved choice once its provider registers, and survives unreadable storage", async () => {
   const { service, plugin } = setup(
     memory({ [DECISION_BACKEND_KEY]: "b/main" }),
   );
-  await plugin("a", { order: 0 });
-  // Not registered yet, so another provider answers.
-  expect(service.backend()).toBe("a/main");
+  await plugin("buzz.typesafe", { id: "typesafe", order: 0 });
+  // Not registered yet: unavailable, not TypeSafe.
+  expect(service.backend()).toBeUndefined();
   await plugin("b", { order: 1, status: () => "needs-setup" });
   expect(service.backend()).toBe("b/main");
   const broken = {
@@ -174,8 +203,9 @@ it("restores a saved choice once its provider registers, and survives unreadable
     },
   } as unknown as Storage;
   const other = setup(broken);
-  await other.plugin("a", {});
+  await other.plugin("buzz.typesafe", { id: "typesafe" });
   await other.plugin("b", { order: 1 });
+  expect(other.service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   other.service.setBackend("b/main");
   expect(other.service.backend()).toBe("b/main");
 });
@@ -183,7 +213,7 @@ it("restores a saved choice once its provider registers, and survives unreadable
 it("checks requests before any provider sees them", async () => {
   const { service, plugin } = setup();
   const decide = vi.fn<DecisionProvider["decide"]>(async () => reply);
-  await plugin("a", { decide });
+  await plugin("buzz.typesafe", { id: "typesafe", decide });
   for (const bad of [
     { ...request, state: " " },
     { ...request, questions: {} },
@@ -229,13 +259,14 @@ it("checks answers against the questions", async () => {
   };
   let answers: unknown = good;
   const { service, plugin } = setup();
-  await plugin("a", {
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
     decide: async () => ({ outcome: "answered", model: "m", answers }) as never,
   });
   const result = await service.decide({ ...request, questions });
   expect(result).toEqual({
     outcome: "answered",
-    backend: "a/main",
+    backend: "buzz.typesafe/typesafe",
     model: "m",
     answers: {
       urgent: good.urgent,
@@ -273,7 +304,8 @@ it("keeps every question name as the answer's own key, even __proto__", async ()
     '{"__proto__":{"type":"yes_no","probability":0.3},"urgent":{"type":"yes_no","probability":0.8}}',
   );
   const { service, plugin } = setup();
-  await plugin("a", {
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
     decide: async () => ({ outcome: "answered", model: "m", answers }) as never,
   });
   const result = await service.decide({ ...request, questions });
@@ -292,10 +324,13 @@ it("turns provider failures, throws and wrong replies into failures", async () =
     throw new Error("down");
   };
   const { service, plugin } = setup();
-  await plugin("a", { decide: (...args) => decide(...args) });
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    decide: (...args) => decide(...args),
+  });
   const failed = (reason: string) => ({
     outcome: "failed",
-    backend: "a/main",
+    backend: "buzz.typesafe/typesafe",
     reason,
   });
   await expect(service.decide(request)).resolves.toEqual(
@@ -315,7 +350,8 @@ it("turns provider failures, throws and wrong replies into failures", async () =
 it("stops waiting at the deadline and aborts the provider", async () => {
   const { service, plugin, timers } = setup();
   let signal: AbortSignal | undefined;
-  await plugin("a", {
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
     decide: (_request, options) => {
       signal = options.signal;
       return new Promise(() => {});
@@ -328,7 +364,7 @@ it("stops waiting at the deadline and aborts the provider", async () => {
   timers[0]?.run();
   await expect(result).resolves.toEqual({
     outcome: "failed",
-    backend: "a/main",
+    backend: "buzz.typesafe/typesafe",
     reason: "timeout",
   });
   expect(signal?.aborted).toBe(true);
