@@ -57,6 +57,7 @@ function deferred<T>() {
 }
 afterEach(async () => {
   cleanup();
+  vi.useRealTimers();
   for (const dispose of disposals.splice(0)) await dispose();
   vi.unstubAllGlobals();
 });
@@ -135,14 +136,17 @@ it("opens a registered Markdown preview from the real message row and restores d
   if (typeof target !== "string") throw new Error("No preview opened");
   const panel = panels.resolve(target);
   if (!panel) throw new Error("No preview panel registered");
+  vi.useFakeTimers();
   const view = render(
     <PanelView panel={panel} target={target} close={() => {}} />,
   );
   const preview = screen.getByRole("region", { name: "Preview: notes.md" });
   expect(within(preview).getByText("Markdown · 132 B")).toBeInTheDocument();
-  expect(within(preview).getByRole("status")).toHaveTextContent(
-    "Loading preview",
+  expect(preview.querySelector("[aria-busy]")).toHaveAttribute(
+    "aria-busy",
+    "true",
   );
+  expect(within(preview).queryByRole("status")).toBeNull();
   expect(
     within(preview).getByRole("link", { name: "Download notes.md" }),
   ).toHaveAttribute("href", source);
@@ -169,8 +173,13 @@ it("opens a registered Markdown preview from the real message row and restores d
     ),
   );
   expect(
-    await within(preview).findByRole("heading", { name: "Project notes" }),
+    within(preview).getByRole("heading", { name: "Project notes" }),
   ).toBeVisible();
+  expect(preview.querySelector("[aria-busy]")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  vi.useRealTimers();
   expect(within(preview).getByRole("table")).toHaveTextContent("PreviewDone");
   expect(within(preview).getByText("const ok = true;")).toBeInTheDocument();
   expect(within(preview).getByRole("link", { name: "Safe" })).toHaveAttribute(
@@ -311,7 +320,6 @@ it("aborts retired reads and ignores a stale response after switching files", as
     />,
   );
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
-  expect(screen.getByRole("status")).toHaveTextContent("Loading preview");
   const signal = fetch.mock.calls[0]?.[1]?.signal;
   view.rerender(
     <FilePreviewPanel

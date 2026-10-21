@@ -7,6 +7,7 @@ import {
   safeLinkUrl,
   scanMarkdown,
 } from "../../features/relay/message-content";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Button } from "../../shared/design-system/ui/Button";
 import messageStyles from "../../features/messages/Messages.module.css";
 import styles from "./FilePreview.module.css";
@@ -76,41 +77,44 @@ function Preview({
         onOpenLink={open}
         typeLabel={file.format === "markdown" ? "Markdown" : "Plain text"}
       />
-      {state.kind === "loading" ? (
-        <p role="status">Loading preview…</p>
-      ) : state.kind === "error" ? (
-        <div role="alert">
-          <p>{state.message}</p>
-          <Button size="sm" onClick={retry}>
-            Retry
-          </Button>
-        </div>
-      ) : !state.text ? (
-        <p role="status">This file is empty.</p>
-      ) : file.format === "markdown" && !scanMarkdown(state.text).tooDeep ? (
-        <div className={messageStyles.text}>
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            skipHtml
-            urlTransform={(url) => safeLinkUrl(url) ?? ""}
-            components={{
-              a: ({ href, children }) =>
-                href ? (
-                  <a href={href} target="_blank" rel="noreferrer">
-                    {children}
-                  </a>
-                ) : (
-                  children
-                ),
-              img: ({ alt }) => <span>{alt || "Image"} (image omitted)</span>,
-            }}
-          >
-            {state.text}
-          </Markdown>
-        </div>
-      ) : (
-        <pre className={styles.text}>{state.text}</pre>
-      )}
+      <LoadingRegion
+        pending={state.kind === "loading"}
+        label="Loading preview…"
+      >
+        {state.kind === "loading" ? null : state.kind === "error" ? (
+          <div role="alert">
+            <p>{state.message}</p>
+            <Button size="sm" onClick={retry}>
+              Retry
+            </Button>
+          </div>
+        ) : !state.text ? (
+          <p role="status">This file is empty.</p>
+        ) : file.format === "markdown" && !scanMarkdown(state.text).tooDeep ? (
+          <div className={messageStyles.text}>
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              skipHtml
+              urlTransform={(url) => safeLinkUrl(url) ?? ""}
+              components={{
+                a: ({ href, children }) =>
+                  href ? (
+                    <a href={href} target="_blank" rel="noreferrer">
+                      {children}
+                    </a>
+                  ) : (
+                    children
+                  ),
+                img: ({ alt }) => <span>{alt || "Image"} (image omitted)</span>,
+              }}
+            >
+              {state.text}
+            </Markdown>
+          </div>
+        ) : (
+          <pre className={styles.text}>{state.text}</pre>
+        )}
+      </LoadingRegion>
     </section>
   );
 }

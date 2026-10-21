@@ -14,7 +14,7 @@ test.use({
   mediaFiles: { [url]: markdown },
 });
 
-// Real panel dispatch, keyboard activation, and narrow layout require a browser.
+// Browser-only: hover, top-layer painting, downloads, and responsive layout.
 test("sent Markdown files open in the panel host and fit enlarged narrow layouts", async ({
   page,
   app,
