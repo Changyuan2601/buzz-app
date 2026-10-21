@@ -2128,7 +2128,11 @@ export class AgentRunners {
         const admitted: { candidate: SharedCandidate; event: RelayEvent }[] =
           [];
         for (const candidate of candidates) {
-          if (!this.stillCurrent(runner, job)) break;
+          if (
+            !this.stillCurrent(runner, job) ||
+            !(await this.claim(runner, true))
+          )
+            break;
           const event = await admitShared(io, candidate, signal, job.requestId);
           if (event) admitted.push({ candidate, event });
         }

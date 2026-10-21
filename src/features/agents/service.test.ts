@@ -7222,21 +7222,37 @@ describe("shared attention through the claimed runner", () => {
     expect(second.run).not.toHaveBeenCalled();
   });
   it.each(["local disable", "definition edit", "claim transfer"])(
-    "stops work after %s during model selection",
+    "stops work after %s during a shared read",
     async (change) => {
       vi.useFakeTimers({ now: 1_000_000 });
       const relay = sharedRelay();
       const def = definition(relay);
       const f = await sharedFixture(relay, def);
       let release = () => {};
+      let reading = () => {};
       const held = new Promise<void>((resolve) => {
         release = resolve;
       });
-      vi.spyOn(f.type, "models").mockImplementation(async () => {
-        await held;
-        return { current: "fast", models: [] };
+      const started = new Promise<void>((resolve) => {
+        reading = resolve;
+      });
+      let block = true;
+      Object.assign(f.session, {
+        snapshotRead: async (...args: Parameters<typeof f.io.read>) => {
+          if (
+            block &&
+            Date.now() >= 1_060_000 &&
+            args[0][0]?.["#d"]?.[0] === channel
+          ) {
+            block = false;
+            reading();
+            await held;
+          }
+          return f.io.read(...args);
+        },
       });
       await vi.advanceTimersByTimeAsync(60_000);
+      await started;
       if (change === "local disable")
         await f.service.save(bot, {
           attention: { "watch/tick": { ...f.timer, enabled: false } },
