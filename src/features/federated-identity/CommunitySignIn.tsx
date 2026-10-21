@@ -47,7 +47,7 @@ function Action({
     return (
       <p role="alert" className="text-body-sm text-danger">
         This account is linked to a different Buzz identity. Open Settings →
-        Hosted Communities to review the existing identity link. Keep this key
+        Builderlab hosting to review the existing identity link. Keep this key
         until you have reviewed the link.
       </p>
     );

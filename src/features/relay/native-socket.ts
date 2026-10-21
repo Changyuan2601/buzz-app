@@ -74,6 +74,8 @@ export class NativeSocket implements LiveSocket {
           "reauthentication-required",
           "binding-mismatch",
           "authorization-denied",
+          // NIP-FA: the issuer refused the grant; final for this session.
+          "grant-refused",
           "invalid-proof",
           "invalid-assertion",
           "invalid-response",

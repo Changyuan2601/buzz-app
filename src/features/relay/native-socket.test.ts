@@ -111,6 +111,7 @@ it.each([
   "Federated sign-in is required",
   "binding-mismatch",
   "authorization-denied",
+  "grant-refused",
   "invalid-proof",
   "relay-forbidden",
 ])(
