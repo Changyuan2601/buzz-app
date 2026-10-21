@@ -596,7 +596,11 @@ export function createOutbox(
       throw new Error("Saved outbox event is invalid");
     return Object.freeze({
       event: Object.freeze({
-        ...event,
+        id: event.id,
+        pubkey: event.pubkey,
+        created_at: event.created_at,
+        kind: event.kind,
+        content: event.content,
         tags: Object.freeze(
           event.tags.map((tag: string[]) => Object.freeze([...tag])),
         ) as unknown as string[][],
@@ -617,12 +621,20 @@ export function createOutbox(
       ...(item.error ? { error: item.error } : {}),
     });
   }
-  function restore(restored: readonly OutgoingEvent[]) {
+  function restore(
+    restored: readonly OutgoingEvent[],
+    saved: readonly OutgoingEvent[],
+  ) {
     const pending = restored.filter(pendingOperation);
+    // Decode can expand status text. Admission uses the saved byte count.
+    const savedPending = saved.filter((_item, index) => {
+      const item = restored[index];
+      return item !== undefined && pendingOperation(item);
+    });
     if (
       pendingCount(pending, 45010) > MAX_PENDING ||
       pendingCount(pending, 9) > MAX_PENDING ||
-      pendingSize(pending).some((size) => size > MAX_PENDING_BYTES)
+      pendingSize(savedPending).some((size) => size > MAX_PENDING_BYTES)
     )
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
@@ -651,11 +663,11 @@ export function createOutbox(
           decoded.push(...records.slice(offset, offset + 12).map(decode));
           if (offset + 12 < records.length) await yieldToHost();
         }
-        restore(decoded);
+        restore(decoded, records);
       });
     else {
       validateSaved(loaded);
-      restore(loaded.map(decode));
+      restore(loaded.map(decode), loaded);
       ready = Promise.resolve();
     }
   } catch (error) {

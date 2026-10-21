@@ -306,7 +306,7 @@ it("confirms only frozen accepted operations after a current read starts and com
   h.add();
   await vi.advanceTimersByTimeAsync(0);
   expect(complete).not.toHaveBeenCalled();
-  expect(reconcileArtifactDelta).not.toHaveBeenCalled();
+  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
   finish();
   await vi.advanceTimersByTimeAsync(0);
   expect(complete).toHaveBeenCalledWith(
@@ -557,4 +557,57 @@ it("keeps a failed delta retry round ahead of queued live reads", async () => {
     reportFailure: true,
   });
   expect(reconcileArtifactCurrent).not.toHaveBeenCalled();
+});
+
+it("keeps delta and other live reads active when confirmation saves fail", async () => {
+  const h = setup();
+  const complete = vi.fn(async () => {
+    throw new Error("Outbox storage is full");
+  });
+  registerArtifactDelivery(h.session, {
+    capture: async () => ["accepted-operation"],
+    targets: () => [
+      { operationId: "accepted-operation", artifactId: "accepted-task" },
+    ],
+    complete,
+  });
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(complete).toHaveBeenCalledOnce();
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+  h.confirmed(
+    eventDto(
+      signed(keypair(), {
+        kind: 45010,
+        content: "{}",
+        tags: [
+          ["type", "test.task"],
+          ["d", "other-task"],
+        ],
+      }),
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(vi.mocked(reconcileArtifactCurrent).mock.calls[1]?.[3]).toEqual([
+    "other-task",
+  ]);
+  expect(complete).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(4);
+});
+it("runs a requested delta even when the delivery journal cannot be read", async () => {
+  const h = setup();
+  registerArtifactDelivery(h.session, {
+    capture: async () => {
+      throw new Error("Journal unavailable");
+    },
+    targets: () => [],
+    complete: async () => {},
+  });
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(60_000 + 7000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
 });

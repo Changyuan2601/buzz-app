@@ -1020,3 +1020,62 @@ it("honors completed retention while preserving a full prior artifact class", as
   await restarted.outbox.ready();
   expect(restarted.local.snapshot()).toHaveLength(2053);
 });
+
+it.each(["unknown", "seen"] as const)(
+  "restores signed %s pending rows at the saved byte bound",
+  async (delivery) => {
+    vi.useFakeTimers();
+    const storage = memory();
+    const row = (content: string, number: number): OutgoingEvent => {
+      const proof = signed(viewer, {
+        kind: 45010,
+        content,
+        tags: [["d", `signed-boundary-${number}`]],
+      });
+      return {
+        event: {
+          id: proof.id,
+          pubkey: proof.pubkey,
+          created_at: proof.created_at,
+          kind: proof.kind,
+          content: proof.content,
+          tags: proof.tags,
+        },
+        signed: proof,
+        delivery,
+        managed: {
+          version: 1,
+          round: 0,
+          attempts: 0,
+          relayAccepted: true,
+          agentReceived: false,
+          nextAttemptAt: 0,
+          receiptDeadline: 0,
+          artifactConfirmed: false,
+        },
+      };
+    };
+    const rows = Array.from({ length: 5 }, (_, number) =>
+      row("x".repeat(200_000), number),
+    );
+    const padding = Math.floor((2_097_149 - JSON.stringify(rows).length) / 2);
+    rows[4] = row("x".repeat(200_000 + padding), 4);
+    expect(JSON.stringify(rows).length).toBeGreaterThanOrEqual(2_097_148);
+    expect(JSON.stringify(rows).length).toBeLessThanOrEqual(2_097_149);
+    storage.save(rows);
+    const h = setup(storage);
+    await h.outbox.ready();
+    expect(h.outbox.snapshot()).toHaveLength(5);
+    expect(h.outbox.snapshot().every((item) => !("sig" in item.event))).toBe(
+      true,
+    );
+    const chat = await h.delivery.submit(input, recipient);
+    expect(storage.load().some((item) => item.event.id === chat.eventId)).toBe(
+      true,
+    );
+    h.dispose();
+    const restarted = setup(storage);
+    await restarted.outbox.ready();
+    expect(restarted.outbox.snapshot()).toHaveLength(6);
+  },
+);

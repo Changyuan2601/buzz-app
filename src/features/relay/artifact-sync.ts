@@ -104,6 +104,7 @@ export function provideArtifactSync(
     let settled = Promise.resolve();
     let requested = true;
     const dirty = new Set<string>();
+    let confirmAfter = 0;
     let retry = 0;
     let retryKind: "delta" | "current" | undefined;
     let notBefore = 0;
@@ -172,21 +173,31 @@ export function provideArtifactSync(
         if (!entry || entry.signal.aborted) return;
         syncing = entry;
         const operation = AbortSignal.any([signal, entry.signal]);
-        const accepted = await captureArtifactDelivery(
-          current,
-          entry.definition.type,
-          JSON.stringify([entry.owner, entry.definition.name]),
-        );
-        operation.throwIfAborted();
-        const ids =
-          retryKind === "delta"
-            ? []
-            : accepted.artifactIds.length
+        let currentWork = false;
+        if (requested && retryKind !== "current") {
+          deltaWork = true;
+          requested = false;
+          await reconcileArtifactDelta(
+            reader,
+            entry.collection,
+            entry.definition.type,
+            operation,
+            { reportFailure: retry >= 3 },
+          );
+        } else {
+          const accepted = await captureArtifactDelivery(
+            current,
+            entry.definition.type,
+            JSON.stringify([entry.owner, entry.definition.name]),
+          );
+          operation.throwIfAborted();
+          const canConfirm = Date.now() >= confirmAfter;
+          const ids =
+            canConfirm && accepted.artifactIds.length
               ? accepted.artifactIds.slice(0, ARTIFACT_SYNC_LIMITS.currentRows)
-              : requested && retryKind !== "current"
-                ? []
-                : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
-        if (ids.length) {
+              : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
+          if (!ids.length) return;
+          currentWork = true;
           for (const id of ids) dirty.delete(id);
           try {
             await reconcileArtifactCurrent(
@@ -197,7 +208,6 @@ export function provideArtifactSync(
               operation,
               { reportFailure: retry >= 3 },
             );
-            await accepted.complete(ids, operation);
           } catch (error) {
             for (const id of ids) {
               if (dirty.size < 1000) dirty.add(id);
@@ -205,21 +215,21 @@ export function provideArtifactSync(
             }
             throw error;
           }
-        } else if (requested) {
-          deltaWork = true;
-          requested = false;
-          await reconcileArtifactDelta(
-            reader,
-            entry.collection,
-            entry.definition.type,
-            operation,
-            { reportFailure: retry >= 3 },
-          );
-        } else return;
+          if (canConfirm) {
+            try {
+              await accepted.complete(ids, operation);
+            } catch {
+              operation.throwIfAborted();
+              // The delivery journal retains this error while shared reads continue.
+              confirmAfter = Date.now() + REPAIR_MS;
+              requested = true;
+            }
+          }
+        }
         retry = 0;
         retryKind = undefined;
         notBefore = 0;
-        if (ids.length)
+        if (currentWork || deltaWork)
           queueMicrotask(() => {
             if (!running) void pump();
           });
