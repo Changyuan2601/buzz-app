@@ -25,6 +25,9 @@
   }
   .buzz-dialog,
   .buzz-dialog-step {
+    /* Enlarged text can make the popup the outer scrollport. Reveal the whole
+       focused field here too, not only WebKit's text selection. */
+    scroll-padding-block: var(--dialog-padding);
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-panel);
     padding: var(--dialog-padding);

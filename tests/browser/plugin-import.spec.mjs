@@ -508,6 +508,21 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       if (scale === 200 && width === 320) {
         // The stacked acquisition sources retain reachable controls in the modal.
         await folder.focus();
+        // CI can leave the popup scrolled so only part of the next field shows.
+        // WebKit's caret-only reveal must still uncover the whole field.
+        await repository.evaluate((input) => {
+          const body = input.closest(".buzz-dialog-body");
+          body.scrollTop +=
+            input.getBoundingClientRect().top -
+            body.getBoundingClientRect().top -
+            parseFloat(getComputedStyle(body).scrollPaddingTop);
+          const popup = input.closest(".buzz-dialog");
+          const edge =
+            popup.getBoundingClientRect().top +
+            popup.clientTop +
+            popup.clientHeight;
+          popup.scrollTop -= edge - input.getBoundingClientRect().bottom + 24;
+        });
         await page.keyboard.press("Tab");
         await expect(repository).toBeFocused();
         await expect(repository).toBeInViewport({ ratio: 1 });
