@@ -52,8 +52,10 @@ mod jev;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
+mod keep_awake;
 mod notifications;
 mod os_idle;
+use keep_awake::{agent_keep_awake_open, agent_keep_awake_set, KeepAwake};
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -546,6 +548,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_copy_image,
         media_stream_base,
         get_os_idle_seconds,
+        agent_keep_awake_open,
+        agent_keep_awake_set,
         workspace_pick_folder,
         repositories_folder_validate,
         plugin_import_folder,
@@ -824,6 +828,7 @@ pub fn run() {
         .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
+        .manage(KeepAwake::default())
         .manage(HuddleWindow::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
@@ -863,6 +868,7 @@ pub fn run() {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<KeepAwake>().reset();
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
@@ -904,6 +910,7 @@ pub fn run() {
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<KeepAwake>().reset();
     app.state::<NsecBackupHost>().close();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());

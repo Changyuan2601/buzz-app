@@ -73,6 +73,8 @@
     "allow-media-copy-image",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
+    "allow-agent-keep-awake-open",
+    "allow-agent-keep-awake-set",
     "allow-workspace-pick-folder",
     "allow-repositories-folder-validate",
     "allow-plugin-import-folder",

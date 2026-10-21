@@ -7585,3 +7585,58 @@ it("refuses change drafts it cannot apply", async () => {
   ).rejects.toThrow("use its pubkey");
   expect(service.updateRequests()).toEqual([]);
 });
+
+it("accounts for local execution independently of reply display, across handoffs and attention turns", async () => {
+  const f = await setup();
+  const power = f.service.keepAwake;
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  let reply!: () => void;
+  let turn!: () => void;
+  const replied = new Promise<void>((resolve) => {
+    reply = resolve;
+  });
+  const ended = new Promise<void>((resolve) => {
+    turn = resolve;
+  });
+  f.run.mockImplementationOnce((delivery) => {
+    delivery.workingUntil(replied);
+    delivery.executingUntil?.(ended);
+  });
+  f.emit({
+    events: [event("power-mention", { tags: [["p", bot]] })],
+    channelId: channel,
+  });
+  try {
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(power.snapshot().working).toBe(true);
+    reply();
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    expect(power.snapshot().working).toBe(true);
+    turn();
+    await vi.waitFor(() => expect(power.snapshot().working).toBe(false));
+    await f.service.save(bot, { attentionEnabled: true });
+    let finish!: () => void;
+    f.run.mockImplementationOnce(({ workingUntil }) => {
+      workingUntil(
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+      );
+    });
+    f.emit({ events: [deploy("power-watch")] });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    expect(power.snapshot().working).toBe(true);
+    expect(
+      f.activity.reader.work().some((row) => row.state === "working"),
+    ).toBe(false);
+    // Retiring the actual runner releases demand even if a provider settles late.
+    await f.ctx.fiber.dispose();
+    expect(power.snapshot().working).toBe(false);
+    finish();
+  } finally {
+    reply();
+    turn();
+  }
+});

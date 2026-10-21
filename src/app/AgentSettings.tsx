@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { KeepAwakePreference } from "./KeepAwakePreference";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -36,6 +37,7 @@ export function AgentSettings({
             checked={rememberAgents}
             onCheckedChange={changeRememberAgents}
           />
+          <KeepAwakePreference keepAwake={agents?.keepAwake} active={active} />
         </SettingsGroup>
       </div>
       {active && mentionError && (

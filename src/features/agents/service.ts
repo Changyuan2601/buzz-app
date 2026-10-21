@@ -1,3 +1,4 @@
+import { createKeepAwake, type KeepAwake } from "./keep-awake";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -475,6 +476,9 @@ export type Delivery<Config = unknown> = Readonly<{
    * resolving `{ ok: false, error }` fails the request; `{ ok: true,
    * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
+  /** Execution may continue after its reply is displayed (Codex). This hold
+   * prevents idle sleep without extending typing, reply activity or lane locks. */
+  executingUntil?(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
   /** The plugin declined this request; no work or successful outcome is implied. */
@@ -825,6 +829,7 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  readonly keepAwake?: KeepAwake;
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1197,6 +1202,7 @@ export class AgentsService extends Service implements Agents {
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
+  readonly keepAwake = createKeepAwake();
   private readonly runners: AgentRunners;
   private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
@@ -1492,6 +1498,7 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
+      execution: this.keepAwake,
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
@@ -1563,6 +1570,11 @@ export class AgentsService extends Service implements Agents {
         for (const stop of stops) stop();
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
         this.runners.clear();
+        void this.keepAwake
+          .dispose()
+          .catch((error) =>
+            console.warn("Couldn’t release agent sleep prevention", error),
+          );
         this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({

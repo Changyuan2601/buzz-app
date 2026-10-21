@@ -250,6 +250,35 @@ IDs do not become per-turn tags.
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 
+## Keep awake while local agents work
+
+**Settings → Buzz → Agent setup → Agent behavior → Keep awake while local agents work**
+is off by default and saved on this device. On macOS desktop, it prevents
+idle **system** sleep only while this app executes local agent work. The display
+can sleep; closing a laptop lid, explicit sleep and running after Quit are not
+supported promises. Browser, Windows and Linux show an unavailable control.
+
+`AgentsService.keepAwake` receives execution demand from the runner, across
+communities, including mentions, watches/timers, classifier calls and session
+controls. This is independent of the optional Agent Activity plugin, saved
+telemetry, typing, and idle harness processes. `workingUntil` retains demand;
+Codex also supplies `executingUntil` through actual turn completion so its final
+model call remains covered after reply display ends. Retiring a runner or losing
+its custody releases its demand without changing existing turn-stop semantics.
+
+The native host owns one process-local macOS power assertion and expires it after
+one hour without a new execution transition or harness step. New activity can
+resume it. Preference-off, completed work, frontend replacement and Quit release
+it; a native generation fences old timers and an IPC lease fences old renderer
+requests. The trusted main renderer supplies work evidence; this is not an
+independent native process monitor or a hostile-plugin boundary. Acquisition,
+release and preference-save errors remain visible with explicit Retry.
+
+Focused coverage: `features/agents/keep-awake.test.ts`, the agent service and
+Codex runtime tests, `app/AgentSettings.test.tsx`, native `keep_awake::tests`,
+and the generated native-command webview-isolation test. Fixture tests do not
+establish real-provider or laptop power-state acceptance.
+
 ## Local agents
 
 `LocalAgents` (`src/features/agents/local.ts`) is a read-only snapshot of the

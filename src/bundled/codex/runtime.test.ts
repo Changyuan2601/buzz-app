@@ -4102,3 +4102,23 @@ it("updates Codex repository context from the agent’s captured community, incl
   expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });
+
+it("keeps execution through the actual turn after its final reply clears display activity", async () => {
+  const f = fixture();
+  const executingUntil = vi.fn<NonNullable<Delivery["executingUntil"]>>();
+  await f.runtime.run({ ...f.delivery("work then reply"), executingUntil });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(executingUntil).toHaveBeenCalledOnce();
+  let ended = false;
+  const done = Promise.resolve(executingUntil.mock.calls[0]?.[0]).then(() => {
+    ended = true;
+  });
+  await f.tool("send", { audience: "everyone", text: "Answer", final: true });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+  expect(ended).toBe(false);
+  await f.complete(0, "");
+  await done;
+  expect(ended).toBe(true);
+});
