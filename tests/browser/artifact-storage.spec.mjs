@@ -463,10 +463,70 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
     });
     const elapsedMs = performance.now() - begin;
     IDBObjectStore.prototype.get = get;
+    const idleWrites = [];
+    for (let n = 0; n < 20; n++) {
+      const start = performance.now();
+      await c.preferences.update("000000", () => ({ pinned: n % 2 === 0 }));
+      idleWrites.push(performance.now() - start);
+    }
+    const contendedWrites = [];
+    const refresh = await c.beginRefresh("all");
+    for (const batchSize of [100, 1000]) {
+      for (let n = 0; n < 5; n++) {
+        let started;
+        const active = new Promise((resolve) => {
+          started = resolve;
+        });
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (...args) {
+          const request = put.apply(this, args);
+          if (this.name === "records") {
+            IDBObjectStore.prototype.put = put;
+            started();
+          }
+          return request;
+        };
+        const backgroundStart = performance.now();
+        const background = c.applyBatch({
+          source: "all",
+          refresh,
+          records: Array.from({ length: batchSize }, (_, i) => ({
+            id: String(10000 + i).padStart(6, "0"),
+            channelId: "channel",
+            type: "test.task",
+            revision: {
+              id: `rev-${batchSize}-${n}-${i}`,
+              content: JSON.stringify({
+                archived: true,
+                title: "x".repeat(500),
+              }),
+            },
+          })),
+        });
+        try {
+          await active;
+          const start = performance.now();
+          await c.preferences.update("000000", () => ({ pinned: true }));
+          const writeMs = performance.now() - start;
+          await background;
+          contendedWrites.push({
+            batchSize,
+            writeMs,
+            batchMs: performance.now() - backgroundStart,
+          });
+        } finally {
+          IDBObjectStore.prototype.put = put;
+        }
+      }
+    }
+    const preference = await c.preferences.get("000000");
     window.artifactTest.close();
     const reopened = window.artifactTest.open();
     return {
       savedMs,
+      idleWrites,
+      contendedWrites,
+      preference,
       elapsedMs,
       scans,
       ids,
@@ -478,6 +538,7 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
       last: (await reopened.get("049999")).record.local,
     };
   });
+  expect(result.preference).toEqual({ pinned: true });
   expect(result.scans).toBe(0);
   expect(result.ids.ids).toHaveLength(75);
   expect(result.nextIds.ids[0]).toBe("000075");
@@ -492,6 +553,8 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
       savedMs: result.savedMs,
       pageMs: result.elapsedMs,
       recordReads: result.reads,
+      idleWrites: result.idleWrites,
+      contendedWrites: result.contendedWrites,
     }),
   );
 });
@@ -1004,4 +1067,50 @@ test("retries database opening with a new handle after a transient failure", asy
     attempts: 2,
     saved: true,
   });
+});
+
+test("direct reads do not wait for an index-only transaction", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const c = window.artifactTest.open();
+    await c.importBatch({
+      records: [{ id: "task", local: { title: "saved" } }],
+    });
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("buzz-artifacts-v1", 3);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const tx = db.transaction("entries", "readwrite");
+    let held = true;
+    const release = () => {
+      held = false;
+      tx.abort();
+    };
+    const timeout = setTimeout(release, 5000);
+    const keepActive = () => {
+      if (held) tx.objectStore("entries").count().onsuccess = keepActive;
+    };
+    keepActive();
+    try {
+      const row = await c.get("task");
+      await c.preferences.get("task");
+      const ids = await c.knownIds({ limit: 10 });
+      const error = await c.refreshError();
+      const checkpoint = await c.checkpoint();
+      return { held, row, ids, error, checkpoint };
+    } finally {
+      clearTimeout(timeout);
+      if (held) release();
+      db.close();
+    }
+  });
+  expect(result.held).toBe(true);
+  expect(result.row.record.local).toEqual({ title: "saved" });
+  expect(result.ids.ids).toEqual(["task"]);
+  expect(result.error).toBeNull();
+  expect(result.checkpoint).toBeNull();
 });

@@ -127,8 +127,9 @@ attempted value retained. Offline shared edits remain undecided.
 
 ## Storage costs
 
-Writes request strict durability. Transactions span all four object stores, so
-large batches can delay other collections' reads or writes. A changed row rewrites
+Writes request strict durability. Transactions include only the object stores that each operation uses. Row writes
+and indexed pages use all four stores. Metadata operations use only metadata.
+Large row batches can still delay other collections' reads or writes. A changed row rewrites
 its indexes. Index upgrades scan the collection. Delta completion does not scan records.
 Ancestry comparison and separate source-membership writes are absent. The database upgrade removes the obsolete membership store, builds the host
 channel index, and preserves records and device preferences. Leaving a community purges only its saved partition. If database

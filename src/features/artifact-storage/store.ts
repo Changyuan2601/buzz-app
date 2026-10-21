@@ -112,6 +112,7 @@ export function createArtifactStore(viewer: string, relay: string) {
   type Then = <T>(request: IDBRequest<T>, next: (value: T) => void) => void;
   async function transact<T>(
     mode: IDBTransactionMode,
+    stores: string[],
     work: (tx: IDBTransaction, then: Then, done: (value: T) => void) => void,
     signal?: AbortSignal,
   ): Promise<T> {
@@ -120,7 +121,7 @@ export function createArtifactStore(viewer: string, relay: string) {
     signal?.throwIfAborted();
     if (closed) throw new Error("Artifact storage closed");
     return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(STORES, mode, { durability: "strict" });
+      const tx = db.transaction(stores, mode, { durability: "strict" });
       let value: T;
       let failure: unknown;
       const stop = () => {
@@ -235,6 +236,7 @@ export function createArtifactStore(viewer: string, relay: string) {
     }
     const ready = transact<void>(
       "readwrite",
+      STORES,
       (tx, then, done) => {
         const metadata = tx.objectStore("metadata");
         then(metadata.get(key("schema")), (schema) => {
@@ -278,13 +280,15 @@ export function createArtifactStore(viewer: string, relay: string) {
     void ready.catch(() => {});
     async function run<T>(
       mode: IDBTransactionMode,
-      work: Parameters<typeof transact<T>>[1],
+      stores: string[],
+      work: Parameters<typeof transact<T>>[2],
       signal?: AbortSignal,
     ) {
       await ready;
       if (disposed) throw new Error("Artifact collection closed");
       return transact<T>(
         mode,
+        stores,
         (tx, then, done) => {
           then(tx.objectStore("metadata").get(key("schema")), (schema) => {
             if (schema?.version !== definition.version)
@@ -398,8 +402,10 @@ export function createArtifactStore(viewer: string, relay: string) {
     const handle: HostArtifactCollection = {
       scope: Object.freeze({ viewer, relay, partition: scope }),
       get: (id) =>
-        run<ArtifactEntry | undefined>("readonly", (tx, then, done) =>
-          readEntry(tx, then, id, done),
+        run<ArtifactEntry | undefined>(
+          "readonly",
+          ["metadata", "records", "preferences"],
+          (tx, then, done) => readEntry(tx, then, id, done),
         ),
       page(query: ArtifactPageQuery) {
         const limit = query.limit ?? 100;
@@ -407,7 +413,7 @@ export function createArtifactStore(viewer: string, relay: string) {
           return Promise.reject(
             new Error("Artifact page limit must be 1 to 1000"),
           );
-        return run<ArtifactPage>("readonly", (tx, then, done) => {
+        return run<ArtifactPage>("readonly", STORES, (tx, then, done) => {
           const pagePrefix = [...prefix, query.index, query.value];
           const lower = query.after
             ? [...pagePrefix, query.after.order, query.after.id]
@@ -443,14 +449,17 @@ export function createArtifactStore(viewer: string, relay: string) {
       },
       preferences: {
         get: (id) =>
-          run<JsonValue | undefined>("readonly", (tx, then, done) =>
-            then(
-              tx.objectStore("preferences").get(key(id)),
-              (pref: StoredPreference | undefined) => done(pref?.value),
-            ),
+          run<JsonValue | undefined>(
+            "readonly",
+            ["metadata", "preferences"],
+            (tx, then, done) =>
+              then(
+                tx.objectStore("preferences").get(key(id)),
+                (pref: StoredPreference | undefined) => done(pref?.value),
+              ),
           ),
         async update(id, change) {
-          await run<void>("readwrite", (tx, then, done) =>
+          await run<void>("readwrite", STORES, (tx, then, done) =>
             mutate(
               tx,
               then,
@@ -463,7 +472,7 @@ export function createArtifactStore(viewer: string, relay: string) {
         },
       },
       async importBatch(batch: ArtifactImport) {
-        await run<void>("readwrite", (tx, then, done) => {
+        await run<void>("readwrite", STORES, (tx, then, done) => {
           const jobs: (() => void)[] = [];
           const next = series(jobs);
           for (const record of batch.records ?? [])
@@ -512,7 +521,7 @@ export function createArtifactStore(viewer: string, relay: string) {
         publish();
       },
       imported: (marker) =>
-        run<boolean>("readonly", (tx, then, done) =>
+        run<boolean>("readonly", ["metadata"], (tx, then, done) =>
           then(
             tx
               .objectStore("metadata")
@@ -521,7 +530,7 @@ export function createArtifactStore(viewer: string, relay: string) {
           ),
         ),
       refreshError: () =>
-        run<string | null>("readonly", (tx, then, done) =>
+        run<string | null>("readonly", ["metadata"], (tx, then, done) =>
           then(tx.objectStore("metadata").get(key("refresh-error")), (row) =>
             done(row?.value ?? null),
           ),
@@ -530,6 +539,7 @@ export function createArtifactStore(viewer: string, relay: string) {
         if (!message) throw new Error("Artifact refresh error is empty");
         await run<void>(
           "readwrite",
+          ["metadata"],
           (tx, then, done) => {
             checkRefresh(tx, then, refresh, () => {
               tx.objectStore("metadata").put({
@@ -553,6 +563,7 @@ export function createArtifactStore(viewer: string, relay: string) {
           );
         return run<{ ids: string[]; next?: string }>(
           "readonly",
+          ["metadata", "records"],
           (tx, then, done) => {
             const records = tx.objectStore("records");
             const parts =
@@ -587,7 +598,7 @@ export function createArtifactStore(viewer: string, relay: string) {
         );
       },
       checkpoint: () =>
-        run<string | null>("readonly", (tx, then, done) =>
+        run<string | null>("readonly", ["metadata"], (tx, then, done) =>
           then(tx.objectStore("metadata").get(key("checkpoint")), (row) =>
             done(row?.value ?? null),
           ),
@@ -595,22 +606,27 @@ export function createArtifactStore(viewer: string, relay: string) {
       beginRefresh(source) {
         if (!source)
           return Promise.reject(new Error("Artifact source is empty"));
-        return run<ArtifactRefresh>("readwrite", (tx, then, done) => {
-          bindSource(tx, then, source, () => {
-            const refresh = { source, generation: crypto.randomUUID() };
-            tx.objectStore("metadata").put({
-              scope,
-              collection,
-              key: "refresh",
-              value: refresh,
+        return run<ArtifactRefresh>(
+          "readwrite",
+          ["metadata"],
+          (tx, then, done) => {
+            bindSource(tx, then, source, () => {
+              const refresh = { source, generation: crypto.randomUUID() };
+              tx.objectStore("metadata").put({
+                scope,
+                collection,
+                key: "refresh",
+                value: refresh,
+              });
+              done(refresh);
             });
-            done(refresh);
-          });
-        });
+          },
+        );
       },
       async completeRefresh(refresh, checkpoint, signal) {
         await run<void>(
           "readwrite",
+          ["metadata"],
           (tx, then, done) => {
             checkRefresh(tx, then, refresh, () => {
               const metadata = tx.objectStore("metadata");
@@ -636,6 +652,7 @@ export function createArtifactStore(viewer: string, relay: string) {
       async applyBatch(batch: ArtifactBatch, signal) {
         await run<void>(
           "readwrite",
+          STORES,
           (tx, then, done) => {
             const jobs: (() => void)[] = [];
             const next = series(jobs);
@@ -727,7 +744,7 @@ export function createArtifactStore(viewer: string, relay: string) {
     collection,
     async clear() {
       const affected = new Set<string>();
-      await transact<void>("readwrite", (tx, then, done) => {
+      await transact<void>("readwrite", STORES, (tx, then, done) => {
         let pending = STORES.length;
         for (const name of STORES) {
           const request = tx
