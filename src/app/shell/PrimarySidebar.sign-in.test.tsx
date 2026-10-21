@@ -69,3 +69,16 @@ it.each([
   expect(await screen.findByRole("alert")).toHaveTextContent(text);
   expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
 });
+
+it.each(["adapter-refused", "grant-refused", "invalid-response"])(
+  "explains a final %s issuer refusal without offering sign-in",
+  async (refusal) => {
+    const h = await refusedLive(refusal);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Restart Buzz to try again",
+    );
+    expect(screen.getByRole("button", { name: "Chats" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(h.connects()).toBe(1);
+  },
+);

@@ -14,6 +14,17 @@ function recoveryMessage(code: string) {
   return "Sign-in did not finish. Try again.";
 }
 
+/** Issuer refusals native keeps for the session revision (`refused()` in
+ * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+const ISSUER_REFUSALS = new Set([
+  "adapter-refused",
+  "grant-refused",
+  "invalid-assertion",
+  "invalid-proof",
+  "invalid-response",
+  "response-too-large",
+]);
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -55,6 +66,14 @@ function Action({
     return (
       <p role="alert" className="text-body-sm text-danger">
         Your account does not have access to this community. Contact its
+        administrator.
+      </p>
+    );
+  if (ISSUER_REFUSALS.has(refusal))
+    return (
+      <p role="alert" className="text-body-sm text-danger">
+        Buzz couldn’t confirm your organization sign-in for this community.
+        Restart Buzz to try again. If it keeps happening, contact your
         administrator.
       </p>
     );
