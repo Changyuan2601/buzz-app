@@ -626,3 +626,38 @@ it("keeps acceptance and the attempted value when saving capture confirmation fa
   await ticks(60_000);
   expect(h.publish).toHaveBeenCalledOnce();
 });
+
+it("keeps newest-first enqueue order when the clock does not advance, including restart", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const firstHost = setup(storage);
+  const now = Date.now();
+  const first = await firstHost.delivery.submit(artifactInput, undefined, {
+    operationKey: "same-ms/first",
+    collection: artifactCollection,
+  });
+  const second = await firstHost.delivery.submit(
+    { ...artifactInput, content: '{"title":"Newest"}' },
+    undefined,
+    { operationKey: "same-ms/second", collection: artifactCollection },
+  );
+  expect(Date.now()).toBe(now);
+  expect(
+    (await firstHost.delivery.artifact("task-id")).map(
+      (entry) => entry.state.eventId,
+    ),
+  ).toEqual([second.eventId, first.eventId]);
+  firstHost.dispose();
+  const restarted = setup(storage);
+  const third = await restarted.delivery.submit(
+    { ...artifactInput, content: '{"title":"Newest after restart"}' },
+    undefined,
+    { operationKey: "same-ms/third", collection: artifactCollection },
+  );
+  expect(Date.now()).toBe(now);
+  expect(
+    (await restarted.delivery.artifact("task-id")).map(
+      (entry) => entry.state.eventId,
+    ),
+  ).toEqual([third.eventId, second.eventId, first.eventId]);
+});
