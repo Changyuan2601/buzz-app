@@ -1,4 +1,8 @@
 import {
+  ARTIFACT_SNAPSHOT_LIMITS,
+  ArtifactSnapshotError,
+} from "./artifact-snapshot";
+import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
@@ -2081,4 +2085,22 @@ it("binds audience authority to the advertised community and rejects unknown ver
   expect(
     (await connectNativeTransport(community)).audienceAuthorityCommunity,
   ).toBeUndefined();
+});
+
+it.each([
+  "snapshot_limit",
+  "snapshot_reset",
+  "snapshot_invalid",
+  "snapshot_unsupported_scope",
+])("preserves %s through native admission", async (code) => {
+  discovery = { artifacts: { snapshot: ARTIFACT_SNAPSHOT_LIMITS } };
+  const transport = await connectNativeTransport(community);
+  respond = () => ({ status: 422, body: { error: "scope or capacity", code } });
+  assert.exists(transport.artifactSnapshots);
+  const work = transport.artifactSnapshots.start(
+    { artifact: "current", kinds: [45010], "#type": ["task"] },
+    new AbortController().signal,
+  );
+  await expect(work).rejects.toBeInstanceOf(ArtifactSnapshotError);
+  await expect(work).rejects.toMatchObject({ code });
 });

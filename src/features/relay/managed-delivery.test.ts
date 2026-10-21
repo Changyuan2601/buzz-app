@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import {
   createOutbox,
   PublishRejected,
@@ -224,4 +224,105 @@ it("records a batch receipt against each original message", async () => {
   expect(await h.delivery.get(two.operationId)).toMatchObject({
     agentReceived: true,
   });
+});
+
+it("keeps local intent added during a journal read until its save completes", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  let release: (() => void) | undefined;
+  let reading = false;
+  const h = setup({
+    ...storage,
+    load: async (options) => {
+      const records = storage.load();
+      if (options?.refresh && reading)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return records;
+    },
+  });
+  await h.ready;
+  reading = true;
+  const refresh = h.delivery.get("missing");
+  await ticks();
+  const id = h.outbox.send(input, undefined, undefined, { recipient });
+  reading = false;
+  release?.();
+  await refresh;
+  await ticks();
+  expect(await h.delivery.get(id)).toMatchObject({ phase: "sending" });
+  expect(storage.load().some((item) => item.event.id === id)).toBe(true);
+});
+it("retains completed artifact delivery when its echo precedes the publish response", async () => {
+  vi.useFakeTimers();
+  let accept: (() => void) | undefined;
+  const h = setup(
+    memory(),
+    () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const { eventId: id } = await h.delivery.submit({
+    kind: 45010,
+    content: "{}",
+    tags: [
+      ["d", crypto.randomUUID()],
+      ["h", recipient.channelId],
+      ["type", "task"],
+      ["op", "create"],
+      ["ar", "1"],
+    ],
+  });
+  await h.managedOwner(true);
+  await ticks();
+  const event = h.publish.mock.calls[0]?.[0];
+  assert.exists(event);
+  h.observe([event]);
+  accept?.();
+  await ticks();
+  expect(await h.delivery.get(id)).toMatchObject({
+    phase: "received",
+    relayAccepted: true,
+  });
+  expect(
+    h.local.snapshot().find((item) => item.event.id === id)?.managed
+      ?.relayAccepted,
+  ).toBe(true);
+});
+it("can retry and discard a definitive managed refusal", async () => {
+  vi.useFakeTimers();
+  const h = setup(memory(), async () => {
+    throw new PublishRejected("artifact-head-conflict");
+  });
+  const { eventId: id } = await h.delivery.submit(input, recipient);
+  await h.managedOwner(true);
+  await ticks(1);
+  expect(await h.delivery.get(id)).toMatchObject({ phase: "failed" });
+  await h.delivery.retry(id);
+  await ticks(1);
+  expect(h.publish).toHaveBeenCalledTimes(2);
+  await h.outbox.dismiss(id);
+  expect(await h.delivery.get(id)).toBeUndefined();
+});
+it("cancels queued managed attempts before it releases ownership", async () => {
+  vi.useFakeTimers();
+  const h = setup(
+    memory(),
+    async (_event, signal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+  );
+  for (let i = 0; i < 6; i++)
+    await h.delivery.submit({ ...input, content: `Prompt ${i}` }, recipient);
+  await h.managedOwner(true);
+  await ticks();
+  expect(h.publish).toHaveBeenCalledTimes(3);
+  await h.managedOwner(false);
+  await ticks(60_000);
+  expect(h.publish).toHaveBeenCalledTimes(3);
 });

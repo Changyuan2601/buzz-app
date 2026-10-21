@@ -4,15 +4,19 @@ import { createArtifactStore } from "../../src/features/artifact-storage/store";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { createOutbox } from "../../src/features/relay/outbox";
 import { browserOutboxStorage } from "../../src/features/relay/outbox-storage";
-import { mergeManagedDelivery } from "../../src/features/relay/managed-delivery";
+import {
+  mergeManagedDelivery,
+  registerManagedDelivery,
+} from "../../src/features/relay/managed-delivery";
 
 const secret = new Uint8Array(32).fill(7);
 const viewer = getPublicKey(secret);
 const recipient = { channelId: "task", agentId: "a".repeat(64) };
 const publications: string[] = [];
 let owner: ReturnType<typeof createOutbox>;
-let release: (() => void) | undefined;
-let lock: Promise<void> | undefined;
+let stopRegistration: (() => void) | undefined;
+let ownership: Promise<void>;
+let release: Promise<void>;
 const open = async (scope: string) => {
   owner = createOutbox(
     viewer,
@@ -26,21 +30,25 @@ const open = async (scope: string) => {
     browserOutboxStorage(scope),
   );
   await owner.ready;
-};
-const own = async (scope: string) => {
   let acquired!: () => void;
-  const ready = new Promise<void>((resolve) => {
+  let released!: () => void;
+  ownership = new Promise<void>((resolve) => {
     acquired = resolve;
   });
-  lock = navigator.locks.request(`delivery-check:${scope}`, async () => {
-    await owner.managedOwner(true);
-    acquired();
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await owner.managedOwner(false);
+  release = new Promise<void>((resolve) => {
+    released = resolve;
   });
-  await ready;
+  stopRegistration = registerManagedDelivery(scope, {
+    owner: async (owned) => {
+      await owner.managedOwner(owned);
+      if (owned) acquired();
+      else released();
+    },
+    receive: owner.receiveManaged,
+  });
+};
+const own = async (_scope: string) => {
+  await ownership;
 };
 const captures: string[] = [];
 async function openCollection(scope: string, name: string) {
@@ -67,7 +75,7 @@ async function openCollection(scope: string, name: string) {
       snapshot: () => ({ status: "connected" }),
       subscribe: () => () => {},
     },
-    channels: { subscribeList: () => () => {} },
+    channels: { list: () => ({ channels: [] }), subscribeList: () => () => {} },
     subscribeLive: () => () => {},
     subscribeArtifactUpdates: () => () => {},
     artifactSnapshots: {
@@ -143,8 +151,8 @@ Object.assign(window, {
       owner.receiveManaged(recipient.channelId, recipient.agentId, [id]),
     retry: (id: string) => owner.delivery.retry(id),
     release: async () => {
-      release?.();
-      await lock;
+      stopRegistration?.();
+      await release;
     },
   },
 });

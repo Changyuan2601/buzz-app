@@ -30,6 +30,7 @@ type ManagedHost = {
 };
 const hosts = new Map<string, ManagedHost>();
 const owners = new Set<string>();
+const locks = new Map<string, AbortController>();
 const transitions = new Map<string, Promise<void>>();
 function transition(scope: string, work: () => Promise<void>) {
   const next = (transitions.get(scope) ?? Promise.resolve())
@@ -41,6 +42,37 @@ function transition(scope: string, work: () => Promise<void>) {
 export function registerManagedDelivery(scope: string, host: ManagedHost) {
   const prior = hosts.get(scope);
   hosts.set(scope, host);
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.locks &&
+    !locks.has(scope)
+  ) {
+    const lifetime = new AbortController();
+    locks.set(scope, lifetime);
+    void navigator.locks
+      .request(
+        `buzz-outbox-owner:${scope}`,
+        { mode: "exclusive", signal: lifetime.signal },
+        async () => {
+          await ownManagedDelivery(scope, true);
+          try {
+            await new Promise<void>((resolve) => {
+              if (lifetime.signal.aborted) resolve();
+              else
+                lifetime.signal.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+            });
+          } finally {
+            await ownManagedDelivery(scope, false);
+          }
+        },
+      )
+      .catch((error) => {
+        if (!lifetime.signal.aborted)
+          console.error("Message outbox ownership fails", scope, error);
+      });
+  }
   void transition(scope, async () => {
     await prior?.owner(false);
     if (hosts.get(scope) === host && owners.has(scope)) await host.owner(true);
@@ -48,7 +80,11 @@ export function registerManagedDelivery(scope: string, host: ManagedHost) {
     console.error("Managed delivery owner fails", scope, error),
   );
   return () => {
-    if (hosts.get(scope) === host) hosts.delete(scope);
+    if (hosts.get(scope) === host) {
+      hosts.delete(scope);
+      locks.get(scope)?.abort();
+      locks.delete(scope);
+    }
     void transition(scope, () => host.owner(false)).catch((error) =>
       console.error("Managed delivery release fails", scope, error),
     );

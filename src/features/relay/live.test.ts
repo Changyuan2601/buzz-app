@@ -2619,3 +2619,33 @@ it("keeps large tails active during replay and fences removed channel lifetimes"
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("fills retained groups as joined homes arrive in separate roster updates", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const ids: string[] = [];
+  for (let i = 0; i < 1150; i++) {
+    ids.push(`task-${i}`);
+    h.owner.update(ids, ids);
+  }
+  await h.first.auth();
+  let cursor = 0;
+  const open = new Set<string>();
+  let maximum = 0;
+  while (cursor < h.first.sent.length) {
+    const frame = h.first.sent[cursor++];
+    if (frame?.[0] === "CLOSE") open.delete(frame[1] as string);
+    if (frame?.[0] !== "REQ") continue;
+    open.add(frame[1] as string);
+    maximum = Math.max(maximum, open.size);
+    await h.first.receive(["EOSE", frame[1]]);
+  }
+  expect(maximum).toBeLessThan(125);
+  expect(h.callbacks.state.mock.lastCall?.[0].routes).toHaveLength(1152);
+  expect(
+    h.callbacks.state.mock.lastCall?.[0].routes.every(
+      (route) => route.status === "live",
+    ),
+  ).toBe(true);
+  h.owner.dispose();
+});

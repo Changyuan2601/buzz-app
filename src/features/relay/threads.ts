@@ -14,6 +14,7 @@ import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
+import { deliveryState } from "./managed-delivery";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
@@ -223,6 +224,9 @@ export function createThreadView({
               ...row,
               delivery: item.delivery,
               deliveryError: item.error,
+              managedDelivery: item.managed
+                ? deliveryState(row.id, item.managed)
+                : undefined,
             })
           : row;
       }),

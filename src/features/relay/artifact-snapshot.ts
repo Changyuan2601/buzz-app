@@ -77,6 +77,19 @@ export class ArtifactSnapshotError extends Error {
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+export function artifactSnapshotFailure(value: unknown) {
+  if (
+    !object(value) ||
+    ![
+      "snapshot_reset",
+      "snapshot_limit",
+      "snapshot_invalid",
+      "snapshot_unsupported_scope",
+    ].includes(String(value.code))
+  )
+    return;
+  return { error: "Artifact snapshot request fails", code: String(value.code) };
+}
 const uuid = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value) &&

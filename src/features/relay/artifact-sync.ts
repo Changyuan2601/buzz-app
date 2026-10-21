@@ -4,7 +4,6 @@ import type {
   OpenArtifactCollection,
 } from "../artifact-storage/service";
 import { hasEventProof } from "./events";
-import { ownManagedDelivery } from "./managed-delivery";
 import type { RelaySession } from "./session";
 import {
   reconcileArtifactSnapshot,
@@ -28,7 +27,6 @@ export function provideArtifactSync(
   storage: ArtifactStorageService,
 ) {
   const groups = new Map<string, Group>();
-  const deliveryOwners = new Map<string, AbortController>();
   function ensureGroup(
     viewer: string,
     relay: string,
@@ -73,7 +71,7 @@ export function provideArtifactSync(
         group.entries.delete(entry);
         if (!group.entries.size) {
           group.lifetime.abort();
-          groups.delete(group.key);
+          if (groups.get(group.key) === group) groups.delete(group.key);
         }
       },
       { once: true },
@@ -90,39 +88,6 @@ export function provideArtifactSync(
         group.lifetime.abort();
         groups.delete(key);
       }
-    for (const [key, owner] of deliveryOwners) {
-      if (key !== scope) {
-        owner.abort();
-        deliveryOwners.delete(key);
-      }
-    }
-    if (scope && !deliveryOwners.has(scope) && navigator.locks) {
-      const lifetime = new AbortController();
-      deliveryOwners.set(scope, lifetime);
-      void navigator.locks
-        .request(
-          `buzz-outbox-owner:${scope}`,
-          { mode: "exclusive", signal: lifetime.signal },
-          async () => {
-            await ownManagedDelivery(scope, true);
-            try {
-              await new Promise<void>((resolve) => {
-                if (lifetime.signal.aborted) resolve();
-                else
-                  lifetime.signal.addEventListener("abort", () => resolve(), {
-                    once: true,
-                  });
-              });
-            } finally {
-              await ownManagedDelivery(scope, false);
-            }
-          },
-        )
-        .catch((error) => {
-          if (!lifetime.signal.aborted)
-            console.error("Message outbox ownership fails", error);
-        });
-    }
   };
   const stopScope = ctx.relay.subscribe(refreshScope);
   refreshScope();
@@ -194,7 +159,14 @@ export function provideArtifactSync(
           );
         }
         retry = 0;
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "Artifact collection version changed"
+        ) {
+          group.lifetime.abort();
+          if (groups.get(group.key) === group) groups.delete(group.key);
+        }
         if (!signal.aborted) {
           retry++;
           if (retry <= 3) {
@@ -226,7 +198,41 @@ export function provideArtifactSync(
         session = next;
         if (next) {
           stopSession = next.live.subscribe(update);
-          stopRoster = next.channels.subscribeList(request);
+          const rosterKey = () =>
+            JSON.stringify(
+              next.channels
+                .list()
+                .channels.map(
+                  ({
+                    id,
+                    cached,
+                    pending,
+                    readOnly,
+                    ttlSeconds,
+                    private: restricted,
+                    members,
+                  }) => [
+                    id,
+                    cached,
+                    pending,
+                    readOnly,
+                    ttlSeconds,
+                    restricted,
+                    members,
+                  ],
+                )
+                .sort((left, right) =>
+                  String(left[0]).localeCompare(String(right[0])),
+                ),
+            );
+          let roster = rosterKey();
+          stopRoster = next.channels.subscribeList(() => {
+            const updated = rosterKey();
+            if (updated !== roster) {
+              roster = updated;
+              request();
+            }
+          });
           const receive = (
             events: readonly import("./events").RelayEvent[],
           ) => {
@@ -324,8 +330,6 @@ export function provideArtifactSync(
     stopOpen();
     stopScope();
     for (const group of groups.values()) group.lifetime.abort();
-    for (const owner of deliveryOwners.values()) owner.abort();
-    deliveryOwners.clear();
     groups.clear();
   });
 }

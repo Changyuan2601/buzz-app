@@ -245,6 +245,7 @@ export function createOutbox(
   let confirmedKeep: ((event: EventData) => boolean) | undefined;
   let storageError: string | undefined;
   let hydrated = false;
+  const unsavedManaged = new Set<string>();
   let managedOwner = false;
   let managedTimer: ReturnType<typeof setTimeout> | undefined;
   let durable = Promise.resolve();
@@ -318,6 +319,7 @@ export function createOutbox(
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
           await storage.save(records);
+          for (const item of records) unsavedManaged.delete(item.event.id);
           if (action === "receipt") {
             const current = find(id);
             if (current?.managed)
@@ -395,6 +397,9 @@ export function createOutbox(
       .then(() => ready)
       .then(async () => {
         if (closed) return;
+        const beforeLoad = new Map(
+          snapshot.map((item) => [item.event.id, item]),
+        );
         const records = await storage.load({ refresh: true });
         validateSaved(records);
         const incoming = new Map(
@@ -426,7 +431,13 @@ export function createOutbox(
           }
         }
         for (const [id, item] of next)
-          if (item.managed && !incoming.has(id) && !attempts.has(id))
+          if (
+            item.managed &&
+            !incoming.has(id) &&
+            !attempts.has(id) &&
+            !unsavedManaged.has(id) &&
+            beforeLoad.get(id) === item
+          )
             next.delete(id);
         snapshot = Object.freeze([...next.values()]);
         if (
@@ -645,7 +656,7 @@ export function createOutbox(
   async function deliverAttempt(id: string) {
     const attempt = attempts.get(id);
     if (closed || !attempt || attempt.controller || inflight() >= 3) return;
-    if (!find(id)) return;
+    if (!find(id) || (find(id)?.managed && !managedOwner)) return;
     if (Date.now() >= attempt.expiresAt) {
       expire(id);
       return;
@@ -877,7 +888,7 @@ export function createOutbox(
     async acknowledge(id: string) {
       await outbox.ready();
       const item = visible.find((item) => item.event.id === id);
-      if (item?.managed && !managedDone(item.managed))
+      if (item?.managed && !managedDone(item.managed) && !item.refused)
         return Promise.reject(
           new Error("Resolve managed delivery before removing this message"),
         );
@@ -1019,6 +1030,7 @@ export function createOutbox(
         ) as unknown as string[][],
         id: getEventHash(template),
       });
+      if (managed) unsavedManaged.add(event.id);
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
       profiling.measure("send.local", event.id, () => {
@@ -1061,6 +1073,8 @@ export function createOutbox(
       if (item?.managed) {
         replace({
           ...item,
+          refused: undefined,
+          error: undefined,
           managed: {
             ...item.managed,
             round: item.managed.round + 1,
@@ -1113,7 +1127,7 @@ export function createOutbox(
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
       const item = visible.find((item) => item.event.id === id);
-      if (item?.managed && !managedDone(item.managed))
+      if (item?.managed && !managedDone(item.managed) && !item.refused)
         return Promise.reject(
           new Error("Resolve managed delivery before removing this message"),
         );
@@ -1178,7 +1192,11 @@ export function createOutbox(
         wakeManaged();
       } else
         for (const [id, attempt] of attempts)
-          if (find(id)?.managed) attempt.controller?.abort(abortError());
+          if (find(id)?.managed) {
+            clearTimeout(attempt.timer);
+            attempts.delete(id);
+            attempt.controller?.abort(abortError());
+          }
       if (!owned) {
         await Promise.allSettled(
           [...deliveries]
@@ -1283,6 +1301,13 @@ export function createOutbox(
             }),
           );
       }
+      for (const item of snapshot)
+        if (
+          byId.has(item.event.id) &&
+          item.managed &&
+          managedDone(item.managed)
+        )
+          completed.set(item.event.id, item);
       snapshot = Object.freeze(
         snapshot.filter(
           (item) =>

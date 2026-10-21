@@ -380,19 +380,49 @@ export function subscribeRelayTraffic(
       (observer !== null ? 1 : 0) -
       (presenceAuthors.length ? 1 : 0) -
       (staged ? SETUP_CONCURRENCY : 0);
+    const interestSet = new Set(interests);
+    const retained = new Map<string, Route>();
+    for (const route of routes.values()) {
+      if (route.historyParent || route.status === "limited") continue;
+      for (const id of scope(route)) {
+        if (interestSet.has(id) && (!route.channelIds || joinedSet.has(id)))
+          retained.set(id, route);
+      }
+    }
     const admitted = new Set<string>();
+    const kept = new Set<Route>();
     let singles = 0,
-      grouped = 0;
+      grouped = 0,
+      free = 0;
     for (const id of ranked) {
+      const route = retained.get(id);
       const batchable = joinedSet.has(id) && (staged || !prioritySet.has(id));
+      const newRoute = route && !kept.has(route) ? 1 : 0;
+      const nextFree =
+        free +
+        (newRoute && route?.channelIds && !route.previous
+          ? Math.max(
+              0,
+              groupSize -
+                scope(route).filter(
+                  (channel) =>
+                    interestSet.has(channel) && joinedSet.has(channel),
+                ).length,
+            )
+          : 0);
+      const nextSingles = singles + (!route && !batchable ? 1 : 0);
+      const nextGrouped = grouped + (!route && batchable ? 1 : 0);
       const cost =
-        singles +
-        (batchable ? 0 : 1) +
-        Math.ceil((grouped + (batchable ? 1 : 0)) / groupSize);
+        kept.size +
+        newRoute +
+        nextSingles +
+        Math.ceil(Math.max(0, nextGrouped - nextFree) / groupSize);
       if (cost > capacity) continue;
       admitted.add(id);
-      if (batchable) grouped++;
-      else singles++;
+      if (route) kept.add(route);
+      singles = nextSingles;
+      grouped = nextGrouped;
+      free = nextFree;
     }
     const remaining = new Set(interests);
     const globals = new Set([
@@ -460,6 +490,24 @@ export function subscribeRelayTraffic(
       } else if (!joinedSet.has(id) || (!staged && prioritySet.has(id)))
         add(`channel:${id}`, [id]);
       else batch.push(id);
+    }
+    for (const route of [...routes.values()]) {
+      if (!batch.length) break;
+      if (
+        !route.channelIds ||
+        route.historyParent ||
+        route.status === "limited" ||
+        route.status === "error" ||
+        route.previous
+      )
+        continue;
+      const extra = batch.splice(
+        0,
+        Math.max(0, groupSize - route.channelIds.length),
+      );
+      if (!extra.length) continue;
+      const next = replace(route, [...route.channelIds, ...extra]);
+      next.replayOffset = 0;
     }
     for (let i = 0; i < batch.length; i += groupSize) {
       const route = add(

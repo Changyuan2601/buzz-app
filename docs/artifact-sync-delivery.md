@@ -1,6 +1,6 @@
 # Artifact sync and message delivery
 
-The host saves received artifacts through `ArtifactStorageService`. Plugins own each collection definition and projector. A Web Lock covers `{viewer, relay, owner, collectionName}`. Only a window with that definition can own the sync work. The owner cancels reads and waits for commits before it releases the lock. The message outbox has a separate lock for `{viewer, relay}`.
+The host saves received artifacts through `ArtifactStorageService`. Plugins own each collection definition and projector. A Web Lock covers `{viewer, relay, owner, collectionName}`. Only a window with that definition can own the sync work. The owner cancels reads and waits for commits before it releases the lock. The message outbox has a separate lock for `{viewer, relay}`. Each retained relay session keeps its lock until disposal. Community selection does not stop pending delivery.
 
 ## Snapshot contract
 
@@ -8,7 +8,7 @@ Sync uses the existing relay session and socket. It needs the version 1 `artifac
 
 The client saves validated bodies during capture. It starts with 100 bodies per request. It splits a batch when the relay returns `snapshot_limit`. Saved bodies remain available after an interrupted capture. A retry can reuse them. Only valid completion permits absence reconciliation. Preferences, pending work, and records with newer local commits survive completion. A reset, expired token, changed access, or lost connection prevents completion.
 
-Live events and confirmed local artifact writes use the same revision checks and atomic store path. A late acceptance cannot replace a newer revision. Repairs run after reconnect, collection changes, and live hints. A 60-second repair covers homes outside active message routes. Repairs are sequential within a collection. Three short retries precede the next repair interval. Local reads do not wait for repair.
+Live events and confirmed local artifact writes use the same revision checks and atomic store path. A late acceptance cannot replace a newer revision. Repairs run after reconnect, collection changes, roster changes, and live hints. Channel activity alone does not request repair. A 60-second repair covers homes outside active message routes. Repairs are sequential within a collection. Three short retries precede the next repair interval. Local reads do not wait for repair.
 
 The relay snapshot PR is a prerequisite. A relay without the capability keeps the saved view. This client does not invent a checkpoint from ordinary query results.
 
@@ -16,7 +16,7 @@ The relay snapshot PR is a prerequisite. A relay without the capability keeps th
 
 Large joined rosters use live groups of at most 1,000 channels. Each group stays open while recent replay reads run in groups of ten channels. At most four requests await EOSE. Each replay filter keeps its 500-event limit. EOSE establishes a route; it does not prove that history is complete. A full limit remains incomplete evidence. Existing finite catch-up owns older gaps. The agent runner retains its event-ID checks before dispatch.
 
-The transport accepts at most 100,000 channel interests. Singleton previews consume separate routes. Demand beyond route capacity gets a limited status. Grouped interests preserve ordinary chat and all-channel agent watches. They do not make 100,000 simultaneous agent runs a supported workload.
+Admission counts retained routes. New joined channels fill groups with space. Retired membership scopes remain fenced. The transport accepts at most 100,000 channel interests. Singleton previews consume separate routes. Demand beyond route capacity gets a limited status. Grouped interests preserve ordinary chat and all-channel agent watches. They do not make 100,000 simultaneous agent runs a supported workload.
 
 The relay permits 1,024 subscriptions, ten filters per request, and 2,048 explicit channel values per request. The default frame limit is 524,288 bytes. Browser broker controls and status frames have a separate 32 MiB bound because their local status includes each channel. This bound does not change relay event limits.
 
@@ -24,7 +24,7 @@ The relay permits 1,024 subscriptions, ten filters per request, and 2,048 explic
 
 `session.messagesForRecipient(agentPubkey)` uses the existing message validation and composer path. `EmbeddedThread.managedRecipient` selects this path for a task conversation. Ordinary chat keeps its existing behavior. `session.delivery.submit(input)` admits kind-45010 artifact operations. `delivery.get(id)` is asynchronous. `delivery.subscribe(listener)` reports durable state changes.
 
-The outbox saves intent and the signed event before publication. It retains the same event ID across uncertain retries. The owner makes at most three attempts before an error. A definitive relay refusal stops automatic retries. Acceptance and exact agent receipt are separate saved facts. Stale writes from another window cannot clear either fact.
+The outbox saves intent and the signed event before publication. It retains the same event ID across uncertain retries. The owner makes at most three attempts before an error. A definitive relay refusal stops automatic retries. An explicit retry clears the refusal. A settled refusal can be discarded. Acceptance and exact agent receipt are separate saved facts. Stale writes from another window cannot clear either fact.
 
 `AgentRun.received(messageIds)` reports only the exact original message IDs. The host binds the channel and agent identity. The plugin calls it at a verified harness receipt boundary. Process start, typing, and an unrelated reply do not prove receipt. The host saves receipt before it clears the opacity pulse. A save failure keeps accepted evidence and exposes an unconfirmed state.
 

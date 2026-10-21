@@ -1,6 +1,7 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import {
   artifactSnapshotCapability,
+  artifactSnapshotFailure,
   createArtifactSnapshotReader,
 } from "./artifact-snapshot";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -408,6 +409,7 @@ export async function connectNativeTransport(
               () => nativeRelayRequest(origin, "/query", [filter]),
               signal,
               "background",
+              artifactSnapshotFailure,
             ),
           ),
         }

@@ -1240,7 +1240,7 @@ export const admitSignedRequest = (
   request: () => Promise<Response>,
   signal?: AbortSignal,
   priority: "foreground" | "background" = "foreground",
-  reason?: (body: unknown) => string | undefined,
+  reason?: Parameters<typeof admittedApiRequest>[4],
 ) =>
   admittedApiRequest(
     signedAdmissions(relayOrigin(origin), viewer).api,

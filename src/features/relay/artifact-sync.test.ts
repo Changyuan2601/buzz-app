@@ -29,6 +29,8 @@ function setup() {
   let confirmed: (events: readonly RelayEvent[]) => void = () => {};
   let opened: (entry: OpenArtifactCollection) => void = () => {};
   let online = true;
+  let rosterListener = () => {};
+  let channels = [{ id: "one", lastActivityAt: 0 }];
   const session = {
     artifactSnapshots: {},
     live: {
@@ -40,7 +42,13 @@ function setup() {
         };
       },
     },
-    channels: { subscribeList: () => () => {} },
+    channels: {
+      list: () => ({ channels }),
+      subscribeList: (listener: () => void) => {
+        rosterListener = listener;
+        return () => {};
+      },
+    },
     subscribeLive: () => () => {},
     subscribeArtifactUpdates: (listener: typeof confirmed) => {
       confirmed = listener;
@@ -101,13 +109,17 @@ function setup() {
     add,
     confirmed: (event: RelayEvent) => confirmed([event]),
     connection,
+    roster: (value: typeof channels) => {
+      channels = value;
+      rosterListener();
+    },
   };
 }
-it("uses distinct collection and outbox locks, coalesces repair, and retires closed collections", async () => {
+it("coalesces collection repair and retires closed collections", async () => {
   const h = setup();
   const entry = h.add();
   await vi.advanceTimersByTimeAsync(0);
-  expect(navigator.locks.request).toHaveBeenCalledTimes(2);
+  expect(navigator.locks.request).toHaveBeenCalledTimes(1);
   expect(reconcileArtifactSnapshot).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(60_000);
   expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
@@ -160,4 +172,34 @@ it("commits proven local acceptance through the same revision path as live recor
       ],
     }),
   );
+});
+
+it("ignores channel activity but repairs when roster membership changes", async () => {
+  const h = setup();
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  h.roster([{ id: "one", lastActivityAt: 10 }]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledOnce();
+  h.roster([
+    { id: "one", lastActivityAt: 10 },
+    { id: "two", lastActivityAt: 0 },
+  ]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
+});
+it("releases an expired version so a current collection can own sync", async () => {
+  const h = setup();
+  vi.mocked(reconcileArtifactSnapshot).mockRejectedValueOnce(
+    new Error("Artifact collection version changed"),
+  );
+  const old = h.add();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledOnce();
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  old.controller.abort();
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(navigator.locks.request).toHaveBeenCalledTimes(2);
 });
