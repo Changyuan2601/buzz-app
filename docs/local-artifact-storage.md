@@ -36,8 +36,13 @@ Several entries can index the same record. Pages use an exclusive `(order, id)`
 cursor. Each page reads only its selected records, with a maximum of 1,000 rows.
 Pages are independent transactions. A change between pages can move a row; restart
 the query after a notification. All windows must use the same collection type,
-version, and projector. Increase the version to rebuild saved indexes in one
-transaction. An older handle then rejects further reads and writes. If opening the database
+version, and projector. Projection behavior, index definitions, and query semantics
+tied to saved state must stay fixed within a version. Changes require a version
+increase. The host checks the declared version in each read or write transaction.
+It cannot detect undeclared changes to a projector. Increase the version to rebuild
+saved indexes in one transaction. A failed rebuild preserves the saved version and
+data. An incompatible type fails explicitly. An older handle then rejects further
+reads and writes. If opening the database
 fails, close the failed handle and open another after the cause clears.
 
 `get(id)` returns a saved artifact and its separate preference. A record contains
@@ -86,7 +91,13 @@ opaque strings; this store does not require a durable server cursor.
 
 `ArtifactStorageService.onOpen` lets host sync attach to a collection and its type
 descriptor and a lifetime AbortSignal. Closing the handle or changing identity or
-community aborts that signal. Leaving a community purges only its saved partition.
+community aborts that signal. Sync uses one Web Lock per
+`{viewer, relay, owner, collectionName}`. Only a window with the real collection
+definition can own that work. Checkpoints and snapshot completion stay within that
+collection and its exact source query. The owner cancels work before it releases
+the lock. A late response cannot commit after the owner closes. Outbox ownership
+uses its separate host service. Records, preferences, and source membership are
+isolated by collection. Leaving a community purges only its saved partition.
 Plugins receive the read, preference, and migration contract. They do
 not receive `applyBatch` or transport access. The task plugin owns task fields,
 parent rules, search tokens, and the meaning of device preferences.

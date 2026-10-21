@@ -472,39 +472,74 @@ test("aborts snapshot completion before and during the local transaction", async
   expect(result.checkpoint).toBeNull();
 });
 
-test("rebuilds projection versions atomically and preserves explicit null preferences", async ({
+test("upgrades across windows and rejects stale writes and snapshot completion", async ({
   page,
+  context,
   storageUrl,
 }) => {
   await open(page, storageUrl);
-  const result = await page.evaluate(async () => {
-    const c = window.artifactTest.open();
-    await c.importBatch({
+  const other = await context.newPage();
+  await open(other, storageUrl);
+  const snapshot = await other.evaluate(async () => {
+    window.collection = window.artifactTest.open();
+    await window.collection.importBatch({
       records: [{ id: "task", local: {} }],
       preferences: [{ id: "task", value: true }],
     });
+    return window.collection.beginSnapshot("all");
+  });
+  const result = await page.evaluate(async () => {
     const newer = window.artifactTest.open("viewer", "relay", "test", {
       version: 2,
       project: ({ preference }) => [
         { index: "value", value: JSON.stringify(preference), order: "" },
       ],
     });
+    window.collection = newer;
     await newer.preferences.update("task", () => null);
     const page = await newer.page({ index: "value", value: "null" });
-    const old = await c.get("task").then(
-      () => "unexpected",
-      (e) => e.message,
-    );
     const older = window.artifactTest.open();
     const downgrade = await older.get("task").then(
       () => "unexpected",
       (e) => e.message,
     );
-    return { page, old, downgrade };
+    const incompatible = window.artifactTest.open("viewer", "relay", "test", {
+      version: 2,
+      type: "other.task",
+    });
+    const type = await incompatible.get("task").then(
+      () => "unexpected",
+      (e) => e.message,
+    );
+    return { page, downgrade, type };
   });
+  const stale = await other.evaluate(async (snapshot) => {
+    const error = (e) => e.message;
+    return Promise.all([
+      window.collection.preferences
+        .update("task", () => false)
+        .then(() => "unexpected", error),
+      window.collection
+        .completeSnapshot(snapshot, { expected: null, next: "stale" })
+        .then(() => "unexpected", error),
+    ]);
+  }, snapshot);
   expect(result.page.entries[0].preference).toBeNull();
-  expect(result.old).toBe("Artifact collection version changed");
+  expect(stale).toEqual([
+    "Artifact collection version changed",
+    "Artifact collection version changed",
+  ]);
   expect(result.downgrade).toBe("Artifact collection requires a newer plugin");
+  expect(result.type).toBe("Artifact collection type changed");
+  expect(
+    await page.evaluate(async () => {
+      const c = window.collection;
+      return {
+        preference: await c.preferences.get("task"),
+        checkpoint: await c.checkpoint(),
+      };
+    }),
+  ).toEqual({ preference: null, checkpoint: null });
 });
 
 test("purges one identity and relay across collections", async ({
