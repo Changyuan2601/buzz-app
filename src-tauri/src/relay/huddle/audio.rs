@@ -369,14 +369,14 @@ mod tests {
             FederatedIdentity,
             Call,
             String,
-            tokio::task::JoinHandle<Vec<String>>,
+            (String, tokio::task::JoinHandle<Vec<String>>),
         ) {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let (acceptor, connector) = tls();
             let relay = format!("wss://{}", listener.local_addr().unwrap());
             let host = IdentityHost::fixture();
             let viewer = host.viewer().await.unwrap();
-            let (issuer, issued) = testing::issuer(&viewer, &relay).await;
+            let (issuer, token, bodies) = testing::issuer(&viewer, &relay).await;
             let fi = testing::signed_in(issuer, &relay, required);
             let call = Call {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -392,7 +392,7 @@ mod tests {
                 fi,
                 call,
                 relay,
-                issued,
+                (token, bodies),
             )
         }
 
@@ -448,7 +448,8 @@ mod tests {
 
         #[tokio::test]
         async fn connect_sends_the_community_assertion_and_signs_nip42_with_the_same_key() {
-            let (listener, connector, host, fi, call, relay, issued) = community(true).await;
+            let (listener, connector, host, fi, call, relay, (token, issued)) =
+                community(true).await;
             let connecting = connect_via(&host, &fi, &call, "room", connector);
             let relay_side = async {
                 let (mut socket, uri, headers) = upgrade(&listener).await;
@@ -469,8 +470,7 @@ mod tests {
                 &relay[6..],
                 "the community's host and port"
             );
-            let header = headers[assertion::HEADER].to_str().unwrap();
-            assert!(header.starts_with("Bearer ey"), "{header}");
+            assert_eq!(headers[assertion::HEADER], format!("Bearer {token}"));
             assert!(headers.get("authorization").is_none());
 
             let event: nostr::event::Event = serde_json::from_value(auth["event"].clone()).unwrap();

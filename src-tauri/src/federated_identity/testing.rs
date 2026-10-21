@@ -14,7 +14,7 @@ pub(crate) fn signed_in(adapter_base: String, relay: &str, required: bool) -> Fe
         .as_mut()
         .unwrap()
         .community_hosts = vec![authority.into()];
-    owner.discover_for_test(relay, required);
+    owner.discovered(relay, required);
     owner.install(tests::record());
     owner
 }
@@ -36,16 +36,17 @@ impl FederatedIdentity {
     }
 }
 
-/// An issuer that mints one assertion for `viewer` at `relay`; its handle
-/// yields the request bodies it received.
+/// An issuer that mints one assertion for `viewer` at `relay`: its base, the
+/// assertion, and a handle yielding the request bodies it received.
 pub(crate) async fn issuer(
     viewer: &str,
     relay: &str,
-) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+) -> (String, String, tokio::task::JoinHandle<Vec<String>>) {
     let minted = super::protocol::now().unwrap() as u64;
     let expires = minted + 60;
+    let assertion = jwt(viewer, relay, minted, expires);
     let (base, server) = tests::adapter(vec![serde_json::json!({
-        "assertion": jwt(viewer, relay, minted, expires),
+        "assertion": assertion,
         "nostr_pubkey": viewer,
         "expires_at": expires,
     })])
@@ -58,7 +59,7 @@ pub(crate) async fn issuer(
             .map(|wire| String::from_utf8(wire.body).unwrap())
             .collect()
     });
-    (base, bodies)
+    (base, assertion, bodies)
 }
 
 /// An unsigned NIP-FI JWT the client-side validator accepts for `relay`.
