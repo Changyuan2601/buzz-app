@@ -1,5 +1,3 @@
-import canvasManifest from "./canvas/manifest.json";
-import * as canvas from "./canvas";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
@@ -66,11 +64,6 @@ import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
-  {
-    manifest: { ...canvasManifest, apiVersion: 1 },
-    module: canvas,
-    enabledByDefault: true,
-  },
   {
     manifest: { ...relayNotesManifest, apiVersion: 1 },
     module: relayNotes,

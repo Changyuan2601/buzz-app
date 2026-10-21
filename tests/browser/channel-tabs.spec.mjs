@@ -515,3 +515,63 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await viewCanvas();
   await expect(text).toHaveValue("Channel-scoped draft");
 });
+
+// Real channel metadata, membership, panel registration, and history reads must
+// agree on archived access. The write-control matrix stays in component tests.
+test.describe("archived Canvas", () => {
+  test.use({ lifecycleVisibility: { archived: ["alpha"], hidden: [] } });
+  test("members can open Canvas and History in an archived channel", async ({
+    page,
+    app,
+  }) => {
+    const revision = app.sign({
+      kind: 40100,
+      content: "Archived plan",
+      tags: [["h", "alpha"]],
+      created_at: 1700000000,
+    });
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!filters.every((filter) => filter.kinds?.includes(40100)))
+        return route.continue();
+      return route.fulfill({ json: [revision] });
+    });
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const scope = await page.evaluate(
+      () => history.state.buzzNavigationV1.entry.target.scope,
+    );
+    const target = {
+      version: 1,
+      kind: "conversation",
+      channelId: "alpha",
+      scope,
+    };
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+    );
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+    const canvas = page.getByRole("region", {
+      name: "Channel Canvas",
+      exact: true,
+    });
+    const editor = canvas.getByRole("textbox", { name: "Canvas Markdown" });
+    await expect(editor).toHaveValue("Archived plan");
+    await expect(editor).toHaveAttribute("readonly", "");
+    await expect(
+      canvas.getByRole("button", { name: "Save Canvas" }),
+    ).toBeDisabled();
+    await canvas.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(
+      canvas.getByRole("textbox", { name: "Revision Markdown" }),
+    ).toHaveValue("Archived plan");
+    await expect(
+      canvas.getByRole("button", { name: "Restore this version" }),
+    ).toBeDisabled();
+  });
+});

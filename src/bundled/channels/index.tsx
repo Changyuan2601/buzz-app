@@ -4,6 +4,7 @@ import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
+import { registerCanvas } from "./canvas-panel";
 import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { CopyIcon } from "../../shared/design-system/icons";
@@ -22,6 +23,7 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerSharedSessions(ctx);
+  registerCanvas(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",

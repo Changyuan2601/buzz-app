@@ -264,7 +264,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Canvas, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -317,9 +317,11 @@ Disabling or replacing a plugin retires its open tab; a channel change or loss o
 eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
 the panel must independently verify access before reading any sensitive data and
-fence asynchronous reads on revocation. Canvas registers **View canvas** this
-way; its editor keeps the channel's draft locally, so reopening after a channel
-change restores it.
+fence asynchronous reads on revocation. Channels registers **View canvas** this
+way, alongside Shared sessions. Canvas has no separate plugin toggle; Solo,
+Todos, and agents use the same session capability. Its editor keeps the channel's
+draft locally, so reopening after a channel change restores it. Members of archived
+channels can read Canvas and History, but cannot edit, save, or restore through the panel.
 
 ### Settings cards
 

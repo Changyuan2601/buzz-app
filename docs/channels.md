@@ -386,7 +386,7 @@ and modeled upstream I/O; it does not send messages to a live community.
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
 Channel Settings tab; selecting it again never closes the pane. Editing is available
-from that pane, not directly from the menu. **View canvas** is the Canvas plugin’s
+from that pane, not directly from the menu. **View canvas** is Channels’
 [channel menu panel](plugin-architecture.md#optional-channel-menu-panels) and opens a
 Canvas tab in the side pane. **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.

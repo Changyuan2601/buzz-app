@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { CanvasHistory } from "../channels/CanvasHistory";
+import { CanvasHistory } from "./CanvasHistory";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   readView,
   replaceView,
+  subscribeView,
   viewRevision,
   writeView,
 } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import styles from "../channels/ChannelTemplates.module.css";
+import styles from "./ChannelTemplates.module.css";
 import panelStyles from "./Canvas.module.css";
 
 type Draft = { content: string; base: string | null };
@@ -22,15 +30,22 @@ export function CanvasEditor({
   profiles,
   scope,
   channelId,
+  readOnly = false,
 }: {
   canvas: ChannelCanvas;
   profiles: ProfileQueries;
   scope: string;
   channelId: string;
+  readOnly?: boolean;
 }) {
   const panelId = useId();
   const [tab, setTab] = useState<"edit" | "history">("edit");
   const key = `canvas-draft-v1:${channelId}`;
+  const draftRevision = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => viewRevision(scope, key),
+  );
+  const retiredDraft = useRef(false);
   const [saved] = useState(() => {
     const value = readView<unknown>(scope, key, null);
     if (!value || typeof value !== "object") return undefined;
@@ -55,7 +70,10 @@ export function CanvasEditor({
   // only if it is still there; never pull it back from elsewhere.
   const handoff = useRef<Element | null>(null);
   useEffect(() => {
-    handoff.current = document.activeElement;
+    const host = editor.current?.closest("[data-panel-workspace]");
+    handoff.current = host?.contains(document.activeElement)
+      ? document.activeElement
+      : null;
   }, []);
   useEffect(() => {
     const previous = handoff.current;
@@ -111,6 +129,15 @@ export function CanvasEditor({
   useEffect(() => {
     if (!loaded) void load();
   }, [loaded, load]);
+  useEffect(() => {
+    if (draftRevision !== "null") {
+      retiredDraft.current = false;
+      return;
+    }
+    if (!loaded || busy || retiredDraft.current) return;
+    retiredDraft.current = true;
+    void load(true);
+  }, [draftRevision, loaded, busy, load]);
   const recover = (replace: boolean) => {
     handoff.current = recovery.current;
     setRecovering(true);
@@ -118,14 +145,21 @@ export function CanvasEditor({
   };
   const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
   const restore = async (revision: RelayEvent) => {
+    if (readOnly) return;
     const generation = ++operation.current;
+    // Keep a clean snapshot stable if another editor opens during this write.
+    if (viewRevision(scope, key) === "null")
+      writeView(scope, key, { content: draft, base });
     const stored = viewRevision(scope, key);
     setBusy(true);
     try {
       const event = await canvas.save(channelId, revision.content, head?.id);
       // A write can land after this editor closed. Retire the unchanged draft
       // unless a reopened editor has replaced it since.
-      if (!dirty) replaceView(scope, key, stored, null);
+      if (!dirty) {
+        retiredDraft.current = true;
+        replaceView(scope, key, stored, null);
+      }
       if (generation !== operation.current) return;
       setHead(event);
       if (dirty) {
@@ -156,13 +190,18 @@ export function CanvasEditor({
     }
   };
   const save = async () => {
+    if (readOnly) return;
     const generation = ++operation.current;
+    // Keep a clean snapshot stable if another editor opens during this write.
+    if (viewRevision(scope, key) === "null")
+      writeView(scope, key, { content: draft, base });
     const stored = viewRevision(scope, key);
     setBusy(true);
     setError("");
     try {
       const event = await canvas.save(channelId, draft, base ?? undefined);
       // Retire the saved draft even if this editor has closed since.
+      retiredDraft.current = true;
       replaceView(scope, key, stored, null);
       if (generation === operation.current) {
         setHead(event);
@@ -193,7 +232,12 @@ export function CanvasEditor({
         <Button
           variant="prominent"
           loading={busy}
-          disabled={!loaded || !canvas.available || (head?.id ?? null) !== base}
+          disabled={
+            readOnly ||
+            !loaded ||
+            !canvas.available ||
+            (head?.id ?? null) !== base
+          }
           onClick={() => void save()}
         >
           Save Canvas
@@ -230,8 +274,13 @@ export function CanvasEditor({
               Shared Markdown for this channel. Saves and restores check the
               loaded revision on supporting relays.
             </p>
+            {readOnly && (
+              <p role="status">Archived channel. Canvas is read-only.</p>
+            )}
             <Textarea
               ref={editor}
+              data-tab-focus
+              readOnly={readOnly}
               aria-label="Canvas Markdown"
               variant="code"
               rows={16}
@@ -264,6 +313,7 @@ export function CanvasEditor({
               busy={busy}
               loaded={loaded}
               dirty={dirty}
+              readOnly={readOnly}
               refreshHead={() => load()}
               restore={restore}
             />
