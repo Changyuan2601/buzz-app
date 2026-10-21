@@ -1,5 +1,9 @@
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { MessageLink } from "../../features/conversation/MessageLink";
 import { CanvasConflictError } from "../../features/channel-templates/canvas-conflict";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useId,
@@ -17,6 +21,8 @@ import type { ChannelCanvas } from "../../features/channel-templates/capability"
 import type { ChannelPanelContext } from "../../features/panels/service";
 import {
   XIcon,
+  CaretDownIcon,
+  CaretRightIcon,
   InfoIcon,
   ArrowsClockwiseIcon,
   ListChecksIcon,
@@ -139,6 +145,7 @@ export function TodosPanel({
   const savedDirty = !!saved && saved.content !== saved.original;
   const [draft, setDraft] = useState<Draft>(saved ?? empty);
   const latestDraft = useRef(draft);
+  const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"load" | "save">();
   const [error, setError] = useState("");
@@ -367,6 +374,250 @@ export function TodosPanel({
         : loaded
           ? "Saved in Canvas"
           : "Channel Canvas";
+  // Source order and ancestor depth keep descendants beside their root across statuses.
+  const childrenByOffset = new Map<number | undefined, typeof items>();
+  const ancestors: typeof items = [];
+  for (const item of items) {
+    ancestors.length = item.parents.length;
+    const parent = ancestors.at(-1)?.offset;
+    const children = childrenByOffset.get(parent) ?? [];
+    children.push(item);
+    childrenByOffset.set(parent, children);
+    ancestors.push(item);
+  }
+  const renderItems = (group: typeof items): ReactNode =>
+    group.map((item) => {
+      const children = childrenByOffset.get(item.offset) ?? [];
+      return (
+        <li key={item.offset}>
+          <div className={styles.row}>
+            <div className={styles.disclosure}>
+              {children.length > 0 && (
+                <IconButton
+                  size="sm"
+                  aria-label={`${collapsed.has(item.offset) ? "Expand" : "Collapse"} ${item.label}`}
+                  aria-expanded={!collapsed.has(item.offset)}
+                  aria-controls={`${prefix}-${item.offset}-children`}
+                  icon={
+                    collapsed.has(item.offset) ? (
+                      <CaretRightIcon size="1rem" />
+                    ) : (
+                      <CaretDownIcon size="1rem" />
+                    )
+                  }
+                  onClick={() =>
+                    setCollapsed((current) => {
+                      const next = new Set(current);
+                      if (next.has(item.offset)) next.delete(item.offset);
+                      else next.add(item.offset);
+                      return next;
+                    })
+                  }
+                />
+              )}
+            </div>
+            <Checkbox
+              id={`${prefix}-${item.offset}`}
+              checked={item.status === "done"}
+              indeterminate={item.status === "doing"}
+              disabled={disabled}
+              onCheckedChange={(value) => {
+                focusAfterToggle.current = `${prefix}-${item.offset}`;
+                change(() =>
+                  setStatus(
+                    draft.content,
+                    item.offset,
+                    value ? "done" : "todo",
+                  ),
+                );
+              }}
+              aria-label={item.label}
+              label=""
+            />
+            <div
+              className={`${styles.label} text-body-sm ${item.status === "done" ? "text-secondary" : ""}`}
+              data-completed={item.status === "done" || undefined}
+            >
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                allowedElements={[
+                  "p",
+                  "a",
+                  "strong",
+                  "em",
+                  "del",
+                  "code",
+                  "br",
+                  "img",
+                ]}
+                unwrapDisallowed
+                components={{
+                  p: ({ children }) => <span>{children}</span>,
+                  a: ({ href, children }) =>
+                    href ? (
+                      <MessageLink
+                        url={href}
+                        registry={undefined}
+                        onOpenLink={() => false}
+                      >
+                        {children}
+                      </MessageLink>
+                    ) : (
+                      <span>{children}</span>
+                    ),
+                  img: ({ alt }) => <span>{alt}</span>,
+                }}
+              >
+                {item.label}
+              </Markdown>
+            </div>
+            <div className={styles.rowDetails}>
+              <div
+                id={`${prefix}-${item.offset}-status`}
+                className={styles.status}
+              >
+                <TodoChoice
+                  id={`${prefix}-${item.offset}-status-control`}
+                  label={`Status for ${item.label}`}
+                  menuTitle="Change status"
+                  title="Status"
+                  icon={<StatusIcon status={item.status} />}
+                  value={item.status}
+                  disabled={disabled}
+                  options={statuses.map(([value, label]) => ({
+                    value,
+                    label,
+                    icon: <StatusIcon status={value} />,
+                  }))}
+                  onValueChange={(value) => {
+                    const status = statuses.find(
+                      ([status]) => status === value,
+                    )?.[0];
+                    if (!status || status === item.status) return;
+                    focusAfterToggle.current = `${prefix}-${item.offset}-status`;
+                    change(() => setStatus(draft.content, item.offset, status));
+                  }}
+                />
+              </div>
+              {item.namedAssignee && (
+                <span className="text-caption text-secondary">
+                  {item.namedAssignee.name}
+                </span>
+              )}
+              <fieldset
+                id={`${prefix}-${item.offset}-assignee`}
+                className={styles.assignee}
+                aria-label={`Assignee for ${item.label}`}
+              >
+                <TodoChoice
+                  id={`${prefix}-${item.offset}-assignee-control`}
+                  label={`Assignee for ${item.label}`}
+                  menuTitle="Assign to"
+                  title={
+                    item.assignee
+                      ? userLabel(item.assignee.pubkey, item.assignee.name)
+                      : item.namedAssignee
+                        ? `${item.namedAssignee.name} (from Canvas; choose a member to link)`
+                        : "Assign task"
+                  }
+                  icon={
+                    item.assignee ? (
+                      personIcon(item.assignee.pubkey, item.assignee.name)
+                    ) : (
+                      <UserIcon size="1rem" aria-hidden="true" />
+                    )
+                  }
+                  variant={item.assignee ? "avatar" : "ghost"}
+                  value={
+                    item.assignee?.pubkey ??
+                    (item.namedAssignee ? "canvas-name" : "")
+                  }
+                  disabled={disabled || !members}
+                  options={[
+                    ...(item.namedAssignee
+                      ? [
+                          {
+                            value: "canvas-name",
+                            label: `${item.namedAssignee.name} (from Canvas; not linked to a member)`,
+                            icon: <UserIcon size="1rem" aria-hidden="true" />,
+                            disabled: true,
+                          },
+                        ]
+                      : []),
+                    {
+                      value: "",
+                      label: "Unassigned",
+                      icon: <UserIcon size="1rem" aria-hidden="true" />,
+                    },
+                    ...choices.map((choice) => ({
+                      ...choice,
+                      label: userLabel(
+                        choice.value,
+                        item.assignee?.pubkey === choice.value
+                          ? item.assignee.name
+                          : "",
+                      ),
+                      icon: personIcon(choice.value),
+                    })),
+                    ...(item.assignee &&
+                    !members?.includes(item.assignee.pubkey)
+                      ? [
+                          {
+                            value: item.assignee.pubkey,
+                            label: `${userLabel(item.assignee.pubkey, item.assignee.name)} (${members ? "not in channel" : "membership unavailable"})`,
+                            icon: personIcon(
+                              item.assignee.pubkey,
+                              item.assignee.name,
+                            ),
+                            disabled: true,
+                          },
+                        ]
+                      : []),
+                  ]}
+                  onValueChange={(pubkey) => {
+                    const currentMembers = people.channels
+                      .list()
+                      .channels.find(
+                        (channel) => channel.id === context.channelId,
+                      )?.members;
+                    if (
+                      !currentMembers ||
+                      (pubkey && !currentMembers.includes(pubkey))
+                    )
+                      return;
+                    focusAfterToggle.current = `${prefix}-${item.offset}-assignee`;
+                    change(() =>
+                      assignTodo(
+                        draft.content,
+                        item.offset,
+                        pubkey
+                          ? {
+                              pubkey,
+                              name: resolveName(
+                                pubkey,
+                                keyLabels.get(pubkey) ?? pubkey,
+                              ),
+                            }
+                          : undefined,
+                      ),
+                    );
+                  }}
+                />
+              </fieldset>
+            </div>
+          </div>
+          {children.length > 0 && (
+            <ul
+              id={`${prefix}-${item.offset}-children`}
+              className={styles.children}
+              hidden={collapsed.has(item.offset)}
+            >
+              {renderItems(children)}
+            </ul>
+          )}
+        </li>
+      );
+    });
   return (
     <div data-buzz-ui="" className={styles.panel} aria-busy={!!busy}>
       <PanelHeader
@@ -546,7 +797,9 @@ export function TodosPanel({
                   />
                 )}
                 {statuses.map(([status, title]) => {
-                  const group = items.filter((item) => item.status === status);
+                  const group = (childrenByOffset.get(undefined) ?? []).filter(
+                    (item) => item.status === status,
+                  );
                   return (
                     group.length > 0 && (
                       <section
@@ -560,183 +813,7 @@ export function TodosPanel({
                             {group.length}
                           </span>
                         </h3>
-                        <ul className={styles.list}>
-                          {group.map((item) => (
-                            <li key={item.offset} className={styles.row}>
-                              {item.parents.length > 0 && (
-                                <div
-                                  className={`${styles.parents} text-caption text-secondary`}
-                                >
-                                  {item.parents.join(" / ")}
-                                </div>
-                              )}
-                              <Checkbox
-                                id={`${prefix}-${item.offset}`}
-                                checked={item.status === "done"}
-                                indeterminate={item.status === "doing"}
-                                disabled={disabled}
-                                onCheckedChange={(value) => {
-                                  focusAfterToggle.current = `${prefix}-${item.offset}`;
-                                  change(() =>
-                                    setStatus(
-                                      draft.content,
-                                      item.offset,
-                                      value ? "done" : "todo",
-                                    ),
-                                  );
-                                }}
-                                label={
-                                  <span
-                                    className={`${styles.label} text-body-sm ${item.status === "done" ? "text-secondary" : ""}`}
-                                    data-completed={
-                                      item.status === "done" || undefined
-                                    }
-                                  >
-                                    {item.label}
-                                  </span>
-                                }
-                              />
-                              <div className={styles.rowDetails}>
-                                <div
-                                  id={`${prefix}-${item.offset}-status`}
-                                  className={styles.status}
-                                >
-                                  <TodoChoice
-                                    id={`${prefix}-${item.offset}-status-control`}
-                                    label={`Status for ${item.label}`}
-                                    menuTitle="Change status"
-                                    title="Status"
-                                    icon={<StatusIcon status={item.status} />}
-                                    value={item.status}
-                                    disabled={disabled}
-                                    options={statuses.map(([value, label]) => ({
-                                      value,
-                                      label,
-                                      icon: <StatusIcon status={value} />,
-                                    }))}
-                                    onValueChange={(value) => {
-                                      const status = statuses.find(
-                                        ([status]) => status === value,
-                                      )?.[0];
-                                      if (!status || status === item.status)
-                                        return;
-                                      focusAfterToggle.current = `${prefix}-${item.offset}-status`;
-                                      change(() =>
-                                        setStatus(
-                                          draft.content,
-                                          item.offset,
-                                          status,
-                                        ),
-                                      );
-                                    }}
-                                  />
-                                </div>
-                                <fieldset
-                                  id={`${prefix}-${item.offset}-assignee`}
-                                  className={styles.assignee}
-                                  aria-label={`Assignee for ${item.label}`}
-                                >
-                                  <TodoChoice
-                                    id={`${prefix}-${item.offset}-assignee-control`}
-                                    label={`Assignee for ${item.label}`}
-                                    menuTitle="Assign to"
-                                    title={
-                                      item.assignee
-                                        ? userLabel(
-                                            item.assignee.pubkey,
-                                            item.assignee.name,
-                                          )
-                                        : "Assign task"
-                                    }
-                                    icon={
-                                      item.assignee ? (
-                                        personIcon(
-                                          item.assignee.pubkey,
-                                          item.assignee.name,
-                                        )
-                                      ) : (
-                                        <UserIcon
-                                          size="1rem"
-                                          aria-hidden="true"
-                                        />
-                                      )
-                                    }
-                                    variant={item.assignee ? "avatar" : "ghost"}
-                                    value={item.assignee?.pubkey ?? ""}
-                                    disabled={disabled || !members}
-                                    options={[
-                                      {
-                                        value: "",
-                                        label: "Unassigned",
-                                        icon: (
-                                          <UserIcon
-                                            size="1rem"
-                                            aria-hidden="true"
-                                          />
-                                        ),
-                                      },
-                                      ...choices.map((choice) => ({
-                                        ...choice,
-                                        label: userLabel(
-                                          choice.value,
-                                          item.assignee?.pubkey === choice.value
-                                            ? item.assignee.name
-                                            : "",
-                                        ),
-                                        icon: personIcon(choice.value),
-                                      })),
-                                      ...(item.assignee &&
-                                      !members?.includes(item.assignee.pubkey)
-                                        ? [
-                                            {
-                                              value: item.assignee.pubkey,
-                                              label: `${userLabel(item.assignee.pubkey, item.assignee.name)} (${members ? "not in channel" : "membership unavailable"})`,
-                                              icon: personIcon(
-                                                item.assignee.pubkey,
-                                                item.assignee.name,
-                                              ),
-                                              disabled: true,
-                                            },
-                                          ]
-                                        : []),
-                                    ]}
-                                    onValueChange={(pubkey) => {
-                                      const currentMembers = people.channels
-                                        .list()
-                                        .channels.find(
-                                          (channel) =>
-                                            channel.id === context.channelId,
-                                        )?.members;
-                                      if (
-                                        !currentMembers ||
-                                        (pubkey &&
-                                          !currentMembers.includes(pubkey))
-                                      )
-                                        return;
-                                      focusAfterToggle.current = `${prefix}-${item.offset}-assignee`;
-                                      change(() =>
-                                        assignTodo(
-                                          draft.content,
-                                          item.offset,
-                                          pubkey
-                                            ? {
-                                                pubkey,
-                                                name: resolveName(
-                                                  pubkey,
-                                                  keyLabels.get(pubkey) ??
-                                                    pubkey,
-                                                ),
-                                              }
-                                            : undefined,
-                                        ),
-                                      );
-                                    }}
-                                  />
-                                </fieldset>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
+                        <ul className={styles.list}>{renderItems(group)}</ul>
                       </section>
                     )
                   );

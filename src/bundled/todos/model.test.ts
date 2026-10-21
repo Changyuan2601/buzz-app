@@ -192,3 +192,19 @@ it("recognizes first-line assignment when continuation prose has another link", 
     "## Todos\n- [ ] Task\n  See [docs](https://example.com).\n",
   );
 });
+
+it("recognizes a plain Canvas assignment and replaces or clears it without duplicating the suffix", () => {
+  const source = "## Todos\n\n- [ ] Ship · Assignee: John\n    - [ ] Child\n";
+  const item = first(source);
+  expect(item.label).toBe("Ship");
+  expect(item.namedAssignee?.name).toBe("John");
+  expect(assignTodo(source, item.offset)).toBe(
+    source.replace(" · Assignee: John", ""),
+  );
+  const assigned = assignTodo(source, item.offset, {
+    pubkey: "a".repeat(64),
+    name: "Alice",
+  });
+  expect(readTodos(assigned).items[0]?.assignee?.name).toBe("Alice");
+  expect(assigned).not.toContain("Assignee: John");
+});

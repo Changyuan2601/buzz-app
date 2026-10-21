@@ -33,7 +33,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   app,
 }) => {
   const original =
-    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n\n## Decisions\nKeep these too.\n";
+    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com)\n- [ ] Legacy · Assignee: John\n\n## Decisions\nKeep these too.\n";
   let head = app.sign({
     kind: 40100,
     content: original,
@@ -96,11 +96,36 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const input = drawer.getByRole("textbox", { name: "New todo" });
   const nested = drawer.getByRole("checkbox", { name: "Review", exact: true });
   await expect(nested).toBeVisible();
+  const first = drawer.getByRole("checkbox", { name: "First", exact: true });
+  const build = drawer.getByRole("checkbox", { name: "Build", exact: true });
+  const positions = await Promise.all([
+    first.boundingBox(),
+    build.boundingBox(),
+    nested.boundingBox(),
+  ]);
+  expect(positions[1].x).toBeGreaterThan(positions[0].x);
+  expect(positions[2].x).toBeGreaterThan(positions[1].x);
+  await expect(drawer.getByText("First / Build", { exact: true })).toHaveCount(
+    0,
+  );
+  await drawer
+    .getByRole("button", { name: "Collapse First", exact: true })
+    .click();
+  await expect(nested).toBeHidden();
+  await drawer
+    .getByRole("button", { name: "Expand First", exact: true })
+    .click();
+  await expect(nested).toBeVisible();
   await expect(
-    nested
-      .locator("xpath=ancestor::li")
-      .getByText("First / Build", { exact: true }),
-  ).toBeVisible();
+    drawer.getByRole("link", { name: "guide", exact: true }),
+  ).toHaveAttribute("href", "https://example.com");
+  await expect(drawer.locator("strong", { hasText: "Read" })).toBeVisible();
+  await expect(
+    drawer.getByRole("button", { name: "Assignee for Legacy", exact: true }),
+  ).toHaveAttribute(
+    "aria-description",
+    "John (from Canvas; choose a member to link)",
+  );
   await input.fill("Ship it");
   await input.press("Enter");
   await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");

@@ -94,7 +94,7 @@ const saved = () =>
   waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas"),
   );
-it("shows nested tasks with parent context across statuses and saves only the child checkbox", async () => {
+it("nests tasks across statuses without repeating parent titles and saves only the child checkbox", async () => {
   const f = fixture();
   const content =
     "## Todos\n\n- [/] Ship\n    - [ ] Build\n        - [x] Test\n    - [ ] Publish\n\n## Keep\nUntouched.\n";
@@ -105,9 +105,19 @@ it("shows nested tasks with parent context across statuses and saves only the ch
   const childRow = child.closest("li"),
     grandchildRow = grandchild.closest("li");
   if (!childRow || !grandchildRow) throw new Error("Expected nested todo rows");
-  expect(within(childRow).getByText("Ship")).toBeInTheDocument();
-  expect(within(grandchildRow).getByText("Ship / Build")).toBeInTheDocument();
-  await userEvent.setup().click(child);
+  expect(childRow.contains(grandchildRow)).toBe(true);
+  expect(within(childRow).queryByText("Ship")).not.toBeInTheDocument();
+  const collapse = screen.getByRole("button", { name: "Collapse Ship" });
+  await userEvent.setup().click(collapse);
+  expect(
+    screen.queryByRole("checkbox", { name: "Build" }),
+  ).not.toBeInTheDocument();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Expand Ship" }));
+  await userEvent
+    .setup()
+    .click(screen.getByRole("checkbox", { name: "Build" }));
   await saved();
   expect(f.canvas.save).toHaveBeenCalledWith(
     context.channelId,
@@ -926,5 +936,23 @@ it("preserves actionable save failure details", async () => {
     .click(screen.getByRole("checkbox", { name: "First" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Keep Canvas below 24 KiB",
+  );
+});
+
+it("renders task Markdown outside checkbox labels and shows a legacy named assignee", async () => {
+  const f = fixture();
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content:
+      "## Todos\n\n- [ ] **Ship** [release](https://example.com) · Assignee: John\n",
+  });
+  render(<TodosPanel {...f.props} />);
+  const link = await screen.findByRole("link", { name: "release" });
+  expect(link.closest("label")).toBeNull();
+  expect(screen.getByText("Ship").tagName).toBe("STRONG");
+  expect(screen.queryByText(/Assignee: John/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Assignee for/ })).toHaveAttribute(
+    "aria-description",
+    "John (from Canvas; choose a member to link)",
   );
 });

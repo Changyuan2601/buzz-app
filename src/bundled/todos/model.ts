@@ -12,6 +12,7 @@ export type Todo = {
   parents: string[];
   status: Status;
   end: number;
+  namedAssignee?: { name: string; start: number };
   assignee?: (Assignee & { start: number }) | undefined;
 };
 const assignment = " · Assignee: ";
@@ -78,18 +79,27 @@ export function readTodos(content: string) {
           content.slice(linkStart - assignment.length, linkStart) === assignment
             ? { pubkey, name, start: linkStart - assignment.length }
             : undefined;
+        const named = assignee
+          ? null
+          : / · Assignee: ([\p{L}\p{N}][\p{L}\p{N} .’'_-]*)$/u.exec(
+              content.slice(offset, end),
+            );
+        const namedAssignee = named?.[1]
+          ? { name: named[1].trim(), start: offset + named.index }
+          : undefined;
         items.push({
           offset: offset + match[1].length,
           label: content
             .slice(
               offset + match[0].length - match[3].length,
-              assignee?.start ?? end,
+              assignee?.start ?? namedAssignee?.start ?? end,
             )
             .trim(),
           status:
             match[2] === " " ? "todo" : match[2] === "/" ? "doing" : "done",
           end,
           assignee,
+          ...(namedAssignee ? { namedAssignee } : {}),
           parents,
         });
       }
@@ -144,7 +154,7 @@ export function assignTodo(
     assignee?.name.replace(/\s+/g, " ").trim() || assignee?.pubkey || "";
   const escaped = name.replace(/[\\`*_{}[\]()#+\-.!<>|&]/g, "\\$&");
   const suffix = assignee ? `${assignment}[${escaped}](${target})` : "";
-  const start = item.assignee?.start ?? item.end;
+  const start = item.assignee?.start ?? item.namedAssignee?.start ?? item.end;
   const next = content.slice(0, start) + suffix + content.slice(item.end);
   const parsed = readTodos(next);
   const edited = parsed.items.find((value) => value.offset === offset);
