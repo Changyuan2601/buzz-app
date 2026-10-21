@@ -328,6 +328,98 @@ it.each([false, true])(
   },
 );
 
+it("retries a failed permission read from the Agents provider dialog", async () => {
+  let reply = deferred<unknown>();
+  native.invoke.mockImplementation(
+    nativeSession(
+      async (command) =>
+        command === "federated_identity_request"
+          ? {
+              status: 200,
+              headers: {},
+              body: JSON.stringify({ status: 1, agents: [] }),
+            }
+          : undefined,
+      undefined,
+      () => reply.promise,
+    ),
+  );
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => builderlab);
+  new HostService(root);
+  new FederatedIdentityService(root);
+  new SettingsCardsService(root);
+  const community = communityFixture(null);
+  root.provide("relay", community.relay as never);
+  const agents = provideAgents(root, community);
+  const reads = () =>
+    native.invoke.mock.calls.filter(
+      ([command, input]) =>
+        command === "federated_identity_request" &&
+        input.request.path.includes("auth/me"),
+    ).length;
+  try {
+    runtime.reconcile([
+      {
+        manifest: { ...manifest, apiVersion: 1 },
+        source: "bundled",
+        revision: "bundled",
+        enabled: true,
+        previous: null,
+        reloadable: false,
+        error: null,
+      },
+    ]);
+    await waitFor(() => expect(agents.types()).toHaveLength(1));
+    const type = agents.types()[0];
+    render(<AgentDefaults agents={agents} />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Log in to Builderlab, attention",
+      }),
+    );
+    const signIn = await screen.findByRole("dialog", { name: "Builderlab" });
+    await user.click(
+      within(signIn).getByRole("button", { name: "Sign in with Builderlab" }),
+    );
+    await waitFor(() => expect(reads()).toBe(1));
+    await act(async () =>
+      reply.resolve({ status: 401, headers: {}, body: "{}" }),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Retry Builderlab access, attention",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Builderlab" });
+    expect(
+      within(dialog).getByText("Could not check Builderlab access."),
+    ).toBeInTheDocument();
+    reply = deferred();
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(reads()).toBe(2);
+    expect(type?.provider?.snapshot().readiness).toBe("checking");
+    await act(async () => reply.resolve(account(true)));
+    await waitFor(() =>
+      expect(type?.provider?.snapshot().readiness).toBe("ready"),
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Sign out" }),
+    ).toBeEnabled();
+  } finally {
+    cleanup();
+    await runtime.dispose();
+    await root.fiber.dispose();
+    await community.dispose();
+  }
+});
+
 it("shows checking while the permission loads and offers a retry when it fails", async () => {
   let reply = deferred<unknown>();
   native.invoke.mockImplementation(

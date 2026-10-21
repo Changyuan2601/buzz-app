@@ -8,6 +8,7 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { Button } from "../../shared/design-system/ui/Button";
 
 export const inject = ["federatedIdentity", "settingsCards", "agents", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -75,6 +76,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
               <p role="status" className="text-body-sm text-secondary">
                 Builderlab remote agents are coming soon for your account.
               </p>
+            )}
+          {state.status === "signed-in" &&
+            state.account?.remoteAgents === "failed" && (
+              <div className="grid justify-items-start gap-2">
+                <p role="alert" className="text-body-sm text-secondary">
+                  Could not check Builderlab access.
+                </p>
+                <Button onClick={() => session.retryRemoteAgents()}>
+                  Retry
+                </Button>
+              </div>
             )}
         </div>
       );
