@@ -48,6 +48,8 @@ export type ClassifierInput = Readonly<{
   event: RelayEvent;
   author: { role: "owner" | "other"; name: string | null };
   context?: ClassifierContext;
+  /** The agent's community, which a provider may bill. */
+  community?: string;
 }>;
 
 const BOUNDARIES =
@@ -87,6 +89,7 @@ export function classifierState(input: ClassifierInput): string {
 export const classifierRequest = (input: ClassifierInput): DecisionRequest => ({
   state: classifierState(input),
   questions: classifierQuestions(input.classifier),
+  ...(input.community ? { community: input.community } : {}),
 });
 
 const NOT_RUN: ClassifierOutcome = Object.freeze({
