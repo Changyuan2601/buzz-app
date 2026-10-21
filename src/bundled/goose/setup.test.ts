@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Spawn } from "./goose";
+import { REQUEST_TIMEOUT_MS, type Spawn } from "./goose";
 import { fakeSpawn } from "./goose-testing";
 import { GooseSetup, keyLabel } from "./setup";
 
@@ -191,12 +191,12 @@ describe("GooseSetup", () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
     await expect(
       goose.picks({ provider: "anthropic", model: "" }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       current: "claude-sonnet-5-5",
       models: [
-        { id: "claude-sonnet-5-5", label: "claude-sonnet-5-5", efforts: [] },
-        { id: "claude-opus-5-5", label: "claude-opus-5-5", efforts: [] },
-        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+        { id: "claude-sonnet-5-5", efforts: [] },
+        { id: "claude-opus-5-5", efforts: [] },
+        { id: "claude-haiku-5-5", efforts: [] },
       ],
     });
     await expect(
@@ -205,13 +205,149 @@ describe("GooseSetup", () => {
       current: "claude-haiku-5-5",
       models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
     });
-    await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
+    await expect(
+      goose.picks({ provider: "", model: "" }),
+    ).resolves.toMatchObject({
       current: "qwen3",
       models: [
-        { id: "qwen3", label: "qwen3", efforts: [] },
-        { id: "llama4", label: "llama4", efforts: [] },
+        { id: "qwen3", efforts: [] },
+        { id: "llama4", efforts: [] },
       ],
     });
+  });
+
+  it("loads each model's supported thinking levels for per-message picks", async () => {
+    const { fake, setup: goose } = setup({
+      thinking: {
+        "claude-sonnet-5-5": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+        "claude-opus-5-5": { current: "max", levels: ["high", "max"] },
+      },
+    });
+    const { models } = await goose.picks({ provider: "anthropic", model: "" });
+    expect(models.map(({ efforts }) => efforts)).toEqual([
+      [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ],
+      [
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ],
+      [],
+    ]);
+    expect(
+      (await goose.picks({ provider: "anthropic", model: "" })).models,
+    ).toMatchObject([
+      {
+        id: "claude-sonnet-5-5",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      {
+        id: "claude-opus-5-5",
+        efforts: [
+          { id: "high", label: "High" },
+          { id: "max", label: "Max" },
+        ],
+      },
+      { id: "claude-haiku-5-5", efforts: [] },
+    ]);
+    const processCount = fake.geese.length;
+    await goose.picks({ provider: "anthropic", model: "" });
+    expect(fake.geese).toHaveLength(processCount);
+  });
+
+  it("keeps healthy model efforts when one probe times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fake, setup: goose } = setup({
+        silentModels: ["claude-opus-5-5"],
+        thinking: {
+          "claude-sonnet-5-5": { current: "medium", levels: ["low", "high"] },
+          "claude-haiku-5-5": { current: "off", levels: ["off"] },
+        },
+      });
+      let settled = false;
+      const pending = goose
+        .picks({ provider: "anthropic", model: "" })
+        .then((result) => {
+          settled = true;
+          return result;
+        });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        fake.geese.some((process) =>
+          process.received.some(
+            (request) =>
+              request.method === "session/set_config_option" &&
+              request.params?.value === "claude-opus-5-5",
+          ),
+        ),
+      ).toBe(true);
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const { models } = await pending;
+      expect(models).toMatchObject([
+        {
+          id: "claude-sonnet-5-5",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+        { id: "claude-opus-5-5", efforts: [] },
+        { id: "claude-haiku-5-5", efforts: [{ id: "off", label: "Off" }] },
+      ]);
+      expect(fake.geese.every((process) => process.killed)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("limits simultaneous effort probes to four", async () => {
+    const listed = Array.from({ length: 6 }, (_, index) => ({
+      id: `model-${index}`,
+    }));
+    const { setup: goose } = setup({
+      providers: PROVIDERS.map((entry) =>
+        entry.providerId === "anthropic"
+          ? { ...ANTHROPIC, models: listed }
+          : entry,
+      ),
+    });
+    let active = 0;
+    let maximum = 0;
+    const release: (() => void)[] = [];
+    const probe = vi.spyOn(goose, "efforts").mockImplementation(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise<void>((resolve) =>
+        release.push(() => {
+          active -= 1;
+          resolve();
+        }),
+      );
+      return { current: "low", levels: ["low"] };
+    });
+    const pending = goose.picks({ provider: "anthropic", model: "" });
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(4));
+    expect(active).toBe(4);
+    for (const done of release.splice(0)) done();
+    await vi.waitFor(() =>
+      expect(probe).toHaveBeenCalledTimes(listed.length + 1),
+    );
+    expect(active).toBe(3);
+    for (const done of release.splice(0)) done();
+    await pending;
+    expect(maximum).toBe(4);
   });
 
   it("saves a provider's fields into goose and reads the list again", async () => {

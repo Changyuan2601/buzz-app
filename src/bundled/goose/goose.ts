@@ -80,8 +80,17 @@ export const ENV: Readonly<Record<string, string | null>> = {
 export type Choice = Readonly<{
   provider: string;
   model: string;
-  effort?: string;
+  effort?: string | undefined;
 }>;
+type ConfigOptions = {
+  configOptions?: {
+    category?: string | null;
+    currentValue?: string;
+    options?: { value: string }[];
+  }[];
+};
+const thinkingOption = (config: ConfigOptions | undefined) =>
+  config?.configOptions?.find((option) => option.category === "thought_level");
 /** goose's provider id for the provider and model its config picks. */
 const CONFIGURED = "goose";
 
@@ -242,8 +251,9 @@ export class GooseProcess {
       }
     });
     let sessionId: string;
+    let config: ConfigOptions | undefined;
     try {
-      ({ sessionId } = (await this.request(
+      const opened = (await this.request(
         "session/new",
         {
           cwd: launch.cwd,
@@ -264,15 +274,24 @@ export class GooseProcess {
           },
         },
         REQUEST_TIMEOUT_MS,
-      )) as { sessionId: string });
+      )) as { sessionId: string } & ConfigOptions;
+      sessionId = opened.sessionId;
+      config = opened;
     } catch (error) {
       void server?.close();
       throw error;
     }
-    session = new GooseSession(this, sessionId, server, launch.choice, {
-      provider,
-      model: "",
-    });
+    session = new GooseSession(
+      this,
+      sessionId,
+      server,
+      launch.choice,
+      {
+        provider,
+        model: "",
+      },
+      config,
+    );
     session.named = named;
     this.sessions.set(sessionId, session);
     if (stopped) {
@@ -473,8 +492,17 @@ export class GooseSession {
   /** A `session/prompt` is in flight. */
   private prompting = false;
   private steering = 0;
-  /** Turns to run, each with the model it was asked for, if any. */
-  private readonly queue: { text: string; model?: string }[] = [];
+  /** Turns to run, each with the model and effort it was asked for, if any. */
+  private readonly queue: { text: string; model?: string; effort?: string }[] =
+    [];
+  /** The thinking levels Goose currently offers for the session's model. */
+  private effortLevels: readonly string[] = [];
+  /** The session's thinking level before a per-message override. */
+  private baselineEffort = "";
+  /** Whether a message pick still needs its fallback restored. */
+  private messageEffortApplied = false;
+  /** The saved choice, used to detect when its Thinking setting is cleared. */
+  private configuredEffort = "";
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
   /** Messages sent and not yet answered. */
@@ -507,7 +535,10 @@ export class GooseSession {
     private readonly choice?: () => Choice,
     /** The provider and model it runs on, as chosen here. */
     private chosen: Choice = { provider: "", model: "" },
-  ) {}
+    config?: ConfigOptions,
+  ) {
+    this.observeThinking(config, true);
+  }
 
   get busy() {
     return this.pending > 0;
@@ -518,9 +549,9 @@ export class GooseSession {
   get open() {
     return !this.closed;
   }
-  /** The thinking level it was put on; empty while it runs on goose's own. */
+  /** Saved effort drives stale-session detection; message picks reset in place. */
   get effort() {
-    return this.chosen.effort ?? "";
+    return this.messageEffortApplied ? "" : this.configuredEffort;
   }
   /** Resolves once nothing runs, waits to run or waits for its answer:
    * unlike `busy`, it waits out the model call goose makes after a final
@@ -537,6 +568,7 @@ export class GooseSession {
     text: string,
     activity: ActivityReceipt = {},
     model?: string,
+    effort?: string,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -546,16 +578,23 @@ export class GooseSession {
       waiter = resolve;
       this.waiters.push(resolve);
     });
-    // A steer cannot change the model, and must not pass a queued turn.
+    // Only steer while an earlier user message is still pending. A final Buzz
+    // send can settle it before goose's trailing prompt call returns.
     if (
       this.prompting &&
+      this.pending > 1 &&
       !this.stopped &&
       !this.queue.length &&
+      effort === undefined &&
       (!model || model === this.model)
     )
       void this.steer(text, activity, waiter, model);
     else {
-      this.queue.push({ text, ...(model ? { model } : {}) });
+      this.queue.push({
+        text,
+        ...(model ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      });
       this.acknowledge(activity, waiter);
       void this.pump();
     }
@@ -678,9 +717,9 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model } = this.queue.shift() ?? { text: "" };
+        const { text, model, effort } = this.queue.shift() ?? { text: "" };
         try {
-          await this.select(model);
+          await this.select(model, effort);
           // The owner stopped it while its provider switch was going.
           if (this.stopped) continue;
           const { stopReason } = (await this.goose.request("session/prompt", {
@@ -705,39 +744,87 @@ export class GooseSession {
   /** Puts the session on the provider, model and thinking level chosen now,
    * or `model` of that provider. A steer joins the running turn, so a change
    * waits for the next. */
-  private async select(model?: string) {
+  private async select(model?: string, effort?: string) {
+    if (effort !== undefined && !effort)
+      throw new Error("goose cannot apply an empty thinking_effort");
     const chosen = this.choice?.();
     if (!chosen) return;
     const want = model ? { ...chosen, model } : chosen;
-    this.model = want.model;
-    if (
+    const savedEffort = want.effort ?? "";
+    const providerChanges =
       want.provider !== this.chosen.provider ||
-      (this.chosen.model && !want.model)
-    ) {
+      (this.chosen.model && !want.model);
+    this.model = want.model;
+    if (providerChanges) {
       // goose keeps the model when the provider stays the same.
       if (want.provider && want.provider === this.chosen.provider)
-        await this.configure("model", await this.defaultModel(want.provider));
-      else await this.configure("provider", want.provider || CONFIGURED);
+        this.observeThinking(
+          await this.configure("model", await this.defaultModel(want.provider)),
+        );
+      else
+        this.observeThinking(
+          await this.configure("provider", want.provider || CONFIGURED),
+        );
       this.chosen = { ...this.chosen, provider: want.provider, model: "" };
     }
     if (want.model !== this.chosen.model) {
-      await this.configure("model", want.model);
+      this.observeThinking(await this.configure("model", want.model));
       this.chosen = { ...this.chosen, model: want.model };
     }
-    // goose keeps the level across models and providers. It has no value
-    // for its own default, so a session put on a level is reopened for it.
-    if (want.effort && want.effort !== this.chosen.effort) {
-      await this.configure("thinking_effort", want.effort);
-      this.chosen = { ...this.chosen, effort: want.effort };
-    }
+
+    const fallback = savedEffort || this.baselineEffort;
+    const requested =
+      effort ?? (this.messageEffortApplied ? fallback : savedEffort);
+    const target =
+      this.messageEffortApplied &&
+      effort === undefined &&
+      requested &&
+      !this.effortLevels.includes(requested)
+        ? (this.effortLevels[0] ?? requested)
+        : requested;
+    const canApplyEffort =
+      effort !== undefined || !target || this.effortLevels.includes(target);
+    if (
+      (target || this.messageEffortApplied) &&
+      (target !== (this.chosen.effort ?? "") || this.messageEffortApplied) &&
+      canApplyEffort
+    )
+      await this.setThinking(target);
+    if (effort !== undefined) this.messageEffortApplied = target !== fallback;
+    else if (canApplyEffort) this.messageEffortApplied = false;
+    if (savedEffort) this.configuredEffort = savedEffort;
   }
+
+  private async setThinking(target: string) {
+    if (target && !this.effortLevels.includes(target))
+      throw new Error(`goose does not support thinking_effort ${target}`);
+    const configured = await this.configure("thinking_effort", target);
+    const option = thinkingOption(configured);
+    if (option?.currentValue !== undefined && option.currentValue !== target)
+      throw new Error(`goose did not apply thinking_effort ${target}`);
+    if (option?.options)
+      this.effortLevels = option.options.map(({ value }) => value);
+    this.chosen = { ...this.chosen, effort: target || undefined };
+  }
+
+  private observeThinking(
+    config: ConfigOptions | undefined,
+    captureBaseline = false,
+  ) {
+    const option = thinkingOption(config);
+    this.effortLevels = option?.options?.map(({ value }) => value) ?? [];
+    const current = option?.currentValue ?? "";
+    if (captureBaseline) this.baselineEffort = current;
+    this.chosen = { ...this.chosen, effort: current || undefined };
+  }
+
   private async configure(configId: string, value: string) {
     try {
-      await this.goose.request("session/set_config_option", {
+      return (await this.goose.request("session/set_config_option", {
         sessionId: this.id,
         configId,
         value,
-      });
+      })) as ConfigOptions;
     } catch (error) {
       throw new Error(
         `goose could not switch its ${configId} to ${value}: ${errorMessage(error)}`,

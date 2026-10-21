@@ -283,6 +283,7 @@ export class GooseRuntime {
     channelId,
     team,
     model,
+    effort,
     workingUntil,
     ignored,
     signal,
@@ -379,6 +380,7 @@ export class GooseRuntime {
           ...(topLevel && named ? { named } : {}),
           ...(!deferred ? { signal } : {}),
           ...(model ? { model } : {}),
+          ...(effort !== undefined ? { effort } : {}),
           activityScope: topLevel
             ? channel
             : (threadReference(event)?.rootId ?? event.id),

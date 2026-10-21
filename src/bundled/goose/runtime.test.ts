@@ -7,7 +7,7 @@ import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
-import { fakeSpawn, flush } from "./goose-testing";
+import { fakeSpawn, flush, type FakeThinking } from "./goose-testing";
 import {
   DEFAULT_CONFIG,
   GooseRuntime,
@@ -65,12 +65,16 @@ function setup(
     core?: string | null;
     /** The channel's Canvas. */
     canvas?: string;
+    thinking?: FakeThinking;
     repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn({
     hold: options.hold ?? false,
     ...(options.reply ? { reply: options.reply } : {}),
+    thinking: options.thinking ?? {
+      "": { current: "medium", levels: ["low", "medium", "high", "max"] },
+    },
   });
   const readFile = vi.fn<NonNullable<Host["readFile"]>>();
   const host = {
@@ -474,6 +478,27 @@ describe("GooseRuntime", () => {
     expect(fake.geese[0]?.configured).toEqual([
       "session-1 thinking_effort=max",
     ]);
+  });
+
+  it("forwards a mention's model and per-message thinking level to Goose", async () => {
+    const { deliver, fake } = setup({
+      thinking: {
+        "picked-model": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+      },
+    });
+    await deliver(message("1", "@Gander think"), {
+      model: "picked-model",
+      effort: "high",
+    });
+    await expect
+      .poll(() => fake.geese[0]?.configured)
+      .toEqual([
+        "session-1 model=picked-model",
+        "session-1 thinking_effort=high",
+      ]);
   });
 
   it("runs a mention on the model its owner picked", async () => {

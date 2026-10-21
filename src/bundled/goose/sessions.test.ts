@@ -5,7 +5,7 @@ import {
   type ServeMcp,
   type ToolServer,
 } from "./goose";
-import { fakeSpawn, flush } from "./goose-testing";
+import { fakeSpawn, flush, type FakeThinking } from "./goose-testing";
 import {
   AgentSessions,
   IDLE_MS,
@@ -32,6 +32,7 @@ const setup = (
     silent,
     onChange,
     store,
+    thinking,
   }: Readonly<{
     pool?: ServerPool;
     onChange?: () => void;
@@ -39,12 +40,16 @@ const setup = (
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
+    thinking?: FakeThinking;
   }> = {},
 ) => {
   const fake = fakeSpawn({
     home: "/home/test",
     hold,
     ...(silent && { silent }),
+    thinking: thinking ?? {
+      "": { current: "medium", levels: ["low", "medium", "high", "max"] },
+    },
     providers: [{ providerId: "openai", defaultModel: "gpt-default" }],
   });
   const process = new SharedProcess(
@@ -361,6 +366,410 @@ describe("AgentSessions", () => {
     await sessions.deliver("a", "five", 5);
     expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
     expect(goose?.configured).toHaveLength(3);
+  });
+
+  it("queues a message effort for its turn and restores the session baseline", async () => {
+    const { fake, sessions } = setup({}, true);
+    const first = sessions.deliver("a", "one", 1);
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+    const goose = fake.geese[0];
+    const picked = sessions.deliver("a", "two", 2, {
+      effort: "high",
+      steer: "Continue the current task instead.",
+    });
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one"]);
+    const fallback = sessions.deliver("a", "three", 3);
+
+    goose?.turns[0]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(2);
+    expect(goose?.configured).toEqual(["session-1 thinking_effort=high"]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+    goose?.turns[1]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(3);
+    expect(goose?.configured).toEqual([
+      "session-1 thinking_effort=high",
+      "session-1 thinking_effort=medium",
+    ]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+    goose?.turns[2]?.finish();
+    await Promise.all([first, picked, fallback]);
+  });
+
+  it("uses a saved thinking level instead of the session baseline", async () => {
+    const { fake, sessions, choose } = setup({}, false, {
+      thinking: { "": { current: "low", levels: ["low", "medium", "high"] } },
+    });
+    choose({ provider: "", model: "", effort: "medium" });
+    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "two", 2, { effort: "high" });
+    await sessions.deliver("a", "three", 3);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=medium",
+      "session-1 thinking_effort=high",
+      "session-1 thinking_effort=medium",
+    ]);
+  });
+
+  it("restores a supported effort when the session baseline is unavailable", async () => {
+    const { fake, sessions, choose } = setup({}, true, {
+      thinking: {
+        "": { current: "medium", levels: ["low", "medium"] },
+        "model-a": { current: "medium", levels: ["high", "max"] },
+      },
+    });
+    choose({ provider: "", model: "model-a" });
+    const picked = sessions.deliver("a", "picked", 1, {
+      model: "model-a",
+      effort: "max",
+    });
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+    const goose = fake.geese[0];
+    goose?.turns[0]?.finish();
+    await picked;
+
+    const ordinary = sessions.deliver("a", "ordinary", 2);
+    await expect.poll(() => goose?.turns.length).toBe(2);
+    expect(goose?.configured).toEqual([
+      "session-1 model=model-a",
+      "session-1 thinking_effort=max",
+      "session-1 thinking_effort=high",
+    ]);
+    goose?.turns[1]?.finish();
+    await ordinary;
+  });
+
+  it("queues a new message after a final send until the current prompt exits", async () => {
+    const { fake, sessions } = setup({}, true);
+    const picked = sessions.deliver("a", "picked", 1, { effort: "high" });
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+    const goose = fake.geese[0];
+    await goose?.mcp("session-1", "tools/call", {
+      name: "send",
+      arguments: { final: true },
+    });
+    await expect(picked).resolves.toEqual({ ok: true });
+
+    const ordinary = sessions.deliver("a", "ordinary", 2);
+    await flush();
+    expect(goose?.turns).toHaveLength(1);
+    expect(goose?.turns[0]?.steered).toEqual([]);
+    goose?.turns[0]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(2);
+    expect(goose?.configured).toEqual([
+      "session-1 thinking_effort=high",
+      "session-1 thinking_effort=medium",
+    ]);
+    goose?.turns[1]?.finish();
+    await expect(ordinary).resolves.toEqual({ ok: true });
+  });
+
+  it("keeps the session baseline when Goose carries saved thinking across a model switch", async () => {
+    const { fake, sessions, choose } = setup({}, true, {
+      thinking: {
+        "": { current: "medium", levels: ["low", "medium", "high"] },
+        "model-a": { current: "medium", levels: ["low", "medium", "high"] },
+        "model-b": { current: "low", levels: ["low", "medium", "high"] },
+      },
+    });
+    choose({ provider: "", model: "model-a", effort: "high" });
+    const first = sessions.deliver("a", "one", 1, { model: "model-a" });
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+    const goose = fake.geese[0];
+
+    choose({ provider: "", model: "model-b", effort: "high" });
+    const second = sessions.deliver("a", "two", 2, { model: "model-b" });
+    goose?.turns[0]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(2);
+
+    choose({ provider: "", model: "model-b", effort: "" });
+    const picked = sessions.deliver("a", "three", 3, { effort: "low" });
+    const fallback = sessions.deliver("a", "four", 4);
+    goose?.turns[1]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(3);
+    expect(goose?.configured).toEqual([
+      "session-1 model=model-a",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-b",
+      "session-1 thinking_effort=low",
+    ]);
+
+    goose?.turns[2]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(4);
+    expect(goose?.configured).toEqual([
+      "session-1 model=model-a",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-b",
+      "session-1 thinking_effort=low",
+      "session-1 thinking_effort=medium",
+    ]);
+    goose?.turns[3]?.finish();
+    await Promise.all([first, second, picked, fallback]);
+  });
+
+  it("restores thinking after switching away from a queued message override", async () => {
+    const { fake, sessions, choose } = setup({}, true, {
+      thinking: {
+        "gpt-default": { current: "low", levels: ["low", "high"] },
+        "picked-model": { current: "high", levels: ["high", "max"] },
+      },
+    });
+    choose({ provider: "openai", model: "", effort: "low" });
+    const first = sessions.deliver("a", "one", 1, {
+      model: "picked-model",
+      effort: "max",
+    });
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+    const goose = fake.geese[0];
+
+    const second = sessions.deliver("a", "two", 2, { model: "gpt-default" });
+    goose?.turns[0]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(2);
+    expect(goose?.configured).toEqual([
+      "session-1 model=picked-model",
+      "session-1 thinking_effort=max",
+      "session-1 model=gpt-default",
+      "session-1 thinking_effort=low",
+    ]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+
+    goose?.turns[1]?.finish();
+    await Promise.all([first, second]);
+  });
+
+  it("keeps saved thinking when a switched model reports no effort levels", async () => {
+    const { fake, sessions, choose } = setup({}, false, {
+      thinking: {
+        "model-with-effort": {
+          current: "low",
+          levels: ["low", "high"],
+        },
+      },
+    });
+    choose({ provider: "", model: "model-with-effort", effort: "high" });
+    await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
+      ok: true,
+    });
+    choose({ provider: "", model: "model-without-effort", effort: "high" });
+    await expect(sessions.deliver("a", "two", 2)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual([
+      "one",
+      "two",
+    ]);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=model-with-effort",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-without-effort",
+    ]);
+  });
+
+  it("does not let an unsupported fallback block the next model's prompt", async () => {
+    const { fake, sessions, choose } = setup({}, false, {
+      thinking: {
+        "model-with-effort": { current: "medium", levels: ["medium", "high"] },
+      },
+    });
+    choose({ provider: "", model: "model-with-effort", effort: "medium" });
+    await sessions.deliver("a", "explicit high", 1, { effort: "high" });
+
+    choose({ provider: "", model: "model-without-effort", effort: "medium" });
+    await expect(sessions.deliver("a", "ordinary", 2)).resolves.toMatchObject({
+      ok: true,
+    });
+
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=model-with-effort",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-without-effort",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual([
+      "explicit high",
+      "ordinary",
+    ]);
+  });
+
+  it("restores a supported fallback when the selected model lacks saved effort", async () => {
+    const { fake, sessions, choose } = setup({}, false, {
+      thinking: {
+        "model-with-off": { current: "off", levels: ["off", "low", "high"] },
+        "model-without-off": { current: "low", levels: ["low", "high", "max"] },
+      },
+    });
+    choose({ provider: "", model: "model-with-off", effort: "off" });
+
+    await sessions.deliver("a", "picked", 1, {
+      model: "model-with-off",
+      effort: "high",
+    });
+    await sessions.deliver("a", "model-only", 2, {
+      model: "model-without-off",
+    });
+
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=model-with-off",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-without-off",
+      "session-1 thinking_effort=low",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual([
+      "picked",
+      "model-only",
+    ]);
+  });
+
+  it("restores the baseline after returning from a model without effort support", async () => {
+    const { fake, sessions } = setup({}, false, {
+      thinking: {
+        "": { current: "medium", levels: ["low", "medium", "high"] },
+        "model-with-effort": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+      },
+    });
+
+    await sessions.deliver("a", "picked", 1, {
+      model: "model-with-effort",
+      effort: "high",
+    });
+    await sessions.deliver("a", "unsupported", 2, {
+      model: "model-without-effort",
+    });
+    await sessions.deliver("a", "returned", 3, {
+      model: "model-with-effort",
+    });
+
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=model-with-effort",
+      "session-1 thinking_effort=high",
+      "session-1 model=model-without-effort",
+      "session-1 model=model-with-effort",
+      "session-1 thinking_effort=medium",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual([
+      "picked",
+      "unsupported",
+      "returned",
+    ]);
+  });
+
+  it("rejects an empty message effort before switching its model", async () => {
+    const { fake, sessions } = setup({}, false, {
+      thinking: {
+        "picked-model": { current: "medium", levels: ["low", "medium"] },
+      },
+    });
+    await expect(
+      sessions.deliver("a", "one", 1, {
+        model: "picked-model",
+        effort: "",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: "goose cannot apply an empty thinking_effort",
+    });
+    expect(fake.geese[0]?.configured).toEqual([]);
+    expect(fake.geese[0]?.turns).toEqual([]);
+  });
+
+  it("restores the baseline before retiring a session with a cleared saved effort", async () => {
+    const { fake, sessions, choose } = setup({}, true, {
+      thinking: { "": { current: "low", levels: ["low", "medium", "high"] } },
+    });
+    choose({ provider: "", model: "", effort: "medium" });
+    const first = sessions.deliver("a", "one", 1);
+    await expect.poll(() => fake.geese[0]?.turns.length).toBe(1);
+
+    choose({ provider: "", model: "", effort: "" });
+    const picked = sessions.deliver("a", "two", 2, { effort: "high" });
+    const fallback = sessions.deliver("a", "three", 3);
+    const goose = fake.geese[0];
+    goose?.turns[0]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(2);
+    goose?.turns[1]?.finish();
+    await expect.poll(() => goose?.turns.length).toBe(3);
+    goose?.turns[2]?.finish();
+    await Promise.all([first, picked, fallback]);
+
+    const fourth = sessions.deliver("a", "four", 4);
+    await expect.poll(() => goose?.turns.length).toBe(4);
+    goose?.turns[3]?.finish();
+    await fourth;
+    expect(goose?.configured).toEqual([
+      "session-1 thinking_effort=medium",
+      "session-1 thinking_effort=high",
+      "session-1 thinking_effort=low",
+    ]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+      "session-1",
+      "session-2",
+    ]);
+  });
+
+  it("surfaces a per-message effort goose does not offer", async () => {
+    const { fake, sessions } = setup({}, false, {
+      thinking: { "": { current: "low", levels: ["low", "high"] } },
+    });
+    await sessions.deliver("a", "picked", 1, { effort: "high" });
+    await expect(
+      sessions.deliver("a", "unsupported", 2, { effort: "ultra" }),
+    ).resolves.toEqual({
+      ok: false,
+      error: "goose does not support thinking_effort ultra",
+    });
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=high",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual(["picked"]);
+  });
+
+  it("stops advertising old efforts after switching to a model without them", async () => {
+    const { fake, sessions } = setup({}, false, {
+      thinking: {
+        "model-with-effort": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+      },
+    });
+    await sessions.deliver("a", "supported", 1, {
+      model: "model-with-effort",
+    });
+    await sessions.deliver("a", "unsupported", 2, {
+      model: "model-without-effort",
+    });
+
+    await expect(
+      sessions.deliver("a", "invalid", 3, {
+        model: "model-without-effort",
+        effort: "high",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: "goose does not support thinking_effort high",
+    });
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=model-with-effort",
+      "session-1 model=model-without-effort",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual([
+      "supported",
+      "unsupported",
+    ]);
+  });
+
+  it("does not change Goose thinking when neither a message nor saved pick exists", async () => {
+    const { fake, sessions } = setup();
+    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese[0]?.configured).toEqual([]);
   });
 
   it("fails a turn goose cannot switch, and switches at the next", async () => {

@@ -5,9 +5,15 @@
 import type { ModelChoice } from "../../features/agents/ModelPicker";
 import type {
   AgentProviderSnapshot,
+  Effort,
   Models,
 } from "../../features/agents/service";
-import { GooseProcess, type Choice, type GooseHost } from "./goose";
+import {
+  GooseProcess,
+  REQUEST_TIMEOUT_MS,
+  type Choice,
+  type GooseHost,
+} from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -82,6 +88,7 @@ const PREFIXES: Readonly<Record<string, readonly string[]>> = {
 
 const TEST_PROMPT = "Reply with exactly: OK";
 const TEST_TIMEOUT_MS = 60_000;
+const MAX_EFFORT_PROBES = 4;
 
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
@@ -212,18 +219,33 @@ export class GooseSetup {
         ? providers.find((item) => item.id === id)?.defaultModel
         : defaults.model) ||
       "";
-    const models = (id ? await this.models(id) : []).map(({ id, label }) => ({
-      id,
-      label,
-      efforts: [],
-    }));
+    const listed = id ? await this.models(id) : [];
+    const models = [...listed];
     // A model its provider does not list is still the one it runs on.
-    return !current || models.some((model) => model.id === current)
-      ? { current, models }
-      : {
-          current,
-          models: [{ id: current, label: current, efforts: [] }, ...models],
-        };
+    if (current && !models.some((model) => model.id === current))
+      models.unshift({ id: current, label: current });
+    const choices: (ModelChoice & { efforts: readonly Effort[] })[] = [];
+    for (let i = 0; i < models.length; i += MAX_EFFORT_PROBES) {
+      const batch = await Promise.all(
+        models.slice(i, i + MAX_EFFORT_PROBES).map(async (model) => {
+          const effortChoice = { provider: id ?? "", model: model.id };
+          const levels = await this.efforts(effortChoice).then(
+            ({ levels }) => levels,
+            () => [],
+          );
+          return {
+            ...model,
+            efforts: levels.map((level) => ({
+              id: level,
+              label: level.charAt(0).toUpperCase() + level.slice(1),
+            })),
+            effortScope: effortChoice.provider,
+          };
+        }),
+      );
+      choices.push(...batch);
+    }
+    return { current, models: choices };
   }
 
   /** goose's providers, read once until something is saved. */
@@ -303,34 +325,38 @@ export class GooseSetup {
     const key = `${provider}\u0000${model}`;
     let efforts = this.thinking.get(key);
     if (!efforts) {
-      efforts = this.with(async (goose, cwd) => {
-        const opened = (await goose.request("session/new", {
-          cwd,
-          mcpServers: [],
-          _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
-        })) as ConfigOptions & { sessionId: string };
-        try {
-          const { configOptions = [] } = model
-            ? ((await goose.request("session/set_config_option", {
-                sessionId: opened.sessionId,
-                configId: "model",
-                value: model,
-              })) as ConfigOptions)
-            : opened;
-          const option = configOptions.find(
-            (item) => item.category === "thought_level",
-          );
-          return {
-            current: option?.currentValue ?? "",
-            levels: (option?.options ?? []).map(({ value }) => value),
-          };
-        } finally {
-          // goose keeps every session; this one is not worth keeping.
-          await goose
-            .request("session/delete", { sessionId: opened.sessionId })
-            .catch(() => undefined);
-        }
-      });
+      efforts = this.with(
+        async (goose, cwd) => {
+          const opened = (await goose.request("session/new", {
+            cwd,
+            mcpServers: [],
+            _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
+          })) as ConfigOptions & { sessionId: string };
+          try {
+            const { configOptions = [] } = model
+              ? ((await goose.request("session/set_config_option", {
+                  sessionId: opened.sessionId,
+                  configId: "model",
+                  value: model,
+                })) as ConfigOptions)
+              : opened;
+            const option = configOptions.find(
+              (item) => item.category === "thought_level",
+            );
+            return {
+              current: option?.currentValue ?? "",
+              levels: (option?.options ?? []).map(({ value }) => value),
+            };
+          } finally {
+            // goose keeps every session; this one is not worth keeping.
+            await goose
+              .request("session/delete", { sessionId: opened.sessionId })
+              .catch(() => undefined);
+          }
+        },
+        {},
+        REQUEST_TIMEOUT_MS,
+      );
       efforts.catch(() => this.thinking.delete(key));
       this.thinking.set(key, efforts);
     }
@@ -408,8 +434,9 @@ export class GooseSetup {
   private with<T>(
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},
+    timeoutMs?: number,
   ): Promise<T> {
-    return briefly(this.host, run, env);
+    return briefly(this.host, run, env, timeoutMs);
   }
 }
 
@@ -419,6 +446,7 @@ export async function briefly<T>(
   host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
+  timeoutMs?: number,
 ): Promise<T> {
   if (!host) throw new Error("goose runs only in the desktop app");
   const cwd = await host.resolveDirectory("~");
@@ -427,7 +455,22 @@ export async function briefly<T>(
     env,
   });
   try {
-    return await run(goose, cwd);
+    const pending = run(goose, cwd);
+    if (timeoutMs === undefined) return await pending;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("effort probe timed out")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   } finally {
     await goose.kill();
   }

@@ -74,6 +74,10 @@ export type FakeSession = Readonly<{
   conversation: readonly Record<string, unknown>[];
 }>;
 
+export type FakeThinking = Readonly<
+  Record<string, Readonly<{ current: string; levels: readonly string[] }>>
+>;
+
 /** A loopback MCP server `serve` started, as the app's host would. */
 export type FakeMcpServer = {
   url: string;
@@ -110,11 +114,11 @@ export function fakeSpawn(
     namingDisabled?: boolean;
     /** Requests each process never answers. */
     silent?: readonly string[];
+    /** Model choices whose `session/set_config_option` request hangs. */
+    silentModels?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
      * one it opens on; one not here lists none. */
-    thinking?: Readonly<
-      Record<string, Readonly<{ current: string; levels: readonly string[] }>>
-    >;
+    thinking?: FakeThinking;
   }> = {},
 ) {
   let defaults = options.defaults;
@@ -164,6 +168,7 @@ export function fakeSpawn(
     const declared = new Map<string, string>();
     /** The model each session was put on; `""` is the one it opened on. */
     const models = new Map<string, string>();
+    const thinkingEfforts = new Map<string, string>();
     const configOptions = (sessionId: string) => {
       const thinking = options.thinking?.[models.get(sessionId) ?? ""];
       return thinking
@@ -171,7 +176,9 @@ export function fakeSpawn(
             {
               id: "thinking_effort",
               category: "thought_level",
-              currentValue: thinking.current,
+              currentValue: thinkingEfforts.has(sessionId)
+                ? thinkingEfforts.get(sessionId)
+                : thinking.current,
               options: thinking.levels.map((level) => ({
                 value: level,
                 name: level,
@@ -246,6 +253,12 @@ export function fakeSpawn(
         answers.delete(id ?? "");
         return;
       }
+      if (
+        method === "session/set_config_option" &&
+        params.configId === "model" &&
+        options.silentModels?.includes(String(params.value))
+      )
+        return;
       if (fake.silent.has(method)) return;
       const sessionId = String(params.sessionId ?? "");
       switch (method) {
@@ -334,6 +347,8 @@ export function fakeSpawn(
           if (params.configId === "model")
             models.set(sessionId, String(params.value));
           if (params.configId === "provider") models.delete(sessionId);
+          if (params.configId === "thinking_effort")
+            thinkingEfforts.set(sessionId, String(params.value));
           return reply(id, { configOptions: configOptions(sessionId) });
         case "session/cancel":
           fake.cancelled.push(sessionId);
