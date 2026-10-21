@@ -650,7 +650,14 @@ export type AgentType<Config = unknown> = {
 export type RemoteAgentType = Readonly<{
   /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
   provision(
-    input: Readonly<{ name: string; community: string; signal: AbortSignal }>,
+    input: Readonly<{
+      name: string;
+      community: string;
+      signal: AbortSignal;
+      /** The hosted kind to register, from `NewAgent.agentType`; absent for
+       * a plain agent. */
+      agentType?: "bestie";
+    }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
    * what it signs. The provider publishes its profile and starts it. */
@@ -778,6 +785,9 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
+  /** Reaches a hosted type's `provision` as-is; a plain create leaves it
+   * unset. Only Bestie setup passes this today. */
+  agentType?: "bestie";
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -1578,14 +1588,14 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name, picture, config }: NewAgent) {
+  async create({ type, name, picture, config, agentType }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
       const listed = recordPicture(picture);
       if (picture && !listed)
         console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
-      return this.provision(type, remote, name.trim(), listed);
+      return this.provision(type, remote, name.trim(), listed, agentType);
     }
     return this.add(
       type,
@@ -1710,6 +1720,7 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
+    agentType?: "bestie",
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
@@ -1717,6 +1728,7 @@ export class AgentsService extends Service implements Agents {
       name,
       community,
       signal: binding.controller.signal,
+      ...(agentType ? { agentType } : {}),
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
       throw new Error("The provider did not return the agent's key");

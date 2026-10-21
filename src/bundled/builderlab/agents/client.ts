@@ -19,7 +19,13 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
+  /** Set only for a hosted Bestie; absent for a plain agent. */
+  agentType?: "bestie";
 }>;
+
+/** The owner already has a live (unattested or active) Bestie; Beekeeper
+ * allows only one and refuses to register a second. */
+export class BestieAlreadyExistsError extends Error {}
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
 
@@ -47,6 +53,14 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   if (status === "1" || status === "UNATTESTED") return "Unattested";
   if (status === "3" || status === "REVOKED") return "Revoked";
   return "Unknown";
+}
+
+/** `agent_type` is absent, `AGENT_TYPE_UNSPECIFIED` or `0` for a plain agent. */
+function rowAgentType(value: unknown): RemoteAgent["agentType"] {
+  const type = String(value ?? "")
+    .split("_")
+    .at(-1);
+  return type === "1" || type === "BESTIE" ? "bestie" : undefined;
 }
 
 /** Native owner identity: the viewer key and the Builderlab-binding-only signer. */
@@ -313,9 +327,10 @@ export function createAgentClient(
         signal,
       );
     },
-    /** Has Beekeeper save the agent's own hourly wake in `channelId`, a relay
-     * workflow signed with the agent's key, replacing any earlier one. */
-    async setHeartbeat(
+    /** Turns on Bestie's hourly check-in in `channelId`, a relay workflow
+     * Beekeeper signs with Bestie's key. Always deletes and re-saves the
+     * workflow, so calling it again is the retry. */
+    async enableBestie(
       agent: Pick<RemoteAgent, "id">,
       community: string,
       channelId: string,
@@ -323,7 +338,7 @@ export function createAgentClient(
     ): Promise<void> {
       if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
       const result = await request(
-        "set-agent-heartbeat",
+        "enable-bestie",
         { agent_id: agent.id, community_url: community, channel_id: channelId },
         signal,
       );
@@ -331,7 +346,26 @@ export function createAgentClient(
       throw new Error(
         typeof result.error_message === "string" && result.error_message
           ? result.error_message
-          : "Builderlab did not confirm the hourly wake.",
+          : "Builderlab could not turn on Bestie's check-in.",
+      );
+    },
+    /** Turns off Bestie's hourly check-in. Succeeds when there was none. */
+    async disableBestie(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "disable-bestie",
+        { agent_id: agent.id, community_url: community },
+        signal,
+      );
+      if (result.status === "succeeded") return;
+      throw new Error(
+        typeof result.error_message === "string" && result.error_message
+          ? result.error_message
+          : "Builderlab could not turn off Bestie's check-in.",
       );
     },
     async delete(
@@ -393,6 +427,8 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
+      /** Requests Beekeeper's hosted Bestie kind; omitted for a plain agent. */
+      agentType?: "bestie",
     ): Promise<RemoteAgent> {
       signal.throwIfAborted();
       const agentName = name.trim();
@@ -406,12 +442,19 @@ export function createAgentClient(
         oauthTarget(),
         account.subject,
         agentName,
+        agentType,
       );
       let result: Record<string, unknown>;
       try {
         result = await request(
           "register-agent",
-          { agent_name: agentName, idempotency_key: intent.key },
+          {
+            agent_name: agentName,
+            idempotency_key: intent.key,
+            ...(agentType === "bestie"
+              ? { agent_type: "AGENT_TYPE_BESTIE" }
+              : {}),
+          },
           signal,
         );
       } catch (error) {
@@ -429,6 +472,12 @@ export function createAgentClient(
         throw error;
       }
       const status = resultStatus(result.status);
+      if ([6, "EXISTS"].includes(status)) {
+        clearRegistration(intent);
+        throw new BestieAlreadyExistsError(
+          "Your Builderlab account already has a Bestie.",
+        );
+      }
       const rejected = new Map<string | number, string>([
         [2, "Agent creation is disabled on this server."],
         ["DISABLED", "Agent creation is disabled on this server."],
@@ -495,13 +544,17 @@ export function createAgentClient(
         )
       )
         throw new Error("Builderlab returned an invalid agent list.");
-      return agents.map((row) => ({
-        id: row.agent_id,
-        name: row.agent_name,
-        pubkey: row.agent_pubkey,
-        status: agentStatus(row.status),
-        instructions: row.agent_instructions ?? "",
-      }));
+      return agents.map((row) => {
+        const agentType = rowAgentType(row.agent_type);
+        return {
+          id: row.agent_id,
+          name: row.agent_name,
+          pubkey: row.agent_pubkey,
+          status: agentStatus(row.status),
+          instructions: row.agent_instructions ?? "",
+          ...(agentType ? { agentType } : {}),
+        };
+      });
     },
   };
 }

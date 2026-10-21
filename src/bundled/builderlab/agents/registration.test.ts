@@ -30,6 +30,12 @@ it("isolates server and name and stores only the creation intent", () => {
     Object.keys(JSON.parse(localStorage.getItem(a.storageKey) ?? "{}")),
   ).toEqual(["key", "createdAt"]);
 });
+it("isolates a Bestie request from a generic request for the same name", () => {
+  const generic = registrationIntent(target, "account-a", "Helper");
+  const bestie = registrationIntent(target, "account-a", "Helper", "bestie");
+  expect(bestie.key).not.toBe(generic.key);
+  expect(bestie.storageKey).not.toBe(generic.storageKey);
+});
 it("rejects an expired key instead of silently generating another", () => {
   registrationIntent(target, "account", "Helper");
   vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000);

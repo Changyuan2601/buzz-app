@@ -93,10 +93,13 @@ export function builderlabType(
       },
     ],
     remote: {
-      async provision({ name, signal }) {
+      async provision({ name, signal, agentType }) {
         await session.ensureSignedIn(signal);
-        return client.register(name, signal, ({ pubkey, id }, intent) =>
-          remember(pubkey, id, intent),
+        return client.register(
+          name,
+          signal,
+          ({ pubkey, id }, intent) => remember(pubkey, id, intent),
+          agentType,
         );
       },
       async activate({ pubkey, auth, community, signal }) {

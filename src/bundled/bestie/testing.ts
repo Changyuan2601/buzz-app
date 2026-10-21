@@ -44,6 +44,8 @@ type Row = {
   agent_pubkey: string;
   status: number;
   agent_instructions?: string;
+  /** `1` for a hosted Bestie; absent for a plain agent. */
+  agent_type?: number;
 };
 type Reply = { status: number; body: unknown };
 
@@ -108,21 +110,33 @@ export async function bestieFixture(invoke: Mock) {
       else if (path === "register-agent") {
         // Beekeeper replays a registration by its idempotency key.
         let row = rows.find((item) => item.key === body.idempotency_key);
-        if (!row) {
-          row = {
-            key: body.idempotency_key,
-            agent_id: `id-${rows.length}`,
-            agent_name: body.agent_name,
-            agent_pubkey: rows.length ? keypair().pubkey : remote.pubkey,
+        if (
+          !row &&
+          body.agent_type === "AGENT_TYPE_BESTIE" &&
+          rows.some((item) => item.agent_type === 1 && item.status !== 3)
+        ) {
+          // Beekeeper allows only one live (unattested or active) Bestie.
+          result = { status: 6 };
+        } else {
+          if (!row) {
+            row = {
+              key: body.idempotency_key,
+              agent_id: `id-${rows.length}`,
+              agent_name: body.agent_name,
+              agent_pubkey: rows.length ? keypair().pubkey : remote.pubkey,
+              status: 1,
+              ...(body.agent_type === "AGENT_TYPE_BESTIE"
+                ? { agent_type: 1 }
+                : {}),
+            };
+            rows.push(row);
+          }
+          result = {
             status: 1,
+            agent_id: row.agent_id,
+            agent_pubkey: row.agent_pubkey,
           };
-          rows.push(row);
         }
-        result = {
-          status: 1,
-          agent_id: row.agent_id,
-          agent_pubkey: row.agent_pubkey,
-        };
       } else if (path === "attest-agent") {
         const row = rows.find(
           (item) => item.agent_pubkey === body.agent_pubkey,
@@ -136,10 +150,18 @@ export async function bestieFixture(invoke: Mock) {
         );
         if (row) row.agent_instructions = body.agent_instructions;
         result = {};
-      } else if (path === "set-agent-heartbeat") {
-        // Beekeeper signs the wake as the agent; the relay holds it.
+      } else if (path === "enable-bestie") {
+        // Beekeeper signs check-in as the agent; the relay holds it.
         result = rows.some((item) => item.agent_id === body.agent_id)
           ? { status: "succeeded", workflow_id: crypto.randomUUID() }
+          : {
+              status: "failed",
+              error_code: "unauthorized",
+              error_message: "No active Buzz agent",
+            };
+      } else if (path === "disable-bestie") {
+        result = rows.some((item) => item.agent_id === body.agent_id)
+          ? { status: "succeeded" }
           : {
               status: "failed",
               error_code: "unauthorized",

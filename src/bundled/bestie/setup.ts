@@ -2,7 +2,10 @@ import type { Agent, Agents } from "../../features/agents/service";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
-import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
+import {
+  BestieAlreadyExistsError,
+  MAX_INSTRUCTIONS_LENGTH,
+} from "../builderlab/agents/client";
 import { bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
@@ -21,10 +24,12 @@ type Record = {
   welcomeId?: string | undefined;
   welcomeFailed?: boolean | undefined;
   complete?: boolean;
-  /** Builderlab confirmed Bestie's own hourly wake in this home. */
-  heartbeat?: boolean | undefined;
-  /** Why Bestie's hourly wake could not be saved, if it could not. */
-  wakeProblem?: string | undefined;
+  /** Whether Bestie's hourly check-in is turned on in this home; absent until
+   * setup's first attempt settles. The switch on the ready page owns it from
+   * then on. */
+  checkIn?: "on" | "off" | undefined;
+  /** Why the last check-in change could not be saved, if it could not. */
+  checkInProblem?: string | undefined;
 };
 type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
@@ -54,6 +59,17 @@ function read(key: string, owner: string): Record | undefined {
       "Saved Bestie setup is unreadable. No new agent was created.",
     );
   }
+  // A record saved before the hourly wake became a check-in switch.
+  const legacy = record as Record &
+    Readonly<{ heartbeat?: boolean; wakeProblem?: string }>;
+  if (record && legacy.checkIn === undefined && legacy.heartbeat !== undefined)
+    record = { ...record, checkIn: legacy.heartbeat ? "on" : "off" };
+  if (
+    record &&
+    legacy.checkInProblem === undefined &&
+    legacy.wakeProblem !== undefined
+  )
+    record = { ...record, checkInProblem: legacy.wakeProblem };
   if (
     record?.version !== 1 ||
     record.owner !== owner ||
@@ -102,6 +118,7 @@ export function createRemoteBestie(
   let disposed = false;
   let operation: AbortController | undefined;
   let work: Promise<void> | undefined;
+  let checkInOperation: AbortController | undefined;
   let state: State = { status: "unavailable", message: "" };
   /** A setup result (error or choice) that only a retry or reconnect clears. */
   let held = false;
@@ -160,6 +177,7 @@ export function createRemoteBestie(
     if (relay.snapshot().session !== state.connection?.session) {
       // A new connection invalidates setup in flight; its retry starts afresh.
       operation?.abort();
+      checkInOperation?.abort();
       held = false;
     }
     if (!held) refresh();
@@ -270,32 +288,45 @@ export function createRemoteBestie(
       agent =
         candidates.find((row) => row.pubkey === selected) ?? candidates[0];
       if (!agent) {
-        // Never make a second Bestie because this community's list is unread.
-        if (
-          !options.createNew &&
-          remote.some(
-            (row) =>
-              row.name === NAME &&
-              row.status === "Active" &&
-              !agents.find(row.pubkey),
-          )
-        )
-          throw new CreateNewError(
-            "Your Builderlab account already has a Bestie that isn't listed in this community yet. Wait for your agents to load, then retry, or create a new Bestie for this community.",
-          );
         progress("Creating Bestie…");
-        // A failure after Builderlab made the agent leaves it unfinished in
-        // Agents; the next attempt finds and finishes it instead.
-        agent = await agents.create({
-          type: BUILDERLAB_TYPE,
-          name: NAME,
-          picture: randomAgentAvatar().url,
-        });
-        remote = await remoteAgents();
+        try {
+          // A failure after Builderlab made the agent leaves it unfinished in
+          // Agents; the next attempt finds and finishes it instead.
+          agent = await agents.create({
+            type: BUILDERLAB_TYPE,
+            name: NAME,
+            picture: randomAgentAvatar().url,
+            agentType: "bestie",
+          });
+          remote = await remoteAgents();
+        } catch (error) {
+          if (!(error instanceof BestieAlreadyExistsError)) throw error;
+          // Builderlab allows only one live Bestie per owner. It isn't listed
+          // here, e.g. because it was set up from another community; resume
+          // it directly rather than offering a second one, which would only
+          // be refused the same way.
+          remote = await remoteAgents();
+          const existing = remote.find(
+            (row) => row.agentType === "bestie" && row.status !== "Revoked",
+          );
+          if (!existing)
+            throw new Error(
+              "Your Builderlab account already has a Bestie, but it could not be found. Retry setup.",
+            );
+          if (existing.status !== "Active")
+            throw new Error(
+              "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+            );
+          record.agent = existing.pubkey;
+          save();
+          check();
+        }
       }
-      record.agent = agent.pubkey;
-      save();
-      check();
+      if (agent) {
+        record.agent = agent.pubkey;
+        save();
+        check();
+      }
     }
     if (agent?.unfinished) {
       progress("Finishing Bestie's setup…");
@@ -304,6 +335,7 @@ export function createRemoteBestie(
       remote = await remoteAgents();
     }
     const pubkey = record.agent;
+    if (!pubkey) throw new Error("Bestie could not be found. Retry setup.");
 
     const instructions = bestieInstructions(owner, record.channelId);
     if (instructions.length > MAX_INSTRUCTIONS_LENGTH)
@@ -451,8 +483,10 @@ export function createRemoteBestie(
       save();
     }
     await delivered("welcomeId", "welcomeFailed");
-    if (!record.heartbeat) {
-      progress("Scheduling Bestie's hourly wake…");
+    // Setup turns check-in on once; after that, the switch on the ready page
+    // owns it, including retrying a failed attempt by turning it on again.
+    if (record.checkIn === undefined) {
+      progress("Turning on Bestie's hourly check-in…");
       const row = remote.find((item) => item.pubkey === pubkey);
       try {
         if (!row)
@@ -461,22 +495,23 @@ export function createRemoteBestie(
           );
         // Beekeeper names a community by its relay URL; origins are https.
         const community = `wss://${new URL(connection.origin ?? "").host}`;
-        await builderlab.agents.setHeartbeat(
+        await builderlab.agents.enableBestie(
           row,
           community,
           record.channelId,
           signal,
         );
-        record.heartbeat = true;
-        record.wakeProblem = undefined;
+        record.checkIn = "on";
+        record.checkInProblem = undefined;
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
           throw error;
-        // Bestie still answers mentions without its hourly wake.
-        record.wakeProblem =
+        // Bestie still answers mentions without its check-in.
+        record.checkIn = "off";
+        record.checkInProblem =
           error instanceof Error
             ? error.message
-            : "Bestie's hourly wake could not be scheduled.";
+            : "Bestie's check-in could not be turned on.";
       }
       check();
       save();
@@ -489,6 +524,57 @@ export function createRemoteBestie(
       record,
       connection,
     });
+  }
+  /** Turns check-in on or off directly, without re-running the rest of
+   * setup. The ready page's switch is its only caller, including the retry
+   * after a failed attempt. */
+  async function setCheckIn(on: boolean) {
+    const context = scope();
+    if (!context) throw new Error("Connect to a community first.");
+    const { key, owner, connection } = context;
+    const record = read(key, owner);
+    if (!record?.complete || !record.agent)
+      throw new Error("Finish Bestie setup before changing check-in.");
+    checkInOperation?.abort();
+    const controller = new AbortController();
+    checkInOperation = controller;
+    const { signal } = controller;
+    const session = connection.session;
+    const active = () =>
+      !disposed && !signal.aborted && relay.snapshot().session === session;
+    try {
+      await builderlab.session.ensureSignedIn(signal);
+      if (!active())
+        throw new DOMException("Account or community changed.", "AbortError");
+      const rows = await builderlab.agents.list(signal);
+      if (!active())
+        throw new DOMException("Account or community changed.", "AbortError");
+      const row = rows.find((item) => item.pubkey === record.agent);
+      if (!row)
+        throw new Error(
+          "Sign in to the Builderlab account that created Bestie, then retry.",
+        );
+      // Beekeeper names a community by its relay URL; origins are https.
+      const community = `wss://${new URL(connection.origin ?? "").host}`;
+      if (on)
+        await builderlab.agents.enableBestie(
+          row,
+          community,
+          record.channelId,
+          signal,
+        );
+      else await builderlab.agents.disableBestie(row, community, signal);
+      record.checkIn = on ? "on" : "off";
+      record.checkInProblem = undefined;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      record.checkInProblem = explain(error);
+    } finally {
+      if (checkInOperation === controller) checkInOperation = undefined;
+    }
+    localStorage.setItem(key, JSON.stringify(record));
+    // Setup isn't running: the switch only appears once it is complete.
+    if (!held) refresh();
   }
   function run(selected?: string, options?: SetupOptions) {
     if (disposed) return Promise.resolve();
@@ -537,9 +623,11 @@ export function createRemoteBestie(
     },
     setup: (selected?: string, options?: SetupOptions) =>
       run(selected, options),
+    setCheckIn,
     dispose() {
       disposed = true;
       operation?.abort();
+      checkInOperation?.abort();
       stopRelay();
       stopAgents();
       listeners.clear();

@@ -66,7 +66,13 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
     record: { agent: h.agent, channelId: HOME, complete: true },
   });
   // Agents made it at Builderlab and listed it as hosted for every device.
-  expect(h.requests("register-agent")).toHaveLength(1);
+  const registration = h.requests("register-agent");
+  expect(registration).toHaveLength(1);
+  const [, registerInput] = registration[0] ?? [];
+  expect(
+    JSON.parse((registerInput as { request: { body: string } }).request.body)
+      .agent_type,
+  ).toBe("AGENT_TYPE_BESTIE");
   expect(h.agents.find(h.agent)).toMatchObject({
     name: "Bestie",
     type: BUILDERLAB_TYPE,
@@ -109,11 +115,11 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
       )
     ];
   expect(instructed).toBeLessThan(order ?? 0);
-  // Beekeeper signs Bestie's hourly wake as Bestie; the owner signs no workflow.
+  // Beekeeper signs Bestie's check-in as Bestie; the owner signs no workflow.
   expect(kinds(h, 30620)).toHaveLength(0);
-  const wake = h.requests("set-agent-heartbeat");
-  expect(wake).toHaveLength(1);
-  const [, input] = wake[0] ?? [];
+  const enabled = h.requests("enable-bestie");
+  expect(enabled).toHaveLength(1);
+  const [, input] = enabled[0] ?? [];
   expect(
     JSON.parse((input as { request: { body: string } }).request.body),
   ).toEqual({
@@ -121,30 +127,33 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
     community_url: "wss://community.example",
     channel_id: HOME,
   });
-  expect(h.bestie.snapshot().record).toMatchObject({ heartbeat: true });
-  expect(h.bestie.snapshot().record?.wakeProblem).toBeUndefined();
+  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
+  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
 });
 
-it("finishes setup when Builderlab can't save the hourly wake, and retries it", async () => {
+it("finishes setup when Builderlab can't turn on check-in, and retries by turning it on again", async () => {
   const h = await bestieFixture(native.invoke);
-  h.reply("set-agent-heartbeat", 200, {
+  h.reply("enable-bestie", 200, {
     status: "failed",
     error_code: "rejected",
-    error_message: "The relay rejected the hourly wake: forbidden",
+    error_message: "The relay rejected check-in: forbidden",
   });
   await h.bestie.setup();
   expect(h.bestie.snapshot()).toMatchObject({
     status: "ready",
     record: {
       complete: true,
-      wakeProblem: "The relay rejected the hourly wake: forbidden",
+      checkIn: "off",
+      checkInProblem: "The relay rejected check-in: forbidden",
     },
   });
-  expect(h.bestie.snapshot().record?.heartbeat).toBeFalsy();
+  // Setup only tries once; the switch owns the retry from here.
   await h.bestie.setup();
-  expect(h.requests("set-agent-heartbeat")).toHaveLength(2);
-  expect(h.bestie.snapshot().record).toMatchObject({ heartbeat: true });
-  expect(h.bestie.snapshot().record?.wakeProblem).toBeUndefined();
+  expect(h.requests("enable-bestie")).toHaveLength(1);
+  await h.bestie.setCheckIn(true);
+  expect(h.requests("enable-bestie")).toHaveLength(2);
+  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
+  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(kinds(h, 9)).toHaveLength(1);
 });
@@ -159,7 +168,7 @@ it("reopens a finished setup after restart without another agent, channel or int
   expect(h.bestie.snapshot().status).toBe("ready");
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.requests("update-agent")).toHaveLength(1);
-  expect(h.requests("set-agent-heartbeat")).toHaveLength(1);
+  expect(h.requests("enable-bestie")).toHaveLength(1);
   expect(h.events).toHaveLength(published);
 });
 
@@ -338,7 +347,7 @@ it("delivers a lost intro once after restart", async () => {
   );
 });
 
-it("does not make a second Bestie while this community's agent list is unread", async () => {
+it("resumes an unlisted Bestie the account already has instead of registering a second one", async () => {
   const h = await bestieFixture(native.invoke);
   h.rows.push({
     key: "elsewhere",
@@ -346,32 +355,57 @@ it("does not make a second Bestie while this community's agent list is unread", 
     agent_name: "Bestie",
     agent_pubkey: "34".repeat(32),
     status: 2,
+    agent_type: 1,
+  });
+  await h.bestie.setup();
+  // Builderlab refused a second Bestie; setup resumed the existing one
+  // instead of offering to create a new one, which could only be refused
+  // again now that the server allows only one live Bestie per owner.
+  expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    message: "Your Bestie is set up.",
+    record: { agent: "34".repeat(32), complete: true },
+  });
+  expect(h.bestie.snapshot().canCreateNew).toBeFalsy();
+  expect(
+    h.rows.find((row) => row.agent_id === "elsewhere")?.agent_instructions,
+  ).toBe(bestieInstructions(h.viewer, HOME));
+});
+
+it("explains an unfinished Bestie found elsewhere in the account without offering a new one", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.rows.push({
+    key: "elsewhere",
+    agent_id: "elsewhere",
+    agent_name: "Bestie",
+    agent_pubkey: "34".repeat(32),
+    status: 1,
+    agent_type: 1,
   });
   await h.bestie.setup();
   expect(h.bestie.snapshot()).toMatchObject({
     status: "error",
-    message: expect.stringContaining("isn't listed in this community yet"),
-    canCreateNew: true,
+    message: expect.stringContaining("hasn't finished setting up yet"),
   });
-  expect(h.requests("register-agent")).toHaveLength(0);
+  expect(h.bestie.snapshot().canCreateNew).toBeFalsy();
+  expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.events).toHaveLength(0);
 });
 
-it("creates a new Bestie when the owner asks despite an unlisted one", async () => {
+it("turns check-in off and back on directly, without repeating the rest of setup", async () => {
   const h = await bestieFixture(native.invoke);
-  h.rows.push({
-    key: "elsewhere",
-    agent_id: "elsewhere",
-    agent_name: "Bestie",
-    agent_pubkey: "34".repeat(32),
-    status: 2,
-  });
   await h.bestie.setup();
-  expect(h.bestie.snapshot().canCreateNew).toBe(true);
-  await h.bestie.setup(undefined, { createNew: true });
-  expect(h.bestie.snapshot()).toMatchObject({
-    status: "ready",
-    message: "Your Bestie is set up.",
-  });
+  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
+  await h.bestie.setCheckIn(false);
+  expect(h.requests("disable-bestie")).toHaveLength(1);
+  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "off" });
+  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  await h.bestie.setCheckIn(true);
+  expect(h.requests("enable-bestie")).toHaveLength(2);
+  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
+  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  // Neither call touched the rest of setup.
   expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.requests("update-agent")).toHaveLength(1);
 });

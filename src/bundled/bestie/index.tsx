@@ -15,6 +15,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type {} from "../builderlab/service";
 import { ChannelPreview } from "../inbox/ChannelPreview";
@@ -164,6 +165,21 @@ function Setup({
   const [home, setHome] =
     useState<Pick<ChannelSummary, "id" | "name" | "channelType">>();
   const [homeError, setHomeError] = useState("");
+  const [checkInPending, setCheckInPending] = useState(false);
+  const toggleCheckIn = useCallback(
+    async (on: boolean) => {
+      setCheckInPending(true);
+      try {
+        await bestie.setCheckIn(on);
+      } catch {
+        // A guard failure (e.g. disconnected mid-click); record.checkInProblem
+        // carries the usual, retryable failure from the attempt itself.
+      } finally {
+        setCheckInPending(false);
+      }
+    },
+    [bestie],
+  );
   const lifetime = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     const controller = new AbortController();
@@ -250,24 +266,26 @@ function Setup({
                 ? "Bestie's instructions have changed since setup."
                 : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
           </p>
-          {state.status === "ready" && state.record?.wakeProblem && (
-            <p className="m-0 text-body-sm text-muted" role="alert">
-              Hourly wake: {state.record.wakeProblem}
-            </p>
-          )}
-          {(state.instructionsChanged ||
-            state.status === "busy" ||
-            (state.status === "ready" && state.record?.wakeProblem)) && (
+          {(state.instructionsChanged || state.status === "busy") && (
             <Button
               size="sm"
               variant="outline"
               loading={state.status === "busy"}
               onClick={() => void bestie.setup()}
             >
-              {state.instructionsChanged || state.status === "busy"
-                ? "Update Bestie's instructions"
-                : "Retry the hourly wake"}
+              Update Bestie's instructions
             </Button>
+          )}
+          <Switch
+            label="Hourly check-in"
+            checked={record.checkIn === "on"}
+            disabled={checkInPending}
+            onCheckedChange={(checked) => void toggleCheckIn(checked)}
+          />
+          {record.checkInProblem && (
+            <p className="m-0 w-full text-body-sm text-danger" role="alert">
+              {record.checkInProblem}
+            </p>
           )}
           <details className="w-full text-body-sm text-muted">
             <summary className="cursor-pointer">Bestie's instructions</summary>

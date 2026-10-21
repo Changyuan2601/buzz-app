@@ -84,3 +84,48 @@ it("sets up Bestie and keeps the private conversation on its page", async () => 
   expect(h.open).not.toHaveBeenCalled();
   expect(h.requests("register-agent")).toHaveLength(1);
 });
+
+it("turns Bestie's check-in off and back on through the switch", async () => {
+  const h = await bestieFixture(native.invoke);
+  const Page = h.pages.snapshot()[0]?.component;
+  if (!Page) throw new Error("Missing Bestie page");
+  render(<Page />);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await screen.findByRole("region", { name: "Bestie conversation" });
+  const toggle = await screen.findByRole("switch", {
+    name: "Hourly check-in",
+  });
+  expect(toggle).toBeChecked();
+  expect(h.requests("enable-bestie")).toHaveLength(1);
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).not.toBeChecked());
+  expect(h.requests("disable-bestie")).toHaveLength(1);
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).toBeChecked());
+  expect(h.requests("enable-bestie")).toHaveLength(2);
+});
+
+it("shows the check-in error under the switch and leaves it off", async () => {
+  const h = await bestieFixture(native.invoke);
+  const Page = h.pages.snapshot()[0]?.component;
+  if (!Page) throw new Error("Missing Bestie page");
+  render(<Page />);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await screen.findByRole("region", { name: "Bestie conversation" });
+  const toggle = await screen.findByRole("switch", {
+    name: "Hourly check-in",
+  });
+  await userEvent.click(toggle);
+  await vi.waitFor(() => expect(toggle).not.toBeChecked());
+  h.reply("enable-bestie", 200, {
+    status: "failed",
+    error_message: "No active Buzz agent",
+  });
+  await userEvent.click(toggle);
+  await screen.findByText("No active Buzz agent");
+  expect(toggle).not.toBeChecked();
+});

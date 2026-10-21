@@ -6,13 +6,17 @@ const UUID =
 
 export type RegistrationIntent = Readonly<{ storageKey: string; key: string }>;
 
-/** Persist only the intent, never the credential or owner proof. */
+/** Persist only the intent, never the credential or owner proof. Beekeeper's
+ * idempotency digest includes the agent type, so a generic and a Bestie
+ * request for the same name must not share one key. */
 export function registrationIntent(
   target: string,
   subject: string,
   name: string,
+  agentType?: string,
 ): RegistrationIntent {
-  const storageKey = PREFIX + JSON.stringify([target, subject, name]);
+  const storageKey =
+    PREFIX + JSON.stringify([target, subject, name, agentType ?? ""]);
   let saved: { key: string; createdAt: number } | null;
   try {
     saved = JSON.parse(localStorage.getItem(storageKey) ?? "null");
