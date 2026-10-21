@@ -621,8 +621,9 @@ function ChannelWorkspace({
     signal: navigation?.signal,
     onSaved: useCallback(() => setComposerFocus((value) => value + 1), []),
   });
+  // Only until the greeting exists: after that Get started is a regular chat.
   const welcomeControls =
-    welcomeChat && agents ? (
+    welcomeChat && !welcomeChat.greetingId && agents ? (
       <WelcomeControls
         agents={agents}
         session={queries}
@@ -1419,9 +1420,7 @@ function ChannelWorkspace({
               }
               onOpenThread={openThread}
               revealMessageId={
-                sent?.channelId === current.id
-                  ? sent.id
-                  : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
+                sent?.channelId === current.id ? sent.id : undefined
               }
               afterMessages={welcomeControls}
             />
