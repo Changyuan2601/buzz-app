@@ -10,6 +10,7 @@ import {
 } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
+import { cardAnswers } from "./card-answers";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -241,7 +242,11 @@ function Timeline({
       agentPubkeys,
     ],
   );
-  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  const answered = useMemo(
+    () => cardAnswers(visibleRows, viewer, agentPubkeys),
+    [visibleRows, viewer, agentPubkeys],
+  );
+  const rows = useMemo(() => membershipRows(answered.rows), [answered.rows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -306,8 +311,8 @@ function Timeline({
   );
   const contentSignature = useMemo(
     () =>
-      `${geometrySignature(visibleRows, profiles, resolveName)}:${afterMessageId ?? ""}`,
-    [visibleRows, profiles, resolveName, afterMessageId],
+      `${geometrySignature(answered.rows, profiles, resolveName)}:${afterMessageId ?? ""}`,
+    [answered.rows, profiles, resolveName, afterMessageId],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
@@ -1223,12 +1228,13 @@ function Timeline({
                       day={day && !disclosure}
                       latest={index === rows.length - 1}
                       reply={
-                        nextRow &&
+                        answered.answers.get(row.id) ??
+                        (nextRow &&
                         nextRow.authorId === viewer &&
                         !nextRow.threadRootId &&
                         !nextRow.membership
                           ? nextRow.content
-                          : undefined
+                          : undefined)
                       }
                     />
                   )}

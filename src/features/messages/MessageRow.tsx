@@ -917,8 +917,10 @@ function MessageRowContent({
                 <InlineUiCard
                   ui={inlineUi.ui}
                   agent={row.authorId}
+                  // An answered card is done even while it is the newest row.
                   live={
                     latest &&
+                    !reply &&
                     layout === "timeline" &&
                     !row.threadRootId &&
                     !!session?.messages
