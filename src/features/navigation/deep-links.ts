@@ -6,10 +6,9 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
-import { parseBuzzLink } from "./buzz-links";
-import { entityTarget } from "../repos/routes";
+import { buzzLinkTarget, parseBuzzLink } from "./buzz-links";
 import type { Navigation, OpenFailure, OpenResult } from "./controller";
-import { parseOpenTarget, type OpenTarget } from "./targets";
+import type { OpenTarget } from "./targets";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -30,7 +29,8 @@ type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
 /** Decide what one OS URL means for the signed-in client. The OS ingress accepts
  * the Buzz link forms, `buzz://message?channel=&id=[&thread=]` and
- * `buzz://channel/<id>`, which carry no community and so bind to the selected one.
+ * `buzz://channel/<id>`, which bind to the selected community unless a
+ * `community-id` query names another.
  * A bound target still passes the usual viewer, membership and channel checks;
  * nothing here grants access. */
 export function deepLinkStep(
@@ -47,39 +47,15 @@ export function deepLinkStep(
   // of its own beyond the Buzz ones.
   if (!link) return { fail: "invalid-target" };
   try {
-    if (!client.viewer || !client.selected) return { fail: "unavailable" };
-    if (link.format === "removed")
-      return {
-        open: {
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.repos",
-          pageId: "repos",
-          scope: {
-            viewer: client.viewer,
-            communityOrigin: communityDestination(client.selected).url,
-          },
-        },
-      };
-    if (link.format === "entity")
-      return {
-        open: entityTarget(link.route, {
-          viewer: client.viewer,
-          communityOrigin: communityDestination(client.selected).url,
-        }),
-      };
-    const { format: _format, ...destination } = link;
-    return {
-      open: parseOpenTarget({
-        version: 1,
-        kind: "conversation",
-        scope: {
-          viewer: client.viewer,
-          communityOrigin: communityDestination(client.selected).url,
-        },
-        ...destination,
-      }),
-    };
+    // A scoped link names its community; the others bind to the selected one.
+    const community =
+      link.format === "scoped" ? link.communityId : client.selected;
+    if (!client.viewer || !community) return { fail: "unavailable" };
+    const open = buzzLinkTarget(url, {
+      viewer: client.viewer,
+      communityOrigin: communityDestination(community).url,
+    });
+    return open ? { open } : { fail: "invalid-target" };
   } catch {
     return { fail: "invalid-target" };
   }

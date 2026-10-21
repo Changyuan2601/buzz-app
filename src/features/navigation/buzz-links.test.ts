@@ -102,7 +102,7 @@ it("ignores query parameters outside the Buzz link grammar, as the original desk
       `buzz://message?foo=bar&channel=${parsed.channelId}&relay=evil&id=${parsed.messageId}`,
     ),
   ).toEqual(parsed);
-  // The channel forms carry everything in the path and ignore any query.
+  // The channel forms carry everything else in the path and ignore any other query.
   expect(parseBuzzLink("buzz://channel/general?relay=evil")).toEqual({
     format: "legacy",
     channelId: "general",
@@ -119,6 +119,57 @@ it("ignores query parameters outside the Buzz link grammar, as the original desk
   expect(parseBuzzLink(`${example}&thread=${thread}&thread=${thread}`)).toBe(
     null,
   );
+});
+it("opens a link naming its community there, and in the receiving one without it", () => {
+  const other = "https://other.example";
+  const thread = "b".repeat(64);
+  const message = `${example}&thread=${thread}&community-id=${encodeURIComponent(other)}`;
+  const channel = `buzz://channel/general/${thread}?community-id=wss://OTHER.example/`;
+  const scoped = { viewer: scope.viewer, communityOrigin: other };
+  expect(parseBuzzLink(channel)).toEqual({
+    format: "scoped",
+    communityId: other,
+    channelId: "general",
+    messageId: thread,
+  });
+  expect(buzzLinkKind(message)).toBe("thread");
+  expect(buzzLinkTarget(message, scope)).toMatchObject({
+    scope: scoped,
+    channelId: "c89a3185-29c5-40db-8284-054536d98b09",
+    threadRootId: thread,
+  });
+  expect(buzzLinkTarget(channel, scope)).toEqual({
+    version: 1,
+    kind: "conversation",
+    scope: scoped,
+    channelId: "general",
+    messageId: thread,
+  });
+  // OS links agree, and need no selected community to name one.
+  for (const selected of [scope.communityOrigin, null])
+    expect(deepLinkStep(channel, { viewer: scope.viewer, selected })).toEqual({
+      open: buzzLinkTarget(channel, scope),
+    });
+  expect(buzzLinkTarget("buzz://channel/general", scope)).toMatchObject({
+    scope,
+  });
+  // A repeated, empty or non-community value is ambiguous and rejects.
+  for (const query of [
+    `community-id=${other}&community-id=${other}`,
+    "community-id=",
+    "community-id=http://other.example",
+    "community-id=https://user@other.example",
+    "community-id=https://other.example/path",
+  ]) {
+    expect(parseBuzzLink(`buzz://channel/general?${query}`)).toBeNull();
+    expect(parseBuzzLink(`${example}&${query}`)).toBeNull();
+    expect(
+      deepLinkStep(`buzz://channel/general?${query}`, {
+        viewer: scope.viewer,
+        selected: scope.communityOrigin,
+      }),
+    ).toEqual({ fail: "invalid-target" });
+  }
 });
 it.each([
   "buzz://channel/",

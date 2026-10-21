@@ -716,3 +716,82 @@ test.describe("links to channels the reader hasn't joined", () => {
     await expect(card).toContainText("Public channel · Not joined");
   });
 });
+
+test("a link naming another joined community opens there; without one it stays here", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const community = (name) =>
+    page
+      .getByRole("navigation", { name: "Communities" })
+      .getByRole("button", { name: `Community switcher: ${name}` });
+  const target = app.histories.get("secondary/beta").at(-1);
+  const secondary = encodeURIComponent("https://secondary.example");
+  const missing = "6d697373-0000-4000-8000-000000000001";
+  const message = app.append(
+    "primary",
+    "alpha",
+    [
+      `[Beta link](buzz://channel/beta?community-id=${secondary})`,
+      `[Message link](buzz://message?channel=beta&id=${target.id}&community-id=${secondary})`,
+      "[Local link](buzz://channel/beta)",
+      "[Unjoined link](buzz://channel/beta?community-id=https://unjoined.example)",
+      `[Gone link](buzz://channel/${missing}?community-id=${secondary})`,
+    ].join(" "),
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const link = (name) => row.getByRole("link", { name, exact: true });
+  const opened = async (channelId, communityOrigin) => {
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+    expect((await state(page)).entry.target).toMatchObject({
+      kind: "conversation",
+      channelId,
+      scope: { viewer: app.viewer, communityOrigin },
+    });
+  };
+  await link("Beta link").click();
+  await expect(community("Secondary")).toBeVisible();
+  await expect(
+    page.getByText("secondary beta message 0", { exact: false }),
+  ).toBeVisible();
+  await opened("beta", "https://secondary.example");
+  await page.screenshot({
+    path: test.info().outputPath("community-link-channel.png"),
+  });
+
+  await button(page, "Go back").click();
+  await expect(community("Primary")).toBeVisible();
+  await link("Message link").click();
+  await expect(community("Secondary")).toBeVisible();
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeFocused();
+  await opened("beta", "https://secondary.example");
+  expect((await state(page)).entry.target.messageId).toBe(target.id);
+
+  await button(page, "Go back").click();
+  await expect(community("Primary")).toBeVisible();
+  await link("Local link").click();
+  await opened("beta", "https://primary.example");
+  await expect(community("Primary")).toBeVisible();
+
+  await button(page, "Go back").click();
+  await link("Unjoined link").click();
+  await expect(button(page, "Retry navigation")).toBeVisible();
+  expect((await state(page)).status).toBe("failed");
+  await expect(community("Primary")).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("community-link-unjoined.png"),
+  });
+
+  await button(page, "Go back").click();
+  await expect(community("Primary")).toBeVisible();
+  await link("Gone link").click();
+  await expect(community("Secondary")).toBeVisible();
+  await expect(button(page, "Retry navigation")).toBeVisible();
+  expect((await state(page)).status).toBe("failed");
+  await page.screenshot({
+    path: test.info().outputPath("community-link-missing.png"),
+  });
+});
