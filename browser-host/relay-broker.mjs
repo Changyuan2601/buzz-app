@@ -1483,15 +1483,14 @@ export function relayBrokerPlugin({
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
-            let raw = "",
-              bytes = 0;
+            let raw = "";
             req.setEncoding("utf8");
             for await (const part of req) {
-              bytes += Buffer.byteLength(part);
+              raw += part;
               if (
-                bytes >
+                Buffer.byteLength(raw) >
                 (updating
-                  ? 32 * 1024 * 1024
+                  ? 450000
                   : watchingPresence
                     ? 20000
                     : prioritizing
@@ -1499,7 +1498,6 @@ export function relayBrokerPlugin({
                       : 256)
               )
                 return json(res, 413, { error: "Live control too large" });
-              raw += part;
             }
             let streamId,
               presenceAuthors,
@@ -1605,14 +1603,12 @@ export function relayBrokerPlugin({
             return json(res, 200, { accepted: true });
           }
           if (route === "/api/relay/stream" && req.method === "POST") {
-            let raw = "",
-              bytes = 0;
+            let raw = "";
             req.setEncoding("utf8");
             for await (const part of req) {
-              bytes += Buffer.byteLength(part);
-              if (bytes > 32 * 1024 * 1024)
-                return json(res, 413, { error: "Live interests too large" });
               raw += part;
+              if (Buffer.byteLength(raw) > 300000)
+                return json(res, 413, { error: "Live interests too large" });
             }
             let channels,
               joined,
@@ -1659,7 +1655,7 @@ export function relayBrokerPlugin({
             // Bound slow-client buffering rather than retaining unbounded traffic.
             const write = (kind, value) => {
               if (res.destroyed) return;
-              if (res.writableLength > 32 * 1024 * 1024) {
+              if (res.writableLength > 2 * 1024 * 1024) {
                 res.destroy();
                 return;
               }

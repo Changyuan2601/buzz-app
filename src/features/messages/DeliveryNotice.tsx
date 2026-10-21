@@ -22,20 +22,6 @@ export function DeliveryNotice({
     return () => clearTimeout(timer);
   }, [row.createdAt, row.delivery]);
   const feedback = deliveryFeedback(row, now);
-  if (row.managedDelivery) {
-    const managed = row.managedDelivery;
-    if (managed.phase !== "failed") return null;
-    return (
-      <div className={styles.delivery}>
-        <span role="status">{managed.error}</span>
-        {retry && (
-          <Button size="inline" variant="ghost" onClick={() => retry(row.id)}>
-            {managed.relayAccepted ? "Check again" : "Retry"}
-          </Button>
-        )}
-      </div>
-    );
-  }
   if (!feedback) return null;
   const canRetry =
     (row.delivery === "failed" || row.delivery === "unknown") && retry;

@@ -46,29 +46,12 @@ export function createMessages(
   publishReport?: (template: EventTemplate) => Promise<void>,
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
-  managedRecipient?: string,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
       throw new Error("Join the conversation before posting");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
-    if (managedRecipient && kind === 9) {
-      if (!/^[0-9a-f]{64}$/.test(managedRecipient))
-        throw new Error("Invalid managed recipient");
-      validateMentions(channelId, [managedRecipient]);
-      return {
-        ...outbox,
-        send: (
-          input: Parameters<Outbox["send"]>[0],
-          recovery?: OutboxRecovery,
-          active?: () => boolean,
-        ) =>
-          outbox.send(input, recovery, active, {
-            recipient: { channelId, agentId: managedRecipient },
-          }),
-      };
-    }
     return outbox;
   };
   const ownedMessage = (event: EventData) =>

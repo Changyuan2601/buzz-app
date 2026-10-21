@@ -311,11 +311,6 @@ const message = (error: unknown) =>
 
 /** What the runner needs of its host. */
 export type RunnerHost = {
-  received?(
-    agent: Agent,
-    channelId: string,
-    messageIds: readonly string[],
-  ): Promise<void>;
   /** Session controls refresh when this copy gains or loses native custody. */
   ownershipChanged?(): void;
   /** The agent, while its community is live to run it in. */
@@ -2005,10 +2000,6 @@ export class AgentRunners {
         workingUntil: working.hold,
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
-        received: (messageIds: readonly string[]) =>
-          job.channelId && this.host.received
-            ? this.host.received(agent, job.channelId, messageIds)
-            : Promise.reject(new Error("Message receipt has no channel")),
         superseded: () => job.work?.supersede(),
         interruptible: (stop: () => Promise<void>) =>
           job.work?.interruptible(stop),

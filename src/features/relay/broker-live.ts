@@ -2,7 +2,6 @@ import { observerFrame, observerGeneration } from "../agents/observer";
 import { eventDto } from "./events";
 import {
   liveChannels,
-  LIVE_INTEREST_CAPACITY,
   livePresenceAuthors,
   liveJoined,
   liveProvenance,
@@ -11,7 +10,7 @@ import {
   type LiveSubscription,
 } from "./live";
 
-const MAX_FRAME = 32 * 1024 * 1024;
+const MAX_FRAME = 1024 * 1024;
 const MAX_RETRY_MS = 30_000;
 /** A generation owns its stream, parser, retry and heartbeat. Interest changes
  * use the same host owner so they cannot interrupt pending publications. */
@@ -25,7 +24,7 @@ export function subscribeBrokerTraffic(
   let channels: string[] = [];
   let joined: string[] = [];
   let sentChannels: string[] = [];
-  // Only IDs in the last dispatched snapshot can have a host wire.
+  // Only IDs in the last dispatched snapshot can have a host wire (at most 1024).
   const removed = new Set<string>();
   let interestRevision = 0;
   const addedAt = new Map<string, number>();
@@ -527,7 +526,7 @@ function liveSnapshot(value: unknown): LiveSnapshot {
     ) ||
     !Array.isArray(snapshot.routes) ||
     // Keep limited channels visible alongside both globals and the optional observer.
-    snapshot.routes.length > LIVE_INTEREST_CAPACITY + 4 ||
+    snapshot.routes.length > 1027 ||
     (snapshot.error !== undefined && typeof snapshot.error !== "string")
   )
     throw new Error("Invalid live broker status");

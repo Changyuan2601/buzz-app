@@ -6,13 +6,12 @@ import type {
 } from "../artifact-storage/service";
 import { provideArtifactSync } from "./artifact-sync";
 import { ArtifactSyncError } from "./artifact-reader";
-import { registerArtifactDelivery } from "./artifact-delivery";
 import {
   reconcileArtifactDelta,
   reconcileArtifactCurrent,
 } from "./artifact-reconcile";
 import { keypair, signed } from "./testing";
-import { eventDto, type RelayEvent } from "./events";
+import { eventDto, type EventData, type RelayEvent } from "./events";
 vi.mock("./artifact-reconcile", async (original) => ({
   ...(await original<typeof import("./artifact-reconcile")>()),
   reconcileArtifactDelta: vi.fn(async () => {}),
@@ -22,7 +21,6 @@ const stops: (() => void)[] = [];
 afterEach(async () => {
   for (const stop of stops.splice(0)) stop();
   await vi.advanceTimersByTimeAsync(0);
-  vi.clearAllMocks();
   vi.mocked(reconcileArtifactDelta).mockReset().mockResolvedValue(undefined);
   vi.mocked(reconcileArtifactCurrent).mockReset().mockResolvedValue(undefined);
   vi.unstubAllGlobals();
@@ -34,11 +32,10 @@ function setup() {
     locks: { request: vi.fn(async (_key, _options, callback) => callback()) },
   });
   const listeners = new Set<() => void>();
-  let confirmed: (events: readonly RelayEvent[]) => void = () => {};
+  let receive: (value: { events: readonly RelayEvent[] }) => void = () => {};
+  let accepted: (event: EventData) => void = () => {};
   let opened: (entry: OpenArtifactCollection) => void = () => {};
   let online = true;
-  let rosterListener = () => {};
-  let channels = [{ id: "one", lastActivityAt: 0 }];
   const session = {
     artifactSync: {},
     live: {
@@ -50,31 +47,34 @@ function setup() {
         };
       },
     },
-    channels: {
-      list: () => ({ channels }),
-      subscribeList: (listener: () => void) => {
-        rosterListener = listener;
-        return () => {};
-      },
-    },
-    subscribeLive: () => () => {},
-    subscribeArtifactUpdates: (listener: typeof confirmed) => {
-      confirmed = listener;
+    subscribeLive: (listener: typeof receive) => {
+      receive = listener;
       return () => {
-        confirmed = () => {};
+        receive = () => {};
       };
     },
+    outbox: {
+      observeSend: (
+        listener: (
+          event: EventData,
+        ) => ((pending: readonly EventData[]) => void) | undefined,
+      ) => {
+        accepted = (event) => listener(event)?.([]);
+        return () => {
+          accepted = () => {};
+        };
+      },
+    },
   };
-  const snapshot = () => ({
-    viewer: "viewer",
-    origin: "https://relay.test",
-    status: "ready",
-    cached: false,
-    session,
-  });
   const ctx = {
     relay: {
-      snapshot,
+      snapshot: () => ({
+        viewer: "viewer",
+        origin: "https://relay.test",
+        status: "ready",
+        cached: false,
+        session,
+      }),
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => {
@@ -86,15 +86,14 @@ function setup() {
       stops.push(effect());
     },
   };
-  const storage = {
-    onOpen: (listener: typeof opened) => {
-      opened = listener;
-      return () => {};
-    },
-  };
   provideArtifactSync(
     ctx as unknown as Context,
-    storage as unknown as ArtifactStorageService,
+    {
+      onOpen: (listener: typeof opened) => {
+        opened = listener;
+        return () => {};
+      },
+    } as unknown as ArtifactStorageService,
   );
   const add = (version = 1) => {
     const controller = new AbortController();
@@ -109,18 +108,13 @@ function setup() {
     } as unknown as OpenArtifactCollection);
     return { controller, collection };
   };
-  const connection = (value: boolean) => {
-    online = value;
-    for (const listener of listeners) listener();
-  };
   return {
-    session,
     add,
-    confirmed: (event: RelayEvent) => confirmed([event]),
-    connection,
-    roster: (value: typeof channels) => {
-      channels = value;
-      rosterListener();
+    confirmed: (event: RelayEvent) => receive({ events: [event] }),
+    accepted: (event: EventData) => accepted(event),
+    connection: (value: boolean) => {
+      online = value;
+      for (const listener of listeners) listener();
     },
   };
 }
@@ -176,20 +170,6 @@ it("refreshes after proven acceptance without writing raw revisions", async () =
   expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
 });
 
-it("ignores channel activity but repairs when roster membership changes", async () => {
-  const h = setup();
-  h.add();
-  await vi.advanceTimersByTimeAsync(0);
-  h.roster([{ id: "one", lastActivityAt: 10 }]);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
-  h.roster([
-    { id: "one", lastActivityAt: 10 },
-    { id: "two", lastActivityAt: 0 },
-  ]);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
-});
 it("releases an expired version so a current collection can own sync", async () => {
   const h = setup();
   vi.mocked(reconcileArtifactDelta).mockRejectedValueOnce(
@@ -282,100 +262,6 @@ it("keeps a current handle when an older in-flight version fails", async () => {
   expect(reconcileArtifactDelta).toHaveBeenCalledTimes(3);
   expect(navigator.locks.request).toHaveBeenCalledOnce();
 });
-it("confirms only frozen accepted operations after a current read starts and commits", async () => {
-  const h = setup();
-  let pending = true;
-  const capture = vi.fn(async () => (pending ? ["accepted-operation"] : []));
-  const targets = vi.fn(() =>
-    pending ? [{ operationId: "accepted-operation", artifactId: "task" }] : [],
-  );
-  const complete = vi.fn(async () => {
-    pending = false;
-  });
-  registerArtifactDelivery(h.session, { capture, targets, complete });
-  let finish = () => {};
-  vi.mocked(reconcileArtifactCurrent).mockImplementationOnce(async () => {
-    expect(capture).toHaveBeenCalledWith(
-      "test.task",
-      JSON.stringify(["test.plugin", "tasks"]),
-    );
-    await new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-  });
-  h.add();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(complete).not.toHaveBeenCalled();
-  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
-  finish();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(complete).toHaveBeenCalledWith(
-    ["accepted-operation"],
-    expect.any(AbortSignal),
-  );
-  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
-});
-it("does not attach acceptance during a delta to that in-flight response", async () => {
-  const h = setup();
-  let pending = false;
-  const complete = vi.fn(async () => {
-    pending = false;
-  });
-  registerArtifactDelivery(h.session, {
-    capture: async () => (pending ? ["operation"] : []),
-    targets: () =>
-      pending ? [{ operationId: "operation", artifactId: "task" }] : [],
-    complete,
-  });
-  let finish = () => {};
-  vi.mocked(reconcileArtifactDelta).mockImplementationOnce(async () => {
-    await new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-  });
-  h.add();
-  await vi.advanceTimersByTimeAsync(0);
-  pending = true;
-  h.confirmed(
-    eventDto(
-      signed(keypair(), {
-        kind: 45010,
-        content: "{}",
-        tags: [
-          ["type", "test.task"],
-          ["d", "task"],
-        ],
-      }),
-    ),
-  );
-  expect(reconcileArtifactCurrent).not.toHaveBeenCalled();
-  expect(complete).not.toHaveBeenCalled();
-  finish();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
-  expect(complete).toHaveBeenCalledWith(["operation"], expect.any(AbortSignal));
-});
-it("retains an accepted obligation after a failed current read", async () => {
-  const h = setup();
-  let pending = true;
-  const complete = vi.fn(async () => {
-    pending = false;
-  });
-  registerArtifactDelivery(h.session, {
-    capture: async () => (pending ? ["operation"] : []),
-    targets: () =>
-      pending ? [{ operationId: "operation", artifactId: "task" }] : [],
-    complete,
-  });
-  vi.mocked(reconcileArtifactCurrent).mockRejectedValueOnce(
-    new Error("Disconnected"),
-  );
-  h.add();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(complete).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(60_000);
-  expect(complete).toHaveBeenCalledWith(["operation"], expect.any(AbortSignal));
-});
 it("keeps duplicate delayed hints behind an in-flight current read", async () => {
   const h = setup();
   h.add();
@@ -432,11 +318,6 @@ it("uses bounded current reads and requests a delta after live overflow", async 
   finish();
   await vi.advanceTimersByTimeAsync(0);
   expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(10);
-  expect(
-    vi.mocked(reconcileArtifactDelta).mock.invocationCallOrder[1],
-  ).toBeLessThan(
-    vi.mocked(reconcileArtifactCurrent).mock.invocationCallOrder[0] as number,
-  );
   expect(
     vi
       .mocked(reconcileArtifactCurrent)
@@ -559,55 +440,27 @@ it("keeps a failed delta retry round ahead of queued live reads", async () => {
   expect(reconcileArtifactCurrent).not.toHaveBeenCalled();
 });
 
-it("keeps delta and other live reads active when confirmation saves fail", async () => {
+it("requests a current read from the existing outbox acceptance observer", async () => {
   const h = setup();
-  const complete = vi.fn(async () => {
-    throw new Error("Outbox storage is full");
-  });
-  registerArtifactDelivery(h.session, {
-    capture: async () => ["accepted-operation"],
-    targets: () => [
-      { operationId: "accepted-operation", artifactId: "accepted-task" },
-    ],
-    complete,
-  });
   h.add();
   await vi.advanceTimersByTimeAsync(0);
-  expect(complete).toHaveBeenCalledOnce();
-  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
-  h.confirmed(
-    eventDto(
-      signed(keypair(), {
-        kind: 45010,
-        content: "{}",
-        tags: [
-          ["type", "test.task"],
-          ["d", "other-task"],
-        ],
-      }),
-    ),
+  h.accepted(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["type", "test.task"],
+        ["d", "task"],
+      ],
+    }),
   );
   await vi.advanceTimersByTimeAsync(0);
-  expect(vi.mocked(reconcileArtifactCurrent).mock.calls[1]?.[3]).toEqual([
-    "other-task",
-  ]);
-  expect(complete).toHaveBeenCalledOnce();
-  await vi.advanceTimersByTimeAsync(60_000);
-  expect(complete).toHaveBeenCalledTimes(2);
-  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(4);
-});
-it("runs a requested delta even when the delivery journal cannot be read", async () => {
-  const h = setup();
-  registerArtifactDelivery(h.session, {
-    capture: async () => {
-      throw new Error("Journal unavailable");
-    },
-    targets: () => [],
-    complete: async () => {},
-  });
-  h.add();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
-  await vi.advanceTimersByTimeAsync(60_000 + 7000);
-  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    "test.task",
+    ["task"],
+    expect.any(AbortSignal),
+    expect.anything(),
+  );
 });

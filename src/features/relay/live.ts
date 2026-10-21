@@ -15,8 +15,6 @@ import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
-export const LIVE_INTEREST_CAPACITY = 100_000;
-export const LIVE_GROUP_SIZE = 1000;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
@@ -102,7 +100,7 @@ export function liveProvenance(value: unknown): LiveProvenance {
       : liveChannels(input.sourceChannels);
   if (
     sourceChannels &&
-    (!sourceChannels.length || sourceChannels.length > LIVE_GROUP_SIZE)
+    (!sourceChannels.length || sourceChannels.length > LIVE_BATCH_SIZE)
   )
     throw new Error("Invalid live source scope");
   return Object.freeze({
@@ -163,13 +161,13 @@ export function livePresenceAuthors(input: unknown): string[] {
 export function liveChannels(input: unknown): string[] {
   if (
     !Array.isArray(input) ||
-    input.length > LIVE_INTEREST_CAPACITY ||
+    input.length > 1024 ||
     input.some(
       (id) => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id),
     )
   )
     throw new Error(
-      "Invalid live channel interests (maximum 100000 bounded IDs)",
+      "Invalid live channel interests (maximum 1024 bounded IDs)",
     );
   return [...new Set(input as string[])].sort();
 }
@@ -180,8 +178,7 @@ export function liveJoined(
   input: unknown,
 ): string[] {
   const joined = liveChannels(input);
-  const allowed = new Set(channels);
-  if (joined.some((id) => !allowed.has(id)))
+  if (joined.some((id) => !channels.includes(id)))
     throw new Error("Joined scope outside live interests");
   return joined;
 }
@@ -201,9 +198,6 @@ type Route = {
   retryRenewal?: boolean;
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
-  replayOffset?: number;
-  historyParent?: string;
-  priorityRank?: number;
 };
 export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
@@ -260,29 +254,18 @@ export function subscribeRelayTraffic(
       Object.freeze({
         status: connection,
         routes: Object.freeze(
-          [...routes.values()]
-            .filter((route) => !route.historyParent)
-            .flatMap((route) => {
-              const { id, channelId, channelIds, status, replay, error } =
-                route;
-              return (channelIds ?? [channelId]).map((channelId) => {
-                const retained =
-                  channelId &&
-                  route.previous?.status === "live" &&
-                  route.previous.wire &&
-                  scope(route.previous).length < scope(route).length &&
-                  scope(route.previous).includes(channelId);
-                return Object.freeze({
+          [...routes.values()].flatMap(
+            ({ id, channelId, channelIds, status, replay, error }) =>
+              (channelIds ?? [channelId]).map((channelId) =>
+                Object.freeze({
                   id: channelId ? `channel:${channelId}` : id,
                   ...(channelId ? { channelId } : {}),
-                  status: retained ? ("live" as const) : status,
-                  replay: retained
-                    ? (route.previous?.replay ?? replay)
-                    : replay,
-                  ...(!retained && error ? { error } : {}),
-                });
-              });
-            }),
+                  status,
+                  replay,
+                  ...(error ? { error } : {}),
+                }),
+              ),
+          ),
         ),
         ...(connectionError ? { error: connectionError } : {}),
       }),
@@ -307,10 +290,6 @@ export function subscribeRelayTraffic(
     delete route.previous;
   }
   function remove(route: Route) {
-    if (!route.historyParent) {
-      const history = routes.get(`replay:${route.id}`);
-      if (history) remove(history);
-    }
     closeWire(route);
     routes.delete(route.id);
   }
@@ -319,15 +298,6 @@ export function subscribeRelayTraffic(
   function replace(route: Route, ids = scope(route)) {
     // A sent replacement is not yet established. Keep the established source
     // through repeated removals; retire the pending intermediate, not a survivor.
-    if (
-      route.replayOffset !== undefined &&
-      JSON.stringify(ids) !== JSON.stringify(scope(route)) &&
-      !scope(route).every((id, index) => ids[index] === id)
-    ) {
-      const history = routes.get(`replay:${route.id}`);
-      if (history) remove(history);
-      route.replayOffset = 0;
-    }
     const previous = route.previous ?? (route.wire ? route : undefined);
     delete route.previous;
     if (previous !== route) closeWire(route); // Never retain a third wire.
@@ -382,60 +352,14 @@ export function subscribeRelayTraffic(
         ...interests,
       ]),
     ];
-    const joinedSet = new Set(joined);
-    const prioritySet = new Set(priority);
-    const staged = joined.length > LIVE_CHANNEL_CAPACITY;
-    const groupSize = staged ? LIVE_GROUP_SIZE : LIVE_BATCH_SIZE;
-    const capacity =
-      LIVE_CHANNEL_CAPACITY -
-      (observer !== null ? 1 : 0) -
-      (presenceAuthors.length ? 1 : 0) -
-      (joined.length ? 1 : 0) -
-      (staged ? SETUP_CONCURRENCY : 0);
-    const interestSet = new Set(interests);
-    const retained = new Map<string, Route>();
-    for (const route of routes.values()) {
-      if (route.historyParent || route.status === "limited") continue;
-      for (const id of scope(route)) {
-        if (interestSet.has(id) && (!route.channelIds || joinedSet.has(id)))
-          retained.set(id, route);
-      }
-    }
-    const admitted = new Set<string>();
-    const kept = new Set<Route>();
-    let singles = 0,
-      grouped = 0,
-      free = 0;
-    for (const id of ranked) {
-      const route = retained.get(id);
-      const batchable = joinedSet.has(id) && (staged || !prioritySet.has(id));
-      const newRoute = route && !kept.has(route) ? 1 : 0;
-      const nextFree =
-        free +
-        (newRoute && route?.channelIds && !route.previous
-          ? Math.max(
-              0,
-              groupSize -
-                scope(route).filter(
-                  (channel) =>
-                    interestSet.has(channel) && joinedSet.has(channel),
-                ).length,
-            )
-          : 0);
-      const nextSingles = singles + (!route && !batchable ? 1 : 0);
-      const nextGrouped = grouped + (!route && batchable ? 1 : 0);
-      const cost =
-        kept.size +
-        newRoute +
-        nextSingles +
-        Math.ceil(Math.max(0, nextGrouped - nextFree) / groupSize);
-      if (cost > capacity) continue;
-      admitted.add(id);
-      if (route) kept.add(route);
-      singles = nextSingles;
-      grouped = nextGrouped;
-      free = nextFree;
-    }
+    const admitted = new Set(
+      ranked.slice(
+        0,
+        LIVE_CHANNEL_CAPACITY -
+          (observer !== null ? 1 : 0) -
+          (presenceAuthors.length ? 1 : 0),
+      ),
+    );
     const remaining = new Set(interests);
     const globals = new Set([
       "profiles",
@@ -446,8 +370,6 @@ export function subscribeRelayTraffic(
     // Scope is immutable for a wire. Retirement rebuilds only the affected batch;
     // navigation is scheduling, never a reason to rebalance healthy subscriptions.
     for (const route of routes.values()) {
-      delete route.priorityRank;
-      if (route.historyParent) continue;
       const ids = scope(route);
       if (
         ids.length
@@ -455,12 +377,12 @@ export function subscribeRelayTraffic(
               (id) =>
                 !remaining.has(id) ||
                 (route.status === "limited") === admitted.has(id) ||
-                (!!route.channelIds && !joinedSet.has(id)),
+                (!!route.channelIds && !joined.includes(id)),
             )
           : !globals.has(route.id)
       ) {
         const survivors = ids.filter(
-          (id) => remaining.has(id) && admitted.has(id) && joinedSet.has(id),
+          (id) => remaining.has(id) && admitted.has(id) && joined.includes(id),
         );
         if (
           route.channelIds &&
@@ -499,61 +421,25 @@ export function subscribeRelayTraffic(
         route.status = "limited";
         route.error =
           "Live channel capacity reached; finite reads remain available";
-      } else if (!joinedSet.has(id) || (!staged && prioritySet.has(id)))
+      } else if (!joined.includes(id) || priority.includes(id))
         add(`channel:${id}`, [id]);
       else batch.push(id);
     }
-    for (const route of [...routes.values()]) {
-      if (!batch.length) break;
-      if (
-        !route.channelIds ||
-        route.historyParent ||
-        route.status === "limited" ||
-        route.status === "error" ||
-        route.previous
-      )
-        continue;
-      const extra = batch.splice(
-        0,
-        Math.max(0, groupSize - route.channelIds.length),
-      );
-      if (!extra.length) continue;
-      const next = replace(route, [...route.channelIds, ...extra]);
-      next.replayOffset =
-        route.replayOffset ??
-        (route.status === "live" ? route.channelIds.length : 0);
-    }
-    for (let i = 0; i < batch.length; i += groupSize) {
-      const route = add(
-        `batch:${++serial}`,
-        batch.slice(i, i + groupSize),
-        true,
-      );
-      if (staged) {
-        route.liveOnly = true;
-        route.replayOffset = 0;
-      }
-    }
+    for (let i = 0; i < batch.length; i += LIVE_BATCH_SIZE)
+      add(`batch:${++serial}`, batch.slice(i, i + LIVE_BATCH_SIZE), true);
     pump();
     notify();
   }
   function fail(route: Route, reason: string, transient = false) {
-    if (route.historyParent) {
-      const parent = routes.get(route.historyParent);
-      if (parent) {
-        parent.replay = "limited";
-        parent.error = reason;
-      }
-    }
     const previous = route.previous;
-    // A transient failure can retain an established subset. Denial and invalid
-    // traffic still retire the wire, and removed channels never regain coverage.
+    // Only an established, unchanged scope may outlive a failed renewal. Never
+    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
     const retain =
       transient &&
       previous?.status === "live" &&
       previous.wire &&
       wires.get(previous.wire) === previous &&
-      scope(previous).every((id) => scope(route).includes(id));
+      JSON.stringify(scope(previous)) === JSON.stringify(scope(route));
     if (retain) delete route.previous;
     closeWire(route);
     delete route.retryRenewal;
@@ -621,41 +507,18 @@ export function subscribeRelayTraffic(
       }
       requests.dispatch(request, send);
     }
-    for (const parent of [...routes.values()]) {
-      if (
-        parent.replayOffset === undefined ||
-        parent.status !== "live" ||
-        parent.replayOffset >= scope(parent).length ||
-        routes.has(`replay:${parent.id}`)
-      )
-        continue;
-      const history: Route = {
-        id: `replay:${parent.id}`,
-        historyParent: parent.id,
-        channelIds: scope(parent).slice(
-          parent.replayOffset,
-          parent.replayOffset + LIVE_BATCH_SIZE,
-        ),
-        status: "pending",
-        replay: "unknown",
-        count: 0,
-        since: parent.since,
-        quotaRetries: 0,
-      };
-      routes.set(history.id, history);
-    }
     let active = [...routes.values()].filter(
       (route) => route.wire && route.status === "pending",
     ).length;
     const rank = (route: Route) =>
-      (route.priorityRank ??= !scope(route).length
+      !scope(route).length
         ? -2
         : Math.min(
             priority.length,
             ...scope(route).map((id) =>
               priority.includes(id) ? priority.indexOf(id) : priority.length,
             ),
-          ));
+          );
     for (const route of [...routes.values()].sort(
       (a, b) => rank(a) - rank(b),
     )) {
@@ -665,14 +528,6 @@ export function subscribeRelayTraffic(
       if (delay > 0) {
         dispatchTimer = setTimeout(pump, delay);
         break;
-      }
-      if (wires.size >= 1024) {
-        if (route.previous?.wire) continue;
-        route.status = "limited";
-        route.error =
-          "Live subscription capacity reached; retry after demand changes";
-        notify();
-        continue;
       }
       // A retry being sent is not recovery. Retain its last failure until EOSE.
       const wire = `live-${++serial}`;
@@ -978,10 +833,7 @@ export function subscribeRelayTraffic(
             [incoming],
             Object.freeze({
               phase:
-                !route.historyParent &&
-                (route.liveOnly || route.status === "live")
-                  ? "live"
-                  : "replay",
+                route.liveOnly || route.status === "live" ? "live" : "replay",
               ...(channelId
                 ? { channelId }
                 : ids.length
@@ -991,26 +843,6 @@ export function subscribeRelayTraffic(
           );
       } else if (data[0] === "EOSE" && route.status === "pending") {
         clearTimeout(route.deadline);
-        if (route.historyParent) {
-          const parent = routes.get(route.historyParent);
-          remove(route);
-          if (parent && parent.replayOffset !== undefined) {
-            parent.replayOffset += scope(route).length;
-            if (parent.error) {
-              delete parent.error;
-              notify();
-            }
-            if (
-              route.count >= LIVE_REPLAY_LIMIT &&
-              parent.replay !== "limited"
-            ) {
-              parent.replay = "limited";
-              notify();
-            }
-          }
-          if (valid()) pump();
-          return;
-        }
         if (route.previous) closeWire(route.previous);
         delete route.previous;
         route.status = "live";

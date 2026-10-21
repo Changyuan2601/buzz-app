@@ -803,10 +803,7 @@ export async function connectNativeTransport(
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.
-        if (
-          event.kind !== ARTIFACT_KIND &&
-          event.created_at < Math.floor(Date.now() / 1000) - 15 * 60
-        ) {
+        if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60) {
           const found = await transport.query(
             [
               {

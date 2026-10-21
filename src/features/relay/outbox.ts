@@ -1,14 +1,4 @@
-import { ARTIFACT_MAX_EVENT_BYTES } from "../agents/agent-config-artifacts";
 import { isWorkflowOperation } from "../workflows/protocol";
-import {
-  managedDelivery,
-  mergeManagedDelivery,
-  deliveryState,
-  MANAGED_MAX_ATTEMPTS,
-  MANAGED_RECEIPT_MS,
-  type ManagedDelivery,
-  type ManagedRecipient,
-} from "./managed-delivery";
 import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
@@ -48,7 +38,6 @@ export type OutgoingEvent = Readonly<{
   acknowledged?: true;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
   guarded?: boolean;
-  managed?: ManagedDelivery;
   delivery: Delivery;
   error?: string | undefined;
   /** The relay refused the last attempt, rather than it failing on this
@@ -71,11 +60,6 @@ export interface Outbox {
     },
     recovery?: OutboxRecovery,
     active?: () => boolean,
-    managed?: Readonly<{
-      recipient?: ManagedRecipient;
-      operationKey?: string;
-      collection?: string;
-    }>,
   ): string;
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
@@ -91,11 +75,8 @@ type SendObserver = (
 ) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
-  subscribe?(listener: () => void): () => void;
   close?(): void;
-  load(options?: {
-    refresh: true;
-  }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
+  load(): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   save(operations: readonly OutgoingEvent[]): void | Promise<void>;
 }
 export class PublishRejected extends Error {
@@ -116,7 +97,6 @@ export class PublishNotSent extends PublishRejected {}
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
-const MAX_PENDING_BYTES = 2 * 1024 * 1024;
 const MAX_CONFIRMED = 2048;
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
@@ -134,11 +114,9 @@ export function createOutbox(
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
     clock = new MessageClock(),
-    deliveryScope,
   }: {
     /** The session's send clock, shared with its rendered views. */
     clock?: MessageClock;
-    deliveryScope?: string;
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
@@ -171,6 +149,7 @@ export function createOutbox(
   let finalVisible: readonly OutgoingEvent[] | undefined;
   const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, 8 * 1024 * 1024);
   const sizes = new WeakMap<OutgoingEvent, number>();
+  let pendingBytes = 0;
   const listeners = new Set<() => void>();
   const localListeners = new Set<() => void>();
   const dismissListeners = new Set<(item: OutgoingEvent) => void>();
@@ -187,7 +166,6 @@ export function createOutbox(
     held?: true;
   };
   const attempts = new Map<string, Attempt>();
-  const deliveries = new Map<Promise<void>, string>();
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
@@ -251,27 +229,19 @@ export function createOutbox(
   let confirmedKeep: ((event: EventData) => boolean) | undefined;
   let storageError: string | undefined;
   let hydrated = false;
-  const unsavedManaged = new Set<string>();
-  let managedOwner = false;
-  let managedTimer: ReturnType<typeof setTimeout> | undefined;
   let durable = Promise.resolve();
-  const pendingSize = (rows: readonly OutgoingEvent[]) => {
-    const totals = [2, 2];
-    for (const item of rows) {
-      let size = sizes.get(item);
-      if (size === undefined) {
-        size = byteSize(item);
-        sizes.set(item, size);
-      }
-      const domain = item.event.kind === 45010 ? 1 : 0;
-      totals[domain] = (totals[domain] ?? 2) + size + 1;
-    }
-    return totals;
-  };
-  const pendingCount = (rows: readonly OutgoingEvent[], kind: number) =>
-    rows.filter((item) => (item.event.kind === 45010) === (kind === 45010))
-      .length;
   const notify = () => {
+    pendingBytes = snapshot.reduce(
+      (sum, item) => {
+        let size = sizes.get(item);
+        if (size === undefined) {
+          size = byteSize(item);
+          sizes.set(item, size);
+        }
+        return sum + size;
+      },
+      2 + Math.max(0, snapshot.length - 1),
+    );
     visible = Object.freeze([
       ...completed.entries().map(([, item]) => item),
       ...snapshot,
@@ -279,10 +249,7 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
-  const persist = (
-    id: string,
-    action?: "acknowledge" | "dismiss" | "receipt" | "artifact",
-  ) => {
+  const persist = (id: string, action?: "acknowledge" | "dismiss") => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
       .catch(() => {})
@@ -295,121 +262,28 @@ export function createOutbox(
         queued();
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = () =>
-          action === "artifact"
-            ? visible.map((item) =>
-                item.event.id === id && item.managed?.relayAccepted
-                  ? {
-                      ...item,
-                      managed: {
-                        ...item.managed,
-                        artifactConfirmed: true,
-                        error: undefined,
-                      },
-                    }
-                  : item,
-              )
-            : action === "dismiss"
-              ? visible.filter((item) => item.event.id !== id)
-              : action === "receipt"
-                ? visible.map((item) =>
-                    item.event.id === id && item.managed
-                      ? {
-                          ...item,
-                          managed: {
-                            ...item.managed,
-                            agentReceived: true,
-                            error: undefined,
-                          },
-                        }
-                      : item,
-                  )
-                : action === "acknowledge"
-                  ? visible.map((item) =>
-                      item.event.id === id
-                        ? {
-                            ...item,
-                            recovery: undefined,
-                            acknowledged: true as const,
-                          }
-                        : item,
-                    )
-                  : visible;
-        const bytes = pendingSize(
+        const records =
           action === "dismiss"
-            ? snapshot.filter((item) => item.event.id !== id)
-            : snapshot,
-        );
+            ? visible.filter((item) => item.event.id !== id)
+            : action === "acknowledge"
+              ? visible.map((item) =>
+                  item.event.id === id
+                    ? {
+                        ...item,
+                        recovery: undefined,
+                        acknowledged: true as const,
+                      }
+                    : item,
+                )
+              : visible;
+        const bytes =
+          action === "dismiss"
+            ? byteSize(snapshot.filter((item) => item.event.id !== id))
+            : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
-          const target = visible.find((item) => item.event.id === id);
-          const domain = target
-            ? target.event.kind === 45010
-              ? 1
-              : 0
-            : undefined;
-          if (
-            domain === undefined
-              ? bytes.some((size) => size > MAX_PENDING_BYTES)
-              : (bytes[domain] ?? 0) > MAX_PENDING_BYTES
-          )
+          if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
-          let saved = records();
-          if (
-            domain !== undefined &&
-            (bytes[1 - domain] ?? 0) > MAX_PENDING_BYTES
-          ) {
-            const prior = await storage.load({ refresh: true });
-            validateSaved(prior);
-            // A failed status save in the other class must not join this commit.
-            const currentRecords = records();
-            const retained = new Set(
-              currentRecords.map((item) => item.event.id),
-            );
-            const priorById = new Map(
-              prior.map((item) => [item.event.id, item]),
-            );
-            saved = currentRecords.flatMap((item) => {
-              if ((item.event.kind === 45010 ? 1 : 0) === domain) return [item];
-              const durable = priorById.get(item.event.id);
-              return durable ? [durable] : [];
-            });
-            saved = [
-              ...saved,
-              ...prior.filter(
-                (item) =>
-                  (item.event.kind === 45010 ? 1 : 0) !== domain &&
-                  pendingOperation(item) &&
-                  !retained.has(item.event.id),
-              ),
-            ];
-          }
-          await storage.save(saved);
-          for (const item of saved) unsavedManaged.delete(item.event.id);
-          if (action === "artifact") {
-            const current = find(id);
-            if (current?.managed?.relayAccepted)
-              replace({
-                ...current,
-                managed: {
-                  ...current.managed,
-                  artifactConfirmed: true,
-                  error: undefined,
-                },
-              });
-            wakeManaged();
-          }
-          if (action === "receipt") {
-            const current = find(id);
-            if (current?.managed)
-              replace({
-                ...current,
-                managed: {
-                  ...current.managed,
-                  agentReceived: true,
-                  error: undefined,
-                },
-              });
-          }
+          await storage.save(records);
           if (action === "dismiss") {
             // Commit removal inside the serialized write, before a later save
             // can capture state. Failed storage never exposes a temporary absence.
@@ -465,125 +339,12 @@ export function createOutbox(
     void persist(item.event.id).catch(() => {
       /* Durable intent restores as unknown. */
     });
-    if (item.managed) wakeManaged();
-  }
-  const managedDone = (state: ManagedDelivery) =>
-    state.relayAccepted &&
-    (!state.recipient || state.agentReceived) &&
-    state.artifactConfirmed !== false;
-  const pendingOperation = (item: OutgoingEvent) =>
-    !!item.recovery ||
-    (item.managed
-      ? !managedDone(item.managed)
-      : !(item.event.kind === 9000 && item.acknowledged) &&
-        item.delivery !== "seen");
-  function refreshManaged() {
-    const work = durable
-      .catch(() => {})
-      .then(() => ready)
-      .then(async () => {
-        if (closed) return;
-        const beforeLoad = new Map(
-          snapshot.map((item) => [item.event.id, item]),
-        );
-        const records = await storage.load({ refresh: true });
-        validateSaved(records);
-        const incoming = new Map(
-          records
-            .filter((item) => item.managed)
-            .map((item) => [item.event.id, decode(item)]),
-        );
-        const next = new Map(snapshot.map((item) => [item.event.id, item]));
-        const before = JSON.stringify(visible);
-        for (const [id, item] of incoming) {
-          const prior = next.get(id) ?? completed.peek(id);
-          const managed =
-            prior?.managed && item.managed
-              ? mergeManagedDelivery(prior.managed, item.managed)
-              : item.managed;
-          const merged = {
-            ...item,
-            ...(attempts.has(id) && prior
-              ? { delivery: prior.delivery, error: prior.error }
-              : {}),
-            ...(managed ? { managed } : {}),
-          };
-          if (managed && managedDone(managed) && !attempts.has(id)) {
-            completed.set(id, merged);
-            next.delete(id);
-          } else {
-            next.set(id, merged);
-            completed.delete(id);
-          }
-        }
-        for (const [id, item] of next)
-          if (
-            item.managed &&
-            !incoming.has(id) &&
-            !attempts.has(id) &&
-            !unsavedManaged.has(id) &&
-            beforeLoad.get(id) === item
-          )
-            next.delete(id);
-        snapshot = Object.freeze([...next.values()]);
-        if (
-          before !==
-          JSON.stringify([
-            ...completed.entries().map(([, item]) => item),
-            ...snapshot,
-          ])
-        )
-          notify();
-      });
-    durable = work;
-    return work;
-  }
-  function wakeManaged(delay = 0) {
-    if (closed || !managedOwner) return;
-    clearTimeout(managedTimer);
-    managedTimer = setTimeout(() => {
-      managedTimer = undefined;
-      void pumpManaged().catch(() => {});
-    }, delay);
-  }
-  async function pumpManaged() {
-    if (closed || !managedOwner) return;
-    await refreshManaged();
-    if (closed || !managedOwner) return;
-    let delay = Infinity;
-    for (const item of [...snapshot]) {
-      const state = item.managed;
-      const id = item.event.id;
-      if (!state || attempts.has(id)) continue;
-      if (managedDone(state)) {
-        completed.set(id, item);
-        snapshot = Object.freeze(snapshot.filter((row) => row.event.id !== id));
-        notify();
-        await persist(id);
-        continue;
-      }
-      if (state.error) continue;
-      if (state.relayAccepted) {
-        if (!state.recipient) continue;
-        if (state.receiptDeadline <= Date.now())
-          saveStatus({ ...item, managed: { ...state, error: "receipt" } });
-        else delay = Math.min(delay, state.receiptDeadline - Date.now());
-      } else if (item.refused || state.attempts >= MANAGED_MAX_ATTEMPTS) {
-        saveStatus({ ...item, managed: { ...state, error: "send" } });
-      } else if (state.nextAttemptAt > Date.now())
-        delay = Math.min(delay, state.nextAttemptAt - Date.now());
-      else {
-        replace({ ...item, delivery: "sending", error: undefined });
-        schedule(id, undefined, item.delivery);
-      }
-    }
-    if (Number.isFinite(delay)) wakeManaged(delay);
   }
   function validateSaved(loaded: readonly OutgoingEvent[]) {
     if (
       !Array.isArray(loaded) ||
-      loaded.length > 2 * MAX_PENDING + MAX_CONFIRMED ||
-      byteSize(loaded) > 2 * MAX_PENDING_BYTES + 8 * 1024 * 1024
+      loaded.length > MAX_PENDING + MAX_CONFIRMED ||
+      byteSize(loaded) > 10 * 1024 * 1024
     )
       throw new Error("Saved outbox exceeds its budget");
   }
@@ -596,11 +357,7 @@ export function createOutbox(
       throw new Error("Saved outbox event is invalid");
     return Object.freeze({
       event: Object.freeze({
-        id: event.id,
-        pubkey: event.pubkey,
-        created_at: event.created_at,
-        kind: event.kind,
-        content: event.content,
+        ...event,
         tags: Object.freeze(
           event.tags.map((tag: string[]) => Object.freeze([...tag])),
         ) as unknown as string[][],
@@ -609,11 +366,8 @@ export function createOutbox(
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
-      ...(item.managed ? { managed: managedDelivery(item.managed) } : {}),
-      ...(item.managed && item.refused ? { refused: true as const } : {}),
-      delivery: item.managed?.relayAccepted
-        ? "accepted"
-        : item.delivery === "seen" && signed
+      delivery:
+        item.delivery === "seen" && signed
           ? "seen"
           : item.delivery === "failed"
             ? "failed"
@@ -621,29 +375,20 @@ export function createOutbox(
       ...(item.error ? { error: item.error } : {}),
     });
   }
-  function restore(
-    restored: readonly OutgoingEvent[],
-    saved: readonly OutgoingEvent[],
-  ) {
-    const pending = restored.filter(pendingOperation);
-    // Decode can expand status text. Admission uses the saved byte count.
-    const savedPending = saved.filter((_item, index) => {
-      const item = restored[index];
-      return item !== undefined && pendingOperation(item);
-    });
-    if (
-      pendingCount(pending, 45010) > MAX_PENDING ||
-      pendingCount(pending, 9) > MAX_PENDING ||
-      pendingSize(savedPending).some((size) => size > MAX_PENDING_BYTES)
-    )
+  function restore(restored: readonly OutgoingEvent[]) {
+    const pending = restored.filter(
+      (item) =>
+        (!(item.event.kind === 9000 && item.acknowledged) &&
+          item.delivery !== "seen") ||
+        !!item.recovery,
+    );
+    if (pending.length > MAX_PENDING)
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
       if (
-        ((!!item.managed && managedDone(item.managed)) ||
-          (item.event.kind === 9000 && item.acknowledged) ||
+        ((item.event.kind === 9000 && item.acknowledged) ||
           item.delivery === "seen") &&
         !item.recovery &&
-        (!item.managed || managedDone(item.managed)) &&
         (!confirmedInvalidated ||
           (item.event.kind === 9007 && confirmedKeep?.(item.event)))
       )
@@ -663,11 +408,11 @@ export function createOutbox(
           decoded.push(...records.slice(offset, offset + 12).map(decode));
           if (offset + 12 < records.length) await yieldToHost();
         }
-        restore(decoded, records);
+        restore(decoded);
       });
     else {
       validateSaved(loaded);
-      restore(loaded.map(decode), loaded);
+      restore(loaded.map(decode));
       ready = Promise.resolve();
     }
   } catch (error) {
@@ -716,24 +461,6 @@ export function createOutbox(
     previousDelivery: Delivery = "failed",
   ) {
     if (closed || attempts.has(id)) return;
-    const item = find(id);
-    if (item?.managed) {
-      if (
-        !managedOwner ||
-        item.managed.relayAccepted ||
-        item.managed.attempts >= MANAGED_MAX_ATTEMPTS ||
-        item.managed.error
-      )
-        return;
-      replace({
-        ...item,
-        managed: {
-          ...item.managed,
-          attempts: item.managed.attempts + 1,
-          nextAttemptAt: Date.now() + 1000 * 2 ** item.managed.attempts,
-        },
-      });
-    }
     attempts.set(id, {
       expiresAt: Date.now() + timeoutMs,
       previousDelivery,
@@ -742,16 +469,10 @@ export function createOutbox(
     });
     void deliver(id);
   }
-  function deliver(id: string) {
-    const work = deliverAttempt(id);
-    deliveries.set(work, id);
-    void work.finally(() => deliveries.delete(work));
-    return work;
-  }
-  async function deliverAttempt(id: string) {
+  async function deliver(id: string) {
     const attempt = attempts.get(id);
     if (closed || !attempt || attempt.controller || inflight() >= 3) return;
-    if (!find(id) || (find(id)?.managed && !managedOwner)) return;
+    if (!find(id)) return;
     if (Date.now() >= attempt.expiresAt) {
       expire(id);
       return;
@@ -794,16 +515,7 @@ export function createOutbox(
         throw new Error("Signer changed the outgoing event");
       const current = find(id);
       if (!current) return; // A verified echo already completed delivery.
-      const signedOperation = { ...current, signed };
-      if (
-        (pendingSize(
-          snapshot.map((item) =>
-            item.event.id === id ? signedOperation : item,
-          ),
-        )[current.event.kind === 45010 ? 1 : 0] ?? 0) > MAX_PENDING_BYTES
-      )
-        throw new Error("Outbox storage is full");
-      replace(signedOperation);
+      replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
       const hold = holdPublish?.(signed);
@@ -840,18 +552,6 @@ export function createOutbox(
       if (latest)
         saveStatus({
           ...latest,
-          ...(latest.managed
-            ? {
-                managed: {
-                  ...latest.managed,
-                  relayAccepted: true,
-                  receiptDeadline:
-                    latest.managed.receiptDeadline ||
-                    Date.now() + MANAGED_RECEIPT_MS,
-                  error: undefined,
-                },
-              }
-            : {}),
           delivery:
             latest.delivery === "seen" || attempt.previousDelivery === "seen"
               ? "seen"
@@ -881,7 +581,7 @@ export function createOutbox(
           ...latest,
           delivery,
           refused:
-            (delivery === "failed" || !!latest.managed) &&
+            delivery === "failed" &&
             error instanceof PublishRejected &&
             !(error instanceof PublishNotSent)
               ? true
@@ -919,8 +619,7 @@ export function createOutbox(
         observed &&
         ((observed.event.kind === 9000 && observed.acknowledged) ||
           observed.delivery === "seen") &&
-        !observed.recovery &&
-        (!observed.managed || managedDone(observed.managed))
+        !observed.recovery
       ) {
         completed.set(id, observed);
         snapshot = Object.freeze(
@@ -930,7 +629,6 @@ export function createOutbox(
         void persist(id).catch(() => {});
       }
       pumpDeliveries();
-      wakeManaged();
     }
   }
   const subscribe = (set: Set<() => void>, listener: () => void) => {
@@ -974,7 +672,7 @@ export function createOutbox(
         )
       )
         throw new Error("Recover the earlier message before sending another");
-      if (!find(id) && pendingCount(snapshot, item.event.kind) >= MAX_PENDING)
+      if (!find(id) && snapshot.length >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve a pending operation",
         );
@@ -992,10 +690,6 @@ export function createOutbox(
     async acknowledge(id: string) {
       await outbox.ready();
       const item = visible.find((item) => item.event.id === id);
-      if (item?.managed && !managedDone(item.managed) && !item.refused)
-        return Promise.reject(
-          new Error("Resolve managed delivery before removing this message"),
-        );
       if (!item?.recovery) return;
       // Member callers verify a fresh signed roster even when the receipt was lost.
       if (
@@ -1018,30 +712,12 @@ export function createOutbox(
       },
       recovery?: OutboxRecovery,
       active?: () => boolean,
-      managed?: Readonly<{
-        recipient?: ManagedRecipient;
-        operationKey?: string;
-        collection?: string;
-      }>,
     ) {
       if (active && !active())
         throw new DOMException("Channel addition cancelled", "AbortError");
       if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
       const savedRecovery = recoveryValue(recovery);
-      if (managed && savedRecovery)
-        throw new Error(
-          "Managed delivery cannot replace another recovery intent",
-        );
-      if (
-        managed?.recipient &&
-        (input.kind !== 9 ||
-          !input.tags.some(
-            ([name, value]) =>
-              name === "h" && value === managed.recipient?.channelId,
-          ))
-      )
-        throw new Error("Managed recipient does not match the message");
       if (
         savedRecovery &&
         (!hydrated ||
@@ -1062,13 +738,10 @@ export function createOutbox(
         (catalog
           ? bytes(input.content) > MAX_CONTENT_BYTES ||
             byteSize(input) > MAX_EVENT_BYTES
-          : byteSize(input) >
-            (input.kind === 45010
-              ? ARTIFACT_MAX_EVENT_BYTES - 512
-              : OUTBOX_INPUT_MAX_BYTES))
+          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
       )
         throw new Error("Message is empty or too large");
-      if (pendingCount(snapshot, input.kind) >= MAX_PENDING)
+      if (snapshot.length >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
@@ -1127,12 +800,8 @@ export function createOutbox(
         created_at: createdAt,
         tags: [
           ...input.tags.map((tag) => [...tag]),
-          ...(input.kind === 45010
-            ? []
-            : [
-                ["client-id", crypto.randomUUID()],
-                ...(channelId ? [["ms", String(ms % 1000)]] : []),
-              ]),
+          ["client-id", crypto.randomUUID()],
+          ...(channelId ? [["ms", String(ms % 1000)]] : []),
         ],
       };
       const event = Object.freeze({
@@ -1142,67 +811,18 @@ export function createOutbox(
         ) as unknown as string[][],
         id: getEventHash(template),
       });
-      if (input.kind === 45010) {
-        const prior = visible.find((item) => item.event.id === event.id);
-        if (prior) {
-          if (
-            prior.managed?.collection !== managed?.collection ||
-            prior.managed?.operationKey !== managed?.operationKey ||
-            !!prior.managed !== !!managed ||
-            JSON.stringify(prior.managed?.recipient) !==
-              JSON.stringify(managed?.recipient)
-          )
-            throw new Error("Artifact delivery identity changed");
-          return event.id;
-        }
-      }
-      const operation = Object.freeze({
-        event,
-        delivery: "sending" as const,
-        ...(savedRecovery ? { recovery: savedRecovery } : {}),
-        ...(active ? { guarded: true } : {}),
-        ...(managed
-          ? {
-              managed: managedDelivery({
-                version: 1,
-                ...managed,
-                ...(input.kind === 45010
-                  ? {
-                      artifactConfirmed: false,
-                      submittedAt: Math.max(
-                        Date.now(),
-                        ...visible.map(
-                          (item) => (item.managed?.submittedAt ?? 0) + 1,
-                        ),
-                      ),
-                    }
-                  : {}),
-                round: 0,
-                attempts: 0,
-                relayAccepted: false,
-                agentReceived: false,
-                nextAttemptAt: 0,
-                receiptDeadline: 0,
-              }),
-            }
-          : {}),
-      });
-      const signedBudget = byteSize({
-        ...operation,
-        signed: { ...event, sig: "0".repeat(128) },
-      });
-      if (
-        (pendingSize(snapshot)[input.kind === 45010 ? 1 : 0] ?? 0) +
-          signedBudget +
-          1 >
-        MAX_PENDING_BYTES
-      )
-        throw new Error("Outbox storage is full");
-      if (managed) unsavedManaged.add(event.id);
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
       profiling.measure("send.local", event.id, () => {
-        snapshot = Object.freeze([...snapshot, operation]);
+        snapshot = Object.freeze([
+          ...snapshot,
+          Object.freeze({
+            event,
+            delivery: "sending" as const,
+            ...(savedRecovery ? { recovery: savedRecovery } : {}),
+            ...(active ? { guarded: true } : {}),
+          }),
+        ]);
         notify();
       });
       const intent = ready.then(() => {
@@ -1211,30 +831,10 @@ export function createOutbox(
       });
       void intent.catch(() => {}); // Delivery reports persistence errors; disposal still saves queued intent.
       schedule(event.id, intent);
-      wakeManaged();
       return event.id;
     },
     retry(id: string, active?: () => boolean) {
       const item = find(id);
-      if (item?.managed) {
-        replace({
-          ...item,
-          refused: undefined,
-          error: undefined,
-          managed: {
-            ...item.managed,
-            round: item.managed.round + 1,
-            attempts: 0,
-            nextAttemptAt: 0,
-            receiptDeadline: Date.now() + MANAGED_RECEIPT_MS,
-            error: undefined,
-          },
-        });
-        void persist(id)
-          .then(() => wakeManaged())
-          .catch(() => {});
-        return;
-      }
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
         throw new DOMException("Channel addition cancelled", "AbortError");
       // Workflow recovery is inspect/dismiss only, including restored intents.
@@ -1273,10 +873,6 @@ export function createOutbox(
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
       const item = visible.find((item) => item.event.id === id);
-      if (item?.managed && !managedDone(item.managed) && !item.refused)
-        return Promise.reject(
-          new Error("Resolve managed delivery before removing this message"),
-        );
       if (item?.recovery && item.delivery !== "failed")
         return Promise.reject(
           new Error(
@@ -1294,11 +890,6 @@ export function createOutbox(
       return work;
     },
   });
-  const stopStorage = storage.subscribe?.(() => {
-    void refreshManaged()
-      .then(() => wakeManaged())
-      .catch(() => {});
-  });
   return {
     outbox,
     local: Object.freeze({
@@ -1306,236 +897,6 @@ export function createOutbox(
       subscribe: (listener: () => void) => subscribe(localListeners, listener),
     }),
     ready,
-    delivery: {
-      async get(id: string) {
-        await refreshManaged();
-        const item = visible.find((item) => item.event.id === id);
-        return item?.managed ? deliveryState(id, item.managed) : undefined;
-      },
-      subscribe: (listener: () => void) => subscribe(localListeners, listener),
-      retry: async (id: string) => {
-        await refreshManaged();
-        outbox.retry(id);
-        await persist(id);
-      },
-      async lookup(operationKey: string) {
-        await refreshManaged();
-        const item = visible.find(
-          (item) => item.managed?.operationKey === operationKey,
-        );
-        return item?.managed
-          ? deliveryState(item.event.id, item.managed)
-          : undefined;
-      },
-      async artifact(id: string) {
-        await refreshManaged();
-        return visible
-          .filter(
-            (item) =>
-              item.managed &&
-              item.event.kind === 45010 &&
-              item.event.tags.some(
-                ([name, value]) => name === "d" && value === id,
-              ),
-          )
-          .sort(
-            (a, b) =>
-              (b.managed?.submittedAt ?? 0) - (a.managed?.submittedAt ?? 0),
-          )
-          .map((item) => ({
-            template: {
-              kind: item.event.kind,
-              content: item.event.content,
-              tags: item.event.tags.map((tag) => [...tag]),
-            },
-            state: {
-              ...deliveryState(item.event.id, managedDelivery(item.managed)),
-              ...(item.error && !item.managed?.relayAccepted
-                ? { error: item.error }
-                : {}),
-              ...(item.managed?.error === "artifact-save"
-                ? {
-                    phase: "failed" as const,
-                    error: "Could not confirm saved data",
-                  }
-                : {}),
-            },
-            confirmed: item.managed?.artifactConfirmed === true,
-          }));
-      },
-      async submit(
-        input: Parameters<Outbox["send"]>[0],
-        recipient?: ManagedRecipient,
-        options?: {
-          operationKey?: string;
-          collection?: { owner: string; name: string };
-        },
-      ) {
-        const submit = async () => {
-          await outbox.ready();
-          await refreshManaged();
-          if (options?.operationKey !== undefined) {
-            managedDelivery({
-              version: 1,
-              round: 0,
-              attempts: 0,
-              relayAccepted: false,
-              agentReceived: false,
-              nextAttemptAt: 0,
-              receiptDeadline: 0,
-              operationKey: options.operationKey,
-            });
-            const prior = visible.find(
-              (item) => item.managed?.operationKey === options.operationKey,
-            );
-            if (prior) {
-              if (
-                prior.event.kind !== input.kind ||
-                prior.event.content !== input.content ||
-                JSON.stringify(prior.event.tags) !==
-                  JSON.stringify(input.tags) ||
-                prior.managed?.collection !==
-                  (options.collection
-                    ? JSON.stringify([
-                        options.collection.owner,
-                        options.collection.name,
-                      ])
-                    : undefined)
-              )
-                throw new Error("Operation key has different artifact content");
-              await persist(prior.event.id);
-              return { operationId: prior.event.id, eventId: prior.event.id };
-            }
-          }
-          const id = outbox.send(input, undefined, undefined, {
-            ...(recipient ? { recipient } : {}),
-            ...(options?.operationKey
-              ? { operationKey: options.operationKey }
-              : {}),
-            ...(options?.collection
-              ? {
-                  collection: JSON.stringify([
-                    options.collection.owner,
-                    options.collection.name,
-                  ]),
-                }
-              : {}),
-          });
-          await persist(id);
-          return { operationId: id, eventId: id };
-        };
-        if (input.kind === 45010 && deliveryScope) {
-          if (!globalThis.navigator?.locks)
-            throw new Error("Artifact delivery requires Web Locks");
-          return navigator.locks.request(
-            `buzz-artifact-submit:${deliveryScope}`,
-            submit,
-          );
-        }
-        if (options && input.kind !== 45010)
-          throw new Error("Operation keys require an artifact");
-        return submit();
-      },
-    },
-    artifactDelivery: {
-      async capture(type: string, collection: string) {
-        await refreshManaged();
-        return visible
-          .filter(
-            (item) =>
-              item.event.kind === 45010 &&
-              item.managed?.relayAccepted &&
-              item.managed.artifactConfirmed !== true &&
-              (!item.managed.collection ||
-                item.managed.collection === collection) &&
-              item.event.tags.some(
-                ([name, value]) => name === "type" && value === type,
-              ),
-          )
-          .map((item) => item.event.id);
-      },
-      targets(ids: readonly string[]) {
-        return ids.map((id) => {
-          const item = find(id);
-          const artifactId = item?.event.tags.find(
-            ([name]) => name === "d",
-          )?.[1];
-          if (!artifactId)
-            throw new Error("Artifact intent has no artifact ID");
-          return { operationId: id, artifactId };
-        });
-      },
-      async complete(ids: readonly string[], signal: AbortSignal) {
-        for (const id of ids) {
-          signal.throwIfAborted();
-          try {
-            await persist(id, "artifact");
-          } catch (error) {
-            const item = find(id);
-            if (item?.managed)
-              replace({
-                ...item,
-                managed: { ...item.managed, error: "artifact-save" },
-              });
-            throw error;
-          }
-        }
-      },
-    },
-    async managedOwner(owned: boolean) {
-      managedOwner = owned;
-      clearTimeout(managedTimer);
-      if (owned) {
-        await refreshManaged();
-        wakeManaged();
-      } else
-        for (const [id, attempt] of attempts)
-          if (find(id)?.managed) {
-            clearTimeout(attempt.timer);
-            attempts.delete(id);
-            attempt.controller?.abort(abortError());
-          }
-      if (!owned) {
-        await Promise.allSettled(
-          [...deliveries]
-            .filter(([, id]) => !!find(id)?.managed)
-            .map(([work]) => work),
-        );
-        await durable.catch(() => {});
-      }
-    },
-    async receiveManaged(
-      channelId: string,
-      agentId: string,
-      messageIds: readonly string[],
-    ) {
-      if (
-        messageIds.length > 256 ||
-        messageIds.some((id) => !/^[0-9a-f]{64}$/.test(id))
-      )
-        throw new Error("Invalid message receipt IDs");
-      await refreshManaged();
-      for (const id of new Set(messageIds)) {
-        const item = find(id);
-        if (
-          !item?.managed ||
-          item.managed.recipient?.channelId !== channelId ||
-          item.managed.recipient.agentId !== agentId ||
-          item.managed.agentReceived
-        )
-          continue;
-        try {
-          await persist(id, "receipt");
-        } catch (error) {
-          replace({
-            ...item,
-            managed: { ...item.managed, error: "receipt-save" },
-          });
-          throw error;
-        }
-      }
-      wakeManaged();
-    },
     /** Fetched/confirmed evidence is disposable; pending intent is not. A revoke
      * during async hydration fences that old confirmed cache, not its writes. */
     purgeConfirmed(keep: (event: EventData) => boolean) {
@@ -1563,8 +924,7 @@ export function createOutbox(
         delivered(event);
         if (
           (awaitsReceipt(event) && attempts.has(event.id)) ||
-          find(event.id)?.recovery ||
-          find(event.id)?.managed
+          find(event.id)?.recovery
         ) {
           snapshot = Object.freeze(
             snapshot.map((item) =>
@@ -1573,17 +933,6 @@ export function createOutbox(
                     ...item,
                     signed: event,
                     delivery: "seen" as const,
-                    ...(item.managed
-                      ? {
-                          managed: {
-                            ...item.managed,
-                            relayAccepted: true,
-                            receiptDeadline:
-                              item.managed.receiptDeadline ||
-                              Date.now() + MANAGED_RECEIPT_MS,
-                          },
-                        }
-                      : {}),
                   })
                 : item,
             ),
@@ -1599,20 +948,12 @@ export function createOutbox(
             }),
           );
       }
-      for (const item of snapshot)
-        if (
-          byId.has(item.event.id) &&
-          item.managed &&
-          managedDone(item.managed)
-        )
-          completed.set(item.event.id, item);
       snapshot = Object.freeze(
         snapshot.filter(
           (item) =>
             !byId.has(item.event.id) ||
             (awaitsReceipt(item.event) && attempts.has(item.event.id)) ||
-            !!item.recovery ||
-            (!!item.managed && !managedDone(item.managed)),
+            !!item.recovery,
         ),
       );
       for (const event of confirmed) {
@@ -1624,15 +965,12 @@ export function createOutbox(
       }
       notify();
       void persist(first.id).catch(() => {});
-      wakeManaged();
     },
     dispose() {
       if (closed) return;
       finalSnapshot = snapshot;
       finalVisible = visible;
       closed = true;
-      stopStorage?.();
-      clearTimeout(managedTimer);
       admissionGates.clear();
       lifetime.abort();
       for (const attempt of attempts.values()) {

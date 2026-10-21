@@ -763,12 +763,7 @@ function MessageRowContent({
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
-        <div
-          className={styles.messageBody}
-          data-managed-sending={
-            row.managedDelivery?.phase === "sending" || undefined
-          }
-        >
+        <div className={styles.messageBody}>
           {!renderMessage && overlays}
           <div
             className={styles.messageContent}

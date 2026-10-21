@@ -20,14 +20,6 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.channelId === right.channelId &&
     left.delivery === right.delivery &&
     left.deliveryError === right.deliveryError &&
-    left.managedDelivery?.operationId === right.managedDelivery?.operationId &&
-    left.managedDelivery?.eventId === right.managedDelivery?.eventId &&
-    left.managedDelivery?.phase === right.managedDelivery?.phase &&
-    left.managedDelivery?.relayAccepted ===
-      right.managedDelivery?.relayAccepted &&
-    left.managedDelivery?.agentReceived ===
-      right.managedDelivery?.agentReceived &&
-    left.managedDelivery?.error === right.managedDelivery?.error &&
     left.authorId === right.authorId &&
     left.signerId === right.signerId &&
     left.workflowOwnerId === right.workflowOwnerId &&

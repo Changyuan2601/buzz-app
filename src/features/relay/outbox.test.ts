@@ -815,18 +815,7 @@ it("restores a retained creation to retained storage when dismissal cannot persi
     content: "",
     tags: [["h", "11111111-1111-4111-8111-111111111111"]],
   });
-  const retained: OutgoingEvent = {
-    event: {
-      id: event.id,
-      pubkey: event.pubkey,
-      created_at: event.created_at,
-      kind: event.kind,
-      content: event.content,
-      tags: event.tags,
-    },
-    signed: event,
-    delivery: "seen",
-  };
+  const retained: OutgoingEvent = { event, signed: event, delivery: "seen" };
   let records: readonly OutgoingEvent[] = [retained];
   const save = vi
     .fn()
@@ -910,18 +899,7 @@ it.each(["commit", "reject", "echo"] as const)(
       content: "Retained edit",
       tags: [["e", "a".repeat(64)]],
     });
-    const pending: OutgoingEvent = {
-      event: {
-        id: event.id,
-        pubkey: event.pubkey,
-        created_at: event.created_at,
-        kind: event.kind,
-        content: event.content,
-        tags: event.tags,
-      },
-      signed: event,
-      delivery: "failed",
-    };
+    const pending: OutgoingEvent = { event, signed: event, delivery: "failed" };
     let records: readonly OutgoingEvent[] = [pending];
     let release = () => {};
     let reject = (_error: Error) => {};
@@ -1008,8 +986,7 @@ it.each(["commit", "reject", "echo"] as const)(
       if (outcome === "commit") expect(remaining).toBeUndefined();
       else
         expect(remaining).toMatchObject({
-          event: pending.event,
-          signed: event,
+          event,
           delivery: outcome === "echo" ? "seen" : "failed",
         });
       expect(

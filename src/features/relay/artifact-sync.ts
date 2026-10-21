@@ -10,7 +10,6 @@ import {
   reconcileArtifactCurrent,
 } from "./artifact-reconcile";
 import { ArtifactSyncError, ARTIFACT_SYNC_LIMITS } from "./artifact-reader";
-import { captureArtifactDelivery } from "./artifact-delivery";
 import { transportPartition } from "./partition";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 
@@ -97,16 +96,12 @@ export function provideArtifactSync(
     let session: RelaySession | undefined;
     let stopSession = () => {};
     let stopLive = () => {};
-    let stopConfirmed = () => {};
-    let stopRoster = () => {};
+    let stopWrites = () => {};
     let connected = false;
-    let running = false;
-    let settled = Promise.resolve();
+    let running: Promise<void> | undefined;
     let requested = true;
     const dirty = new Set<string>();
-    let confirmAfter = 0;
     let retry = 0;
-    let retryKind: "delta" | "current" | undefined;
     let notBefore = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let batch: AbortController | undefined;
@@ -120,241 +115,155 @@ export function provideArtifactSync(
         now.session.live.snapshot().status === "connected"
       );
     };
-    const schedule = (delay: number, delta = false) => {
+    const request = () => {
+      requested = true;
+      pump();
+    };
+    const hint = (event: import("./events").EventData) => {
+      if (
+        event.kind === 45010 &&
+        [...group.entries].some((entry) =>
+          event.tags.some(
+            ([key, value]) => key === "type" && value === entry.definition.type,
+          ),
+        )
+      ) {
+        const id = event.tags.find(([key]) => key === "d")?.[1];
+        if (id && dirty.size < 1000) dirty.add(id);
+        else requested = true;
+        pump();
+      } else if ([45011, 9005, 44100, 44101].includes(event.kind)) request();
+    };
+    const schedule = (delay: number) => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
-        requested ||= delta;
-        void pump();
+        pump();
       }, delay);
     };
-    const request = () => {
-      requested = true;
-      if (!running) {
-        if (Date.now() < notBefore) {
-          schedule(notBefore - Date.now());
-          return;
-        }
-        clearTimeout(timer);
-        timer = undefined;
-        void pump();
-      }
-    };
-    group.request = request;
-    const repair = setInterval(request, REPAIR_MS);
-    async function pump() {
+    function pump() {
       if (
         running ||
         !group.entries.size ||
         group.lifetime.signal.aborted ||
-        !active()
+        !active() ||
+        !session?.artifactSync ||
+        (!requested && !dirty.size)
       )
         return;
       if (Date.now() < notBefore) {
         schedule(notBefore - Date.now());
         return;
       }
-      const current = session;
-      const reader = current?.artifactSync;
-      if (!current || !reader) return;
       clearTimeout(timer);
       timer = undefined;
-      running = true;
-      let finish!: () => void;
-      settled = new Promise<void>((resolve) => {
-        finish = resolve;
-      });
+      const current = session;
+      const reader = current.artifactSync;
+      if (!reader) return;
+      const entry = [...group.entries][0];
+      if (!entry || entry.signal.aborted) return;
       batch = new AbortController();
-      const signal = AbortSignal.any([group.lifetime.signal, batch.signal]);
-      let syncing: OpenArtifactCollection | undefined;
-      let deltaWork = false;
-      try {
-        const entry = [...group.entries][0];
-        if (!entry || entry.signal.aborted) return;
-        syncing = entry;
-        const operation = AbortSignal.any([signal, entry.signal]);
-        let currentWork = false;
-        if (requested && retryKind !== "current") {
-          deltaWork = true;
-          requested = false;
-          await reconcileArtifactDelta(
-            reader,
-            entry.collection,
-            entry.definition.type,
-            operation,
-            { reportFailure: retry >= 3 },
-          );
-        } else {
-          const accepted = await captureArtifactDelivery(
-            current,
-            entry.definition.type,
-            JSON.stringify([entry.owner, entry.definition.name]),
-          );
-          operation.throwIfAborted();
-          const canConfirm = Date.now() >= confirmAfter;
-          const ids =
-            canConfirm && accepted.artifactIds.length
-              ? accepted.artifactIds.slice(0, ARTIFACT_SYNC_LIMITS.currentRows)
-              : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
-          if (!ids.length) return;
-          currentWork = true;
-          for (const id of ids) dirty.delete(id);
-          try {
-            await reconcileArtifactCurrent(
-              reader,
-              entry.collection,
-              entry.definition.type,
-              ids,
-              operation,
-              { reportFailure: retry >= 3 },
-            );
-          } catch (error) {
-            for (const id of ids) {
-              if (dirty.size < 1000) dirty.add(id);
-              else requested = true;
-            }
-            throw error;
-          }
-          if (canConfirm) {
+      const signal = AbortSignal.any([
+        group.lifetime.signal,
+        entry.signal,
+        batch.signal,
+      ]);
+      running = (async () => {
+        try {
+          if (requested) {
+            requested = false;
             try {
-              await accepted.complete(ids, operation);
-            } catch {
-              operation.throwIfAborted();
-              // The delivery journal retains this error while shared reads continue.
-              confirmAfter = Date.now() + REPAIR_MS;
+              await reconcileArtifactDelta(
+                reader,
+                entry.collection,
+                entry.definition.type,
+                signal,
+                { reportFailure: retry >= 3 },
+              );
+            } catch (error) {
+              requested = true;
+              throw error;
+            }
+          }
+          const ids = [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
+          if (ids.length) {
+            for (const id of ids) dirty.delete(id);
+            try {
+              await reconcileArtifactCurrent(
+                reader,
+                entry.collection,
+                entry.definition.type,
+                ids,
+                signal,
+                { reportFailure: retry >= 3 },
+              );
+            } catch (error) {
+              for (const id of ids) {
+                if (dirty.size < 1000) dirty.add(id);
+                else requested = true;
+              }
+              throw error;
+            }
+          }
+          retry = 0;
+          notBefore = 0;
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message === "Artifact collection version changed"
+          ) {
+            group.entries.delete(entry);
+            if (!group.entries.size) {
+              group.lifetime.abort();
+              if (groups.get(group.key) === group) groups.delete(group.key);
+            } else {
+              retry = 0;
               requested = true;
             }
-          }
-        }
-        retry = 0;
-        retryKind = undefined;
-        notBefore = 0;
-        if (currentWork || deltaWork)
-          queueMicrotask(() => {
-            if (!running) void pump();
-          });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message === "Artifact collection version changed"
-        ) {
-          if (syncing) group.entries.delete(syncing);
-          if (!group.entries.size) {
-            group.lifetime.abort();
-            if (groups.get(group.key) === group) groups.delete(group.key);
-          } else {
-            retry = 0;
-            retryKind = undefined;
-            requested = true;
-          }
-        } else if (!signal.aborted) {
-          retry++;
-          const permanent =
-            error instanceof ArtifactSyncError &&
-            ["sync_limit", "sync_invalid"].includes(error.code);
-          requested ||= deltaWork;
-          if (retry <= 3 && !permanent) {
-            retryKind = deltaWork ? "delta" : "current";
-            const delay = RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS;
+          } else if (!signal.aborted) {
+            retry++;
+            const permanent =
+              error instanceof ArtifactSyncError &&
+              ["sync_limit", "sync_invalid"].includes(error.code);
+            const delay =
+              !permanent && retry <= 3
+                ? (RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS)
+                : REPAIR_MS;
             notBefore = Date.now() + delay;
             schedule(delay);
-          } else {
-            retryKind = undefined;
-            notBefore = Date.now() + REPAIR_MS;
           }
         }
-      } finally {
-        finish();
-        running = false;
+      })().finally(() => {
+        running = undefined;
         batch = undefined;
-        if (!group.lifetime.signal.aborted) {
-          if (retry === 0 && (requested || dirty.size)) void pump();
-          else if (retry > 0 && !timer) schedule(REPAIR_MS, true);
-        }
-      }
+        if (!group.lifetime.signal.aborted && (requested || dirty.size)) pump();
+      });
     }
+    group.request = request;
+    const repair = setInterval(request, REPAIR_MS);
     const update = () => {
       const now = ctx.relay.snapshot();
       const next =
         now.viewer === viewer && now.origin === relay ? now.session : undefined;
       const changed = next !== session;
-      if (next !== session) {
+      if (changed) {
         batch?.abort();
         stopSession();
         stopLive();
-        stopConfirmed();
-        stopRoster();
+        stopWrites();
         session = next;
         if (next) {
           stopSession = next.live.subscribe(update);
-          const rosterKey = () =>
-            JSON.stringify(
-              next.channels
-                .list()
-                .channels.map(
-                  ({
-                    id,
-                    cached,
-                    pending,
-                    readOnly,
-                    ttlSeconds,
-                    private: restricted,
-                    members,
-                  }) => [
-                    id,
-                    cached,
-                    pending,
-                    readOnly,
-                    ttlSeconds,
-                    restricted,
-                    members,
-                  ],
-                )
-                .sort((left, right) =>
-                  String(left[0]).localeCompare(String(right[0])),
-                ),
-            );
-          let roster = rosterKey();
-          stopRoster = next.channels.subscribeList(() => {
-            const updated = rosterKey();
-            if (updated !== roster) {
-              roster = updated;
-              request();
-            }
-          });
-          const receive = (
-            events: readonly import("./events").RelayEvent[],
-          ) => {
-            let changed = false;
-            for (const event of events) {
-              if (!hasEventProof(event)) continue;
-              if (
-                event.kind === 45010 &&
-                [...group.entries].some((entry) =>
-                  event.tags.some(
-                    ([name, value]) =>
-                      name === "type" && value === entry.definition.type,
-                  ),
-                )
-              ) {
-                const id = event.tags.find(([name]) => name === "d")?.[1];
-                if (id && dirty.size < 1000) dirty.add(id);
-                else requested = true;
-                changed = true;
-              } else if ([45011, 9005, 44100, 44101].includes(event.kind)) {
-                requested = true;
-                changed = true;
-              }
-            }
-            if (changed && !running) {
-              if (Date.now() < notBefore) schedule(notBefore - Date.now());
-              else void pump();
-            }
-          };
-          stopConfirmed = next.subscribeArtifactUpdates(receive);
-          stopLive = next.subscribeLive(({ events }) => receive(events), {
-            replay: true,
-          });
+          stopLive = next.subscribeLive(
+            ({ events }) => {
+              for (const event of events) if (hasEventProof(event)) hint(event);
+            },
+            { replay: true },
+          );
+          stopWrites =
+            next.outbox?.observeSend((event) =>
+              event.kind === 45010 ? () => hint(event) : undefined,
+            ) ?? (() => {});
         }
       }
       const ready = active();
@@ -363,7 +272,7 @@ export function provideArtifactSync(
         requested = true;
       } else if (!connected || changed) {
         retry = 0;
-        retryKind = undefined;
+        notBefore = 0;
         request();
       }
       connected = ready;
@@ -385,10 +294,9 @@ export function provideArtifactSync(
       stopRelay();
       stopSession();
       stopLive();
-      stopConfirmed();
-      stopRoster();
+      stopWrites();
       group.request = () => {};
-      await settled;
+      await running;
     }
   }
   ctx.effect(() => () => {
