@@ -9,7 +9,8 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-test.use({ historyCounts: { alpha: 1, beta: 0 } });
+const builderlabUrl = "https://builderlab.example/deployment";
+test.use({ historyCounts: { alpha: 1, beta: 0 }, builderlabUrl });
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
@@ -662,17 +663,17 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
 
   await page.goto(app.origin);
   await page.evaluate(
-    ({ owner, request }) =>
+    ({ owner, request, backendUrl }) =>
       localStorage.setItem(
         "buzz.hosted-community-deletion.v1",
         JSON.stringify({
           version: 1,
           owner_pubkey: owner,
-          backend_origin: window.location.origin,
+          backend_origin: backendUrl,
           request,
         }),
       ),
-    { owner, request },
+    { owner, request, backendUrl: `${builderlabUrl}/api/goose` },
   );
   await page.reload();
   await button(page, "Your profile").click();
@@ -770,13 +771,13 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
     .check();
   // Another tab claims the slot while this dialog is open.
   await page.evaluate(
-    (community) =>
+    ({ community, backendUrl }) =>
       localStorage.setItem(
         "buzz.hosted-community-deletion.v1",
         JSON.stringify({
           version: 1,
           owner_pubkey: "b".repeat(64),
-          backend_origin: window.location.origin,
+          backend_origin: backendUrl,
           request: {
             community_id: community.id,
             host: community.normalized_host,
@@ -785,7 +786,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
           },
         }),
       ),
-    community,
+    { community, backendUrl: `${builderlabUrl}/api/goose` },
   );
   await dialog.getByRole("button", { name: "Start deletion" }).click();
   const alert = dialog.getByRole("alert");

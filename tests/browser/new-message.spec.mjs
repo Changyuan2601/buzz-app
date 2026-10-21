@@ -17,6 +17,7 @@ const test = base.extend({
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
   localAgentActivity: [false, { scope: "worker" }],
+  builderlabUrl: ["", { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async ({ compiledApp, page, context }, use) => {
     const key = generateSecretKey(),

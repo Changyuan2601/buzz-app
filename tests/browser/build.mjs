@@ -17,6 +17,7 @@ export async function buildApp(
     companionFixture,
     localAgentActivity,
     pairingFixture,
+    builderlabUrl,
   },
   use,
 ) {
@@ -71,6 +72,8 @@ export async function buildApp(
       define: {
         ...(developmentReact ? { "import.meta.env.DEV": "true" } : {}),
         "import.meta.env.VITE_BUZZ_LIVE": '"1"',
+        "import.meta.env.VITE_BUZZ_BUILDERLAB_URL":
+          JSON.stringify(builderlabUrl),
         "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES":
           JSON.stringify(fixtureAliases),
         ...(developmentReact
