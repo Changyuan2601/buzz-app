@@ -1815,11 +1815,11 @@ it("seeds a real continuing Solo session with app input and reuses it for the ow
     );
     expect(process?.prompts[1]).toContain("<buzz-event");
     expect(process?.prompts[1]).not.toContain("<app-conversation-start>");
-    const propose = vi.fn();
-    Object.assign(agent, { proposeInstructions: propose });
+    const save = vi.fn(async () => {});
+    Object.assign(agent, { saveInstructions: save });
     process?.emit({
       type: "control_request",
-      request_id: "proposal",
+      request_id: "save",
       request: {
         subtype: "mcp_message",
         server_name: "buzz",
@@ -1828,14 +1828,14 @@ it("seeds a real continuing Solo session with app input and reuses it for the ow
           id: 8,
           method: "tools/call",
           params: {
-            name: "propose_instructions",
+            name: "save_instructions",
             arguments: { text: "Be concise." },
           },
         },
       },
     });
     await vi.waitFor(() =>
-      expect(propose).toHaveBeenCalledWith("Be concise.", channel),
+      expect(save).toHaveBeenCalledWith("Be concise.", channel),
     );
     expect(
       runtime.conversations(self).some((entry) => entry.key === channel),

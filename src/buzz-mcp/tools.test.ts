@@ -1708,30 +1708,27 @@ it("reads users by id without the name search", async () => {
   expect(client.searchProfiles).not.toHaveBeenCalled();
 });
 
-it("offers instruction proposals through the shared tool dispatcher without saving or publishing", async () => {
+it("saves instructions through the shared tool dispatcher without publishing", async () => {
   const { client, published } = fake();
-  const proposeInstructions = vi.fn();
+  const saveInstructions = vi.fn(async () => {});
   const result = await callSessionTool(
-    { ...client, proposeInstructions },
+    { ...client, saveInstructions },
     { channel: "solo" },
-    "propose_instructions",
+    "save_instructions",
     { text: "Be brief." },
   );
-  expect(proposeInstructions).toHaveBeenCalledWith("Be brief.", "solo");
-  expect(result).toContain("Nothing was saved");
+  expect(saveInstructions).toHaveBeenCalledWith("Be brief.", "solo");
+  expect(result).toContain("Saved as your instructions");
   expect(published).toEqual([]);
   await expect(
-    callSessionTool(client, { channel: "solo" }, "propose_instructions", {
+    callSessionTool(client, { channel: "solo" }, "save_instructions", {
       text: "Be brief.",
     }),
   ).rejects.toThrow("unavailable");
   await expect(
-    callSessionTool(
-      { ...client, proposeInstructions },
-      {},
-      "propose_instructions",
-      { text: "Be brief." },
-    ),
+    callSessionTool({ ...client, saveInstructions }, {}, "save_instructions", {
+      text: "Be brief.",
+    }),
   ).rejects.toThrow("unavailable");
 });
 

@@ -32,6 +32,8 @@ export type WelcomeReceipt = {
   greeting?: "pending" | "attempted";
   greetingId?: string;
   greetingAt?: number;
+  /** The agent saved instructions from its setup answers. */
+  instructions?: "saved";
 };
 export function readWelcome(scope: string): WelcomeReceipt | undefined {
   const revision = viewRevision(scope, WELCOME_KEY);

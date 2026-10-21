@@ -269,93 +269,35 @@ No hidden kickoff message or designed tour is added.
 The original prepared Welcome identity and saved Welcome chat title are unchanged.
 
 
-## Getting-started actions (2026-10-19)
+## Setup questions and saved instructions (2026-10-20)
 
-The three actions are enabled after the actual post-save greeting. A click uses
-`session.messages.send` with its exact label and the exact agent recipient, through
-the ordinary outbox/signing/delivery path. The normal verified relay observation
-starts a mention turn in the same continuing provider conversation. Its existing
-message-linked activity bubble owns the working indication. No synthetic runner
-event, alternate model invocation, action reply receipt, custom retry control,
-working explanation or Stop waiting button remains. Ordinary message delivery
-errors and retry stay with the outbox. Remount never sends an action automatically.
+After the name and avatar are saved, the greeting asks three setup questions, one
+at a time, each as a choice card that keeps **Write your own**: how to talk with
+the owner, how to handle tasks, and what the agent will mostly be used for. Every
+answer is an ordinary owner message in the Get started chat. The service adds
+app guidance only to owner-authored top-level messages in that completed private
+Solo chat, with its exact agent/member/type checks.
 
-The service supplies app guidance only for exact owner-authored action wording in
-the completed private Welcome Solo chat, with its exact agent/member/type checks.
-The actual message remains unchanged in each provider's ordinary event prompt;
-separate app context carries the help facts and read-only community guidance.
-Existing agent instructions are not rewritten to inject onboarding content.
+After the third answer the agent writes second-person instructions and calls
+`save_instructions`. The app saves them to the agent's existing Instructions
+field, the same one shown and edited in agent settings, and marks the Welcome
+receipt as saved. The tool works only in that chat, only for its agent, and only
+once; other config fields are kept. Runtimes pick up the new instructions on the
+next turn. Codex's binding schema version is v8 so resumed older threads gain the
+tool. Standalone clients without the capability get a clear unavailable response.
 
-- **Tell me about Buzz** loads the bundled draft
-  `features/agents/buzz-help.md` overview on demand. The guide was written for this
-  onboarding experiment from repository evidence; it is not approved product
-  documentation and needs human accuracy, emphasis and voice review. The agent explains it naturally
-  and can answer ordinary chat follow-ups. It is not a provider-specific filesystem
-  skill or a visual tour. The app owns the guide and action label, not model prose.
-- **Tell me about this community** asks the agent to discover channel metadata and
-  inspect at most three useful channels, preferring welcome/general/about, using
-  the existing channels/channel/read/canvas tools. Search is bounded and citations
-  use discovered channel/message IDs. This is the agent's own signed relay access,
-  never borrowed viewer access. It must report partial, empty or inaccessible
-  evidence and must not join/invite or write community content. Prompt instructions
-  are guidance, not an isolated hostile-plugin security sandbox; normal relay
-  authorization remains authoritative. These are normal agent turns, not the
-  introduction's restricted one-message handle; prompt read-only constraints are
-  not a new tool sandbox.
-- **Finish setting up this agent** opens the actual owned profile with Identity /
-  Instructions, not a parallel editor, and starts the guided conversation directly.
-  The agent asks one question at a time about tasks, response style, initiative
-  and boundaries; ordinary owner replies continue that same chat. The owner can
-  skip/finish or start working instead. The app offers a single reviewable draft
-  through `propose_instructions`; no preference is saved by the tool.
-
-The shared tools retain one stable list across providers, including an explicitly
-availability-gated instruction-proposal tool. Codex's binding schema version moves
-to v7 so resumed older threads cannot silently lack it. Standalone/external clients
-without the optional proposal capability receive a clear unavailable response.
-No native command, credential store, FOUNDATION, or signing policy was changed.
-
-One bounded in-memory proposal per agent is partitioned by community/viewer. It
-requires an actual owner-authored **Finish setting up this agent** message in
-that exact private Solo chat, matching type
-and unchanged saved instructions. A successful proposal consumes that consent;
-starting guided customization again permits a new proposal. Disconnect/session
-replacement clears permissions and proposals. Reload does not retain unsaved
-proposals; choose **Finish setting up this agent** again. The profile displays text with no Markdown/HTML
-execution. Apply to draft changes only the existing provider-owned Instructions
-field, asks confirmation before replacing a changed draft, and keeps the existing
-Save action as the sole persistence path. Failed saves retain the draft/proposal;
-successful instruction changes dismiss it. Other config fields remain owned by
-the provider form and are not rewritten by onboarding.
-
-Focused evidence now includes exact button dispatch, a real viewer-signed outbox
-message observed by the actual runner with ordinary local message activity,
-owner-only scoped guidance, one-shot proposal consent and ordinary follow-ups.
-Continuing Claude/Codex/Goose protocol tests exercise separate app guidance beside
-the actual owner event, not app-start input. The earlier channel-only activity
-workaround was removed; message activity needs no shared store/schema expansion.
-The card retains only the requested heading, supporting line and three actions;
-setup still opens the real profile, with explicit Apply to draft and Save.
-
-No new live relay messages or provider calls were made by the assistant for this
-change. Human live acceptance of the button → visible user message → standard
-working indicator → reply remains pending. Both-theme/narrow/enlarged-text layout,
-packaged relaunch and broader CI remain separate.
-
-The action card stays at that one historical position while the selected user
-message and agent replies appear below it. It is not re-offered after responses.
-Scroll back to use the same card again. If the greeting is outside the loaded
-history window, the card is omitted until that exact message loads; it never
-falls back to the newest message. Focus inside the card keeps its virtual row
-mounted through the timeline's existing focus pinning. No new persistence flag,
-subscription or scrollport was added.
+The agent then says it is crafting the instructions, notes they can be edited in
+agent settings, and offers three first steps: **Start a new chat**, **Create a
+channel** and **Create another agent**. Choosing one gives the agent the bundled
+draft `features/agents/buzz-help.md` guide to explain it. The guide is not
+approved product documentation and needs human review.
 
 ## Team-testing snapshot
 
 This push is WIP for teammate testing, not a merge/readiness declaration. Human
 feedback reported the native conversation and single historical card looking
 good. Focused automated checks cover visible action sends, continuing protocol
-sessions, proposal review/save and anchored timeline composition. Full live
+sessions, instruction saving and anchored timeline composition. Full live
 Codex/Goose acceptance, packaged relaunch, browser geometry/accessibility across
 themes and sizes, and integration with newer main remain deferred. Keep other
 development copies from holding the same agent while testing; do not bypass the

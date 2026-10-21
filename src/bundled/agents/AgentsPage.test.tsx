@@ -342,9 +342,6 @@ function setup(
       return team;
     }),
     core: vi.fn(async () => undefined),
-    instructionProposal: () => undefined,
-    subscribeInstructionProposals: () => () => {},
-    dismissInstructionProposal() {},
     welcome: vi.fn(async () => {
       throw new Error("Welcome is not exercised by agent-library tests");
     }),

@@ -385,7 +385,11 @@ export type RunnerHost = {
   context(agent: Agent, event: RelayEvent): Promise<ClassifierContext>;
   /** A person's name as the agent's community shows it. */
   displayName(agent: Agent, pubkey: string): string | null;
-  proposeInstructions(pubkey: string, text: string, channelId: string): void;
+  saveInstructions(
+    pubkey: string,
+    text: string,
+    channelId: string,
+  ): Promise<void>;
   welcomeGuidance(
     agent: Agent,
     event: RelayEvent,
@@ -2021,9 +2025,9 @@ export class AgentRunners {
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
-      proposeInstructions: (text: string, channelId: string) => {
+      saveInstructions: (text: string, channelId: string) => {
         signal.throwIfAborted();
-        this.host.proposeInstructions(agent.pubkey, text, channelId);
+        return this.host.saveInstructions(agent.pubkey, text, channelId);
       },
       attention: this.attention(agent.pubkey),
     });
@@ -2117,10 +2121,6 @@ export class AgentRunners {
       remember: unavailable,
       templates: () => [],
       tabs: () => this.host.tabs(agent),
-      proposeInstructions: (text: string, channelId: string) => {
-        check();
-        this.host.proposeInstructions(agent.pubkey, text, channelId);
-      },
       attention: this.attention(agent.pubkey),
     });
     runner.working++;

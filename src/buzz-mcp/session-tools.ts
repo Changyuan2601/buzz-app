@@ -36,11 +36,11 @@ type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
 /** Offered only in the Get started chat; listed in full so the agent has it
- * when the owner asks. */
-const PROPOSE_INSTRUCTIONS: Tool = {
-  name: "propose_instructions",
+ * when setup ends. */
+const SAVE_INSTRUCTIONS: Tool = {
+  name: "save_instructions",
   description:
-    "Only available after the owner explicitly sends Finish setting up this agent in their Get started chat. Offers one complete editable instructions draft, never saves. Unavailable elsewhere. The owner must Apply to draft then Save in the agent profile.",
+    "Only during setup in the owner's Get started chat: saves your complete instructions, written from their setup answers. Unavailable elsewhere. The owner can edit them anytime in your agent settings.",
   inputSchema: {
     type: "object",
     properties: { text: { type: "string" } },
@@ -54,7 +54,7 @@ const PROPOSE_INSTRUCTIONS: Tool = {
  * never needs replacing when attention is turned on or off: the attention
  * tools refuse calls while it is off, and `turnNote` says which it is. */
 export const BUZZ_SESSION: BuzzSession = Object.freeze({
-  tools: [...TOOLS, ...ATTENTION_TOOLS, PROPOSE_INSTRUCTIONS],
+  tools: [...TOOLS, ...ATTENTION_TOOLS, SAVE_INSTRUCTIONS],
 });
 
 const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
@@ -76,7 +76,7 @@ export const sessionTools = (
 ): readonly SessionTool[] => [
   ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
   ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  { ...PROPOSE_INSTRUCTIONS, load: "always" as const },
+  { ...SAVE_INSTRUCTIONS, load: "always" as const },
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
@@ -128,17 +128,17 @@ export async function callSessionTool(
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
   const tool = added.find((tool) => tool.name === name);
   if (tool) return tool.call(client, context, args);
-  if (name === "propose_instructions") {
+  if (name === "save_instructions") {
     if (
-      !client.proposeInstructions ||
+      !client.saveInstructions ||
       !context.channel ||
       typeof args.text !== "string"
     )
       throw new Error(
-        "Instruction proposals are unavailable here. Use the agent's profile to edit instructions manually.",
+        "Saving instructions is unavailable here. The owner can edit them in your agent settings.",
       );
-    client.proposeInstructions(args.text, context.channel);
-    return "Proposed for review in the agent's profile. Nothing was saved. The owner must choose Apply to draft, review/edit, then Save.";
+    await client.saveInstructions(args.text, context.channel);
+    return "Saved as your instructions. The owner can edit them anytime in your agent settings.";
   }
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;

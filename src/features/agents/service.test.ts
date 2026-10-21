@@ -1,4 +1,4 @@
-import { saveWelcome, WELCOME_KEY } from "../sessions/welcome";
+import { readWelcome, saveWelcome, WELCOME_KEY } from "../sessions/welcome";
 import { setDefaultAgent } from "../solo/default-agent";
 import { writeView } from "../../shared/view-state";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
@@ -6648,7 +6648,7 @@ it("starts Welcome through the claimed runner with app input, target-only signed
         () => {},
       ),
     });
-    const proposed = "Help with planning. Ask before taking action.";
+    const written = "Keep answers short. Check with me first.";
     const seenGuidance: (string | undefined)[] = [];
     run.mockImplementation((delivery) => {
       seenGuidance.push(delivery.guidance);
@@ -6662,61 +6662,30 @@ it("starts Welcome through the claimed runner with app input, target-only signed
           state: "working",
         }),
       );
-      if (delivery.guidance?.includes("guided agent customization")) {
-        expect(() =>
-          delivery.agent.proposeInstructions?.(proposed, "elsewhere"),
-        ).toThrow("guided customization");
-        delivery.agent.proposeInstructions?.(proposed, channel);
-        expect(() =>
-          delivery.agent.proposeInstructions?.("Again", channel),
-        ).toThrow("owner must choose");
-      } else
-        expect(() =>
-          delivery.agent.proposeInstructions?.(proposed, channel),
-        ).toThrow("owner must choose");
     });
     try {
-      for (const [key, label] of [
-        ["buzz", "Tell me about Buzz"],
-        ["community", "Tell me about this community"],
-        ["customize", "Finish setting up this agent"],
-      ] as const) {
+      // Each setup answer is an owner message that gets the setup guidance.
+      for (const answer of ["Short and to the point", "Check with me first"]) {
         const count = run.mock.calls.length;
-        // Picking the agent's choice sends its label as an owner message.
-        const id = await session.messages.send(channel, label, [bot]);
+        const id = await session.messages.send(channel, answer, [bot]);
         await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(count + 1));
         expect(published.at(-1)).toMatchObject({
           id,
           pubkey: viewer,
-          content: label,
+          content: answer,
           kind: 9,
         });
         expect(published.at(-1)?.tags).toContainEqual(["p", bot]);
-        expect(started).toHaveBeenCalledTimes(2);
-        expect(seenGuidance.at(-1)).toContain(
-          key === "buzz"
-            ? "Buzz quick guide"
-            : key === "community"
-              ? "AS THIS AGENT"
-              : "guided agent customization",
-        );
+        expect(seenGuidance.at(-1)).toContain("three questions");
       }
-      const proposal = service.instructionProposal(bot);
-      expect(proposal).toMatchObject({
-        text: proposed,
-        basedOn: "",
-        type: "example/echo",
-      });
-      expect(service.find(bot)?.config).toEqual({ reply: "ok" });
-      if (proposal) service.dismissInstructionProposal(bot, proposal.id);
-      expect(service.instructionProposal(bot)).toBeUndefined();
-      // Matching words from someone else never grant consent or app guidance.
+      expect(started).toHaveBeenCalledTimes(2);
+      // Matching words from someone else never get app guidance.
       emit({
         channelId: channel,
         events: [
-          event("outside-action", {
+          event("outside-answer", {
             pubkey: other,
-            content: "Finish setting up this agent",
+            content: "Building and coding",
             tags: [
               ["h", channel],
               ["p", bot],
@@ -6724,34 +6693,36 @@ it("starts Welcome through the claimed runner with app input, target-only signed
           }),
         ],
       });
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
       expect(seenGuidance.at(-1)).toBeUndefined();
-      // Ordinary owner follow-ups can propose after a fresh explicit setup request.
-      run.mockImplementationOnce(() => {});
-      await session.messages.send(channel, "Finish setting up this agent", [
-        bot,
-      ]);
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
-      run.mockImplementationOnce((delivery) =>
-        delivery.agent.proposeInstructions?.(proposed, channel),
-      );
-      emit({
-        channelId: channel,
-        events: [
-          event("customize-followup", {
-            pubkey: viewer,
-            content: "Help with planning; that's enough for now.",
-            tags: [
-              ["h", channel],
-              ["p", bot],
-            ],
-          }),
-        ],
+      // The last answer's turn saves the instructions, only in this chat, once.
+      let saving: Promise<unknown> | undefined;
+      run.mockImplementationOnce(async (delivery) => {
+        await expect(
+          delivery.agent.saveInstructions?.(written, "elsewhere"),
+        ).rejects.toThrow("Get started");
+        saving = delivery.agent.saveInstructions?.(written, channel);
+        await saving;
+        await expect(
+          delivery.agent.saveInstructions?.("Again", channel),
+        ).rejects.toThrow("Get started");
       });
-      await vi.waitFor(() =>
-        expect(service.instructionProposal(bot)?.text).toBe(proposed),
-      );
-      expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+      await session.messages.send(channel, "Building and coding", [bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+      await vi.waitFor(() => expect(saving).toBeDefined());
+      await saving;
+      expect(service.find(bot)?.config).toEqual({
+        reply: "ok",
+        instructions: written,
+      });
+      expect(readWelcome(setupScope)?.instructions).toBe("saved");
+      // After setup, a first thing to try gets the guide; other words none.
+      await session.messages.send(channel, "Create a channel", [bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+      expect(seenGuidance.at(-1)).toContain("Buzz quick guide");
+      await session.messages.send(channel, "Thanks!", [bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
+      expect(seenGuidance.at(-1)).toBeUndefined();
     } finally {
       outbox.dispose();
     }

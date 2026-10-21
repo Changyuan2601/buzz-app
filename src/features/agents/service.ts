@@ -1,10 +1,5 @@
-import { InstructionSuggestions } from "./instruction-suggestions";
-import {
-  welcomeActionGuidance,
-  welcomeActionOf,
-  type InstructionProposal,
-} from "./onboarding";
-import { readWelcome } from "../sessions/welcome";
+import { isStarterAction, setupGuidance, starterGuidance } from "./onboarding";
+import { readWelcome, saveWelcome } from "../sessions/welcome";
 import { readDefaultAgent } from "../solo/default-agent";
 import {
   savedWelcomeClientId,
@@ -341,7 +336,7 @@ export type AgentHandle = Readonly<{
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
   /** Only offers a reviewable draft after the owner requests guided customization. */
-  proposeInstructions?(text: string, channelId: string): void;
+  saveInstructions?(text: string, channelId: string): Promise<void>;
 }>;
 /** What an agent reads and writes of its attention. Every read is current,
  * so a long run sees the owner's switch and the classifier's state change. */
@@ -784,9 +779,6 @@ export type Agents = {
     signal: AbortSignal,
     phase?: "connected" | "saved",
   ): Promise<RelayEvent>;
-  instructionProposal(pubkey: string): InstructionProposal | undefined;
-  subscribeInstructionProposals(listener: () => void): () => void;
-  dismissInstructionProposal(pubkey: string, id: string): void;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1054,23 +1046,6 @@ export class AgentsService extends Service implements Agents {
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
-  private readonly instructionSuggestions = new InstructionSuggestions();
-  subscribeInstructionProposals = (listener: () => void) =>
-    this.instructionSuggestions.subscribe(listener);
-  instructionProposal = (pubkey: string) => {
-    const agent = this.find(pubkey);
-    const binding = agent && this.bindingOf(agent);
-    return binding && agent?.owner === binding.viewer
-      ? this.instructionSuggestions.snapshot(`${binding.scope}:${pubkey}`)
-      : undefined;
-  };
-  dismissInstructionProposal(pubkey: string, id: string) {
-    const agent = this.find(pubkey);
-    const binding = agent && this.bindingOf(agent);
-    if (binding)
-      this.instructionSuggestions.dismiss(`${binding.scope}:${pubkey}`, id);
-  }
-
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1283,8 +1258,8 @@ export class AgentsService extends Service implements Agents {
       },
       welcomeGuidance: (agent, event, channel) =>
         this.welcomeGuidance(agent, event, channel),
-      proposeInstructions: (pubkey, text, channel) =>
-        this.proposeInstructions(pubkey, text, channel),
+      saveInstructions: (pubkey, text, channel) =>
+        this.saveInstructions(pubkey, text, channel),
       classifier: () => this.classifier(),
       jev: () => this.jev,
       jevStatus: () => this.jevStatus,
@@ -1676,16 +1651,10 @@ export class AgentsService extends Service implements Agents {
   private welcomeContext(agent: Agent, channelId: string) {
     const binding = this.bindingOf(agent);
     if (!binding || binding.viewer !== agent.owner) return;
-    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
     const channel = binding.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
     if (
-      !receipt?.complete ||
-      !receipt.greetingId ||
-      receipt.agent !== agent.pubkey ||
-      receipt.type !== agent.type ||
-      receipt.channelId !== channelId ||
       !ownSolo(channel, binding.viewer) ||
       !channel?.private ||
       channel.cached ||
@@ -1697,8 +1666,20 @@ export class AgentsService extends Service implements Agents {
       !channel.members.includes(binding.viewer)
     )
       return;
-    return binding;
+    // Only the owner's private Solo chats reach the device's Welcome record.
+    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    if (
+      !receipt?.complete ||
+      !receipt.greetingId ||
+      receipt.agent !== agent.pubkey ||
+      receipt.type !== agent.type ||
+      receipt.channelId !== channelId
+    )
+      return;
+    return { binding, receipt };
   }
+  /** App guidance for the owner's message in their Get started chat: the
+   * setup questions until instructions are saved, then the first things to try. */
   private welcomeGuidance(agent: Agent, event: RelayEvent, channelId: string) {
     if (
       event.kind !== 9 ||
@@ -1706,23 +1687,23 @@ export class AgentsService extends Service implements Agents {
       event.tags.some(([key]) => key === "e")
     )
       return;
-    const action = welcomeActionOf(event.content);
-    if (!action) return;
-    const binding = this.welcomeContext(agent, channelId);
-    if (!binding) return;
-    if (action === "customize")
-      this.instructionSuggestions.allow(`${binding.scope}:${agent.pubkey}`, {
-        type: agent.type,
-        basedOn: this.instructionsOf(agent),
-        channelId,
-      });
-    return welcomeActionGuidance(action, this.instructionsOf(agent));
+    const context = this.welcomeContext(agent, channelId);
+    if (!context) return;
+    if (!context.receipt.instructions)
+      return setupGuidance(this.instructionsOf(agent));
+    return isStarterAction(event.content) ? starterGuidance() : undefined;
   }
   private instructionsOf(agent: Agent) {
     const config = agent.config as { instructions?: unknown } | undefined;
     return typeof config?.instructions === "string" ? config.instructions : "";
   }
-  private proposeInstructions(pubkey: string, text: string, channelId: string) {
+  /** Saves the instructions the agent wrote from its setup answers, once,
+   * only in its owner's Get started chat. */
+  private async saveInstructions(
+    pubkey: string,
+    text: string,
+    channelId: string,
+  ) {
     const agent = this.ready(pubkey);
     const binding = agent && this.bindingOf(agent);
     if (
@@ -1734,14 +1715,16 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "This agent's community is unavailable for customization.",
       );
-    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    const scope = relayPartition(binding.origin, binding.viewer);
+    const receipt = readWelcome(scope);
     if (
       !receipt?.complete ||
+      receipt.instructions ||
       receipt.agent !== pubkey ||
       receipt.channelId !== channelId
     )
       throw new Error(
-        "Choose guided customization again from this agent's Welcome card.",
+        "Instructions save here only during setup in the Get started chat.",
       );
     const channel = binding.session.channels
       .list()
@@ -1760,13 +1743,12 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "Guided customization needs your private Solo chat with this agent.",
       );
-    this.instructionSuggestions.propose(
-      `${binding.scope}:${pubkey}`,
-      text,
-      channelId,
-      agent.type,
-      this.instructionsOf(agent),
-    );
+    const instructions = text.trim();
+    if (!instructions) throw new Error("Write the instructions to save.");
+    await this.save(pubkey, {
+      config: { ...(agent.config as object), instructions },
+    });
+    saveWelcome(scope, { ...receipt, instructions: "saved" });
   }
 
   /** Has the provider make the agent, then sets it up. From here on it is
@@ -3087,8 +3069,6 @@ export class AgentsService extends Service implements Agents {
     entry?.stop();
     entry?.binding?.stopLive();
     entry?.binding?.controller.abort();
-    if (entry?.binding)
-      this.instructionSuggestions.clearScope(entry.binding.scope);
   }
   private bind(origin: string) {
     const entry = this.bound.get(origin);
@@ -3112,8 +3092,6 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.session !== live?.session ||
       entry.binding?.scope !== live?.scope;
     if (changed) {
-      if (entry.binding)
-        this.instructionSuggestions.clearScope(entry.binding.scope);
       entry.binding?.stopLive();
       entry.binding?.controller.abort();
       this.listings.delete(origin);
@@ -3158,10 +3136,6 @@ export class AgentsService extends Service implements Agents {
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
-      if (!now && session.viewer)
-        this.instructionSuggestions.clearScope(
-          relayPartition(origin, session.viewer),
-        );
       if (now !== connected) {
         // Catch-up reads what this connect may have missed, up to now.
         connection.epoch += now ? 1 : 0;

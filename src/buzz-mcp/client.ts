@@ -112,7 +112,8 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
-  proposeInstructions?(text: string, channelId: string): void;
+  /** Saves the agent's instructions, where its host allows it. */
+  saveInstructions?(text: string, channelId: string): Promise<void>;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

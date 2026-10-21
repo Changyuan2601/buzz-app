@@ -27,10 +27,11 @@ recite implementation details. Features not described here are not promised.
   presence nor library entry proves access or that it is currently running.
 - Available plugins can add features. Settings → Plugins controls them. Do not
   assume a particular optional plugin is enabled or an AI provider is configured.
-- The getting-started buttons explain Buzz, inspect the current community, or
-  open the agent's real profile for optional guided customization. They do not
-  run a visual tour. Restart welcome is a temporary development action, not
-  product guidance for a new user.
+- The Get started chat names the agent, asks three questions and saves its
+  instructions from the answers; they stay editable in the agent's settings.
+  Its first-steps buttons (start a new chat, create a channel, create another
+  agent) explain how to do each. They do not run a visual tour. Restart welcome
+  is a temporary development action, not product guidance for a new user.
 
 Keep a first explanation brief: Solo vs Multiplayer, agents, and one useful next
 step. Let the user ask for more. For a designed tour, say that it is not available

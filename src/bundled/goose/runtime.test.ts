@@ -647,18 +647,21 @@ it("starts Goose Welcome with app input, real agent send and a continuing Solo s
       "<buzz-app-guidance>\nUse the maintained Buzz quick guide.",
     );
     expect(process?.turns[1]?.text).toContain("<buzz-event");
-    const propose = vi.fn();
-    Object.assign(f.agent, { proposeInstructions: propose });
+    const save = vi.fn(async () => {});
+    Object.assign(f.agent, { saveInstructions: save });
     const result = await process?.mcp(turn?.sessionId ?? "", "tools/call", {
-      name: "propose_instructions",
+      name: "save_instructions",
       arguments: { text: "Be concise." },
     });
     expect(result?.result).toMatchObject({
       content: [
-        { type: "text", text: expect.stringContaining("Nothing was saved") },
+        {
+          type: "text",
+          text: expect.stringContaining("Saved as your instructions"),
+        },
       ],
     });
-    expect(propose).toHaveBeenCalledWith("Be concise.", channel);
+    expect(save).toHaveBeenCalledWith("Be concise.", channel);
     process?.turns[1]?.finish();
   } finally {
     controller.abort();

@@ -1,4 +1,3 @@
-import { InstructionProposalProvider } from "./InstructionProposal";
 // An agent's sections, wherever they are shown (its Build view and its
 // profile panel): the type's tabs, local-only Attention, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
@@ -58,33 +57,18 @@ export function agentSections({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
     render: () => (
-      <InstructionProposalProvider agents={agents} agent={agent}>
-        <Component
-          agent={agent}
-          {...(role === "settings" && settingsSection
-            ? { settingsSection }
-            : {})}
-          {...(role === "settings" && settingsContent
-            ? { settingsContent }
-            : {})}
-          {...(conversation && { conversation })}
-          save={async (config) => {
-            const proposal = agents.instructionProposal?.(agent.pubkey);
-            await (settingsHost?.pendingSave
-              ? settingsHost.pendingSave(config)
-              : agents.save(agent.pubkey, { config }));
-            if (
-              proposal &&
-              config &&
-              typeof config === "object" &&
-              "instructions" in config &&
-              config.instructions !== proposal.basedOn
-            )
-              agents.dismissInstructionProposal(agent.pubkey, proposal.id);
-          }}
-          {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-        />
-      </InstructionProposalProvider>
+      <Component
+        agent={agent}
+        {...(role === "settings" && settingsSection ? { settingsSection } : {})}
+        {...(role === "settings" && settingsContent ? { settingsContent } : {})}
+        {...(conversation && { conversation })}
+        save={(config) =>
+          settingsHost?.pendingSave
+            ? settingsHost.pendingSave(config)
+            : agents.save(agent.pubkey, { config })
+        }
+        {...(role === "settings" && settingsHost ? { settingsHost } : {})}
+      />
     ),
   }));
   if (settingsHost && !settingsTab)

@@ -471,7 +471,7 @@ export class CodexRuntime {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
     // added the shared session tools; v7 added the shared note tools; v8 adds
-    // instruction proposals.
+    // instruction saving.
     return `buzz.codex.sessions.v8:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {

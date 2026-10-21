@@ -3626,15 +3626,11 @@ it("starts Codex Welcome with app input and resumes that saved Solo thread for t
     "<buzz-app-guidance>\nUse the maintained Buzz quick guide.",
   );
   expect(inputText(f.starts()[1])).toContain("<buzz-event>");
-  const propose = vi.fn();
-  Object.assign(f.agent, { proposeInstructions: propose });
-  const result = await f.tool(
-    "propose_instructions",
-    { text: "Be concise." },
-    1,
-  );
+  const save = vi.fn(async () => {});
+  Object.assign(f.agent, { saveInstructions: save });
+  const result = await f.tool("save_instructions", { text: "Be concise." }, 1);
   expect(result?.result).toMatchObject({ success: true });
-  expect(propose).toHaveBeenCalledWith("Be concise.", "channel");
+  expect(save).toHaveBeenCalledWith("Be concise.", "channel");
   await f.complete(1);
 });
 

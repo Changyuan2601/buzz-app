@@ -45,11 +45,13 @@ export function appClient(
     pubkey: agent.pubkey,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
-    ...(agent.proposeInstructions
+    ...(agent.saveInstructions
       ? {
-          proposeInstructions: (text: string, channelId: string) => {
+          saveInstructions: (text: string, channelId: string) => {
             check();
-            agent.proposeInstructions?.(text, channelId);
+            return (
+              agent.saveInstructions?.(text, channelId) ?? Promise.resolve()
+            );
           },
         }
       : {}),
