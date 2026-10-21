@@ -586,13 +586,16 @@ impl FederatedIdentity {
 
 /// NIP-FA: the issuer refused, or its success response was rejected. These are
 /// not retried automatically; the refusal stands for its session revision,
-/// viewer and relay until one of them changes or the app restarts.
+/// viewer and relay until one of them changes or the app restarts. A 401
+/// `invalid_grant` decodes as `grant-refused`; on this route it is an
+/// undefined 401 code, so it is terminal too (NIP-FA).
 fn refused(failure: &Failure) -> bool {
     matches!(
         failure.code,
         "adapter-refused"
             | "authorization-denied"
             | "binding-mismatch"
+            | "grant-refused"
             | "invalid-proof"
             | "invalid-response"
             | "invalid-assertion"
@@ -1032,6 +1035,11 @@ mod tests {
                 "invalid-proof",
             ),
             ("418 I'm a teapot", "{}", "adapter-refused"),
+            (
+                "401 Unauthorized",
+                r#"{"error":"invalid_grant"}"#,
+                "grant-refused",
+            ),
             ("200 OK", "{}", "invalid-response"),
         ] {
             let (base, requests) = refusing_issuer(status, body).await;
