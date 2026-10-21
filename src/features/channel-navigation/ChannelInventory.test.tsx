@@ -207,7 +207,7 @@ function fixture(
   return { view, navigator, snapshot, list, session, publish, drop };
 }
 
-it("combines chat types by recency, keeps the current chat, and reveals activity older than seven days", async () => {
+it("combines chat types by recency, keeps the current chat, and reveals activity older than five days", async () => {
   const now = 1_800_000_000;
   const clock = vi.spyOn(Date, "now").mockReturnValue(now * 1000);
   const preferences = createSidebarPreferencesStore({
@@ -225,7 +225,7 @@ it("combines chat types by recency, keeps the current chat, and reveals activity
       id: "old",
       name: "Old chat",
       channelType: "stream",
-      lastActivityAt: now - 7 * 86400 - 1,
+      lastActivityAt: now - 5 * 86400 - 1,
     },
     {
       id: "current",
@@ -243,9 +243,9 @@ it("combines chat types by recency, keeps the current chat, and reveals activity
     },
     {
       id: "edge",
-      name: "Just inside seven days",
+      name: "Just inside five days",
       channelType: "stream",
-      lastActivityAt: now - 7 * 86400 + 1,
+      lastActivityAt: now - 5 * 86400 + 1,
     },
   ]);
   const mounted = render(h.view("current"));
@@ -256,7 +256,7 @@ it("combines chat types by recency, keeps the current chat, and reveals activity
       screen.getByRole("button", { name: "Current old chat" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Just inside seven days" }),
+      screen.getByRole("button", { name: "Just inside five days" }),
     ).toBeVisible();
     const names = () =>
       Array.from(document.querySelectorAll("[data-channel-id]")).map((row) =>
@@ -526,7 +526,7 @@ it.each(["ready", "error"] as const)(
   },
 );
 
-it.each(["Laptop", "Recent", "Starred"])(
+it.each(["Laptop", "All messages", "Starred"])(
   "uses only the invoking section for placement (%s)",
   async (section) => {
     const fromGroup = section === "Laptop";
@@ -756,7 +756,7 @@ it("hides generated legacy rooms while keeping ordinary expiring channels visibl
   render(h.view("alpha"));
   expect(
     await screen.findByRole("button", {
-      name: "Private projectTemporary channel. Cleans up after 1 hour without activity.",
+      name: "Private project",
     }),
   ).toBeVisible();
   expect(

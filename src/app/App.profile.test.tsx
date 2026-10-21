@@ -203,13 +203,22 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const user = await setup();
   if (!services) throw new Error("Missing app services");
   const current = services;
-  await user.click(await screen.findByRole("button", { name: "New message" }));
-  const composing = await screen.findByRole("region", { name: "New message" });
+  await act(async () => {
+    await services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: { viewer, communityOrigin: origin },
+      route: { version: 1, params: "new-chat-recipient" },
+    });
+  });
+  const composing = await screen.findByRole("region", { name: "New chat" });
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Message your new chat",
   });
   await user.click(editor);
   await user.paste("Keep this draft behind Settings");
@@ -233,7 +242,7 @@ it("keeps the same unsent conversation and companion panel through Settings sect
     expect(note).toHaveValue("Retain companion state");
     expect(
       within(composing).getByRole("textbox", {
-        name: "Message Draft recipient",
+        name: "Message your new chat",
         hidden: true,
       }),
     ).toBe(editor);
@@ -275,13 +284,22 @@ it("keeps the same unsent conversation and companion panel through Settings sect
 
 it("returns keyboard-opened Settings to the same focused draft", async () => {
   const user = await setup();
-  await user.click(await screen.findByRole("button", { name: "New message" }));
-  const composing = await screen.findByRole("region", { name: "New message" });
+  await act(async () => {
+    await services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: { viewer, communityOrigin: origin },
+      route: { version: 1, params: "new-chat-recipient" },
+    });
+  });
+  const composing = await screen.findByRole("region", { name: "New chat" });
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Message your new chat",
   });
   await user.click(editor);
   await user.paste("Keyboard draft");

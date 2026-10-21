@@ -713,13 +713,17 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   expect(f.open).not.toHaveBeenCalled();
 });
 
-it("opens Chat settings from the heading and restores keyboard focus without navigating", async () => {
+it("opens Chat settings from the overflow and restores keyboard focus without navigating", async () => {
   const f = fixture();
   f.mount();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat settings" });
-  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
+  const trigger = await screen.findByRole("button", { name: "Chat actions" });
   trigger.focus();
+  await user.keyboard("{Enter}");
+  const settings = await screen.findByRole("menuitem", {
+    name: "Chat settings…",
+  });
+  settings.focus();
   await user.keyboard("{Enter}");
   const dialog = await screen.findByRole("dialog", { name: "Chat settings" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));

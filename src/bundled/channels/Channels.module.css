@@ -1071,16 +1071,8 @@ html[data-keyboard-navigation]
   }
 }
 
-.railSectionTitle {
+.railSectionHeader {
   display: none;
-  margin: 0;
-  padding: var(--space-2);
-  color: var(--text-subtle);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
-  font-weight: var(--type-weight-semibold);
-  overflow-wrap: anywhere;
 }
 .olderMessagesRow {
   flex: 0 0 auto;
@@ -1091,7 +1083,7 @@ html[data-keyboard-navigation]
 }
 
 @container navigation-rail (min-width: 12rem) {
-  .railSectionTitle {
+  .railSectionHeader {
     display: block;
   }
 }

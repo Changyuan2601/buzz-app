@@ -150,7 +150,7 @@ export function SidebarSection({
       setRemoving(false);
     }
   };
-  if (hideTitle)
+  if (hideTitle && !compactTitle)
     return (
       <section
         ref={dropRef}
@@ -158,7 +158,6 @@ export function SidebarSection({
         aria-label={title}
         className={`${styles.channelSection} ${styles.untitledSection}`}
       >
-        {compactTitle && <h3 className={styles.railSectionTitle}>{title}</h3>}
         <div
           id={id}
           className={`${styles.sectionContent} ${newMessage ? styles.untitledSectionContent : ""}`}
@@ -188,7 +187,9 @@ export function SidebarSection({
       data-section-dragging={dragging || undefined}
       data-menu-open={menuOpen || undefined}
     >
-      <div className={styles.sectionHeader}>
+      <div
+        className={`${styles.sectionHeader} ${compactTitle ? styles.railSectionHeader : ""}`}
+      >
         <details open={open}>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
           <summary

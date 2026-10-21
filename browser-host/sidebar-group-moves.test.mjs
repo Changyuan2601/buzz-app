@@ -116,7 +116,7 @@ it.each([true, false])(
         sidebarSections([{ id: "alpha", name: "Alpha" }], restored).map(
           ({ key }) => key,
         ),
-      ).toEqual(["group:work", "channels", "dms"]);
+      ).toEqual(["group:work", "channels"]);
     } finally {
       h.owner.dispose();
     }
@@ -134,7 +134,7 @@ it("moves directly from Starred into a saved group and retains other assignments
       sidebarSections([{ id: "alpha", name: "Alpha" }], restored).map(
         ({ key }) => key,
       ),
-    ).toEqual(["group:work", "channels", "dms"]);
+    ).toEqual(["group:work", "channels"]);
   } finally {
     h.owner.dispose();
   }

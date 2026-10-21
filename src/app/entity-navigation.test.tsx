@@ -218,13 +218,14 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie"]),
+    ).toEqual(["Bestie"]),
   );
 
   expect(
     screen.queryByRole("tab", { name: "Repository" }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Inbox" })).toBeInTheDocument();
 
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
@@ -237,7 +238,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(screen.getByRole("navigation", { name: "Pages" }))
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie"]),
+    ).toEqual(["Bestie"]),
   );
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();

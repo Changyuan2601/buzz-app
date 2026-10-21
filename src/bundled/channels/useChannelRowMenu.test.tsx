@@ -114,7 +114,7 @@ it("keeps menus with independent actions when the usual row action is unavailabl
   // Test-only action: no new product action or writer is introduced by this seam.
   const actionsFor = () => ["Independent action"];
   view.rerender({ sections: sidebarSections([dm]), actionsFor });
-  act(() => view.result.current.open(dm, "dms"));
+  act(() => view.result.current.open(dm, "channels"));
   expect(view.result.current.rowMenu?.channelId).toBe("dm");
   view.rerender({ sections: sidebarSections([dm]), actionsFor: () => [] });
   expect(view.result.current.rowMenu).toBeUndefined();
