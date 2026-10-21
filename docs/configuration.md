@@ -128,7 +128,9 @@ BUZZ_BUILDERLAB_TENANTS='[{"relayHost":"communities.buzz.xyz","self":"12f6870117
   fragment). The native build grants every distinct `loginOrigin`, together with
   `BUZZ_BUILDERLAB_URL`'s origin, to the bundled Builderlab plugin, up to 15
   login origins (the manifest limit of 16 keeps one for that origin's Apps
-  Platform); the first-launch OAuth client can reach nothing else.
+  Platform); the first-launch OAuth client can reach nothing else. The native
+  kind-24243 binding signer accepts a challenge for these origins and production
+  Builderlab only.
 
 A community URL that matches no row sets up a key only, without Builderlab.
 Malformed rows fail the Vite configuration and the native build without echoing
@@ -138,9 +140,10 @@ the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 
 After Builderlab sign-in, the first-launch flow reads two things about the
 account from kgoose: the Nostr key bound to it and the communities it owns
-([identity](identity.md)). A developer's real account is bound to their real key
-and that binding must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those
-two reads — and nothing else — on a dev server:
+([identity](identity.md)), and binds a key it creates or imports to an unlinked
+account. A developer's real account is bound to their real key and that binding
+must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those two reads and
+the binding — and nothing else — on a dev server:
 
 ```sh
 # A brand-new account: the key-setup choice follows sign-in.
@@ -154,8 +157,9 @@ the way the Community URL field accepts them. Vite exposes the value as
 `VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
 `pnpm tauri build` define it empty, so packaged apps always ask kgoose. A
 malformed value fails the Vite configuration without being echoed. Restart the
-dev server after changing it. The faked steps (key backup, binding, unlinking)
-are unaffected: they wait whether or not a seed is set.
+dev server after changing it. With a seed, binding succeeds without a request
+or a native signature. The faked steps (key backup, unlinking) are unaffected:
+they wait whether or not a seed is set.
 
 ## Whole-video limit
 

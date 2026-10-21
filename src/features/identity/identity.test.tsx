@@ -30,7 +30,7 @@ import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 import { Welcome } from "./Welcome";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
-import type { OwnedCommunity } from "./builderlab-account";
+import type { FirstRunAccount, OwnedCommunity } from "./builderlab-account";
 import { createCommunities } from "../communities/service";
 import { connectNativeTransport } from "../relay/native";
 import { keypair, profile, signed } from "../relay/testing";
@@ -83,11 +83,16 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
     throw new Error("Welcome saved a profile without a join");
   },
 };
-/** The signed-in account's reads with no key bound and nothing owned: today's every user. */
-const unlinked: ComponentProps<typeof Welcome>["account"] = () => ({
-  linkedKey: () => Promise.resolve(null),
-  ownedCommunities: () => Promise.resolve([]),
-});
+/** The signed-in account with no key bound and nothing owned, binding through `bind`. */
+const unlinkedWith =
+  (bind: FirstRunAccount["bind"]): ComponentProps<typeof Welcome>["account"] =>
+  () => ({
+    linkedKey: () => Promise.resolve(null),
+    ownedCommunities: () => Promise.resolve([]),
+    bind,
+  });
+/** Today's every user: nothing bound or owned, and binding the new key succeeds. */
+const unlinked = unlinkedWith(() => Promise.resolve());
 const roots: Context[] = [];
 /** The production shape: the service exists at startup and hydrates once the key is ready. */
 function communitiesFor(identity: Identity, openRelay = "") {
@@ -852,8 +857,10 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   ).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await manageKeysForMe(user);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Backing up and linking your key… [TODO]",
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Backing up your key… [TODO]",
+    ),
   );
   await release(1);
   expect(delay.mock.calls).toEqual([[2000], [2000]]);
@@ -1098,9 +1105,12 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   const released = deferred<Credential>();
   const connect = vi.fn((_signal: AbortSignal) => released.promise);
   const linked = deferred<string | null>();
+  const bound = deferred<void>();
+  const bind = vi.fn((_pubkey: string) => bound.promise);
   const account = vi.fn(() => ({
     linkedKey: () => linked.promise,
     ownedCommunities: () => Promise.resolve([]),
+    bind,
   }));
   const { delay, release } = gatedDelay();
   const identity = createIdentity();
@@ -1158,12 +1168,18 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   await manageKeysForMe(user);
   expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
   expect(invoke).toHaveBeenCalledWith("identity_create", {});
+  expect(bind).not.toHaveBeenCalled();
   await act(async () => created.resolve(viewer));
   // The key is now ready, but setup keeps the app behind the onboarding screens.
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   expect(screen.queryByText("Signed in")).toBeNull();
+  // The created key is bound to the account before anything is backed up.
+  expect(screen.getByRole("status")).toHaveTextContent("Linking your key…");
+  expect(bind.mock.calls).toEqual([[viewer]]);
+  expect(delay).toHaveBeenCalledTimes(1);
+  await act(async () => bound.resolve());
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Backing up and linking your key… [TODO]",
+    "Backing up your key… [TODO]",
   );
   await release(1);
   expect(
@@ -1183,6 +1199,60 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     expect(screen.getByRole("button", { name })).toBeDisabled();
   }
   expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
+  ]);
+  identity.dispose();
+});
+
+it("a link that fails after the key is created stops setup before the backup, and Back rests on Join a community without entering the app", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const bind = vi.fn((_pubkey: string) =>
+    Promise.reject(
+      new Error(
+        "This Builderlab account is connected to another Buzz identity.",
+      ),
+    ),
+  );
+  const delay = vi.fn().mockResolvedValue(undefined);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      account={unlinkedWith(bind)}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await manageKeysForMe(user);
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This Builderlab account is connected to another Buzz identity.",
+  );
+  expect(bind.mock.calls).toEqual([[viewer]]);
+  // The key is saved; the backup never ran, and the app stays hidden.
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
@@ -1823,6 +1893,7 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     throw new Error(`Unexpected command ${command}`);
   });
   const { delay, release } = gatedDelay();
+  const bind = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
@@ -1830,7 +1901,7 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinked}
+      account={unlinkedWith(bind)}
       connect={vi.fn().mockResolvedValue(credential)}
       delay={delay}
     >
@@ -1860,6 +1931,8 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     await screen.findByRole("heading", { name: "Your private identity key" }),
   ).toBeVisible();
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  // Linked to the account on the way, like a key Builderlab manages.
+  expect(bind.mock.calls).toEqual([[viewer]]);
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(await screen.findByText(key)).toHaveClass("font-mono");
   expect(screen.getByText("Private key (nsec)")).toBeVisible();
@@ -1939,8 +2012,9 @@ it("Please back this up for me on the reveal page runs the backup step and lands
   await user.click(
     screen.getByRole("button", { name: "Please back this up for me" }),
   );
+  // The key was linked before the reveal, so only the backup runs here.
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Backing up and linking your key… [TODO]",
+    "Backing up your key… [TODO]",
   );
   expect(screen.queryByText(key)).toBeNull();
   await release(1);
@@ -2015,12 +2089,13 @@ async function keyImportPage(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
   delay = vi.fn().mockResolvedValue(undefined),
+  account = unlinked,
 ) {
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinked}
+      account={account}
       connect={vi.fn().mockResolvedValue(credential)}
       delay={delay}
     >
@@ -2111,16 +2186,23 @@ it("I already have a key opens Enter your private key, classifies what is pasted
   identity.dispose();
 });
 
-it("Continue with this key imports the pasted nsec behind Importing your key, then lands on Join a community with no backup or reveal", async () => {
+it("Continue with this key imports the pasted nsec behind Importing your key, links it to the new account, then lands on Join a community with no backup or reveal", async () => {
   const imported = deferred<string>();
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_import") return imported.promise;
     throw new Error(`Unexpected command ${command}`);
   });
+  const bound = deferred<void>();
+  const bind = vi.fn((_pubkey: string) => bound.promise);
   const identity = createIdentity();
   const user = userEvent.setup();
-  const delay = await keyImportPage(user, identity);
+  const delay = await keyImportPage(
+    user,
+    identity,
+    undefined,
+    unlinkedWith(bind),
+  );
   await user.paste(ownedNsec);
   // Enter in the field submits, like the Continue button.
   await user.keyboard("{Enter}");
@@ -2131,7 +2213,15 @@ it("Continue with this key imports the pasted nsec behind Importing your key, th
   expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
   expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
+  expect(bind).not.toHaveBeenCalled();
   await act(async () => imported.resolve(owned.pubkey));
+  // The account has no key, so the imported one is bound to it like a created one.
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Linking your key…"),
+  );
+  expect(bind.mock.calls).toEqual([[owned.pubkey]]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await act(async () => bound.resolve());
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
@@ -2306,6 +2396,8 @@ const linkedTo =
   () => ({
     linkedKey: () => Promise.resolve(pubkey),
     ownedCommunities: () => Promise.resolve(communities),
+    // The import accepts only the linked key: there is nothing to bind.
+    bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
   });
 const linkedNpub = npubEncode(owned.pubkey);
 /**
@@ -2553,11 +2645,13 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
     throw new Error(`Unexpected command ${command}`);
   });
   const found = deferred<readonly OwnedCommunity[]>();
+  const bind = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
   const { delay, release } = await welcomeBackPage(user, identity, () => ({
     linkedKey: () => Promise.resolve(owned.pubkey),
     ownedCommunities: () => found.promise,
+    bind,
   }));
   await user.click(screen.getByRole("button", { name: "I lost this key" }));
   // The owned list is real and read for this page.
@@ -2604,10 +2698,13 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   await manageKeysForMe(user);
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Backing up and linking your key… [TODO]",
+      "Backing up your key… [TODO]",
     ),
   );
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  // The new key is linked in the old one's place. Until the unlink above is
+  // real, kgoose still holds the old key and would refuse this bind.
+  expect(bind.mock.calls).toEqual([[viewer]]);
   await release(2);
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -2733,6 +2830,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
             new Error("Builderlab account check failed (HTTP 503: not JSON)."),
           ),
         ownedCommunities: () => Promise.resolve([]),
+        bind: () => Promise.resolve(),
       })}
       delay={delay}
     >
@@ -2791,6 +2889,41 @@ it("the development seed answers the account reads in place of kgoose", async ()
   // No host request went anywhere: the seed replaced both reads.
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+  ]);
+  identity.dispose();
+});
+
+it("the development seed links a created key without a request or a native signature", async () => {
+  vi.stubEnv("VITE_BUZZ_FIRST_RUN_ACCOUNT", "unlinked");
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await manageKeysForMe(user);
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  // Neither kgoose (`plugin_host_request`) nor the binding signer was reached.
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
   ]);
   identity.dispose();
 });

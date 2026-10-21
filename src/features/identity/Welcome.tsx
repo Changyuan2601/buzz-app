@@ -46,6 +46,7 @@ import {
   findCommunities,
   firstRunSteps,
   importKey,
+  linkKey,
   type SetupPause,
   wait,
 } from "./setup";
@@ -224,19 +225,25 @@ export function Welcome({
     }
   };
   const denied = joinError?.denied;
-  /** The pages setup rests on. A pause this component did not reach has nothing to render. */
+  /**
+   * The pages setup rests on, all reached after sign-in. A pause this component
+   * did not reach has nothing to render.
+   */
   const paused = (at: SetupPause) => {
     const current = reads.current;
+    if (!current) return null;
+    // A key created or brought here becomes the account's before anything else.
+    const link = linkKey(identity, current);
     switch (at) {
       case "key-choice":
         return (
           <KeyChoice
             email={auth.account?.email}
             onManaged={() =>
-              void setup.start([steps.createKey, steps.backUpAndLink])
+              void setup.start([steps.createKey, link, steps.backUp])
             }
             onOwn={() =>
-              void setup.start([steps.createKey], {
+              void setup.start([steps.createKey, link], {
                 status: "paused",
                 at: "key-reveal",
               })
@@ -245,9 +252,11 @@ export function Welcome({
           />
         );
       case "key-import":
-        // On the linked lane only the linked key is accepted, and the backup is
-        // offered rather than assumed. Otherwise an imported key is already
-        // backed up wherever it came from, so it skips the backup and reveal.
+        // On the linked lane only the linked key is accepted, so there is
+        // nothing to link, and the backup is offered rather than assumed.
+        // Otherwise an imported key is linked like a created one; it is
+        // already backed up wherever it came from, so it skips the backup and
+        // reveal.
         return (
           <KeyImport
             expectedPubkey={linked}
@@ -255,7 +264,7 @@ export function Welcome({
             onImport={async (nsec) => {
               await importKey(identity, nsec);
               if (linked) pause("backup-offer");
-              else void setup.start([]);
+              else void setup.start([link]);
             }}
           />
         );
@@ -263,12 +272,12 @@ export function Welcome({
         return (
           <KeyReveal
             identity={identity}
-            onBackUp={() => void setup.start([steps.backUpAndLink])}
+            onBackUp={() => void setup.start([steps.backUp])}
             onContinue={() => void setup.start([])}
           />
         );
       case "welcome-back":
-        return linked && current ? (
+        return linked ? (
           <WelcomeBack
             npub={npubEncode(linked)}
             onImport={() => pause("key-import")}

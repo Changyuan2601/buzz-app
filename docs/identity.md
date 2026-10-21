@@ -48,14 +48,15 @@ Setup then pauses on **Set up your key**: it
 says no backed-up key was found for the signed-in email and that Builderlab
 can keep a copy so you can sign in on other devices, and offers **Manage my
 keys for me** and two smaller choices, **I want to manage my own key** and
-**I already have a key**. Manage runs **Creating keys** — the only
-step that does real work: it generates a Nostr key through the same native
-create command as the key setup screen, so the next launch opens as a
-returning user — then *Backing up and linking your key*, a `[TODO]`
-placeholder; nothing is uploaded or bound yet (the real step uploads the
-encrypted copy and binds the key through the kind-24243 challenge the
-hosted-communities card already drives). Managing your own key runs
-**Creating keys** alone and pauses
+**I already have a key**. Manage runs **Creating keys**, which generates a
+Nostr key through the same native create command as the key setup screen, so
+the next launch opens as a returning user; then **Linking your key**, which
+binds that key to the signed-in account at the same portal (kgoose's binding
+challenge, signed natively as a kind-24243 event, then verified — the flow the
+hosted-communities card drives), sending nothing more when the account already
+holds the key; then *Backing up your key*, a `[TODO]` placeholder that uploads
+nothing yet. Managing your own key runs **Creating keys** and **Linking your
+key** and pauses
 on **Your private identity key**: the nsec, shown on arrival (see [UI and
 sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
 *I’ve saved my private key somewhere safe*, and two actions — **Please back
@@ -74,8 +75,9 @@ valid nsec*. **Back** returns to Set up your key with the typed key discarded;
 same native import command as the key setup screen (`identity_import`, which
 takes the nsec as typed) behind *Importing your key…*. A native refusal — an
 invalid key, or a key already saved in this slot — appears under the field with
-the form kept. An imported key is already backed up wherever it came from, so
-it skips the backup and reveal pages. Key-only setup (a community no tenant hosts) has no account to
+the form kept. An imported key is then linked to the account like a created
+one, and skips the backup and reveal pages: it is already backed up wherever it
+came from. Key-only setup (a community no tenant hosts) has no account to
 look a backup up in or back up to, so it runs **Creating keys** alone with no
 choice or reveal page.
 
@@ -87,7 +89,8 @@ public key (npub)* with **Copy**. **Enter your private key** (primary) opens the
 same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
-device** is *Coming soon* (device pairing is its future entry). A successful
+device** is *Coming soon* (device pairing is its future entry). The imported
+key is already the account's, so nothing is linked. A successful
 import pauses on **Back up this key?** — importing never uploads silently —
 with **Not now** and **Back it up**, which runs the *Backing up your key*
 placeholder. **I lost this key** (quieter) runs **Finding communities**, a real
@@ -99,14 +102,18 @@ loaded), and memberships in other people's communities cannot be listed and are
 lost too. **Back** returns to Welcome back; **Start over with a new key**
 (destructive) runs *Unlinking your old key*, a `[TODO]` placeholder that does
 not call kgoose's delete endpoint yet, and continues on the ordinary **Set up
-your key** page so the new key is backed up and linked. The lane never offers
+your key** page so the new key is linked and backed up. Until the unlink is
+real, kgoose still holds the old key and refuses that link. The lane never offers
 Manage my keys for me or I want to manage my own key while the old key is
 linked.
 
 Every lane ends the same way. A linked account runs **Finding communities**
 (the same real read) once its key is on the device; the old key's list is not
 read after starting over. A failed step shows **Couldn’t finish setup** with the
-error and **Back**: to the welcome screen while no key exists, or, once a key is
+error — for a refused link, the hosted-communities card's copy (*This
+Builderlab account is connected to another Buzz identity.*, *This Buzz identity
+is connected to another Builderlab account.*), otherwise the step and HTTP
+status, as for the account check — and **Back**: to the welcome screen while no key exists, or, once a key is
 on the device, to the Join page below, so the app never opens without a
 community. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again

@@ -76,6 +76,26 @@ export function checkAccount(
 }
 
 /**
+ * Real: binds the key now on this device to the signed-in account, so the
+ * account is this key's and a backup can be accepted for it. The account sends
+ * nothing more when it already holds the key, so a re-run is harmless.
+ */
+export function linkKey(
+  identity: Identity,
+  account: FirstRunAccount,
+): SetupStep {
+  return {
+    label: "Linking your key…",
+    run: async () => {
+      const state = identity.snapshot();
+      if (state.status !== "ready")
+        throw new Error("Your key could not be saved on this device.");
+      await account.bind(state.viewer);
+    },
+  };
+}
+
+/**
  * Real: the communities the linked account owns, for Join a community's rows
  * and the start-over page. Runs only once a key is on the device and the
  * account is linked (the list is meaningless otherwise). A failed list is
@@ -111,11 +131,8 @@ export async function lookupBackedUpKey(
 /**
  * TODO(kgoose): upload the key for the signed-in account; only waits for now.
  * The real step wraps the nsec in an HPKE envelope for kgoose's nsec-backup
- * record and, for a key the account is not yet linked to, binds the pubkey
- * through the kind-24243 challenge/verify flow the hosted-communities card
- * already drives (`bind` in src/bundled/hosted-communities/native.ts:
- * `/v1/buzz/nostr-identities/challenge`, native
- * `identity_sign_builderlab_binding`, then `/verify`).
+ * record, which kgoose accepts only for the key bound to the account: the
+ * linked lane's own, or one `linkKey` bound first.
  */
 export const backUpKey = (delay = wait) => delay(2000);
 
@@ -131,7 +148,8 @@ export const unlinkKey = (delay = wait) => delay(2000);
  * backend yet and only wait; replace their `run` with the real call and drop
  * the marker from the label. Everything but `createKey` needs a Builderlab
  * account, so key-only setup (a community no tenant hosts) runs that alone.
- * The real account reads are `checkAccount` and `findCommunities` above.
+ * The real account steps are `checkAccount`, `linkKey` and `findCommunities`
+ * above.
  */
 export function firstRunSteps(identity: Identity, delay = wait) {
   return {
@@ -142,14 +160,9 @@ export function firstRunSteps(identity: Identity, delay = wait) {
       },
     },
     createKey: { label: "Creating keys…", run: () => createKey(identity) },
-    /** A key the account is already linked to: backup only. */
+    /** For a key the account holds: the linked one, or one `linkKey` bound. */
     backUp: {
       label: "Backing up your key… [TODO]",
-      run: () => backUpKey(delay),
-    },
-    /** A key created here: backup, and the binding that makes it the account's. */
-    backUpAndLink: {
-      label: "Backing up and linking your key… [TODO]",
       run: () => backUpKey(delay),
     },
     unlink: {
