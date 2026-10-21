@@ -1,5 +1,7 @@
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+import filePreviewManifest from "./file-preview/manifest.json";
+import * as filePreview from "./file-preview";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -64,6 +66,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...huddlesManifest, apiVersion: 1 },
     module: huddles,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...filePreviewManifest, apiVersion: 1 },
+    module: filePreview,
     enabledByDefault: true,
   },
   {

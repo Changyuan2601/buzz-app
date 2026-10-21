@@ -256,7 +256,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage & costs are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, Mentions, Emoji, File Preview, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -293,6 +293,19 @@ GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
+
+The optional, default-on **File Preview** plugin makes the file area open a preview for sent
+Markdown (`.md`, `.markdown`, or Markdown MIME type) and plain text (`.txt` or
+`text/plain`) attachments served through Buzz's authenticated media source.
+It opens a conversation panel with a compact file summary. A separate trailing
+Download action saves the file directly. Disable
+it in Settings → Plugins to restore ordinary file cards. Previews accept UTF-8
+text up to 100 KB; other formats and larger files retain download. Markdown
+uses GFM with raw HTML and embedded images omitted. Relative links remain inert.
+Files on external hosts retain their ordinary Open action.
+Attachment renderers receive optional `placement: "message" | "composer"`
+context. File Preview offers its panel action only in message placement, keeping
+the composer's existing attachment modal in place. Older hosts may omit placement.
 
 ### Optional channel menu panels
 

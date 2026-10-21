@@ -12,6 +12,11 @@ import {
 import styles from "./Messages.module.css";
 import { downloadNativeMedia } from "./native-download";
 import { useState } from "react";
+import {
+  IconButton,
+  type IconButtonProps,
+} from "../../shared/design-system/ui/IconButton";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 
 export function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -34,16 +39,27 @@ export function FileAttachment({
   attachment,
   source,
   onOpenLink,
+  onPreview,
+  variant = "card",
 }: {
   attachment: Attachment;
   source: string | undefined;
   onOpenLink(url: string): boolean;
+  onPreview?: (() => void) | undefined;
+  variant?: "card" | "summary";
 }) {
   const [downloadError, setDownloadError] = useState(false);
   const displayName = attachment.name ?? mimeLabel(attachment.mime) ?? "File";
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const externalSource = !!source && safeOpenUrl(source) && !proxySource;
+  const download = () => {
+    if (!source) return;
+    setDownloadError(false);
+    void downloadNativeMedia(source, attachment.name ?? "").catch(() =>
+      setDownloadError(true),
+    );
+  };
   if (source && !proxySource && !externalSource)
     return (
       <UnavailableFileAttachment
@@ -51,6 +67,74 @@ export function FileAttachment({
         attachment={attachment}
       />
     );
+
+  if (source && proxySource && (onPreview || variant === "summary")) {
+    const type =
+      /\.(md|markdown)$/i.test(attachment.name ?? "") ||
+      /^text\/(x-)?markdown(?:;|$)/i.test(attachment.mime ?? "")
+        ? "Markdown"
+        : /\.txt$/i.test(attachment.name ?? "") ||
+            attachment.mime?.startsWith("text/plain")
+          ? "Plain text"
+          : (mimeLabel(attachment.mime) ?? "File");
+    const label = (
+      <span className={styles.fileAttachmentBody}>
+        <span className={styles.fileAttachmentName} title={displayName}>
+          {displayName}
+        </span>
+        <span className={styles.fileAttachmentMeta}>
+          {type}
+          {attachment.size !== undefined &&
+            ` · ${formatFileSize(attachment.size)}`}
+        </span>
+      </span>
+    );
+    const action = {
+      "aria-label": `Download ${displayName}`,
+      title: `Download ${displayName}`,
+      icon: <DownloadIcon aria-hidden="true" />,
+      shape: variant === "summary" ? "control" : "row-end",
+    } satisfies IconButtonProps;
+    return (
+      <>
+        <div
+          className={
+            variant === "summary"
+              ? styles.fileSummary
+              : styles.filePreviewAttachment
+          }
+        >
+          <div className={styles.filePreviewMain}>
+            {onPreview ? (
+              <NavigationItem
+                aria-label={`Preview ${displayName}`}
+                icon={
+                  <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+                }
+                label={label}
+                onClick={onPreview}
+              />
+            ) : (
+              label
+            )}
+          </div>
+          <span className={styles.fileDownloadAction}>
+            {nativeSource ? (
+              <IconButton {...action} onClick={download} />
+            ) : (
+              <IconButton
+                {...action}
+                nativeButton={false}
+                role="link"
+                render={<a href={source} download={attachment.name ?? ""} />}
+              />
+            )}
+          </span>
+        </div>
+        {downloadError && <span role="alert">Download failed</span>}
+      </>
+    );
+  }
 
   const content = (
     <>
@@ -106,12 +190,7 @@ export function FileAttachment({
           className={styles.fileAttachment}
           aria-label={`Download ${displayName}`}
           title={displayName}
-          onClick={() => {
-            setDownloadError(false);
-            void downloadNativeMedia(source, attachment.name ?? "").catch(() =>
-              setDownloadError(true),
-            );
-          }}
+          onClick={download}
         >
           {content}
         </button>

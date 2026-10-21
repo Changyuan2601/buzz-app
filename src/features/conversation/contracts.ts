@@ -57,6 +57,8 @@ export type ComposerCaptureProps = Readonly<{
 export type AttachmentRendererProps = Readonly<{
   attachment: Attachment;
   source: string;
+  /** Older hosts may omit the rendering placement. */
+  placement?: "message" | "composer";
   onRemove?: (() => void) | undefined;
 }> &
   TargetOpener;

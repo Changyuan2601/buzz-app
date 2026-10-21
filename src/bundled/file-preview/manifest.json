@@ -1,0 +1,7 @@
+{
+  "id": "buzz.file-preview",
+  "name": "File Preview",
+  "apiVersion": 1,
+  "description": "Preview Markdown and plain text attachments beside a conversation.",
+  "discovery": { "category": "communication" }
+}

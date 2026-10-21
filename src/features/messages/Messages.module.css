@@ -956,9 +956,6 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
-.fileGroup .fileAttachment {
-  margin-top: 0;
-}
 .fileAttachmentBody {
   flex: 1;
   min-width: 0;
@@ -980,6 +977,41 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+.filePreviewAttachment,
+.fileSummary {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-standard);
+}
+.filePreviewAttachment {
+  width: 21rem;
+  max-width: 100%;
+  margin-top: var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-inset);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--text-body-sm--font-weight);
+}
+.fileSummary {
+  gap: var(--space-2);
+}
+.filePreviewMain {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.fileDownloadAction {
+  display: flex;
+  align-self: stretch;
+}
+.fileGroup .fileAttachment,
+.fileGroup .filePreviewAttachment {
+  margin-top: 0;
 }
 .audioAttachment {
   position: relative;

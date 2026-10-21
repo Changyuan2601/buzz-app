@@ -314,6 +314,7 @@ function DraftMedia({
       registry={renderers}
       attachment={attachment}
       source={source}
+      placement="composer"
       fallback={fallback}
     />
   ) : (
