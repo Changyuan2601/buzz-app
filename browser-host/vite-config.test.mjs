@@ -160,6 +160,8 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             ([key]) => !key.startsWith("BUZZ_"),
           ),
         ),
+        // Timestamped Vite config bundles cannot reuse the native cache.
+        NODE_DISABLE_COMPILE_CACHE: "1",
         BUZZ_DEV_VIEWER: "a".repeat(64),
         BUZZ_RELAY_URL: "",
         BUZZ_COMMUNITY_ALIASES: "",
