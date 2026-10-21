@@ -57,13 +57,9 @@ export function InlineUiCard({
         : reply
           ? { text: reply }
           : undefined;
+    // Unkeyed, so a card answered here stays mounted and collapses smoothly.
     return answered ? (
-      <ChoiceForm
-        key={answered.text}
-        ui={ui}
-        className={className}
-        answered={answered}
-      />
+      <ChoiceForm ui={ui} className={className} answered={answered} />
     ) : null;
   }
   return (
@@ -101,12 +97,17 @@ function ChoiceForm({
     ready: Promise<unknown>;
   }>(undefined);
   const frozen = !!answered;
-  const [choice, setChoice] = useState<string | null>(() =>
-    !answered ? null : ui.options.includes(answered.text) ? answered.text : OWN,
-  );
-  const [own, setOwn] = useState(() =>
-    answered && !ui.options.includes(answered.text) ? answered.text : "",
-  );
+  const [picked, setChoice] = useState<string | null>(null);
+  const [typed, setOwn] = useState("");
+  // Only a card answered while open has Shuffle and Submit to close.
+  const [answeredHere] = useState(!answered);
+  // A frozen card shows its answer, whatever was picked or typed before.
+  const choice = !answered
+    ? picked
+    : ui.options.includes(answered.text)
+      ? answered.text
+      : OWN;
+  const own = answered && choice === OWN ? answered.text : typed;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
@@ -162,8 +163,8 @@ function ChoiceForm({
                 />
               )}
             </div>
-            {!frozen && (
-              <div className={styles.shuffle}>
+            {(!frozen || answeredHere) && (
+              <div className={styles.shuffle} {...collapse(frozen)}>
                 <Button
                   variant="prominent"
                   size="sm"
@@ -196,45 +197,67 @@ function ChoiceForm({
               onValueChange={setChoice}
             >
               {ui.options.map((option) => (
-                <Radio
+                <div
                   key={option}
-                  value={option}
-                  label={option}
-                  variant="tile"
-                />
+                  className={styles.collapsible}
+                  {...collapse(frozen && option !== choice)}
+                >
+                  <div className={styles.collapsibleContent}>
+                    <Radio value={option} label={option} variant="tile" />
+                  </div>
+                </div>
               ))}
             </RadioGroup>
           </Field>
-          <RadioWriteIn
-            aria-label="Write your own"
-            placeholder="Write your own"
-            selected={choice === OWN}
-            value={own}
-            disabled={busy}
-            readOnly={frozen}
-            maxLength={profile ? 64 : 500}
-            onFocus={() => setChoice(OWN)}
-            onChange={(event) => setOwn(event.target.value)}
-          />
+          <div
+            className={styles.collapsible}
+            {...collapse(frozen && choice !== OWN)}
+          >
+            <div className={styles.collapsibleContent}>
+              <RadioWriteIn
+                aria-label="Write your own"
+                placeholder="Write your own"
+                selected={choice === OWN}
+                value={own}
+                disabled={busy}
+                readOnly={frozen}
+                maxLength={profile ? 64 : 500}
+                onFocus={() => setChoice(OWN)}
+                onChange={(event) => setOwn(event.target.value)}
+              />
+            </div>
+          </div>
         </div>
         {error && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error}
           </p>
         )}
-        {!frozen && (
-          <div className={styles.actions}>
-            <Button
-              type="submit"
-              variant="prominent"
-              loading={busy}
-              disabled={!answer}
-            >
-              Submit
-            </Button>
+        {(!frozen || answeredHere) && (
+          <div className={styles.collapsibleEnd} {...collapse(frozen)}>
+            <div className={styles.collapsibleContent}>
+              <div className={styles.actions}>
+                <Button
+                  type="submit"
+                  variant="prominent"
+                  loading={busy}
+                  disabled={!answer}
+                >
+                  Submit
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </form>
     </div>
   );
+}
+
+/** Answering closes what wasn't chosen like an accordion: it fades, then its
+ * space closes. Closed parts leave the accessibility tree and focus order. */
+function collapse(closed: boolean) {
+  return closed
+    ? { "data-collapsed": "", "aria-hidden": true, inert: true }
+    : {};
 }
