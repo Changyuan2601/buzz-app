@@ -1,6 +1,5 @@
 import { vi } from "vitest";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
-import { createFederatedSession } from "./session";
 
 /** Consumer fixtures supply public host events; they do not implement credential custody. */
 export function federatedFixture(
@@ -55,9 +54,5 @@ export function federatedFixture(
       });
     }),
   };
-  return {
-    service,
-    publish,
-    session: createFederatedSession(service),
-  };
+  return { service, publish };
 }
