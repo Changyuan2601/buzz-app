@@ -163,7 +163,7 @@ function ChoiceForm({
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
   return (
-    <div className={className}>
+    <div className={className} data-no-timestamp-hint="">
       <form
         ref={form}
         className={styles.card}

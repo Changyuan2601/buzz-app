@@ -93,7 +93,13 @@ export function MessageTimestampHint({
       content={fullDate}
       open={createdAt !== undefined && open}
       onOpenChange={(next) =>
-        setOpen(next && !payload.current?.contains(document.activeElement))
+        setOpen(
+          next &&
+            !payload.current?.contains(document.activeElement) &&
+            // Pointing at a control the message holds is using it, not
+            // asking when it was sent.
+            !payload.current?.querySelector("[data-no-timestamp-hint]:hover"),
+        )
       }
       delay={1000}
       disableHoverablePopup
