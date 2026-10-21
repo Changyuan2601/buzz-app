@@ -37,13 +37,39 @@ describe("Canvas todo source edits", () => {
     );
     expect(readTodos("## Todos\n- [-] Other\n- [//] Mark\n").items).toEqual([]);
   });
-  it("recognizes actual Markdown structure, not examples or nested task lists", () => {
+  it("recognizes nested tasks but excludes examples, quotes and continuation prose", () => {
     const content =
       "```md\n## Todos\n- [ ] Fenced\n```\n\n## Todos\n\n- [ ] Real\n  - [ ] Nested\n\n    [ ] Continuation\n\n> - [ ] Quoted\n\n```\n- [ ] Code\n```\n\n### Details\n\n+ [x] Also real\n\n# Next\n\n- [ ] Other\n";
     expect(readTodos(content).items.map((i) => i.label)).toEqual([
       "Real",
+      "Nested",
       "Also real",
     ]);
+  });
+  it("reads nested task paths and edits only the selected source bytes", () => {
+    const content =
+      "## Todos\r\n\r\n- [ ] Ship\r\n    - [/] Build\r\n        - [X] Test\r\n    - [ ] Ship\r\n- Group\r\n  - [ ] Other\r\n\r\n## Keep\r\n- [ ] Outside\r\n";
+    const { items } = readTodos(content);
+    expect(items.map(({ label, parents }) => [label, parents])).toEqual([
+      ["Ship", []],
+      ["Build", ["Ship"]],
+      ["Test", ["Ship", "Build"]],
+      ["Ship", ["Ship"]],
+      ["Other", []],
+    ]);
+    const nested = items[2]!;
+    expect(setStatus(content, nested.offset, "todo")).toBe(
+      content.replace("[X]", "[ ]"),
+    );
+    const assigned = assignTodo(content, nested.offset, alex);
+    expect(assigned).toBe(
+      content.replace(
+        "Test\r\n",
+        `Test · Assignee: [Alex](${profileTarget(alex.pubkey)})\r\n`,
+      ),
+    );
+    expect(assignTodo(assigned, nested.offset)).toBe(content);
+    expect(readTodos(addTodo(content, "New")).items).toHaveLength(6);
   });
   it("preserves prose, sections, markers and trailing whitespace when adding", () => {
     const before =

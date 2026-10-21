@@ -563,6 +563,13 @@ export function TodosPanel({
                         <ul className={styles.list}>
                           {group.map((item) => (
                             <li key={item.offset} className={styles.row}>
+                              {item.parents.length > 0 && (
+                                <div
+                                  className={`${styles.parents} text-caption text-secondary`}
+                                >
+                                  {item.parents.join(" / ")}
+                                </div>
+                              )}
                               <Checkbox
                                 id={`${prefix}-${item.offset}`}
                                 checked={item.status === "done"}

@@ -33,7 +33,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   app,
 }) => {
   const original =
-    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n\n## Decisions\nKeep these too.\n";
+    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n\n## Decisions\nKeep these too.\n";
   let head = app.sign({
     kind: 40100,
     content: original,
@@ -94,6 +94,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     exact: true,
   });
   const input = drawer.getByRole("textbox", { name: "New todo" });
+  const nested = drawer.getByRole("checkbox", { name: "Review", exact: true });
+  await expect(nested).toBeVisible();
+  await expect(
+    nested
+      .locator("xpath=ancestor::li")
+      .getByText("First / Build", { exact: true }),
+  ).toBeVisible();
   await input.fill("Ship it");
   await input.press("Enter");
   await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
@@ -119,6 +126,14 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
       `## Todos\n\n- [x] Ship it · Assignee: [Fixture Reader](nostr:${npubEncode(app.viewer)})\n`,
     ),
   );
+  const beforeChildEdit = head.content;
+  const child = drawer.getByRole("checkbox", { name: "Build", exact: true });
+  await child.focus();
+  await child.press("Space");
+  await expect(child).toBeChecked();
+  await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
+  expect(writes).toHaveLength(4);
+  expect(head.content).toBe(beforeChildEdit.replace("[ ] Build", "[x] Build"));
   const conversation = await page
     .getByRole("article", { name: "Conversation", exact: true })
     .boundingBox();
@@ -133,6 +148,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   // clicking the launcher, which moves when the conversation expands.
   await expect(dock).toHaveCount(0);
   await launcher.click();
+  await expect(child).toBeChecked();
   await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   await assignee.click();
   await page

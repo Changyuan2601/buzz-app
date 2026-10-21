@@ -94,6 +94,30 @@ const saved = () =>
   waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas"),
   );
+it("shows nested tasks with parent context across statuses and saves only the child checkbox", async () => {
+  const f = fixture();
+  const content =
+    "## Todos\n\n- [/] Ship\n    - [ ] Build\n        - [x] Test\n    - [ ] Publish\n\n## Keep\nUntouched.\n";
+  f.canvas.read.mockResolvedValue({ ...head, content });
+  render(<TodosPanel {...f.props} />);
+  const child = await screen.findByRole("checkbox", { name: "Build" });
+  expect(within(child.closest("li")!).getByText("Ship")).toBeInTheDocument();
+  const grandchild = screen.getByRole("checkbox", { name: "Test" });
+  expect(
+    within(grandchild.closest("li")!).getByText("Ship / Build"),
+  ).toBeInTheDocument();
+  await userEvent.setup().click(child);
+  await saved();
+  expect(f.canvas.save).toHaveBeenCalledWith(
+    context.channelId,
+    content.replace("[ ] Build", "[x] Build"),
+    head.id,
+  );
+  expect(screen.getByRole("checkbox", { name: "Ship" })).toHaveAttribute(
+    "aria-checked",
+    "mixed",
+  );
+});
 it("adds and checks tasks, saves exact base, preserves other Markdown and restores saved content", async () => {
   const f = fixture(),
     user = userEvent.setup();
