@@ -1,3 +1,5 @@
+import { newestMessage } from "../../buzz-mcp/send-cursor";
+import { threadReference } from "../../features/relay/thread-reference";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -479,11 +481,11 @@ function fixture(
     args: unknown,
     index = starts().length - 1,
     overrides = {},
-  ): Promise<Wire | undefined> => {
+  ) => {
     const threadId = (
       starts()[index]?.params as { threadId: string } | undefined
     )?.threadId;
-    // Existing routing tests simulate a caller reading before composing.
+    // Simulate a caller supplying the cursor from its latest conversation view.
     if (
       name === "send" &&
       args &&
@@ -491,22 +493,48 @@ function fixture(
       !("cursor" in args)
     ) {
       const send = args as Record<string, unknown>;
-      const read = await tool(
-        "read",
-        {
-          ...(send.channel ? { channel: send.channel } : {}),
-          ...(send.reply ? { thread: send.reply } : {}),
-        },
-        index,
+      const inputs = sent.filter(
+        (wire) =>
+          (wire.method === "turn/start" || wire.method === "turn/steer") &&
+          (wire.params as { threadId?: string })?.threadId === threadId,
       );
-      const result = read?.result as
-        | { contentItems?: { text?: string }[] }
-        | undefined;
-      const cursor = result?.contentItems
-        ?.map((item) => item.text ?? "")
-        .join("\n")
-        .match(/(?:^|\n)cursor (0|[a-f0-9]{64})(?:\n|$)/)?.[1];
-      args = { ...send, cursor: cursor ?? "0" };
+      const prompt =
+        (inputs.at(-1)?.params as { input?: { text?: string }[] })?.input
+          ?.map((item) => item.text ?? "")
+          .join("\n") ?? "";
+      const envelope = prompt.match(/<context>\s*([^<]+)<\/context>/)?.[1];
+      const routing = envelope
+        ? (JSON.parse(envelope) as {
+            channel_id: string;
+            reply_to?: string;
+            posting?: string;
+          })
+        : undefined;
+      const destination = String(
+        send.channel ?? routing?.channel_id ?? "channel",
+      );
+      const reference =
+        typeof send.reply === "string"
+          ? send.reply
+          : send.channel === undefined && routing?.posting !== "top-level"
+            ? routing?.reply_to
+            : undefined;
+      const message =
+        reference && events.find((event) => event.id === reference);
+      const thread = message
+        ? (threadReference(message)?.rootId ?? message.id)
+        : reference;
+      const head = newestMessage(
+        events.filter(
+          (event) =>
+            event.tags.some(
+              (tag) => tag[0] === "h" && tag[1] === destination,
+            ) &&
+            (!thread ||
+              (threadReference(event)?.rootId ?? event.id) === thread),
+        ),
+      );
+      args = { ...send, cursor: head?.id ?? "0" };
     }
     const id = `tool-${++toolId}`;
     toolCalls.set(id, { threadId, turnId: `turn-${index + 1}`, callId: id });
