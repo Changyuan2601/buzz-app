@@ -315,7 +315,7 @@ mod tests {
         )
         .await;
         assert_eq!(result.err().as_deref(), Some("relay-forbidden"));
-        let heads = server.await.unwrap();
+        let heads = server.heads().await;
         assert!(
             heads[0].to_ascii_lowercase().contains("upgrade: websocket"),
             "{}",
@@ -339,7 +339,6 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Ok(None)));
-        assert!(!server.is_finished());
-        server.abort();
+        assert!(server.received().is_empty());
     }
 }

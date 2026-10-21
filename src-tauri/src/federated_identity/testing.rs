@@ -153,9 +153,9 @@ pub(crate) async fn community(required: bool) -> Community {
 }
 impl Community {
     /// Answers discovery at `/info` whenever asked, and every other request
-    /// with the next of `replies`, one connection each. Yields those other
+    /// with the next of `replies`, one connection each, recording those other
     /// requests' heads in order.
-    pub(crate) fn serve(&self, replies: Vec<String>) -> tokio::task::JoinHandle<Vec<String>> {
+    pub(crate) fn serve(&self, replies: Vec<String>) -> Served {
         let (listener, acceptor) = (self.listener.clone(), self.acceptor.clone());
         let discovery = if self.required {
             reply(
@@ -165,10 +165,12 @@ impl Community {
         } else {
             reply("200 OK", "{}")
         };
-        tokio::spawn(async move {
+        let heads = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let expected = replies.len();
+        let recorded = heads.clone();
+        let task = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let mut replies = replies.into_iter();
-            let mut heads = Vec::new();
             while replies.len() > 0 {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(tcp).await.unwrap();
@@ -180,35 +182,82 @@ impl Community {
                 let answer = if head.starts_with("GET /info ") {
                     discovery.clone()
                 } else {
-                    heads.push(head);
+                    recorded.lock().unwrap().push(head);
                     replies.next().unwrap()
                 };
                 stream.write_all(answer.as_bytes()).await.unwrap();
                 let _ = stream.shutdown().await;
             }
-            heads
-        })
+        });
+        Served {
+            task,
+            heads,
+            expected,
+        }
     }
     /// Asserts `head` carries exactly the issued assertion if the community
     /// requires NIP-FI, and none otherwise; never as `Authorization`.
     pub(crate) fn assert_carried(&self, head: &str) {
+        if !self.required {
+            return self.assert_uncarried(head);
+        }
         let carried: Vec<_> = head
             .lines()
             .filter_map(|line| line.split_once(':'))
             .filter(|(name, _)| name.eq_ignore_ascii_case(super::assertion::HEADER))
             .map(|(_, value)| value.trim().to_owned())
             .collect();
-        let expected = if self.required {
-            vec![format!("Bearer {}", self.token)]
-        } else {
-            vec![]
-        };
-        assert_eq!(carried, expected, "{head}");
-        assert!(!head.contains(&self.token) || self.required, "{head}");
+        assert_eq!(carried, [format!("Bearer {}", self.token)], "{head}");
         assert!(
             !head.to_ascii_lowercase().contains("authorization: bearer"),
             "{head}"
         );
+    }
+    /// Asserts `head` carries no assertion in any header or casing.
+    pub(crate) fn assert_uncarried(&self, head: &str) {
+        let lower = head.to_ascii_lowercase();
+        assert!(
+            !lower.contains(&super::assertion::HEADER.to_ascii_lowercase()),
+            "{head}"
+        );
+        assert!(!lower.contains("bearer"), "{head}");
+        assert!(!head.contains(&self.token), "{head}");
+    }
+}
+/// A running `Community::serve`.
+pub(crate) struct Served {
+    task: tokio::task::JoinHandle<()>,
+    heads: Arc<std::sync::Mutex<Vec<String>>>,
+    expected: usize,
+}
+impl Served {
+    /// The recorded heads once every expected request has arrived; fails
+    /// within five seconds naming the first request that never did.
+    pub(crate) async fn heads(mut self) -> Vec<String> {
+        let finished =
+            tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task).await;
+        let heads = self.received();
+        match finished {
+            Ok(result) => result.unwrap(),
+            Err(_) => {
+                self.task.abort();
+                panic!(
+                    "request {} of {} never arrived; received {heads:?}",
+                    heads.len() + 1,
+                    self.expected
+                );
+            }
+        }
+        heads
+    }
+    /// The heads recorded so far.
+    pub(crate) fn received(&self) -> Vec<String> {
+        self.heads.lock().unwrap().clone()
+    }
+}
+impl Drop for Served {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 /// A complete response with a JSON body that closes its connection.

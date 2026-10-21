@@ -3801,7 +3801,7 @@ mod federated_header {
         .await
         .unwrap();
         assert_eq!(response.status, 200);
-        community.assert_carried(&server.await.unwrap()[0]);
+        community.assert_carried(&server.heads().await[0]);
     }
     #[tokio::test]
     async fn http_attaches_for_required_discovery() {
@@ -3831,7 +3831,7 @@ mod federated_header {
         .await
         .unwrap();
         assert_eq!(response.status, 200);
-        community.assert_carried(&server.await.unwrap()[0]);
+        community.assert_carried(&server.heads().await[0]);
     }
     #[tokio::test]
     async fn upload_attaches_for_required_discovery() {
@@ -3863,7 +3863,7 @@ mod federated_header {
         .await
         .unwrap();
         assert_eq!(response.status(), 200);
-        community.assert_carried(&server.await.unwrap()[0]);
+        community.assert_carried(&server.heads().await[0]);
     }
     #[tokio::test]
     async fn media_download_attaches_for_required_discovery() {
@@ -3886,7 +3886,7 @@ mod federated_header {
             MAX_MEDIA as u64,
         )
         .await;
-        community.assert_carried(&server.await.unwrap()[0]);
+        community.assert_carried(&server.heads().await[0]);
     }
     #[tokio::test]
     async fn media_stream_attaches_for_required_discovery() {

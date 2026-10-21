@@ -503,9 +503,9 @@ mod tests {
             room: None,
         };
         let _ = admit_membership(&community.host, &community.fi, &call).await;
-        let heads = server.await.unwrap();
+        let heads = server.heads().await;
         assert!(heads[0].starts_with("GET / "), "{}", heads[0]);
-        assert!(!heads[0].contains(crate::federated_identity::assertion::HEADER));
+        community.assert_uncarried(&heads[0]);
         assert!(heads[1].starts_with("POST /query "), "{}", heads[1]);
         community.assert_carried(&heads[1]);
     }
@@ -532,7 +532,7 @@ mod tests {
             &viewer,
         )
         .await;
-        let heads = server.await.unwrap();
+        let heads = server.heads().await;
         assert!(heads[0].starts_with("POST /events "), "{}", heads[0]);
         community.assert_carried(&heads[0]);
     }
