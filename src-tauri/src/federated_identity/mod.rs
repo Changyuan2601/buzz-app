@@ -730,4 +730,6 @@ pub(crate) async fn federated_identity_sign_out(
 }
 
 #[cfg(test)]
+pub(crate) mod testing;
+#[cfg(test)]
 mod tests;

@@ -56,6 +56,16 @@ pub(super) async fn connect(
     call: &Call,
     room: &str,
 ) -> Result<(Socket, Peers)> {
+    connect_via(host, fi, call, room, Connector::Rustls(tls_config()?)).await
+}
+
+async fn connect_via(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    call: &Call,
+    room: &str,
+    connector: Connector,
+) -> Result<(Socket, Peers)> {
     let community = super::origin(&call.community)?;
     // Issued for the community's HTTPS origin and the signing identity, like
     // every other relay route; without a NIP-FI session it carries nothing.
@@ -63,7 +73,7 @@ pub(super) async fn connect(
         .await?
         .ok_or("Huddle authorization unavailable")?;
     let request = audio_request(&community, room, authorization.header())?;
-    fi.during_authorization(host, &authorization, open(host, call, request))
+    fi.during_authorization(host, &authorization, open(host, call, request, connector))
         .await?
 }
 
@@ -88,7 +98,12 @@ fn audio_request(community: &Url, room: &str, assertion: Option<&str>) -> Result
     Ok(request)
 }
 
-async fn open(host: &IdentityHost, call: &Call, request: Request) -> Result<(Socket, Peers)> {
+async fn open(
+    host: &IdentityHost,
+    call: &Call,
+    request: Request,
+    connector: Connector,
+) -> Result<(Socket, Peers)> {
     // Use the same origin string as the existing desktop v2 client for NIP-42.
     let relay = super::origin(&call.community)?
         .as_str()
@@ -97,7 +112,7 @@ async fn open(host: &IdentityHost, call: &Call, request: Request) -> Result<(Soc
     let joined = connection::connect(
         request,
         Some(&call.parent),
-        Some(Connector::Rustls(tls_config()?)),
+        Some(connector),
         |challenge| async move {
             host.sign(template(
                 22242,
@@ -291,6 +306,299 @@ mod tests {
         assert!(bare.headers().get(assertion::HEADER).is_none());
         assert!(bare.headers().get("authorization").is_none());
     }
+    mod wire {
+        use super::*;
+        use crate::federated_identity::testing;
+        use futures_util::FutureExt;
+        use std::sync::Arc;
+        use tokio::{
+            io::AsyncReadExt,
+            net::{TcpListener, TcpStream},
+            sync::oneshot,
+        };
+        use tokio_rustls::{server::TlsStream, TlsAcceptor};
+        use tokio_tungstenite::{tungstenite::handshake::server, WebSocketStream};
+
+        const FAILURE_BOUND: Duration = Duration::from_secs(5);
+
+        type Stream = TlsStream<TcpStream>;
+
+        /// A loopback TLS relay; `tls()` gives the client connector trusting only it.
+        struct Relay(TcpListener, TlsAcceptor);
+        impl Relay {
+            async fn accept(&self) -> Stream {
+                let (tcp, _) = self.0.accept().await.unwrap();
+                self.1.accept(tcp).await.unwrap()
+            }
+        }
+        fn tls() -> (TlsAcceptor, Connector) {
+            let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+            let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+            let server = rustls::ServerConfig::builder_with_provider(provider.clone())
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![cert.cert.der().clone()],
+                    rustls::pki_types::PrivateKeyDer::Pkcs8(
+                        cert.signing_key.serialize_der().into(),
+                    ),
+                )
+                .unwrap();
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(cert.cert.der().clone()).unwrap();
+            let client = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            (
+                TlsAcceptor::from(Arc::new(server)),
+                Connector::Rustls(Arc::new(client)),
+            )
+        }
+
+        /// A loopback community on a non-default port. `required` is whether its
+        /// discovery demands NIP-FI; the session starts signed in.
+        async fn community(
+            required: bool,
+        ) -> (
+            Relay,
+            Connector,
+            IdentityHost,
+            FederatedIdentity,
+            Call,
+            String,
+            tokio::task::JoinHandle<Vec<String>>,
+        ) {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let (acceptor, connector) = tls();
+            let relay = format!("wss://{}", listener.local_addr().unwrap());
+            let host = IdentityHost::fixture();
+            let viewer = host.viewer().await.unwrap();
+            let (issuer, issued) = testing::issuer(&viewer, &relay).await;
+            let fi = testing::signed_in(issuer, &relay, required);
+            let call = Call {
+                id: uuid::Uuid::new_v4().to_string(),
+                community: format!("https://{}/", &relay[6..]),
+                viewer,
+                parent: uuid::Uuid::new_v4().to_string(),
+                room: None,
+            };
+            (
+                Relay(listener, acceptor),
+                connector,
+                host,
+                fi,
+                call,
+                relay,
+                issued,
+            )
+        }
+
+        async fn upgrade(
+            relay: &Relay,
+        ) -> (
+            WebSocketStream<Stream>,
+            String,
+            tokio_tungstenite::tungstenite::http::HeaderMap,
+        ) {
+            let stream = relay.accept().await;
+            let (seen, head) = std::sync::mpsc::channel();
+            // tungstenite fixes the callback's error type.
+            #[allow(clippy::result_large_err)]
+            let socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                move |request: &server::Request, response: server::Response| {
+                    seen.send((request.uri().to_string(), request.headers().clone()))
+                        .unwrap();
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            let (uri, headers) = head.recv().unwrap();
+            (socket, uri, headers)
+        }
+
+        async fn send(socket: &mut WebSocketStream<Stream>, value: Value) {
+            socket
+                .send(Message::Text(value.to_string().into()))
+                .await
+                .unwrap();
+        }
+
+        /// The relay half of a successful join; returns the client's auth message.
+        async fn admit(socket: &mut WebSocketStream<Stream>, viewer: &str) -> Value {
+            send(
+                socket,
+                json!({"type":"challenge","challenge":"relay-challenge"}),
+            )
+            .await;
+            let Some(Ok(Message::Text(auth))) = socket.next().await else {
+                panic!("expected the NIP-42 auth message");
+            };
+            send(
+                socket,
+                json!({"type":"joined","peer_index":0,"peers":[{"peer_index":0,"pubkey":viewer}]}),
+            )
+            .await;
+            serde_json::from_str(&auth).unwrap()
+        }
+
+        #[tokio::test]
+        async fn connect_sends_the_community_assertion_and_signs_nip42_with_the_same_key() {
+            let (listener, connector, host, fi, call, relay, issued) = community(true).await;
+            let connecting = connect_via(&host, &fi, &call, "room", connector);
+            let relay_side = async {
+                let (mut socket, uri, headers) = upgrade(&listener).await;
+                (admit(&mut socket, &call.viewer).await, uri, headers)
+            };
+            let (joined, (auth, uri, headers)) = tokio::join!(connecting, relay_side);
+            let (_socket, peers) = joined.unwrap();
+            assert_eq!(peers, Peers::from([(0, call.viewer.clone())]));
+
+            let requested: Value = serde_json::from_str(&issued.await.unwrap()[0]).unwrap();
+            assert_eq!(
+                requested["relay_url"], relay,
+                "issued for the community origin and port"
+            );
+            assert_eq!(uri, "/huddle/room/audio");
+            assert_eq!(
+                headers["host"],
+                &relay[6..],
+                "the community's host and port"
+            );
+            let header = headers[assertion::HEADER].to_str().unwrap();
+            assert!(header.starts_with("Bearer ey"), "{header}");
+            assert!(headers.get("authorization").is_none());
+
+            let event: nostr::event::Event = serde_json::from_value(auth["event"].clone()).unwrap();
+            event.verify().unwrap();
+            assert_eq!(
+                event.pubkey.to_hex(),
+                call.viewer,
+                "NIP-42 signed by the asserted key"
+            );
+            let event = serde_json::to_value(event).unwrap();
+            assert_eq!(event["kind"], 22242);
+            assert_eq!(
+                event["tags"],
+                json!([["relay", relay], ["challenge", "relay-challenge"]])
+            );
+            assert_eq!(auth["parent_channel_id"], call.parent);
+        }
+
+        #[tokio::test]
+        async fn connect_without_a_required_session_sends_no_assertion() {
+            let (listener, connector, host, fi, call, _, _) = community(false).await;
+            fi.sign_out_for_test();
+            let connecting = connect_via(&host, &fi, &call, "room", connector);
+            let relay_side = async {
+                let (mut socket, _, headers) = upgrade(&listener).await;
+                admit(&mut socket, &call.viewer).await;
+                headers
+            };
+            let (joined, headers) = tokio::join!(connecting, relay_side);
+            joined.unwrap();
+            assert!(headers.get(assertion::HEADER).is_none());
+            assert!(headers.get("authorization").is_none());
+        }
+
+        #[tokio::test]
+        async fn signed_out_before_connect_opens_no_socket() {
+            let (listener, connector, host, fi, call, _, _) = community(true).await;
+            fi.sign_out_for_test();
+            let result = connect_via(&host, &fi, &call, "room", connector).await;
+            assert!(result.is_err());
+            assert!(
+                listener.0.accept().now_or_never().is_none(),
+                "no upgrade was attempted"
+            );
+        }
+
+        /// Retire the session at `gate`, then let the relay continue: the retired
+        /// connect must end without authenticating or returning a socket.
+        async fn retired_at(gate: &str, retire: impl FnOnce(&FederatedIdentity)) {
+            let (listener, connector, host, fi, call, _, _) = community(true).await;
+            let connecting = connect_via(&host, &fi, &call, "room", connector);
+            tokio::pin!(connecting);
+            let (reached, at_gate) = oneshot::channel();
+            let (release, released) = oneshot::channel::<()>();
+            let relay_side = tokio::spawn({
+                let gate = gate.to_owned();
+                async move {
+                    if gate == "upgrade" {
+                        // The upgrade request has arrived; withhold the response.
+                        let mut stream = listener.accept().await;
+                        let mut head = Vec::new();
+                        while !head.ends_with(b"\r\n\r\n") {
+                            head.push(stream.read_u8().await.unwrap());
+                        }
+                        reached.send(()).unwrap();
+                        released.await.unwrap();
+                        let mut rest = Vec::new();
+                        // EOF: the client hung up instead of waiting.
+                        let _ = stream.read_to_end(&mut rest).await;
+                        rest.is_empty()
+                    } else {
+                        // Upgraded; the client now waits for the challenge.
+                        let (mut socket, _, _): (WebSocketStream<Stream>, _, _) =
+                            upgrade(&listener).await;
+                        reached.send(()).unwrap();
+                        released.await.unwrap();
+                        let _ = socket
+                            .send(Message::Text(
+                                json!({"type":"challenge","challenge":"late"})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await;
+                        !matches!(socket.next().await, Some(Ok(Message::Text(_))))
+                    }
+                }
+            });
+            tokio::select! {
+                _ = at_gate => {}
+                result = &mut connecting => panic!("connect ended before the {gate} gate: {:?}", result.map(|_| ())),
+            }
+            retire(&fi);
+            let result = tokio::time::timeout(FAILURE_BOUND, &mut connecting)
+                .await
+                .unwrap_or_else(|_| panic!("retired connect at the {gate} gate kept waiting"));
+            assert_eq!(
+                result.map(|_| ()).unwrap_err(),
+                "Federated authorization changed"
+            );
+            release.send(()).unwrap();
+            let silent = tokio::time::timeout(FAILURE_BOUND, relay_side)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(silent, "retired work sent more after the {gate} gate");
+        }
+
+        #[tokio::test]
+        async fn sign_out_during_the_upgrade_ends_the_connect() {
+            retired_at("upgrade", FederatedIdentity::sign_out_for_test).await;
+        }
+
+        #[tokio::test]
+        async fn account_switch_during_the_upgrade_ends_the_connect() {
+            retired_at("upgrade", FederatedIdentity::switch_account_for_test).await;
+        }
+
+        #[tokio::test]
+        async fn sign_out_while_awaiting_the_challenge_sends_no_auth() {
+            retired_at("challenge", FederatedIdentity::sign_out_for_test).await;
+        }
+
+        #[tokio::test]
+        async fn account_switch_while_awaiting_the_challenge_sends_no_auth() {
+            retired_at("challenge", FederatedIdentity::switch_account_for_test).await;
+        }
+    }
+
     #[test]
     fn tls_uses_an_explicit_provider_with_system_trust() {
         assert!(tls_config().is_ok());

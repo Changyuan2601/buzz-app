@@ -197,6 +197,15 @@ impl FederatedIdentity {
             .await?
             .assertion)
     }
+    /// Settles `relay`'s discovery as a connection would, without the network.
+    #[cfg(test)]
+    pub(super) fn discover_for_test(&self, relay: &str, required: bool) {
+        self.discovery_generation(relay, Some(("fixture".into(), CancellationToken::new())))
+            .unwrap()
+            .result
+            .set(Ok(required))
+            .unwrap();
+    }
     pub(crate) async fn assertion_for_relay(
         &self,
         identity: &IdentityHost,
