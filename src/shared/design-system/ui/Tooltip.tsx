@@ -43,6 +43,9 @@ export function Tooltip({
 }) {
   const id = useId();
   const triggerRef = useRef<HTMLElement>(null);
+  const setTriggerRef = useCallback((trigger: HTMLElement | null) => {
+    triggerRef.current = trigger;
+  }, []);
   const promote = useCallback((positioner: HTMLDivElement) => {
     const update = () => {
       const trigger = triggerRef.current;
@@ -73,9 +76,7 @@ export function Tooltip({
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
-        ref={(trigger: HTMLElement | null) => {
-          triggerRef.current = trigger;
-        }}
+        ref={setTriggerRef}
         delay={delay}
         closeOnClick={closeOnClick}
         // Base UI merges render-element props last. Put the combined link on
