@@ -2431,26 +2431,80 @@ it("returns a send cursor for the actual unfiltered read view", async () => {
 });
 
 it("keeps a locally accepted cursor while relay reads lag behind publication", async () => {
-  const { client, published } = fake([event({ id: root })]);
+  const events = [event({ id: root })];
+  const { client, published } = fake(events);
   const first = await callTool(client, { channel: "chan" }, "send", {
     audience: "everyone",
     text: "First",
     cursor: root,
   });
-  await expect(
-    callTool(client, { channel: "chan" }, "send", {
-      audience: "everyone",
-      text: "Concurrent",
-      cursor: root,
-    }),
-  ).rejects.toThrow("Stale cursor");
+  const rejected = await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Concurrent",
+    cursor: root,
+  }).catch((error: Error) => error.message);
+  expect(rejected).toContain("Stale cursor");
+  expect(rejected).not.toMatch(/cursor [a-f0-9]{64}/);
   const cursor = String(first).match(/cursor ([a-f0-9]{64})/)?.[1];
+  const accepted = await vi.mocked(client.publish).mock.results[0]?.value;
+  if (!accepted) throw new Error("Missing published event");
+  events.push(accepted);
+  const visible = await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Concurrent",
+    cursor: root,
+  }).catch((error: Error) => error.message);
+  expect(visible).toContain(`cursor ${cursor}`);
+  expect(visible).toContain("First");
   await callTool(client, { channel: "chan" }, "send", {
     audience: "everyone",
     text: "Continuation",
     cursor,
   });
   expect(published).toHaveLength(2);
+});
+
+it("holds channel sends behind accepted thread replies while relay reads lag", async () => {
+  const { client, published } = fake([
+    event({ id: root }),
+    event({ id: nested, created_at: 99 }),
+  ]);
+  const publish = client.publish;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  client.publish = vi.fn(async (template) => {
+    entered();
+    await gate;
+    return publish(template);
+  });
+  const thread = callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
+    text: "Thread answer",
+    cursor: root,
+  });
+  await started;
+  const channel = callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Concurrent channel answer",
+    cursor: root,
+  }).catch((error: Error) => error.message);
+  release();
+  await thread;
+  expect(await channel).toContain("Stale cursor");
+  expect(published).toHaveLength(1);
+  await expect(
+    callTool(client, { channel: "chan", root: nested }, "send", {
+      audience: "everyone",
+      text: "Unrelated thread",
+      cursor: nested,
+    }),
+  ).resolves.toContain("sent ");
 });
 
 it("does not advance the cursor when publication fails", async () => {

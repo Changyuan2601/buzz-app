@@ -7,7 +7,7 @@ import type { BuzzClient, BuzzEvent } from "./client";
 export const CONVERSATION_MESSAGES = [9, 40002, 40008, 45001, 45003];
 const LIMIT = 1000;
 type MessageHead = Pick<BuzzEvent, "id" | "created_at" | "tags">;
-type Admission = { tail: Promise<void>; head?: MessageHead };
+type Admission = { tail: Promise<void>; heads: Map<string, MessageHead> };
 const communities = new Map<string, Map<string, Admission>>();
 const standalone = new WeakMap<object, Map<string, Admission>>();
 
@@ -42,11 +42,11 @@ export async function guardedSend(
     if (typeof scope === "string") communities.set(scope, conversations);
     else standalone.set(scope, conversations);
   }
-  const key = JSON.stringify([channel, root]);
-  let state = conversations.get(key);
+  // A channel read includes its threads, so their publications share a queue.
+  let state = conversations.get(channel);
   if (!state) {
-    state = { tail: Promise.resolve() };
-    conversations.set(key, state);
+    state = { tail: Promise.resolve(), heads: new Map() };
+    conversations.set(channel, state);
   }
   const previous = state.tail;
   let release!: () => void;
@@ -92,10 +92,13 @@ export async function guardedSend(
     const messages = found.filter(
       (event) => !root || (threadReference(event)?.rootId ?? event.id) === root,
     );
-    const head = newestMessage(
-      state.head ? [...messages, state.head] : messages,
-    );
+    const accepted = state.heads.get(root ?? "");
+    const head = newestMessage(accepted ? [...messages, accepted] : messages);
     if (cursor !== (head?.id ?? "0")) {
+      if (head && !messages.some((message) => message.id === head.id))
+        throw new Error(
+          "Stale cursor. Nothing sent. The latest accepted message is not yet available to read. Read again before reconsidering your draft.",
+        );
       const latest = await describe(
         found
           .filter(
@@ -111,11 +114,18 @@ export async function guardedSend(
     }
     const event = await publish();
     // Keep only admission evidence, never another agent's cached message body.
-    state.head = {
+    const evidence = {
       id: event.id,
       created_at: event.created_at,
       tags: event.tags,
     };
+    for (const view of root ? ["", root] : [""]) {
+      const prior = state.heads.get(view);
+      state.heads.set(
+        view,
+        newestMessage(prior ? [prior, evidence] : [evidence]) ?? evidence,
+      );
+    }
     return `sent ${event.id}\ncursor ${event.id}`;
   } finally {
     release();
