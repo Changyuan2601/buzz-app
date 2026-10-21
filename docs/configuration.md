@@ -142,24 +142,32 @@ After Builderlab sign-in, the first-launch flow reads two things about the
 account from kgoose: the Nostr key bound to it and the communities it owns
 ([identity](identity.md)), and binds a key it creates or imports to an unlinked
 account. A developer's real account is bound to their real key and that binding
-must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those two reads and
-the binding — and nothing else — on a dev server:
+must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those two reads, the
+binding and the key backup — and nothing else — on a dev server:
 
 ```sh
 # A brand-new account: the key-setup choice follows sign-in.
 BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
 # A returning user: Welcome back for this npub, with these owned communities.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
+# A brand-new account whose every backup fails as if Builderlab were unreachable.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'
 ```
 
-`communities` is optional and lists hostnames (or `wss://`/`https://` origins)
-the way the Community URL field accepts them. Vite exposes the value as
+Every field is optional; without `npub` the account is unlinked. `communities`
+lists hostnames (or `wss://`/`https://` origins) the way the Community URL field
+accepts them. `backup` names a failure kind from
+`src/features/identity/backup-failure.ts` (such as `unreachable`, `timeout` or
+`refused`), and every backup then fails with that kind's page. Vite exposes the
+value as
 `VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
 `pnpm tauri build` define it empty, so packaged apps always ask kgoose. A
 malformed value fails the Vite configuration without being echoed. Restart the
-dev server after changing it. With a seed, binding succeeds without a request
-or a native signature. The faked steps (key backup, unlinking) are unaffected:
-they wait whether or not a seed is set.
+dev server after changing it. With a seed, binding and backup succeed (unless
+`backup` is set) without a request, a native signature or a native backup
+command, and backup is offered in every build. The faked steps (the
+backed-up-key lookup, unlinking) are unaffected: they wait whether or not a
+seed is set.
 
 ## Whole-video limit
 

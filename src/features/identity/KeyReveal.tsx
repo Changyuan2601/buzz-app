@@ -5,8 +5,10 @@ import { PrivateKey } from "./PrivateKey";
 import type { Identity } from "./service";
 
 /**
- * Pause after "Creating keys…" when the user keeps their own copy: the nsec,
- * visible on arrival, with Copy. Leaving without a backup needs the box ticked.
+ * Pause after "Creating keys…" when the user keeps their own copy, or after
+ * its link or backup failed: the nsec, visible on arrival, with Copy. Leaving
+ * without a backup needs the box ticked; without `onBackUp` (this sign-in
+ * cannot back a key up) a backup is not offered.
  * No save-to-file: the webview has no save dialog and no file plugin, so a
  * key file would have to be written natively, which is deferred.
  */
@@ -17,7 +19,7 @@ export function KeyReveal({
 }: {
   identity: Identity;
   /** Builderlab keeps a copy after all. */
-  onBackUp: () => void;
+  onBackUp?: (() => void) | undefined;
   /** The user has the only copy. */
   onContinue: () => void;
 }) {
@@ -49,9 +51,11 @@ export function KeyReveal({
         <Button onClick={onContinue} disabled={!saved}>
           Continue without backing up
         </Button>
-        <Button variant="primary" onClick={onBackUp}>
-          Please back this up for me
-        </Button>
+        {onBackUp && (
+          <Button variant="primary" onClick={onBackUp}>
+            Please back this up for me
+          </Button>
+        )}
       </div>
     </>
   );

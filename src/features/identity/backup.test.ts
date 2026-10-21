@@ -1,9 +1,12 @@
 import { expect, it, vi } from "vitest";
 import {
+  BackupError,
   type BackupStatus,
+  backUpWith,
   createBackupStatus,
   handoffBackupSession,
 } from "./backup";
+import { BACKUP_FAILURES } from "./backup-failure";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -12,7 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-type Send = Parameters<typeof createBackupStatus>[0];
+type Send = NonNullable<Parameters<typeof createBackupStatus>[0]>;
 type Watcher = { onmessage: (status: BackupStatus) => void };
 const at = (
   seq: number,
@@ -20,10 +23,15 @@ const at = (
   status: "idle" | "running" | "complete",
 ): BackupStatus => ({ seq, pass, builderlab: true, status });
 
-function native() {
+function native(initial: BackupStatus = at(1, 0, "idle")) {
   const watchers: Watcher[] = [];
-  let state = (): Promise<BackupStatus> => Promise.resolve(at(1, 0, "idle"));
+  let state = (): Promise<BackupStatus> => Promise.resolve(initial);
   let watch = (): Promise<void> => Promise.resolve();
+  // The first-run handoff starts pass 1; handing the slot back starts none.
+  const session = vi.fn(
+    async (credential: unknown): Promise<unknown> => (credential ? 1 : null),
+  );
+  const choice = vi.fn(async (): Promise<unknown> => ({}));
   const send = vi.fn(
     async (
       command: string,
@@ -34,13 +42,20 @@ function native() {
         return watch();
       }
       if (command === "nsec_backup_state") return state();
+      if (command === "nsec_backup_session") return session(args?.credential);
+      if (command === "nsec_backup_set_choice") return choice();
       throw new Error(`Unexpected command: ${command}`);
     },
   );
   return {
     send,
+    session,
+    choice,
     store: () => createBackupStatus(send as Send),
     watchers,
+    failState(error: unknown) {
+      state = () => Promise.reject(error);
+    },
     holdState(status: BackupStatus) {
       let release!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -151,4 +166,174 @@ it("resolves a handoff to its ticket, or null when none is issued or the handoff
     generation: expect.any(Number),
     credential: "token",
   });
+});
+
+type Waiter = Parameters<typeof backUpWith>[0];
+const pubkey = "a".repeat(64);
+const commands = (host: ReturnType<typeof native>) =>
+  host.send.mock.calls.map(([command, args]) =>
+    command === "nsec_backup_session"
+      ? `${command}(${args?.credential ?? null})`
+      : command,
+  );
+/** The first-run waiter against the identity's real store over `host`, with a
+ * deadline the test expires. */
+function backUp(host: ReturnType<typeof native>) {
+  const identity: Waiter = {
+    backup: host.store(),
+    setBackupChoice: ((pubkey: string, automatic: boolean) =>
+      host.send("nsec_backup_set_choice", {
+        pubkey,
+        automatic,
+      })) as Waiter["setBackupChoice"],
+  };
+  let expire!: () => void;
+  let signal!: AbortSignal;
+  const after = vi.fn((_ms: number, cleared: AbortSignal) => {
+    signal = cleared;
+    return new Promise<void>((resolve) => {
+      expire = resolve;
+    });
+  });
+  const done = backUpWith(identity, pubkey, "private-token", {
+    after,
+    send: host.send as Send,
+  });
+  const failed = done.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  return {
+    done,
+    failed,
+    after,
+    expire: () => expire(),
+    cleared: () => signal.aborted,
+    started: () =>
+      vi.waitFor(() =>
+        expect(host.send).toHaveBeenCalledWith(
+          "nsec_backup_session",
+          expect.objectContaining({ credential: "private-token" }),
+        ),
+      ),
+  };
+}
+const settledAt = (seq: number, pass: number, settled: object) =>
+  ({ seq, pass, builderlab: true, ...settled }) as BackupStatus;
+
+it("turns consent on, hands the credential over and waits for the pass its ticket names", async () => {
+  // A stale failure from before the handoff must not answer.
+  const host = native(
+    settledAt(1, 0, { status: "failed", kind: "unreachable" }),
+  );
+  const backup = backUp(host);
+  await backup.started();
+  expect(backup.after).toHaveBeenCalledWith(60_000, expect.anything());
+  host.watchers[0]?.onmessage(at(2, 1, "running"));
+  // Drains every microtask an answer would have queued.
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(commands(host)).not.toContain("nsec_backup_session(null)");
+
+  host.watchers[0]?.onmessage(at(3, 1, "complete"));
+  await expect(backup.done).resolves.toBeUndefined();
+  expect(commands(host)).toEqual([
+    "nsec_backup_watch",
+    "nsec_backup_state",
+    "nsec_backup_set_choice",
+    "nsec_backup_session(private-token)",
+    "nsec_backup_session(null)",
+  ]);
+  expect(host.send).toHaveBeenCalledWith("nsec_backup_set_choice", {
+    pubkey,
+    automatic: true,
+  });
+  expect(backup.cleared()).toBe(true);
+});
+
+it.each([
+  [{ status: "failed", kind: "refused" }, "refused"],
+  [{ status: "failed", kind: "unreachable" }, "unreachable"],
+  [{ status: "waiting", reason: "not_linked" }, "not_linked"],
+  // Each would only be retried on a later wake.
+  [{ status: "waiting", reason: "no_session" }, "interrupted"],
+  [{ status: "waiting", reason: "no_consent" }, "interrupted"],
+  [{ status: "idle" }, "interrupted"],
+] as const)(
+  "fails a pass that ended %o as %s, and hands the slot back",
+  async (ended, kind) => {
+    const host = native();
+    const backup = backUp(host);
+    await backup.started();
+    host.watchers[0]?.onmessage(settledAt(2, 1, ended));
+    const error = await backup.failed;
+    expect(error).toBeInstanceOf(BackupError);
+    expect(error).toMatchObject({
+      name: "BackupError",
+      kind,
+      message: BACKUP_FAILURES[kind].message,
+      retryable: BACKUP_FAILURES[kind].retryable,
+    });
+    expect(commands(host).at(-1)).toBe("nsec_backup_session(null)");
+    expect(backup.cleared()).toBe(true);
+  },
+);
+
+it("answers from the snapshot when the pass settled before the subscription", async () => {
+  const host = native();
+  host.session.mockImplementationOnce(async () => {
+    host.watchers[0]?.onmessage(at(2, 1, "complete"));
+    return 1;
+  });
+  await expect(backUp(host).done).resolves.toBeUndefined();
+});
+
+it("times out on the deadline, handing the slot back so the running pass retires", async () => {
+  const host = native();
+  const backup = backUp(host);
+  await backup.started();
+  host.watchers[0]?.onmessage(at(2, 1, "running"));
+  backup.expire();
+  expect(await backup.failed).toMatchObject({
+    kind: "timeout",
+    retryable: true,
+  });
+  expect(commands(host).at(-1)).toBe("nsec_backup_session(null)");
+});
+
+it("is unavailable without writing consent where native backup does not run", async () => {
+  const host = native({ ...at(1, 0, "idle"), builderlab: false });
+  expect(await backUp(host).failed).toMatchObject({ kind: "unavailable" });
+  expect(commands(host)).toEqual(["nsec_backup_watch", "nsec_backup_state"]);
+});
+
+it("is unavailable when the handoff starts no pass, and still hands the slot back", async () => {
+  const host = native();
+  host.session.mockResolvedValueOnce(null);
+  expect(await backUp(host).failed).toMatchObject({ kind: "unavailable" });
+  expect(commands(host).slice(-2)).toEqual([
+    "nsec_backup_session(private-token)",
+    "nsec_backup_session(null)",
+  ]);
+});
+
+it("never shows native text when the status cannot be read or consent written", async () => {
+  const unread = native();
+  unread.failState(new Error("Backup status belongs to the main window"));
+  const error = await backUp(unread).failed;
+  expect(error).toMatchObject({
+    kind: "unknown",
+    message: "Your key wasn’t backed up.",
+  });
+  expect(commands(unread)).not.toContain("nsec_backup_set_choice");
+
+  const unwritten = native();
+  unwritten.choice.mockRejectedValueOnce(
+    new Error("keychain: errSecInteractionNotAllowed"),
+  );
+  expect(await backUp(unwritten).failed).toMatchObject({
+    kind: "interrupted",
+    message: BACKUP_FAILURES.interrupted.message,
+  });
+  // The credential is never handed over without consent.
+  expect(commands(unwritten).at(-1)).toBe("nsec_backup_set_choice");
 });

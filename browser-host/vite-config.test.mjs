@@ -181,11 +181,20 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 JSON.stringify(command === 'serve' ? 'unlinked' : ''),
               );
             }
-            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = '{"npub":"s3cret"}';
-            await assert.rejects(
-              loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
-              (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+            // A backup kind resolves against the failure table through the native loader.
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = '{"backup":"unreachable"}';
+            const failing = await loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile);
+            assert.equal(
+              failing.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+              JSON.stringify('{"backup":"unreachable"}'),
             );
+            for (const seed of ['{"npub":"s3cret"}', '{"backup":"s3cret"}']) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+                (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+              );
+            }
             delete process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';

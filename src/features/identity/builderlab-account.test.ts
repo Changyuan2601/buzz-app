@@ -2,9 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import type { HostRequest } from "../host/service";
+import { type BackupStatus, createBackupStatus } from "./backup";
 import { builderlabAccount } from "./builderlab-account";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  Channel: class {
+    constructor(public onmessage: (response: unknown) => void) {}
+  },
+}));
 
 const credential: Credential = {
   value: "private-token",
@@ -32,6 +38,16 @@ function kgoose(...replies: Array<ReturnType<typeof answer> | Error | string>) {
   });
   return { request, sent };
 }
+type BackupIdentity = Parameters<typeof builderlabAccount>[3];
+/** The reads and binding never touch the backup status or consent. */
+const untouched: BackupIdentity = {
+  backup: createBackupStatus(() => {
+    throw new Error("Read the backup status");
+  }),
+  setBackupChoice: () => {
+    throw new Error("Wrote backup consent");
+  },
+};
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.mocked(invoke).mockReset();
@@ -46,6 +62,7 @@ describe("linkedKey", () => {
       credential,
       "https://tenant.example",
       request,
+      untouched,
     );
     expect(await account.linkedKey()).toBe(pubkey);
     expect(sent).toEqual([
@@ -67,7 +84,12 @@ describe("linkedKey", () => {
     const { request, sent } = kgoose(
       answer(200, { identity: { pubkey_hex: pubkey } }),
     );
-    await builderlabAccount(credential, undefined, request).linkedKey();
+    await builderlabAccount(
+      credential,
+      undefined,
+      request,
+      untouched,
+    ).linkedKey();
     expect(sent[0]?.url).toBe(
       "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
     );
@@ -90,7 +112,12 @@ describe("linkedKey", () => {
     ],
   ])("reads %s as not linked", async (_label, reply) => {
     const { request } = kgoose(reply);
-    const account = builderlabAccount(credential, "https://t.example", request);
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    );
     expect(await account.linkedKey()).toBeNull();
   });
 
@@ -134,14 +161,24 @@ describe("linkedKey", () => {
     ["a transport error", new Error("offline"), /offline/],
   ])("fails on %s instead of answering", async (_label, reply, message) => {
     const { request } = kgoose(reply);
-    const account = builderlabAccount(credential, "https://t.example", request);
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    );
     await expect(account.linkedKey()).rejects.toThrow(message);
   });
 
   it("warns in development with the route and status, never the body", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { request } = kgoose(answer(403, "secret body"));
-    const account = builderlabAccount(credential, "https://t.example", request);
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    );
     await expect(account.linkedKey()).rejects.toThrow(/HTTP 403/);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.join(" ")).toBe(
@@ -169,7 +206,12 @@ describe("ownedCommunities", () => {
         ],
       }),
     );
-    const account = builderlabAccount(credential, "https://t.example", request);
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    );
     expect(await account.ownedCommunities()).toEqual([
       { host: "design.example.com", url: "https://design.example.com" },
       { host: "buzz.example.org:8443", url: "https://buzz.example.org:8443" },
@@ -184,12 +226,14 @@ describe("ownedCommunities", () => {
       credential,
       "https://t.example",
       kgoose(answer(400, { error: { code: "missing_mapping" } })).request,
+      untouched,
     );
     expect(await unlinked.ownedCommunities()).toEqual([]);
     const failing = builderlabAccount(
       credential,
       "https://t.example",
       kgoose(answer(503, { error: { code: "relay_unavailable" } })).request,
+      untouched,
     );
     await expect(failing.ownedCommunities()).rejects.toThrow(
       /temporarily unavailable/,
@@ -198,6 +242,7 @@ describe("ownedCommunities", () => {
       credential,
       "https://t.example",
       kgoose(answer(502, "<html>bad gateway</html>")).request,
+      untouched,
     );
     await expect(unparseable.ownedCommunities()).rejects.toThrow(
       "Builderlab community list failed (HTTP 502: not JSON).",
@@ -237,6 +282,7 @@ describe("bind", () => {
       credential,
       "https://tenant.example",
       request,
+      untouched,
     );
     await account.bind(pubkey);
     const api = "https://tenant.example/api/goose/v1/buzz/nostr-identities";
@@ -270,7 +316,9 @@ describe("bind", () => {
       answer(200, { ...challenge, origin: "https://builderlab.example" }),
       bound(pubkey),
     );
-    await builderlabAccount(credential, undefined, request).bind(pubkey);
+    await builderlabAccount(credential, undefined, request, untouched).bind(
+      pubkey,
+    );
     expect(sent.map(({ url }) => url)).toEqual(
       ["current", "challenge", "verify"].map(
         (path) =>
@@ -287,9 +335,12 @@ describe("bind", () => {
 
   it("sends nothing more when the account already holds this key", async () => {
     const { request, sent } = kgoose(bound(pubkey));
-    await builderlabAccount(credential, "https://t.example", request).bind(
-      pubkey,
-    );
+    await builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    ).bind(pubkey);
     expect(sent.map(({ url }) => url)).toEqual([
       "https://t.example/api/goose/v1/buzz/nostr-identities/current",
     ]);
@@ -340,6 +391,7 @@ describe("bind", () => {
         credential,
         "https://t.example",
         request,
+        untouched,
       );
       await expect(account.bind(pubkey)).rejects.toThrow(message);
       expect(sent).toHaveLength(1 + replies.length);
@@ -351,10 +403,139 @@ describe("bind", () => {
   it("surfaces the native signer's refusal and never verifies", async () => {
     vi.mocked(invoke).mockRejectedValue("Invalid Nostr identity challenge");
     const { request, sent } = kgoose(unbound, answer(200, challenge));
-    const account = builderlabAccount(credential, "https://t.example", request);
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    );
     await expect(account.bind(pubkey)).rejects.toThrow(
       "Invalid Nostr identity challenge",
     );
     expect(sent).toHaveLength(2);
+  });
+});
+
+describe("backup", () => {
+  const status = (
+    seq: number,
+    pass: number,
+    builderlab = true,
+    progress: "idle" | "running" | "complete" = "idle",
+  ): BackupStatus => ({ seq, pass, builderlab, status: progress });
+  /** The identity's real status store over a scripted native host. */
+  function host(snapshot: BackupStatus) {
+    const watchers: { onmessage: (status: BackupStatus) => void }[] = [];
+    const send = vi.fn(async (command: string, args?: unknown) => {
+      if (command === "nsec_backup_watch")
+        watchers.push((args as { onEvent: (typeof watchers)[number] }).onEvent);
+      else if (command === "nsec_backup_state") return snapshot;
+      else throw new Error(`Unexpected command ${command}`);
+    });
+    const setBackupChoice = vi.fn(
+      (_pubkey: string, automatic: boolean): Promise<never> =>
+        Promise.resolve({ available: true, pubkey, automatic } as never),
+    );
+    const identity: BackupIdentity = {
+      backup: createBackupStatus(send as never),
+      setBackupChoice,
+    };
+    return { identity, send, setBackupChoice, watchers };
+  }
+
+  it("hands the session credential to the native uploader and waits for its pass", async () => {
+    const native = host(status(1, 0));
+    vi.mocked(invoke).mockImplementation(async (_command, args) =>
+      (args as { credential: string | null }).credential ? 1 : null,
+    );
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      kgoose().request,
+      native.identity,
+    );
+    const done = account.backUp(pubkey);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    native.watchers[0]?.onmessage(status(2, 1, true, "complete"));
+    await done;
+    expect(native.setBackupChoice.mock.calls).toEqual([[pubkey, true]]);
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        "nsec_backup_session",
+        {
+          source: "builderlab",
+          generation: expect.any(Number),
+          credential: "private-token",
+        },
+      ],
+      [
+        "nsec_backup_session",
+        {
+          source: "builderlab",
+          generation: expect.any(Number),
+          credential: null,
+        },
+      ],
+    ]);
+  });
+
+  it("is offered only for the build's own portal, and only where native backup runs", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+    const offered = (origin: string | undefined, builderlab: boolean) => {
+      const native = host(status(1, 0, builderlab));
+      return {
+        native,
+        offered: builderlabAccount(
+          credential,
+          origin,
+          kgoose().request,
+          native.identity,
+        ).backupOffered(),
+      };
+    };
+    expect(await offered(undefined, true).offered).toBe(true);
+    expect(await offered("https://builderlab.example", true).offered).toBe(
+      true,
+    );
+    expect(await offered(undefined, false).offered).toBe(false);
+    // A tenant's credential is never handed to the uploader, so the status is not read.
+    const tenant = offered("https://tenant.example", true);
+    expect(await tenant.offered).toBe(false);
+    expect(tenant.native.send).not.toHaveBeenCalled();
+    // A status that cannot be read is not an offer.
+    const refused = host(status(1, 0));
+    refused.send.mockRejectedValueOnce(
+      "Backup status belongs to the main window",
+    );
+    expect(
+      await builderlabAccount(
+        credential,
+        undefined,
+        kgoose().request,
+        refused.identity,
+      ).backupOffered(),
+    ).toBe(false);
+    // A build without its own portal hands no first-run credential over.
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
+    expect(await offered("https://builderlab.example", true).offered).toBe(
+      false,
+    );
+  });
+
+  it("declines by turning automatic backup off, and never rejects", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const native = host(status(1, 0));
+    const account = builderlabAccount(
+      credential,
+      "https://t.example",
+      kgoose().request,
+      native.identity,
+    );
+    await account.declineBackup(pubkey);
+    expect(native.setBackupChoice.mock.calls).toEqual([[pubkey, false]]);
+    native.setBackupChoice.mockRejectedValueOnce(
+      "Another copy is changing backup consent",
+    );
+    await expect(account.declineBackup(pubkey)).resolves.toBeUndefined();
   });
 });

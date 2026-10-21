@@ -48,23 +48,29 @@ Setup then pauses on **Set up your key**: it
 says no backed-up key was found for the signed-in email and that Builderlab
 can keep a copy so you can sign in on other devices, and offers **Manage my
 keys for me** and two smaller choices, **I want to manage my own key** and
-**I already have a key**. Manage runs **Creating keys**, which generates a
-Nostr key through the same native create command as the key setup screen, so
+**I already have a key**. A sign-in that cannot back a key up (see
+[automatic backup](#automatic-backup-and-optional-recovery)) gets neither the
+copy sentence nor Manage my keys for me. Manage runs **Creating keys**, which
+generates a Nostr key through the same native create command as the key setup
+screen, so
 the next launch opens as a returning user; then **Linking your key**, which
 binds that key to the signed-in account at the same portal (kgoose's binding
 challenge, signed natively as a kind-24243 event, then verified — the flow the
 hosted-communities card drives), sending nothing more when the account already
-holds the key; then *Backing up your key*, a `[TODO]` placeholder that uploads
-nothing yet. Managing your own key runs **Creating keys** and **Linking your
-key** and pauses
-on **Your private identity key**: the nsec, shown on arrival (see [UI and
+holds the key; then **Backing up your key**, which waits for the native
+uploader to confirm the backup
+([automatic backup](#automatic-backup-and-optional-recovery)).
+Managing your own key runs **Creating keys** and **Linking your key** and
+pauses on **Your private identity key**: the nsec, shown on arrival (see [UI and
 sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
 *I’ve saved my private key somewhere safe*, and two actions — **Please back
-this up for me**, which runs the backup placeholder, and **Continue without
-backing up**, enabled only once the box is ticked. The page reads the key
-through the same `identity_export` command Settings → Profile uses; there is no
-save-to-file. **I already have a key** opens **Enter your private key** while
-setup stays paused: a masked private-key field — paste or type an `nsec1…` key,
+this up for me**, which links the key if that has not happened yet and backs it
+up, and **Continue without backing up**, enabled only once the box is ticked.
+Please back this up for me is offered only where the key can be backed up.
+The page reads the key through the same `identity_export` command Settings →
+Profile uses; there is no save-to-file. **I already have a key** opens **Enter
+your private key** while setup stays paused: a masked private-key field —
+paste or type an `nsec1…` key,
 or drop or choose a text file of at most 1 KiB whose first line is one — with
 **Reveal private key**, a live *Public identity* npub preview under a valid key
 (never hex), and classified messages for anything else: a NIP-49 `ncryptsec1…`
@@ -90,11 +96,12 @@ same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
 device** is *Coming soon* (device pairing is its future entry). The imported
-key is already the account's, so nothing is linked. A successful
-import pauses on **Back up this key?** — importing never uploads silently —
-with **Not now** and **Back it up**, which runs the *Backing up your key*
-placeholder. **I lost this key** (quieter) runs **Finding communities**, a real
-read of the communities the account owns
+key is already the account's, so nothing is linked. Where the key can be
+backed up, a successful import pauses on **Back up this key?** — importing
+never uploads silently — with **Not now** and **Back it up**, which runs
+**Backing up your key**; otherwise it continues without the offer. **I lost
+this key** (quieter) runs **Finding communities**, a real read of the
+communities the account owns
 (`POST /api/goose/v1/buzz/communities/list`), and shows **Start over with a new
 key**: a new key loses everything the old one could reach; *Communities you
 own* lists their hostnames (*None* when empty, or that the list could not be
@@ -112,10 +119,17 @@ Every lane ends the same way. A linked account runs **Finding communities**
 read after starting over. A failed step shows **Couldn’t finish setup** with the
 error — for a refused link, the hosted-communities card's copy (*This
 Builderlab account is connected to another Buzz identity.*, *This Buzz identity
-is connected to another Builderlab account.*), otherwise the step and HTTP
-status, as for the account check — and **Back**: to the welcome screen while no key exists, or, once a key is
-on the device, to the Join page below, so the app never opens without a
-community. Setup then lands on
+is connected to another Builderlab account.*), for a backup, why it did not
+complete, otherwise the step and HTTP status, as for the account check — and,
+once a key is on the device, *Your key is saved on this device.* A failed link
+or backup offers a way on in place of Back: for a key created here, **Show my
+key** opens Your private identity key, so a key neither backed up nor seen
+never leaves first run; for an imported key, which the user already holds,
+**Not now** carries on without it. A backup failure that may clear, such as
+Builderlab being unreachable or slow to confirm, also offers **Try again**,
+which repeats only the failed step. Any other failed step offers **Back**: to
+the welcome screen while no key exists, or, once a key is on the device, to the
+Join page below, so the app never opens without a community. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
 when the account owns communities, rows under *Communities you own* — icon
@@ -125,7 +139,8 @@ that host — then a **Community URL** field with **Join** beside it, and
 failed list shows the page without rows. No invite list is shown; nothing
 serves pending invites yet. In development,
 [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](configuration.md#first-run-account-seed-development)
-answers the two account reads in place of kgoose.
+answers the two account reads, and fakes the link and the backup, in place of
+kgoose and the native uploader.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
@@ -305,6 +320,19 @@ failed with a named kind; no service response body reaches the renderer. A login
 handoff or retry resolves to the number of the pass it starts, or to none, so a
 caller can wait for that pass's own outcome. A pass superseded by a key install
 reports nothing; reloading the window mid-pass reports idle.
+
+First run's **Backing up your key** is a pass of this uploader. It saves the
+automatic choice for the key, hands the first-run Builderlab sign-in to the
+uploader, waits up to 60 seconds for the pass that handoff starts, and then
+hands the sign-in back, whatever the outcome; an earlier pass's result never
+answers it. A pass that stops to wait for consent, a session or a key binding
+fails the step, since nothing would wake it again before first run ends. The
+failed page names the reason without any service response. The automatic choice
+stays on after a failure, so a later Builderlab sign-in may still finish the
+backup the user asked for; leaving the failed page through Show my key or Not
+now turns it off for that key. First run offers backup only when this build's
+uploader can back up to Builderlab and the user signed in at the build's own
+portal: a tenant's sign-in is never handed to the uploader.
 
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees

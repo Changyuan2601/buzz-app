@@ -11,15 +11,17 @@ import {
 } from "../../bundled/hosted-communities/api";
 import { enteredRelayOrigin } from "../communities/destination";
 import type { Host, HostResponse } from "../host/service";
+import { BackupError, backUpWith } from "./backup";
 import type { FirstRunAccountSeed } from "./first-run-seed";
+import type { Identity } from "./service";
 
 /** A community the signed-in account owns: its hostname and the canonical origin a join uses. */
 export type OwnedCommunity = Readonly<{ host: string; url: string }>;
 
 /**
- * What first run reads about the signed-in Builderlab account, and the binding
- * that makes this device's key the account's. Backup and unlinking stay the
- * `[TODO]` steps in setup.ts.
+ * What first run reads about the signed-in Builderlab account, the binding
+ * that makes this device's key the account's, and that key's backup. Unlinking
+ * stays the `[TODO]` step in setup.ts.
  */
 export type FirstRunAccount = Readonly<{
   /** The hex key bound 1:1 to the account, or null when none is (a reply with no `identity`). */
@@ -32,7 +34,19 @@ export type FirstRunAccount = Readonly<{
    * account already holds that key, so running it again is safe.
    */
   bind(pubkey: string): Promise<void>;
+  /**
+   * Whether this build can back a key up for this sign-in: native backup runs
+   * only for the build's own Builderlab portal. Any error answers false.
+   */
+  backupOffered(): Promise<boolean>;
+  /** Backs `pubkey` up and waits for the native uploader's result; rejects with a `BackupError`. */
+  backUp(pubkey: string): Promise<void>;
+  /** Turns automatic backup off for `pubkey`. Best effort: never rejects. */
+  declineBackup(pubkey: string): Promise<void>;
 }>;
+
+/** The identity's backup status and consent, which the backup steps use. */
+type BackupIdentity = Pick<Identity, "backup" | "setBackupChoice">;
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -99,12 +113,13 @@ function owned(community: NonNullable<Reply["communities"]>[number]) {
  * bundled plugin's native grant like the sign-in itself. Routes and reply
  * shapes are the hosted-communities card's (`native.ts` ROUTES `identity` and
  * `list` and its `bind`; `api.ts` parsers); the card's own backend is not
- * touched.
+ * touched. The backup goes through the native uploader instead (`backup.ts`).
  */
 export function builderlabAccount(
   credential: Credential,
   origin: string | undefined,
   request: Host["request"],
+  identity: BackupIdentity,
 ): FirstRunAccount {
   const target = oauthTarget(origin);
   const portal = new URL(target).origin;
@@ -210,15 +225,42 @@ export function builderlabAccount(
         "Could not load the communities this account owns.",
         (reply) => reply?.communities?.flatMap(owned) ?? [],
       ),
+    async backupOffered() {
+      try {
+        // The uploader accepts credentials only from the build's own portal.
+        if (portal !== new URL(oauthTarget()).origin) return false;
+        return (await identity.backup.ready()).builderlab;
+      } catch {
+        return false;
+      }
+    },
+    backUp: (pubkey) => backUpWith(identity, pubkey, credential.value),
+    declineBackup: (pubkey) =>
+      identity.setBackupChoice(pubkey, false).then(
+        () => {},
+        (error: unknown) => {
+          // Consent stays on; Settings → Identity still shows the key.
+          if (import.meta.env.DEV)
+            console.warn("Could not turn automatic backup off", error);
+        },
+      ),
   };
 }
 
 /**
- * The reads answered from the `BUZZ_DEV_FIRST_RUN_ACCOUNT` development seed;
- * binding succeeds without a request or a native signature.
+ * The reads answered from the `BUZZ_DEV_FIRST_RUN_ACCOUNT` development seed.
+ * Binding and backup succeed without a request, a native signature or a
+ * native backup command, and backup is offered in every build; a seeded
+ * `backup` kind fails every backup with that kind's page instead.
  */
 export const seededAccount = (seed: FirstRunAccountSeed): FirstRunAccount => ({
   linkedKey: () => Promise.resolve(seed.linked),
   ownedCommunities: () => Promise.resolve(seed.communities),
   bind: () => Promise.resolve(),
+  backupOffered: () => Promise.resolve(true),
+  backUp: () =>
+    seed.backup
+      ? Promise.reject(new BackupError(seed.backup))
+      : Promise.resolve(),
+  declineBackup: () => Promise.resolve(),
 });

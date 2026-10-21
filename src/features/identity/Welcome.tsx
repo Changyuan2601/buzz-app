@@ -41,13 +41,16 @@ import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Identity } from "./service";
 import {
+  backUp,
   checkAccount,
   createSetup,
   findCommunities,
   firstRunSteps,
   importKey,
   linkKey,
+  notNow,
   type SetupPause,
+  showMyKey,
   wait,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
@@ -55,17 +58,21 @@ import { SetupWindowHeader } from "./SetupWindowHeader";
 import { WelcomeBack } from "./WelcomeBack";
 
 /**
- * The signed-in account's reads: the development seed when a dev server set
- * one (production builds define it empty), else the tenant's kgoose through
- * the same bundled grant the sign-in used.
+ * The signed-in account: the development seed when a dev server set one
+ * (production builds define it empty), else the tenant's kgoose through the
+ * same bundled grant the sign-in used, and the identity's native uploader.
  */
-const firstRunAccount = (credential: Credential, origin?: string) => {
+const firstRunAccount = (
+  credential: Credential,
+  origin: string | undefined,
+  identity: Identity,
+) => {
   const seed = parseFirstRunAccountSeed(
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
   );
   return seed
     ? seededAccount(seed)
-    : builderlabAccount(credential, origin, bundledHost.request);
+    : builderlabAccount(credential, origin, bundledHost.request, identity);
 };
 
 /**
@@ -87,9 +94,13 @@ export function Welcome({
   children: ReactNode;
   /** `origin` is the tenant portal a community URL selected; the build default otherwise. */
   connect?: (signal: AbortSignal, origin?: string) => Promise<Credential>;
-  /** The account reads for a credential `connect` returned, at the same origin. */
+  /** The account for a credential `connect` returned, at the same origin. */
   account?:
-    | ((credential: Credential, origin?: string) => FirstRunAccount)
+    | ((
+        credential: Credential,
+        origin: string | undefined,
+        identity: Identity,
+      ) => FirstRunAccount)
     | undefined;
   tenants?: readonly BuilderlabTenant[];
   delay?: (ms: number) => Promise<void>;
@@ -110,6 +121,8 @@ export function Welcome({
   const [linked, setLinked] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
+  // Whether this sign-in can back a key up; the pages offer backup only then.
+  const [offered, setOffered] = useState(false);
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   // The canonical origin the user asked to join: before sign-in it drives the
@@ -145,12 +158,12 @@ export function Welcome({
     loginOrigin.current = origin;
     await login.signIn();
     if (login.snapshot().status !== "signed-in") return;
-    const current = account(login.credential(), origin);
+    const current = account(login.credential(), origin, identity);
     reads.current = current;
-    void setup.start([checkAccount(current, setLinked), steps.checkBackup], {
-      status: "paused",
-      at: "key-choice",
-    });
+    void setup.start(
+      [checkAccount(current, setLinked, setOffered), steps.checkBackup],
+      { status: "paused", at: "key-choice" },
+    );
   };
   /** Between pauses nothing runs: no key exists until a choice resumes setup. */
   const pause = (at: SetupPause) =>
@@ -163,6 +176,7 @@ export function Welcome({
     setFinding(undefined);
     setLinked(undefined);
     setOwned(undefined);
+    setOffered(false);
     reads.current = undefined;
     setup.reset();
     login.cancel();
@@ -232,15 +246,20 @@ export function Welcome({
   const paused = (at: SetupPause) => {
     const current = reads.current;
     if (!current) return null;
-    // A key created or brought here becomes the account's before anything else.
-    const link = linkKey(identity, current);
+    // A key created here becomes the account's before anything else. If that
+    // or its backup fails, the user is shown the key instead: a key neither
+    // backed up nor seen must not leave first run.
+    const link = linkKey(identity, current, showMyKey);
+    const backUpCreated = backUp(identity, current, showMyKey);
     switch (at) {
       case "key-choice":
         return (
           <KeyChoice
             email={auth.account?.email}
-            onManaged={() =>
-              void setup.start([steps.createKey, link, steps.backUp])
+            onManaged={
+              offered
+                ? () => void setup.start([steps.createKey, link, backUpCreated])
+                : undefined
             }
             onOwn={() =>
               void setup.start([steps.createKey, link], {
@@ -253,26 +272,34 @@ export function Welcome({
         );
       case "key-import":
         // On the linked lane only the linked key is accepted, so there is
-        // nothing to link, and the backup is offered rather than assumed.
-        // Otherwise an imported key is linked like a created one; it is
-        // already backed up wherever it came from, so it skips the backup and
-        // reveal.
+        // nothing to link, and the backup is offered (where it can run) rather
+        // than assumed. Otherwise an imported key is linked like a created
+        // one; it is already backed up wherever it came from, so it skips the
+        // backup and reveal, and continues without the link if that fails.
         return (
           <KeyImport
             expectedPubkey={linked}
             onBack={() => pause(linked ? "welcome-back" : "key-choice")}
             onImport={async (nsec) => {
               await importKey(identity, nsec);
-              if (linked) pause("backup-offer");
-              else void setup.start([link]);
+              if (!linked)
+                void setup.start([linkKey(identity, current, notNow)]);
+              else if (offered) pause("backup-offer");
+              else void setup.start(finish());
             }}
           />
         );
       case "key-reveal":
+        // Reached after a failed link too, so the backup links first; that
+        // sends nothing more once the account holds the key.
         return (
           <KeyReveal
             identity={identity}
-            onBackUp={() => void setup.start([steps.backUp])}
+            onBackUp={
+              offered
+                ? () => void setup.start([link, backUpCreated])
+                : undefined
+            }
             onContinue={() => void setup.start([])}
           />
         );
@@ -293,7 +320,9 @@ export function Welcome({
         return (
           <BackupOffer
             onSkip={() => void setup.start(finish())}
-            onBackUp={() => void setup.start([steps.backUp, ...finish()])}
+            onBackUp={() =>
+              void setup.start([backUp(identity, current, notNow), ...finish()])
+            }
           />
         );
       case "key-lost":
@@ -375,17 +404,23 @@ export function Welcome({
         ) : progress.status === "paused" ? (
           paused(progress.at)
         ) : progress.status === "failed" ? (
-          // Once a key is saved, Back rests on the Join page: `backToLanding`
-          // would reset to idle, and with identity ready the gate would lift
-          // into the app with no community.
+          // A step with a fallback offers it in place of Back. Otherwise, once
+          // a key is saved, Back rests on the Join page: `backToLanding` would
+          // reset to idle, and with identity ready the gate would lift into the
+          // app with no community.
           <Failure
             title="Couldn’t finish setup"
             error={progress.error}
+            keySaved={state.status === "ready"}
+            backLabel={progress.fallback}
             onBack={
-              state.status === "ready"
-                ? () => void setup.start([])
-                : backToLanding
+              progress.fallback
+                ? () => void setup.fallBack()
+                : state.status === "ready"
+                  ? () => void setup.start([])
+                  : backToLanding
             }
+            onRetry={progress.retryable ? () => void setup.retry() : undefined}
           />
         ) : auth.error ? (
           <Failure
@@ -472,14 +507,19 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 function Failure({
   title,
   error,
+  keySaved = false,
   onBack,
+  backLabel = "Back",
   publicKey,
   onRetry,
   busy = false,
 }: {
   title: string;
   error: string;
+  /** Setup failed after the key was saved: say it is not lost. */
+  keySaved?: boolean;
   onBack: () => void;
+  backLabel?: string | undefined;
   /** Shown as the user's shareable identity, with Copy, when set. */
   publicKey?: string | undefined;
   /** Offers Try again, disabled while `busy`. */
@@ -494,11 +534,16 @@ function Failure({
       <p role="alert" className="text-body text-danger">
         {error}
       </p>
+      {keySaved && (
+        <p className="text-body text-secondary">
+          Your key is saved on this device.
+        </p>
+      )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
         <Button onClick={onBack} disabled={busy}>
-          Back
+          {backLabel}
         </Button>
         {onRetry && (
           <Button variant="primary" onClick={onRetry} disabled={busy}>
