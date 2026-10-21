@@ -215,7 +215,7 @@ it.each([
     );
     expect(screen.getByText(`${label} · 132 B`)).toBeVisible();
     await userEvent.click(
-      screen.getByRole("button", { name: "Preview notes", exact: true }),
+      screen.getByRole("button", { name: "Preview notes" }),
     );
     const target = open.mock.calls[0]?.[0];
     if (!target) throw new Error("No preview opened");
@@ -224,7 +224,6 @@ it.each([
     render(<PanelView panel={panel} target={target} close={() => {}} />);
     const preview = screen.getByRole("region", {
       name: "Preview: notes",
-      exact: true,
     });
     expect(within(preview).getByText(`${label} · 132 B`)).toBeVisible();
     await within(preview).findByText("This file is empty.");
