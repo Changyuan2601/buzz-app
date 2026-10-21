@@ -65,10 +65,13 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
     const collection = store.collection(owner, definition);
     const controller = new AbortController();
     let unsubscribe: (() => void) | undefined;
+    let removeEffect: (() => void) | undefined;
     const close = () => {
+      if (controller.signal.aborted) return;
       controller.abort();
       unsubscribe?.();
       collection.close();
+      removeEffect?.();
     };
     const valid = () => {
       const now = capture();
@@ -89,6 +92,7 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
       return result;
     };
     const facade: ArtifactCollection = {
+      scope: collection.scope,
       get(id) {
         valid();
         return checked(collection.get(id));
@@ -121,7 +125,7 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
       },
       close,
     };
-    this.ctx.effect(() => close);
+    removeEffect = this.ctx.effect(() => close);
     for (const listener of this.opened)
       listener({
         viewer,

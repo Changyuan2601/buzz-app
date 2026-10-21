@@ -29,7 +29,12 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   // Storage is the external boundary here; browser tests exercise its real transactions.
   const get = vi.fn(async () => undefined);
   const close = vi.fn();
-  const collection = { get, close };
+  const scopeDescriptor = Object.freeze({
+    viewer: "viewer",
+    relay: "https://relay.test",
+    partition: "https://relay.test:viewer",
+  });
+  const collection = { get, close, scope: scopeDescriptor };
   const factory = vi.fn(() => collection);
   const stores = service as unknown as { stores: Map<string, unknown> };
   stores.stores.set(JSON.stringify(["viewer", "https://relay.test"]), {
@@ -38,6 +43,14 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   });
   const listener = vi.fn();
   service.onOpen(listener);
+  const effects = root.fiber.getEffects().length;
+  for (let i = 0; i < 50; i++) {
+    const temporary = plugin.artifactStorage.open(definition);
+    expect(root.fiber.getEffects()).toHaveLength(effects + 1);
+    temporary.close();
+    expect(root.fiber.getEffects()).toHaveLength(effects);
+  }
+  listener.mockClear();
   const handle = plugin.artifactStorage.open(definition);
   expect(factory).toHaveBeenCalledWith("test.plugin", definition);
   expect(listener.mock.calls[0]?.[0]).toMatchObject({
@@ -47,6 +60,7 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
     collection,
   });
   expect(handle).not.toHaveProperty("applyBatch");
+  expect(handle.scope).toBe(scopeDescriptor);
   await handle.get("task");
   expect(get).toHaveBeenCalledWith("task");
   scope = { viewer: "other", selected: "https://relay.test" };

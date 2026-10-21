@@ -24,7 +24,9 @@ const next = page.next
 
 The host derives the plugin identity from Cordis. The saved community selection
 supplies the viewer and relay origin, including while the network is unavailable.
-A collection captures that scope. A handle rejects calls after the identity or relay changes.
+A collection captures that scope. Its read-only `scope` descriptor supplies
+`viewer`, normalized `relay`, and the legacy `partition` string for migration.
+A handle rejects calls after the identity or relay changes.
 Close the handle when its view ends. Subscribe before the first read. Notifications
 follow a committed transaction and reach other windows through BroadcastChannel.
 They carry no saved content. Each window reads IndexedDB again.
@@ -35,7 +37,8 @@ cursor. Each page reads only its selected records, with a maximum of 1,000 rows.
 Pages are independent transactions. A change between pages can move a row; restart
 the query after a notification. All windows must use the same collection type,
 version, and projector. Increase the version to rebuild saved indexes in one
-transaction. An older handle then rejects further reads and writes.
+transaction. An older handle then rejects further reads and writes. If opening the database
+fails, close the failed handle and open another after the cause clears.
 
 `get(id)` returns a saved artifact and its separate preference. A record contains
 the current revision, conflicting heads, unresolved ancestry, known availability,
@@ -71,7 +74,8 @@ The host collection adds these operations for sync:
   can update the saved channel home.
 - `completeSnapshot(snapshot, checkpoint)` reconciles absent records for only that
   source, then commits the checkpoint. Live and confirmed writes after capture
-  remain available. Content, local snapshots, and preferences remain saved.
+  remain available. A record remains available while another source still contains
+  it. Content, local snapshots, and preferences remain saved.
 
 `source` is an exact authoritative query scope supplied by sync. The sync owner
 must validate server completion and current access before it calls

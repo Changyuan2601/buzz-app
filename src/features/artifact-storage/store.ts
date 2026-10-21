@@ -23,6 +23,7 @@ type Row = StoredArtifact & {
   collection: string;
   id: string;
   sequence?: number | undefined;
+  homes?: Record<string, string>;
 };
 type StoredPreference = { value: JsonValue };
 
@@ -47,42 +48,53 @@ export function createArtifactStore(viewer: string, relay: string) {
   let opening: Promise<IDBDatabase> | undefined;
   function database() {
     if (closed) throw new Error("Artifact storage closed");
-    opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 1);
-      let blocked = false;
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        for (const name of STORES) {
-          const store = db.createObjectStore(name, {
-            keyPath:
-              name === "entries"
-                ? ["scope", "collection", "index", "value", "order", "id"]
-                : name === "members"
-                  ? ["scope", "collection", "source", "id"]
-                  : name === "metadata"
-                    ? ["scope", "collection", "key"]
-                    : ["scope", "collection", "id"],
-          });
-          if (name === "entries")
-            store.createIndex("record", ["scope", "collection", "id"]);
-        }
-      };
-      request.onerror = () => reject(request.error);
-      request.onblocked = () => {
-        blocked = true;
-        reject(new Error("Close other Buzz windows to open artifact storage"));
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        if (closed || blocked) {
-          db.close();
-          reject(new Error("Artifact storage closed"));
-          return;
-        }
-        db.onversionchange = () => db.close();
-        resolve(db);
-      };
-    });
+    if (!opening) {
+      const attempt = new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(DB, 1);
+        let blocked = false;
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          for (const name of STORES) {
+            const store = db.createObjectStore(name, {
+              keyPath:
+                name === "entries"
+                  ? ["scope", "collection", "index", "value", "order", "id"]
+                  : name === "members"
+                    ? ["scope", "collection", "source", "id"]
+                    : name === "metadata"
+                      ? ["scope", "collection", "key"]
+                      : ["scope", "collection", "id"],
+            });
+            if (name === "entries" || name === "members")
+              store.createIndex("record", ["scope", "collection", "id"]);
+          }
+        };
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => {
+          blocked = true;
+          reject(
+            new Error("Close other Buzz windows to open artifact storage"),
+          );
+        };
+        request.onsuccess = () => {
+          const db = request.result;
+          if (closed || blocked) {
+            db.close();
+            reject(new Error("Artifact storage closed"));
+            return;
+          }
+          db.onversionchange = () => {
+            db.close();
+            opening = undefined;
+          };
+          resolve(db);
+        };
+      });
+      opening = attempt;
+      void attempt.catch(() => {
+        if (opening === attempt) opening = undefined;
+      });
+    }
     return opening;
   }
   type Then = <T>(request: IDBRequest<T>, next: (value: T) => void) => void;
@@ -329,6 +341,7 @@ export function createArtifactStore(viewer: string, relay: string) {
       };
     }
     const handle: HostArtifactCollection = {
+      scope: Object.freeze({ viewer, relay, partition: scope }),
       get: (id) =>
         run<ArtifactEntry | undefined>("readonly", (tx, then, done) =>
           readEntry(tx, then, id, done),
@@ -515,26 +528,47 @@ export function createArtifactStore(viewer: string, relay: string) {
                       cursor.continue();
                       return;
                     }
-                    mutate(
-                      tx,
-                      then,
-                      member.id,
-                      (row) => ({
-                        row:
-                          (row.sequence ?? 0) > snapshot.captureSequence
-                            ? row
-                            : {
-                                ...row,
-                                record: {
-                                  ...row.record,
-                                  availability: {
-                                    state: "unavailable",
-                                    reason: "Absent from completed snapshot",
+                    then(
+                      tx.objectStore("records").get(key(member.id)),
+                      (saved: Row | undefined) => {
+                        if (!saved)
+                          throw new Error("Snapshot member has no record");
+                        if ((saved.sequence ?? 0) > snapshot.captureSequence) {
+                          cursor.continue();
+                          return;
+                        }
+                        cursor.delete();
+                        then(
+                          tx
+                            .objectStore("members")
+                            .index("record")
+                            .count(IDBKeyRange.only(key(member.id))),
+                          (remaining) => {
+                            if (remaining) {
+                              cursor.continue();
+                              return;
+                            }
+                            mutate(
+                              tx,
+                              then,
+                              member.id,
+                              (row) => ({
+                                row: {
+                                  ...row,
+                                  record: {
+                                    ...row.record,
+                                    availability: {
+                                      state: "unavailable",
+                                      reason: "Absent from completed snapshot",
+                                    },
                                   },
                                 },
-                              },
-                      }),
-                      () => cursor.continue(),
+                              }),
+                              () => cursor.continue(),
+                            );
+                          },
+                        );
+                      },
                     );
                   });
                 });
@@ -607,6 +641,10 @@ export function createArtifactStore(viewer: string, relay: string) {
                     id: incoming.id,
                     generation: batch.snapshot?.generation ?? null,
                   });
+                  const homes = {
+                    ...row.homes,
+                    [incoming.revision.id]: incoming.channelId,
+                  };
                   const received = receiveRevision(row, incoming.revision);
                   if (
                     batch.snapshot &&
@@ -638,11 +676,13 @@ export function createArtifactStore(viewer: string, relay: string) {
                     row: {
                       ...row,
                       ...received,
+                      homes,
                       sequence: batch.snapshot ? row.sequence : sequence,
                       record: {
                         ...received.record,
-                        ...(received.record.current?.id === incoming.revision.id
-                          ? { channelId: incoming.channelId }
+                        ...(received.record.current &&
+                        homes[received.record.current.id]
+                          ? { channelId: homes[received.record.current.id] }
                           : {}),
                         type: incoming.type,
                       },
@@ -724,6 +764,7 @@ export function createArtifactStore(viewer: string, relay: string) {
   return {
     collection,
     async clear() {
+      const affected = new Set<string>();
       await transact<void>("readwrite", (tx, then, done) => {
         let pending = STORES.length;
         for (const name of STORES) {
@@ -735,11 +776,19 @@ export function createArtifactStore(viewer: string, relay: string) {
               if (--pending === 0) done();
               return;
             }
+            affected.add(cursor.value.collection);
             cursor.delete();
             cursor.continue();
           });
         }
       });
+      for (const collection of affected) {
+        const channel = new BroadcastChannel(
+          `${DB}:${JSON.stringify([scope, collection])}`,
+        );
+        channel.postMessage(null);
+        channel.close();
+      }
     },
     close() {
       closed = true;

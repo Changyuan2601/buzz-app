@@ -537,7 +537,13 @@ test("purges one identity and relay across collections", async ({
     }
     first.close();
     other.close();
+    const observer = createArtifactStore("viewer", "relay");
+    const observed = observer.collection("test", definition);
+    await observed.get("task");
+    const notification = new Promise((resolve) => observed.subscribe(resolve));
     await purgeArtifactStorage("viewer", "relay");
+    await notification;
+    observer.close();
     const reopened = createArtifactStore("viewer", "relay");
     const a = reopened.collection("test", definition);
     const b = reopened.collection("test", { ...definition, name: "two" });
@@ -558,4 +564,94 @@ test("purges one identity and relay across collections", async ({
   expect(result.pref).toBeUndefined();
   expect(result.marker).toBe(false);
   expect(result.other.preference).toBe(false);
+});
+
+test("keeps a pending revision's home and reconciles overlapping sources separately", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const c = window.artifactTest.open();
+    const record = (id, parents, channelId) => ({
+      id: "task",
+      channelId,
+      type: "test.task",
+      revision: { id, parents, content: "{}" },
+    });
+    await c.applyBatch({
+      source: "old-home",
+      records: [record("A", [], "old-home")],
+      availability: [
+        { id: "task", expectedRevision: "A", value: { state: "available" } },
+      ],
+    });
+    await c.applyBatch({
+      source: "new-home",
+      records: [record("C", ["B"], "new-home")],
+    });
+    await c.applyBatch({
+      source: "new-home",
+      records: [record("B", ["A"], "old-home")],
+    });
+    const moved = await c.get("task");
+    const old = await c.beginSnapshot("old-home");
+    await c.completeSnapshot(old, { expected: null, next: "old-complete" });
+    const retained = await c.get("task");
+    const next = await c.beginSnapshot("new-home");
+    await c.completeSnapshot(next, {
+      expected: "old-complete",
+      next: "all-complete",
+    });
+    return { moved, retained, absent: await c.get("task") };
+  });
+  expect(result.moved.record.current.id).toBe("C");
+  expect(result.moved.record.channelId).toBe("new-home");
+  expect(result.retained.record.availability.state).toBe("available");
+  expect(result.absent.record.availability.state).toBe("unavailable");
+});
+
+test("retries database opening with a new handle after a transient failure", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const { createArtifactStore } = await import(
+      "/src/features/artifact-storage/store.ts"
+    );
+    const store = createArtifactStore("viewer", "relay");
+    const definition = {
+      name: "retry",
+      type: "test.task",
+      version: 1,
+      project: () => [],
+    };
+    const original = IDBFactory.prototype.open;
+    let attempts = 0;
+    IDBFactory.prototype.open = function (...args) {
+      if (++attempts === 1)
+        throw new DOMException("Temporary open failure", "UnknownError");
+      return original.apply(this, args);
+    };
+    try {
+      const failed = store.collection("test", definition);
+      const error = await failed.get("task").then(
+        () => "unexpected",
+        (e) => e.message,
+      );
+      failed.close();
+      const retried = store.collection("test", definition);
+      await retried.importBatch({ records: [{ id: "task", local: {} }] });
+      return { error, attempts, saved: !!(await retried.get("task")) };
+    } finally {
+      IDBFactory.prototype.open = original;
+      store.close();
+    }
+  });
+  expect(result).toEqual({
+    error: "Temporary open failure",
+    attempts: 2,
+    saved: true,
+  });
 });

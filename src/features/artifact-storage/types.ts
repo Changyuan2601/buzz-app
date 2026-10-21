@@ -58,6 +58,11 @@ export type ArtifactImport = Readonly<{
   marker?: string;
 }>;
 export type ArtifactCollection = {
+  readonly scope: Readonly<{
+    viewer: string;
+    relay: string;
+    partition: string;
+  }>;
   get(id: string): Promise<ArtifactEntry | undefined>;
   page(query: ArtifactPageQuery): Promise<ArtifactPage>;
   /** Subscribe before the first read. Each notification requires a fresh read. */
