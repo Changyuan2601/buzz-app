@@ -3027,6 +3027,9 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
     types: () => types,
   } as unknown as Agents;
   const h = mount({}, undefined, undefined, agents);
+  const media = vi
+    .spyOn(h.session, "media")
+    .mockReturnValue("buzz-media://localhost/honey-small");
   await h.user.type(h.input(), "use what you show");
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
@@ -3042,6 +3045,21 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   expect(
     await screen.findByLabelText("Effort for Honey's next run"),
   ).toHaveAttribute("aria-valuetext", "High");
+  // A mentioned agent's profile may not be loaded yet (not a member), so ask for it.
+  expect(h.session.profiles.ensure).toHaveBeenCalledWith(
+    [first.pubkey],
+    "background",
+  );
+  // Artwork arriving after the picker opens must use authenticated thumbnails.
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", picture: "https://art.test/honey.png" }],
+    ]),
+  );
+  expect(
+    screen.getByRole("dialog", { name: /Model.*effort/ }).querySelector("img"),
+  ).toHaveAttribute("src", "buzz-media://localhost/honey-small");
+  expect(media).toHaveBeenCalledWith("https://art.test/honey.png", "small");
   await h.user.keyboard("{Escape}");
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenLastCalledWith(

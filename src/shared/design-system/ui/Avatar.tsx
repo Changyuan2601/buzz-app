@@ -2,12 +2,19 @@ import "../styles/avatar-shape.css";
 import "../styles/avatar-status.css";
 import { Avatar as BaseAvatar } from "@base-ui/react/avatar";
 import {
+  createContext,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+
+/** The host may supply artwork for recognized sources; unknown images keep normal loading. */
+export const AvatarArtworkContext = createContext<
+  ((src: string) => ReactNode) | null
+>(null);
 
 type AvatarSize = "compact" | "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
@@ -127,6 +134,8 @@ export function Avatar({
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
+  const renderArtwork = useContext(AvatarArtworkContext);
+  const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
   return (
@@ -147,16 +156,17 @@ export function Avatar({
         }
         aria-hidden={!alt || undefined}
       >
-        {src ? (
-          <AvatarArtwork
-            key={src}
-            src={src}
-            fallback={content}
-            loading={loading}
-          />
-        ) : (
-          <span aria-hidden="true">{content}</span>
-        )}
+        {artwork ??
+          (src ? (
+            <AvatarArtwork
+              key={src}
+              src={src}
+              fallback={content}
+              loading={loading}
+            />
+          ) : (
+            <span aria-hidden="true">{content}</span>
+          ))}
       </BaseAvatar.Root>
       {statusBadge && (
         <span className="buzz-avatar-status-dot" aria-hidden="true" />

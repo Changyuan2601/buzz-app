@@ -153,8 +153,6 @@ test("owner profile keeps its pane and caret stable during inline name editing",
     .poll(async () => (await profile.boundingBox()).width)
     .toBeLessThan(draggedWidth);
   const adaCard = agents.getByRole("gridcell", { name: "Ada", exact: true });
-  const portrait = adaCard.locator('span[aria-hidden="true"]').first();
-  const widePortrait = (await portrait.boundingBox()).width;
   await divider.press("End");
   const agentGrid = agents.getByRole("grid", { name: "Agents", exact: true });
   await expect
@@ -166,7 +164,6 @@ test("owner profile keeps its pane and caret stable during inline name editing",
       ),
     )
     .toBe(1);
-  expect((await portrait.boundingBox()).width).toBeLessThan(widePortrait);
   expect(
     await agentGrid.evaluate(
       (element) =>

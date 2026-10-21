@@ -27,6 +27,19 @@ import type {
   ContributionReader,
   PageTabsProps,
 } from "./contracts";
+import type { RelaySession } from "../relay/session";
+
+/** A Solo chat's sidebar icon: what the plugin knows about the chat, or
+ * `fallback` when it has nothing to show. */
+export type ChatIconProps = Readonly<{
+  session: RelaySession;
+  channelId: string;
+  fallback: ReactNode;
+}>;
+export type ChatIcon = Readonly<{
+  id: string;
+  component: ComponentType<ChatIconProps>;
+}>;
 
 export type Conversation = {
   attachments: ContributionReader<AttachmentRenderer>;
@@ -57,6 +70,11 @@ export type Conversation = {
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
+  /** Solo chat icons; the sidebar shows the first one. */
+  chatIcons: ContributionReader<ChatIcon>;
+  /** Shows `component` as each Solo chat's sidebar icon while the providing
+   * plugin runs. */
+  registerChatIcon(component: ComponentType<ChatIconProps>): void;
   /** The host's date labels, so plugin text reads like the message rows. */
   format: {
     /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
@@ -119,6 +137,8 @@ export class ConversationService extends Service implements Conversation {
   readonly actions;
   private readonly actionEntries;
   private readonly tabEntries;
+  readonly chatIcons;
+  private readonly chatIconEntries;
   readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
@@ -169,6 +189,12 @@ export class ConversationService extends Service implements Conversation {
       component: ComponentType<PageTabsProps>;
     }>(ctx);
     this.tabEntries = tabs;
+    const chatIcons = createContributions<ChatIcon>(ctx);
+    this.chatIconEntries = chatIcons;
+    this.chatIcons = {
+      snapshot: chatIcons.snapshot,
+      subscribe: chatIcons.subscribe,
+    };
     const Tabs = (props: PageTabsProps) => {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
@@ -192,6 +218,11 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
+  }
+  registerChatIcon(component: ComponentType<ChatIconProps>) {
+    if (typeof component !== "function")
+      throw new Error("A chat icon needs a component");
+    this.chatIconEntries.register(this.ctx, { id: "chat-icon", component });
   }
   registerMessageAction(value: MessageAction) {
     validate(value);

@@ -276,7 +276,7 @@ it("keeps unavailable creation actions disabled", async () => {
 
 it.each([
   ["New", "New workspace"],
-  ["New in Solo", "New workspace…"],
+  ["New chat or workspace", "New workspace…"],
 ])(
   "does not navigate to a replaced session after project creation from %s completes",
   async (triggerName, itemName) => {
@@ -557,7 +557,9 @@ it.each(["empty", "chats", "projects", "both"])(
       expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
     }
     await user.click(screen.getByRole("tab", { name: "Solo" }));
-    const trigger = within(nav).getByRole("button", { name: "New in Solo" });
+    const trigger = within(nav).getByRole("button", {
+      name: "New chat or workspace",
+    });
     await user.click(trigger);
     await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
     expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
@@ -574,7 +576,9 @@ it.each(["empty", "chats", "projects", "both"])(
 it("keeps new Solo chats available when project creation is unavailable", async () => {
   const user = userEvent.setup();
   const f = fixture(true);
-  await user.click(screen.getByRole("button", { name: "New in Solo" }));
+  await user.click(
+    screen.getByRole("button", { name: "New chat or workspace" }),
+  );
   expect(
     await screen.findByRole("menuitem", { name: "New workspace…" }),
   ).toHaveAttribute("aria-disabled", "true");

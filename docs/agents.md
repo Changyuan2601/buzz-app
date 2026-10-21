@@ -77,6 +77,21 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
+On desktop the GitHub plugin adds `watch_pr`, so an agent can wait on a pull
+request without a model checking it. An agent calls it with a pull request URL,
+from a thread or a Solo chat. While the app is open the plugin reads the pull
+request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+settles on the head commit, once per commit and result, or when new feedback has
+been quiet for 90 seconds. The wake is a plugin wake (`ctx.agents.wake`, below)
+in the conversation where it called the tool: no message is sent, and the agent
+is told its text is data. It quotes the failed checks' names and the new
+comments, line by line, each clipped, with GitHub's links. Agents comment as the
+`gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
+that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
+other comments wake the agent. A watch is saved on the device. It ends when the
+pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
+or when the agent calls it with `stop: true`.
+
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
@@ -88,6 +103,32 @@ no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
+
+A plugin wakes an agent with `ctx.agents.wake(pubkey, { channel, root?, text })`,
+in the conversation of that channel and thread, or of a Solo chat when it leaves
+out `root`. It throws when this copy of the app does not run the agent or its
+mention lane is full. The wake is a `plugin` trigger in the mention lane, with
+the mention's rate limit, and is dropped like a queued mention when the agent
+stops running here. Nothing goes to the relay. Claude, Codex and goose take it
+on their mention path, without the owner check, since the plugin is the owner's
+installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+anchor in place of the event (the thread's `e` tag, and a random id), and a
+`<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
+woke the agent, that neither the owner nor anyone in the channel wrote it, and
+that its text is data. The anchor's id is never published: failure reports and
+typing go to the thread root, or the channel itself in a Solo chat, and a wake
+with no `root` outside a Solo chat is ignored. A wake is not saved for resume
+and shows no activity row or Stop.
+
+A plugin leaves context for a later turn with
+`ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
+or publishing a message. Pass the thread root for a thread conversation.
+Channel-scoped sessions, DMs and Solo chats consume notes across their channel;
+thread-scoped sessions take only notes addressed to their root. Notes are
+consumed once when the harness is ready to deliver the turn, and restored to
+the same conversation ahead of newer notes if delivery definitely never began.
+They remain in memory only, and the call returns false unless this copy runs
+the agent.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
@@ -724,9 +765,9 @@ selected model family icon, not the Goose runtime or Databricks/provider mark,
 as explicitly confirmed by the product owner. Goose device defaults have no
 reset action: omitting a model in Goose retains its stored provider model.
 
-## Usage & costs
+## Usage
 
-Usage & costs is a default-off page summarising what the selected community's agents
+Usage is a default-off page summarising what the selected community's agents
 on this computer spent: estimated cost against the previous period, tokens, cache
 hit rate (cache reads over all prompt tokens: uncached input, cache reads and
 cache writes), daily cost by agent
@@ -740,7 +781,7 @@ started, and one observation per model request: the harness's request id when it
 records one, the time, the model, the token counts, and the cost only when the
 harness recorded one, with the harness's word for how it got it. An absent count
 is unknown, not zero; `input` excludes cache counts, and `cacheWrite1h` is the
-subset of `cacheWrite` cached for an hour. Usage & costs groups the observations into
+subset of `cacheWrite` cached for an hour. Usage groups the observations into
 days itself. Reading never starts, stops or changes a session.
 
 A snapshot covers the session's descendants too, such as Claude Code and Codex
@@ -761,15 +802,15 @@ A consumer that keeps snapshots follows these rules:
 - `since` only bounds activity time. It is not a checkpoint, so it cannot find
   a correction a harness made to a session last active before it.
 
-Until collected usage is persisted, Usage & costs applies these rules to what it holds
+Until collected usage is persisted, Usage applies these rules to what it holds
 while the page is open. An agent whose read fails keeps what earlier reads found.
 
-Usage & costs shows the last 7 or 30 days. It reads the last 30 days once for both, and
+Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
 again only on Refresh or when the agents change. Thirty days is what Claude Code
 keeps by default, and older history would undercount. Only the 7-day period is
 compared with the one before it, because a 30-day comparison would need days
-that were not read. The page says that costs are estimated from the session
-files on this computer, not a bill.
+that were not read. The page marks costs as a best-effort estimate from the
+session files on this computer, not a bill.
 
 Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
@@ -790,11 +831,14 @@ input, which the readers subtract.
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.
 
-Where a harness recorded no cost, Usage & costs estimates it at Anthropic's published
-first-party API rates, including for a Claude model a provider prefixes, such as
-`databricks-claude-sonnet-5-5`. That may differ from what a subscription or
-provider bills. Totals add only known values. A total is marked partial when an
-unknown count, a model without known rates (such as Codex's OpenAI models) or an
-incomplete snapshot left something out, and unavailable when nothing was known.
+Where a harness recorded no cost, Usage estimates it from the token counts at the
+provider's published API list prices, including a model's long-prompt rates and,
+for a Claude model a provider prefixes such as `databricks-claude-sonnet-5-5`, the
+Anthropic model's rates. The prices are the data `@pydantic/genai-prices` bundles,
+loaded when the page first reads; they change with the package version, never at
+run time. That may differ from what a subscription or provider bills. Totals add
+only known values. A total is marked partial when an unknown count, a model
+without known rates or an incomplete snapshot left something out, and
+unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
-recorded usage. Usage & costs does not read or publish kind-44200 metrics.
+recorded usage. Usage does not read or publish kind-44200 metrics.

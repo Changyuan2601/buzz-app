@@ -93,7 +93,7 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
       `https://github.com/${author}`,
     );
     await expect(
-      panel.getByRole("tab", { name: "Discussion", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+      panel.getByRole("list", { name: "Pull request checklist" }),
+    ).toBeVisible();
   }
 });

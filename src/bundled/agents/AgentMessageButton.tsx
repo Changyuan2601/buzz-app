@@ -11,7 +11,9 @@ export function AgentMessageButton({
   relay,
   navigator,
   navigation,
+  variant = "subtle",
 }: {
+  variant?: "glass" | "subtle";
   pubkey: string;
   relay: RelayData;
   navigator: Navigation | undefined;
@@ -99,7 +101,7 @@ export function AgentMessageButton({
       <Button
         size="sm"
         shape="control"
-        variant="subtle"
+        variant={variant}
         disabled={!available || opening}
         loading={opening}
         onClick={() => void open()}

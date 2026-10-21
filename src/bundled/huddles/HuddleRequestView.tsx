@@ -26,7 +26,7 @@ export function HuddleRequestView({
       className={`${styles.window} ${styles.requestWindow}`}
       aria-label="Incoming Huddle request"
     >
-      <ProfileBackdrop src={caller?.picture} kind="human" />
+      <ProfileBackdrop src={caller?.picture} />
       <header className={styles.windowHeader}>
         <div className={styles.windowMinimize}>
           <IconButton

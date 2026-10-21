@@ -70,15 +70,10 @@ type Choice = { id: string; name: string; kind: "person" | "channel" };
 
 /** Unknown classification is not evidence of a private conversation. Only a
  * verified current roster plus a known non-agent profile supplies Shared. */
-export function ChatAccessIndicator({
-  session,
-  channel,
-  onClick,
-}: {
-  session: RelaySession;
-  channel: ChannelSummary | undefined;
-  onClick(): void;
-}) {
+export function useSharedWithPeople(
+  session: RelaySession,
+  channel: ChannelSummary | undefined,
+) {
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -105,7 +100,19 @@ export function ChatAccessIndicator({
         !agents.identities.some((agent) => agent.pubkey === key)
       );
     });
-  if (!human) return null;
+  return !!human;
+}
+
+export function ChatAccessIndicator({
+  session,
+  channel,
+  onClick,
+}: {
+  session: RelaySession;
+  channel: ChannelSummary | undefined;
+  onClick(): void;
+}) {
+  if (!useSharedWithPeople(session, channel)) return null;
   return (
     <IconButton
       aria-label="Shared · Manage access"
@@ -113,6 +120,27 @@ export function ChatAccessIndicator({
       icon={<UsersIcon size={16} />}
       onClick={onClick}
     />
+  );
+}
+
+/** Status only: the chat's actions menu owns access management. The row's
+ * select button names it through `soloSharedMarkId`. */
+export const soloSharedMarkId = (channelId: string) =>
+  `solo-shared-${channelId}`;
+
+export function ChatSharedMark({
+  session,
+  channel,
+}: {
+  session: RelaySession;
+  channel: ChannelSummary | undefined;
+}) {
+  if (!useSharedWithPeople(session, channel)) return null;
+  return (
+    <span id={channel && soloSharedMarkId(channel.id)} data-solo-shared="">
+      <UsersIcon size={16} aria-hidden="true" />
+      <span className="sr-only">Shared</span>
+    </span>
   );
 }
 

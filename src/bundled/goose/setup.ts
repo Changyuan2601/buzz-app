@@ -370,6 +370,8 @@ export class GooseSetup {
     return this.with(async (goose, cwd) => {
       const session = await goose.open({
         cwd,
+        // A titled session spares the provider a naming call.
+        title: "Buzz connection test",
         systemPrompt: "",
         choice: () => choice,
       });

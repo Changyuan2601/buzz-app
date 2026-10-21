@@ -9,7 +9,22 @@ import type {
   StorageResult,
   ConfigurationState,
   ManagementAction,
+  PluginInfo,
 } from "./types";
+
+export function canRetryPlugin(
+  plugin: PluginInfo | undefined,
+  activation: ReturnType<PluginRuntime["snapshot"]>[string] | undefined,
+  externalPluginsPaused: boolean,
+) {
+  return (
+    !!plugin?.enabled &&
+    !plugin.error &&
+    !(externalPluginsPaused && plugin.source === "external") &&
+    activation?.status === "failed" &&
+    activation.revision === plugin.revision
+  );
+}
 
 export type BundledPlugin = {
   manifest: PluginManifest;
@@ -77,16 +92,18 @@ export function createPluginManager(
       return;
     configuration = next;
     refreshError = null;
-    const desired =
-      next.status === "ready"
-        ? next.catalog.plugins.filter(
-            (plugin) =>
-              plugin.enabled &&
-              !(next.externalPluginsPaused && plugin.source === "external"),
-          )
-        : [];
-    runtime.reconcile(desired);
+    runtime.reconcile(desiredPlugins());
     publish();
+  }
+  function desiredPlugins() {
+    const current = configuration;
+    return current.status === "ready"
+      ? current.catalog.plugins.filter(
+          (plugin) =>
+            plugin.enabled &&
+            !(current.externalPluginsPaused && plugin.source === "external"),
+        )
+      : [];
   }
   async function getCatalog() {
     if (catalogPending)
@@ -185,6 +202,15 @@ export function createPluginManager(
     change: (action: ManagementAction, id: string) =>
       update(() => storage.changePlugin(action, id)),
     reload: (id: string) => update(() => storage.reloadPlugin(id), 120_000),
+    retryPlugin: (id: string) => {
+      if (closed || busy) return false;
+      const desired = desiredPlugins();
+      const plugin = desired.find((item) => item.manifest.id === id);
+      const activation = runtime.snapshot()[id];
+      if (!canRetryPlugin(plugin, activation, false)) return false;
+      runtime.reconcile(desired, id);
+      return true;
+    },
     retry: () => update(getCatalog),
     recover: () => update(storage.recoverSettings),
     dismissError: () => {

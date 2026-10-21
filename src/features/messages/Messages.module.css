@@ -1087,7 +1087,8 @@ button.mediaPreview {
   font-variant-numeric: tabular-nums;
 }
 .mediaTimeLink {
-  margin-right: var(--space-1h);
+  display: flex;
+  align-items: center;
   font-variant-numeric: tabular-nums;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -2212,14 +2213,20 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   gap: var(--composer-gap);
 }
 
-.mediaTimeLink > :is(button, span) {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.25rem;
-  padding: 0 var(--space-1h);
-  border-radius: var(--radius-chip);
-  background: var(--affordance-selected);
-  font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
+.mediaTimeDigits {
+  padding-inline: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+  font-weight: var(--text-mono--font-weight);
+}
+.mediaTimeLabel {
+  color: var(--text-metadata);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
@@ -2288,10 +2295,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   height: 1.5rem;
 }
 
-.mediaReviewViewer .mediaTimeLink > :is(button, span) {
-  color: var(--text-standard);
-  background: var(--affordance-subtle-hover);
-}
 .mediaReviewViewer .threadNote {
   padding: var(--space-6) var(--space-3);
   text-align: center;
@@ -2339,15 +2342,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     top: 0;
     z-index: 5;
   }
-}
-
-/* Keep the time anchor in the first text line, allowing subsequent lines and
-   markdown blocks to retain their normal wrapping. */
-.mediaReviewComment .mediaTimeLink + .text:has(> p:first-child),
-.mediaReviewComment .mediaTimeLink + .text > p:first-child,
-.mediaReviewComment .mediaTimeLink + .text[data-single-emoji],
-.mediaReviewComment .mediaTimeLink + .plainText {
-  display: inline;
 }
 
 /* Keep the sidebar at its resting size as it fades over the resized stage. */

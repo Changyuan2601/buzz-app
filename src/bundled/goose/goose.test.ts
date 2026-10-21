@@ -77,7 +77,6 @@ describe("GooseProcess", () => {
     expect(process.options.cwd).toBe("/work");
     expect(process.options.env).toMatchObject({
       GOOSE_MODE: "auto",
-      GOOSE_DISABLE_SESSION_NAMING: "true",
       BUZZ_PRIVATE_KEY: null,
       BUZZ_AUTH_TAG: null,
       BUZZ_RELAY_URL: null,
@@ -313,6 +312,44 @@ describe("GooseProcess", () => {
     expect(process.opened[0]?._meta).toMatchObject({
       sessionTitle: "Ada · #general",
     });
+  });
+
+  it("keeps a session's title when goose's config turns naming off", async () => {
+    const fake = fakeSpawn({ namingDisabled: true });
+    const goose = await GooseProcess.start(fake.spawn, { cwd: "/work" });
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      title: "Ada · #general",
+      named: vi.fn(),
+    });
+    expect(fake.geese[0]?.opened[0]?._meta).toMatchObject({
+      sessionTitle: "Ada · #general",
+    });
+    expect(session.named).toBeUndefined();
+  });
+
+  it("passes on the first name goose generates for a session it names", async () => {
+    const { open, process } = await start();
+    const named = vi.fn();
+    const session = await open({ title: "Ada · #general", named });
+    expect(process.opened[0]?._meta).not.toHaveProperty("sessionTitle");
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "run-1" } },
+    });
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      title: " Fix the login bug ",
+      _meta: { messageCount: 1, userSetName: false },
+    });
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      title: "A later name",
+      _meta: { messageCount: 2, userSetName: false },
+    });
+    await flush();
+    expect(named).toHaveBeenCalledExactlyOnceWith("Fix the login bug");
   });
 
   it("runs a message the turn could not take as the next turn", async () => {

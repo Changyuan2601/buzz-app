@@ -9,6 +9,7 @@
 }
 .card {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -25,13 +26,73 @@
   text-align: center;
   user-select: none;
 }
+.agentCard {
+  --profile-backdrop-mask: linear-gradient(to bottom, black, 25%, transparent);
+  --profile-backdrop-filter: blur(40px) saturate(4);
+  --profile-backdrop-scale: 2;
+  --profile-backdrop-opacity: 0.64;
+  --profile-backdrop-duration: var(--duration-state);
+  gap: var(--space-6);
+  justify-content: flex-end;
+  padding: calc(var(--space-8) * 2 + var(--space-2)) var(--space-6)
+    var(--space-6);
+}
+/* Static grain sits above the blurred/faded artwork, below card content. */
+.grain {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: url("./card-grain.png");
+  background-size: 128px 128px;
+  opacity: 0.02;
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .grain {
+    display: none;
+  }
+}
+.identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
 .card:is([role="option"], [role="gridcell"]) {
   cursor: pointer;
 }
 .card:is([aria-selected="true"], [data-selected="true"]) {
-  border-color: var(--border-focus);
+  border-color: var(--border-prominent);
+  box-shadow: var(--shadow-sm);
 }
-.card:focus-visible {
+/* Hover previews the richer selected artwork; the foreground stays still. */
+@media (hover: hover) and (pointer: fine) {
+  .agentCard:where(:hover) {
+    --profile-backdrop-filter: blur(40px) saturate(4.6);
+    --profile-backdrop-scale: 2.15;
+    --profile-backdrop-opacity: 0.7;
+  }
+}
+/* Selection remains stronger than hover after the pointer leaves. */
+.agentCard:is([aria-selected="true"], [data-selected="true"]) {
+  --profile-backdrop-filter: blur(40px) saturate(5.2);
+  --profile-backdrop-scale: 2.3;
+  --profile-backdrop-opacity: 0.76;
+}
+html[data-keyboard-navigation] .agentCard {
+  --profile-backdrop-duration: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agentCard,
+  .agentCard:is([aria-selected="true"], [data-selected="true"]) {
+    --profile-backdrop-scale: 2;
+    --profile-backdrop-duration: 0s;
+  }
+}
+html[data-keyboard-navigation] .card:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
@@ -56,7 +117,7 @@
 .crewPortrait + .crewPortrait {
   margin-left: calc(var(--space-5) * -1);
 }
-.crewPortrait :is(img, video) {
+.crewPortrait > :is(img, video) {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -76,7 +137,7 @@
 .card[data-unavailable] .portrait {
   opacity: 0.5;
 }
-.portrait :is(img, video) {
+.portrait > :is(img, video) {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -88,6 +149,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.identity .name {
+  margin-block: 0;
+}
+/* Keep photos at their existing size without invisible spacing around them. */
+.agentCard .portrait:has(> [class~="buzz-avatar-status"]) {
+  width: clamp(3rem, 12cqw, 6rem);
+  height: clamp(3rem, 12cqw, 6rem);
+}
+.agentCard .portrait > [class~="buzz-avatar-status"] {
+  width: 100%;
+  height: 100%;
 }
 .detail {
   display: flex;

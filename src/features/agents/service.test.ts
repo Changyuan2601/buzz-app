@@ -1016,6 +1016,130 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+describe("a plugin's wake", () => {
+  const root = "e".repeat(64);
+  /** Once this copy holds the agent. */
+  const held = async (native: ReturnType<typeof fakeNative>) => {
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await settle();
+  };
+  /** Every event published as the agent, as JSON. */
+  const sent = async (native: ReturnType<typeof fakeNative>) =>
+    JSON.stringify(
+      await Promise.all(native.publish.mock.results.map(({ value }) => value)),
+    );
+
+  it("runs like a mention in its thread, typing at the thread's root", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    let finish = () => {};
+    const turn = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+    plugin.agents.wake(bot, { channel, root, text: "CI failed" });
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      const { trigger } = run.mock.calls[0]?.[0] ?? {};
+      expect(trigger).toMatchObject({
+        type: "plugin",
+        plugin: "example",
+        channel,
+        root,
+        text: "CI failed",
+      });
+      expect(trigger?.type === "plugin" && trigger.id).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
+      await settle();
+      expect(native.publish).toHaveBeenCalledWith(bot, {
+        kind: 20002,
+        content: "",
+        tags: [
+          ["h", channel],
+          ["e", root, "", "reply"],
+        ],
+      });
+    } finally {
+      finish();
+    }
+  });
+
+  it("never publishes its own id, even when its turn fails", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    run.mockImplementation(async ({ workingUntil }) =>
+      workingUntil(
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ ok: false, error: "boom" }), 4_000),
+        ),
+      ),
+    );
+    // In a thread, and at the top level of a channel that is not a Solo
+    // chat, where it has no conversation and so shows no typing.
+    plugin.agents.wake(bot, { channel, root, text: "CI failed" });
+    plugin.agents.wake(bot, { channel, text: "CI failed again" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(12_000);
+    await settle();
+    const ids = run.mock.calls.map(([{ trigger }]) =>
+      trigger.type === "plugin" ? trigger.id : "",
+    );
+    expect(ids.every(Boolean)).toBe(true);
+    const all = await sent(native);
+    expect(all).toContain(root);
+    for (const id of ids) expect(all).not.toContain(id);
+    // Typing only in the thread.
+    for (const pulse of await published(native, 20002))
+      expect(pulse.tags).toEqual([
+        ["h", channel],
+        ["e", root, "", "reply"],
+      ]);
+  });
+
+  it("throws outside a plugin, without text or a well-formed root, or for an agent this copy does not run", async () => {
+    const { service, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    expect(() => service.wake(bot, { channel, text: "hi" })).toThrow(
+      /Only a plugin/,
+    );
+    expect(() => plugin.agents.wake(bot, { channel, text: " " })).toThrow(
+      /needs a channel and text/,
+    );
+    for (const bad of ["", "note1abc", "r".repeat(63), ` ${"a".repeat(64)}`])
+      expect(() =>
+        plugin.agents.wake(bot, { channel, root: bad, text: "hi" }),
+      ).toThrow(/64-hex event id/);
+    expect(() => plugin.agents.wake(sibling, { channel, text: "hi" })).toThrow(
+      /does not run that agent/,
+    );
+  });
+
+  it("is dropped like a mention when the agent stops running here", async () => {
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    let running: Delivery<Config> | undefined;
+    run.mockImplementationOnce(
+      (delivery) =>
+        new Promise(() => {
+          running = delivery;
+        }),
+    );
+    plugin.agents.wake(bot, { channel, root, text: "first" });
+    plugin.agents.wake(bot, { channel, root, text: "second" });
+    await vi.waitFor(() => expect(running).toBeDefined());
+    await service.remove(bot);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
 it("shows no typing for a mention its runtime ignores", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const { service, run, emit, native } = await setup();
@@ -1169,7 +1293,9 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.event.content,
+            : trigger.type === "plugin"
+              ? trigger.text
+              : trigger.event.content,
           resolve,
         );
       }),
@@ -1619,6 +1745,57 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   await service.remove(bot);
   expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+it("leaves a plugin's note for an agent's next turn in a channel, once, while this copy runs it", async () => {
+  const { service, ctx, run, emit } = await setup();
+  expect(ctx.agents.note(bot, channel, "early")).toBe(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(ctx.agents.note(bot, channel, "(I interrupted your reply)")).toBe(
+      true,
+    ),
+  );
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  expect(agent?.notes?.("elsewhere")).toEqual([]);
+  expect(agent?.notes?.(channel)).toEqual(["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([]);
+  // A turn that never began puts its notes back ahead of newer ones.
+  ctx.agents.note(bot, channel, "(newer)");
+  agent?.restoreNotes?.(channel, ["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([
+    "(I interrupted your reply)",
+    "(newer)",
+  ]);
+});
+
+it("isolates thread notes and restores them to the same conversation", async () => {
+  const { service, ctx, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(ctx.agents.note(bot, channel, "channel")).toBe(true),
+  );
+  const first = "a".repeat(64);
+  const second = "b".repeat(64);
+  ctx.agents.note(bot, channel, "first", first);
+  ctx.agents.note(bot, channel, "second", second);
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  expect(agent?.notes?.(channel, second)).toEqual(["second"]);
+  expect(agent?.notes?.(channel, second)).toEqual([]);
+  expect(agent?.notes?.(channel, first)).toEqual(["first"]);
+  ctx.agents.note(bot, channel, "newer first", first);
+  agent?.restoreNotes?.(channel, ["first"], first);
+  expect(agent?.notes?.(channel, second)).toEqual([]);
+  expect(agent?.notes?.(channel, first)).toEqual(["first", "newer first"]);
+  expect(agent?.notes?.(channel)).toEqual(["channel"]);
+  // A channel-scoped session consumes notes for any thread in its channel.
+  ctx.agents.note(bot, channel, "first again", first);
+  ctx.agents.note(bot, channel, "second again", second);
+  expect(agent?.notes?.(channel)).toEqual(["first again", "second again"]);
 });
 
 it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
@@ -4286,7 +4463,9 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : [trigger.event.content];
+        : trigger.type === "plugin"
+          ? [trigger.text]
+          : [trigger.event.content];
   });
 /** Each run's trigger type, and how many events a catch-up had. */
 const turns = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>

@@ -15,15 +15,11 @@ import {
   type ToolServer,
   type TurnPick,
 } from "./claude";
-import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 import type { AgentStore } from "../../features/agents/store";
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
-/** How long a one-off turn can run before it is given up; Janet's turn
- * deadline. */
-export const ONCE_DEADLINE_MS = STANDALONE_DEADLINE_MS;
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -199,7 +195,8 @@ export class AgentSessions {
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    if (this.disposed)
+      return { ok: false, error: "Claude was stopped", undelivered: true };
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
@@ -239,12 +236,21 @@ export class AgentSessions {
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
-      await this.options.store.delete(key);
-      this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen, {
-        pick,
-        ...activity,
-      });
+      // Nothing has taken the message in yet.
+      let retry: string;
+      try {
+        await this.options.store.delete(key);
+        this.drop(key, live);
+        retry = fresh ? await fresh() : text;
+      } catch (error) {
+        console.warn("Claude could not start over", error);
+        return {
+          ok: false,
+          error: `Claude could not start over: ${error instanceof Error ? error.message : String(error)}`,
+          undelivered: true,
+        };
+      }
+      return this.deliver(key, retry, seen, { pick, ...activity });
     }
     return delivered;
   }
@@ -281,52 +287,50 @@ export class AgentSessions {
   /** Runs one turn in a new session, then stops its process. The session is
    * not saved, so it never displaces a conversation's saved session and is
    * never resumed. `label` names it in the snapshot. It gives up, and stops
-   * the turn, after `deadline` ms of running. `prompt` is asked for the turn's
-   * text once a process is ready, so a turn that should no longer run by then
-   * returns undefined and sends nothing. It settles only when its process has
-   * exited, so it shows as working while it may still be working. */
+   * the turn, once `signal` aborts. `prompt` is asked for the turn's text once
+   * a process is ready, so a turn that should no longer run by then returns
+   * undefined and sends nothing. It settles only when its process has exited,
+   * so it shows as working while it may still be working. */
   async runOnce(
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
-    deadline = ONCE_DEADLINE_MS,
+    signal?: AbortSignal,
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    if (signal?.aborted) return { ok: false, error: message(signal.reason) };
     const key = `${label} #${++this.onceCount}`;
     this.once.set(key, undefined);
     this.options.onChange?.();
-    let live: Live | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Its process as soon as it exists, so one still initializing can be
+    // stopped; one that spawns after the turn was given up is stopped at once.
+    let spawned: ClaudeProcess | undefined;
+    let over = false;
     try {
-      live = await this.start(undefined);
+      const live = await abortable(
+        this.start(undefined, undefined, (process) => {
+          spawned = process;
+          if (over) void process.kill();
+        }),
+        signal,
+      );
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
       live.process.onActivity = this.options.onChange;
       this.once.set(key, live);
-      const text = await prompt();
+      const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await Promise.race([
-        live.process.send(text),
-        new Promise<Settled>((resolve) => {
-          timer = setTimeout(
-            () =>
-              resolve({
-                ok: false,
-                error: `The turn ran past its ${Math.round(deadline / 1000)}s deadline and was stopped`,
-              }),
-            deadline,
-          );
-        }),
-      ]);
+      return await abortable(live.process.send(text), signal);
     } catch (error) {
+      if (signal?.aborted) return { ok: false, error: message(signal.reason) };
       console.warn("Claude could not start a one-off session", error);
       return { ok: false, error: "Claude could not start" };
     } finally {
-      clearTimeout(timer);
-      if (live) {
+      over = true;
+      if (spawned) {
         // Killing only asks it to stop; the host may let it run a few seconds.
-        void live.process.kill();
-        await live.process.exited.catch(() => undefined);
+        void spawned.kill();
+        await spawned.exited.catch(() => undefined);
       }
       this.once.delete(key);
       this.options.onChange?.();
@@ -365,47 +369,64 @@ export class AgentSessions {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
           void live.process.kill();
-          return { ok: false, error: "Claude was stopped" };
+          return { ok: false, error: "Claude was stopped", undelivered: true };
         }
         this.adopt(key, live, seen);
         return live;
       },
-      (error) => {
+      (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         console.warn("Claude could not start", error);
-        return { ok: false, error: "Claude could not start" };
+        return {
+          ok: false,
+          error: "Claude could not start",
+          undelivered: true,
+        };
       },
     );
     this.opening.set(key, opened);
     return opened;
   }
-  private async start(resume: string | undefined, key?: string): Promise<Live> {
+  /** `spawned` is told of a new session's process as soon as it exists,
+   * before it is initialized. */
+  private async start(
+    resume: string | undefined,
+    key?: string,
+    spawned?: (process: ClaudeProcess) => void,
+  ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
     const launch = await this.options.launch(key);
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
-      : await this.fresh(launch);
+      : await this.fresh(launch, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed)
       return { process, fingerprint, used: this.now() };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key);
+    return this.start(resume, key, spawned);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
-  private async fresh(launch: Omit<ClaudeLaunch, "resume" | "sessionId">) {
+  private async fresh(
+    launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
+    spawned?: (process: ClaudeProcess) => void,
+  ) {
     const spare = await this.options.spare?.take(launch);
     if (spare)
       try {
+        spawned?.(spare);
         await spare.initialize(launch);
         return spare;
       } catch {
         void spare.kill();
       }
-    return ClaudeProcess.start(this.options.spawn, {
+    const process = await ClaudeProcess.spawn(this.options.spawn, {
       ...launch,
       sessionId: this.newId(),
     });
+    spawned?.(process);
+    await process.initialize(launch);
+    return process;
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
@@ -473,6 +494,21 @@ export class AgentSessions {
     void live.process.kill();
   }
 }
+
+/** `work`, or a rejection with `signal`'s reason once it aborts. */
+function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    signal.addEventListener("abort", abort, { once: true });
+    work
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 /** Where a process runs and may work, its model and effort: all a spare is
  * started with. */

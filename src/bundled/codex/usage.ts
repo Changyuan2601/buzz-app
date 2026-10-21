@@ -168,6 +168,9 @@ async function list(rpc: AppServer, params: Json) {
     const page: { data: Thread[]; nextCursor: string | null } =
       await rpc.request("thread/list", {
         ...params,
+        // Without it, Codex lists only its default provider's threads, which
+        // can leave out every thread the agent ran.
+        modelProviders: [],
         limit: 50,
         ...(cursor ? { cursor } : {}),
       });

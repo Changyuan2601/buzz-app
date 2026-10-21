@@ -1277,6 +1277,13 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
 ) {
     use tauri::Manager as _;
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
+    // Like Tauri's asset protocol, let the requesting window (only) read the
+    // bytes, e.g. to sample avatar colors; `<img>` display never needed it.
+    let origin = ctx
+        .app_handle()
+        .get_webview(ctx.webview_label())
+        .and_then(|webview| webview.url().ok())
+        .and_then(|url| window_origin(&url));
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
             Ok((url, Some((start, end)))) => {
@@ -1285,13 +1292,30 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
             Ok((url, None)) => fetch_media(&host, url, None).await,
             Err(status) => Err(status),
         };
-        responder.respond(response.unwrap_or_else(|status| {
+        let mut response = response.unwrap_or_else(|status| {
             tauri::http::Response::builder()
                 .status(status)
                 .body(Vec::new())
                 .expect("static response")
-        }));
+        });
+        if let Some(origin) = origin {
+            response
+                .headers_mut()
+                .insert("Access-Control-Allow-Origin", origin);
+        }
+        responder.respond(response);
     });
+}
+
+/// The serialized origin of a window's page (`tauri://localhost`,
+/// `http://tauri.localhost`, or the dev server). Pages without a host get none.
+fn window_origin(url: &Url) -> Option<tauri::http::HeaderValue> {
+    let host = url.host_str()?;
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    tauri::http::HeaderValue::from_str(&format!("{}://{host}{port}", url.scheme())).ok()
 }
 
 /// Decode only the custom scheme URLs emitted by convertFileSrc. The media URL

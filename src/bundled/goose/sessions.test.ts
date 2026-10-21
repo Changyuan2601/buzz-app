@@ -243,6 +243,20 @@ describe("AgentSessions", () => {
     expect(goose?.turns.at(-1)?.text).toBe("everything so far");
   });
 
+  it("leaves only a conversation's first session for goose to name", async () => {
+    const { fake, sessions, change } = setup();
+    const named = vi.fn();
+    await sessions.deliver("a", "one", 1, { title: "Buzz", named });
+    change({ systemPrompt: "newer" }, false);
+    await sessions.deliver("a", "two", 2, { title: "Buzz", named });
+    // A reopened session would cost another naming call for a named chat.
+    expect(
+      fake.geese[0]?.opened.map(
+        (session) => (session._meta as { sessionTitle?: string }).sessionTitle,
+      ),
+    ).toEqual([undefined, "Buzz"]);
+  });
+
   it("switches the live session's provider and model between turns", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);
@@ -530,6 +544,7 @@ describe("AgentSessions", () => {
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
       error: expect.stringMatching(/HTTP MCP/),
+      undelivered: true,
     });
   });
 
@@ -561,6 +576,7 @@ describe("AgentSessions", () => {
     await expect(delivering).resolves.toEqual({
       ok: false,
       error: "goose was stopped",
+      undelivered: true,
     });
     await expect(once).resolves.toMatchObject({ ok: false });
     await flush(30);
@@ -686,6 +702,7 @@ describe("AgentSessions", () => {
     await expect(late).resolves.toEqual({
       ok: false,
       error: "goose did not start in time",
+      undelivered: true,
     });
     release();
     await flush(30);
@@ -721,6 +738,7 @@ describe("AgentSessions", () => {
     await expect(expired).resolves.toEqual({
       ok: false,
       error: "goose did not start in time",
+      undelivered: true,
     });
     release();
     await expect(opening).resolves.toEqual({ ok: true });
@@ -743,6 +761,7 @@ describe("AgentSessions", () => {
     await expect(opening).resolves.toEqual({
       ok: false,
       error: "goose could not start: goose did not answer session/new in 60s",
+      undelivered: true,
     });
     expect(fake.geese[0]?.killed).toBe(true);
     expect(fake.servers.map((server) => server.closed)).toEqual([true]);

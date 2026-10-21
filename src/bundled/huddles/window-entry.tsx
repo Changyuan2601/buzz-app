@@ -1,3 +1,4 @@
+import { AgentAvatarArtworkProvider } from "../../features/agents/AgentAvatarArtworkProvider";
 import "../../shared/styles/globals.css";
 import "@fontsource-variable/inter/wght.css";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -54,5 +55,9 @@ function Companion() {
 const container = document.getElementById("root");
 if (container) {
   container.style.height = "100dvh";
-  createRoot(container).render(<Companion />);
+  createRoot(container).render(
+    <AgentAvatarArtworkProvider>
+      <Companion />
+    </AgentAvatarArtworkProvider>,
+  );
 }

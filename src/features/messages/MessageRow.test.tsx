@@ -42,8 +42,13 @@ const row: ChannelMessage = {
 };
 
 it.each([false, true])(
-  "carries agent-envelope appearance into avatar navigation: %s",
-  (agentEnvelope) => {
+  "previews human and agent identities and preserves avatar navigation: %s",
+  async (agentEnvelope) => {
+    vi.useFakeTimers();
+    const showPopover = HTMLElement.prototype.showPopover;
+    HTMLElement.prototype.showPopover = function () {
+      this.style.display = "block";
+    };
     const authorId = "ab".repeat(32);
     const open = vi.fn(() => true);
     try {
@@ -62,17 +67,37 @@ it.each([false, true])(
           retry={undefined}
         />,
       );
+      const avatar = screen.getByRole("button", {
+        name: `View ${authorId.slice(0, 10)} profile`,
+      });
+      expect(
+        screen.queryByRole("dialog", { name: /profile preview/ }),
+      ).toBeNull();
+      fireEvent.mouseEnter(avatar);
+      await act(() => vi.advanceTimersByTimeAsync(250));
+      const preview = screen.getByRole("dialog", {
+        name: `${authorId.slice(0, 10)} profile preview`,
+      });
+      expect(preview).toHaveTextContent(authorId.slice(0, 10));
+      expect(!!within(preview).queryByLabelText("Agent")).toBe(agentEnvelope);
       fireEvent.click(
-        screen.getByRole("button", {
-          name: `View ${authorId.slice(0, 10)} profile`,
-        }),
+        within(preview).getByRole("button", { name: "View profile" }),
       );
+      expect(open).toHaveBeenCalledWith(
+        profileTarget(authorId, { agent: agentEnvelope }),
+        { rootId: "root" },
+      );
+      open.mockClear();
+      fireEvent.click(avatar);
       expect(open).toHaveBeenCalledWith(
         profileTarget(authorId, { agent: agentEnvelope }),
         { rootId: "root" },
       );
     } finally {
       cleanup();
+      if (showPopover) HTMLElement.prototype.showPopover = showPopover;
+      else Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+      vi.useRealTimers();
     }
   },
 );

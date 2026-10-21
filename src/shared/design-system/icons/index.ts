@@ -225,6 +225,8 @@ import TablerMonitorIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceDesk
 export const MonitorIcon = defineIcon("tabler", TablerMonitorIcon);
 import TablerDeviceMobileIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceMobile.mjs";
 export const DeviceMobileIcon = defineIcon("tabler", TablerDeviceMobileIcon);
+import TablerNoteIcon from "@tabler/icons-react/dist/esm/icons/IconNote.mjs";
+export const NoteIcon = defineIcon("tabler", TablerNoteIcon);
 import TablerNotionLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandNotion.mjs";
 export const NotionLogoIcon = defineIcon("tabler", TablerNotionLogoIcon);
 import TablerPaletteIcon from "@tabler/icons-react/dist/esm/icons/IconPalette.mjs";

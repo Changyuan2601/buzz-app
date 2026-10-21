@@ -97,10 +97,6 @@ async function open(page, app) {
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
 async function link(page, app, target) {
-  await page.route(
-    /https:\/\/api\.github\.com\/repos\/block\/buzz\/(?:issues\/\d+\/comments|pulls\/\d+\/reviews)\?/,
-    (route) => route.fulfill({ json: [] }),
-  );
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
       json: {
@@ -362,11 +358,19 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   // This scroll-ownership journey needs overflowing content; descriptions now
   // start collapsed, so open the real disclosure before sending wheel input.
   const description = panel(page).getByRole("button", {
-    name: "Expand Description",
+    name: "Description",
     exact: true,
   });
   await description.click();
   await expect(description).toHaveAttribute("aria-expanded", "true");
+  // The disclosure animates open; wheel only once the panel overflows.
+  await expect
+    .poll(() =>
+      panel(page)
+        .locator("[class*='root']")
+        .evaluate((el) => el.scrollHeight - el.clientHeight),
+    )
+    .toBeGreaterThan(1000);
   await panel(page)
     .getByRole("heading", { name: "A useful change #1" })
     .hover();

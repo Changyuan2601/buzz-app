@@ -1,8 +1,11 @@
 // The session of the conversation an agent's profile was opened from, set
 // apart above the agent's other conversations. Types list their own sessions.
 import { useEffect, useId, useRef, useState } from "react";
+import { formatItemTimestamp } from "../../shared/datetime";
+import styles from "./ActivityLayout.module.css";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import type { AgentConversation } from "./service";
 
@@ -132,48 +135,58 @@ export function OpenedConversation({
     ? "thread"
     : "channel";
   return (
-    <section aria-labelledby={id}>
+    <section aria-labelledby={id} className={styles.section}>
       <InlineHeader id={id} title={`This ${place}`} />
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-container bg-surface-inset p-4">
-        {session ? (
-          <>
-            <span className="min-w-0">
-              <span className="block truncate text-label">
-                {session.name
-                  ? `#${session.name}`
-                  : session.channelId.slice(0, 8)}
+      <SettingsGroup layout="form">
+        <div className={styles.row}>
+          {session ? (
+            <>
+              <span className={styles.copy}>
+                <span
+                  className="block truncate text-label-sm"
+                  title={session.name ? `#${session.name}` : session.channelId}
+                >
+                  {session.name
+                    ? `#${session.name}`
+                    : session.channelId.slice(0, 8)}
+                </span>
+                <span className="block text-body-sm text-subtle">
+                  {[
+                    status,
+                    session.at &&
+                      `Last active ${formatItemTimestamp(session.at / 1000, { withTime: true })}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || `${harness} session`}
+                </span>
               </span>
-              <span className="block text-body-sm text-subtle">
-                {[
-                  status,
-                  session.at &&
-                    `Last active ${new Date(session.at).toLocaleString()}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || `${harness} session`}
+              <Button
+                variant="subtle"
+                size="sm"
+                aria-label={`View transcript: ${session.name ? `#${session.name}` : session.channelId.slice(0, 8)}`}
+                onClick={onView}
+              >
+                View transcript
+              </Button>
+            </>
+          ) : searching ? (
+            <span role="status" className="text-body-sm text-subtle">
+              Looking for a {harness} session…
+            </span>
+          ) : error ? (
+            <span role="alert" className="text-body-sm">
+              Could not look for a {harness} session: {error}
+            </span>
+          ) : (
+            <span className="grid gap-1">
+              <span className="text-label">No {harness} session here yet</span>
+              <span className="text-body-sm text-subtle">
+                One starts when you mention the agent in this {place}.
               </span>
             </span>
-            <Button variant="prominent" onClick={onView}>
-              View transcript
-            </Button>
-          </>
-        ) : searching ? (
-          <span role="status" className="text-body-sm text-subtle">
-            Looking for a {harness} session…
-          </span>
-        ) : error ? (
-          <span role="alert" className="text-body-sm">
-            Could not look for a {harness} session: {error}
-          </span>
-        ) : (
-          <span className="grid gap-1">
-            <span className="text-label">No {harness} session here yet</span>
-            <span className="text-body-sm text-subtle">
-              One starts when you mention the agent in this {place}.
-            </span>
-          </span>
-        )}
-      </div>
+          )}
+        </div>
+      </SettingsGroup>
     </section>
   );
 }

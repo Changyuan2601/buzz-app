@@ -3,9 +3,7 @@ import { loadGitHubDetails } from "./data";
 import { parseGitHubReference } from "./references";
 
 afterEach(() => vi.unstubAllGlobals());
-const reference = parseGitHubReference(
-  "https://github.com/block/buzz/pull/23#issuecomment-1",
-);
+const reference = parseGitHubReference("https://github.com/block/buzz/pull/23");
 assert.exists(reference);
 it("loads PR details and preserves merged state, branches, and change counts", async () => {
   const fetch = vi.fn().mockResolvedValue(

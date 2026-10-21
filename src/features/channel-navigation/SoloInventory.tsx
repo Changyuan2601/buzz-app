@@ -12,9 +12,15 @@ import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPo
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
+import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
+import {
+  soloSharedMarkId,
+  useSharedWithPeople,
+} from "../../bundled/channels/SoloShare";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -33,8 +39,17 @@ import {
 import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import type { ContributionReader } from "../conversation/contracts";
+import type { ChatIcon } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
+
+const noSubscription = () => () => {};
+const chatIcon = (
+  <span className={styles.conversationIcon} aria-hidden="true">
+    <ChatCircleIcon size={16} />
+  </span>
+);
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
@@ -42,11 +57,14 @@ export function SoloInventory({
   scope,
   navigator,
   target,
+  chatIcons,
 }: {
   session: RelaySession;
   scope: string;
   navigator: Navigation;
   target: OpenTarget;
+  /** Plugin icons that can stand in for a chat's own. */
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
 }) {
   const list = useChannelList(session.channels);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -67,6 +85,10 @@ export function SoloInventory({
     session.agentActivity.subscribeWorking,
     session.agentActivity.workingSnapshot,
     session.agentActivity.workingSnapshot,
+  );
+  const ChatIcon = useSyncExternalStore(
+    chatIcons?.subscribe ?? noSubscription,
+    () => chatIcons?.snapshot()[0]?.component,
   );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
@@ -107,6 +129,11 @@ export function SoloInventory({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
           (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
     );
+  // Capped workspaces never hide the open chat or one that needs the viewer.
+  const unreadChats = useUnreadChannelIds(
+    session.unread,
+    JSON.stringify(conversations.map((item) => item.id)),
+  );
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -134,8 +161,8 @@ export function SoloInventory({
                     <IconButton
                       ref={trigger}
                       size="compact"
-                      aria-label="New in Solo"
-                      title="New in Solo"
+                      aria-label="New chat or workspace"
+                      title="New chat or workspace"
                       icon={<PlusIcon size={15} strokeWidth={2.5} />}
                     />
                   }
@@ -194,6 +221,10 @@ export function SoloInventory({
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
+          pinned:
+            selected === item.id ||
+            workingChannels.has(item.id) ||
+            unreadChats.has(item.id),
         }))}
         onNew={newChat}
         renderChat={(item, rename) => (
@@ -203,9 +234,13 @@ export function SoloInventory({
             navigation={navigator}
             pendingClick={pendingClick}
             id={item.id}
+            channel={conversations.find(
+              (conversation) => conversation.id === item.id,
+            )}
             title={item.title}
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
+            Icon={ChatIcon}
             onSelect={() => void open(item.id)}
             onRename={rename}
             onOpenThread={(thread) =>
@@ -232,9 +267,11 @@ function SoloConversationRow({
   navigation,
   pendingClick,
   id,
+  channel,
   title,
   selected,
   working,
+  Icon,
   onSelect,
   onRename,
   onOpenThread,
@@ -245,9 +282,11 @@ function SoloConversationRow({
   navigation: Navigation;
   pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   id: string;
+  channel: ChannelSummary | undefined;
   title: string;
   selected: boolean;
   working: boolean;
+  Icon?: ChatIcon["component"] | undefined;
   onSelect: () => void;
   onRename: (() => boolean) | undefined;
 } & Pick<
@@ -262,6 +301,8 @@ function SoloConversationRow({
     id,
     working,
   );
+  // Describe only by a mark that renders, using the same Shared evidence.
+  const shared = useSharedWithPeople(session, channel);
   return (
     <ChannelActivityPopover
       session={session}
@@ -278,6 +319,7 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
+          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
           onPointerDown={(event) => {
             pointer.current = event.pointerType;
           }}
@@ -310,9 +352,11 @@ function SoloConversationRow({
           }
           onContextMenu={() => clearTimeout(pendingClick.current)}
           icon={
-            <span className={styles.conversationIcon} aria-hidden="true">
-              <ChatCircleIcon size={16} />
-            </span>
+            Icon ? (
+              <Icon session={session} channelId={id} fallback={chatIcon} />
+            ) : (
+              chatIcon
+            )
           }
           label={
             <span className={styles.chatRow}>

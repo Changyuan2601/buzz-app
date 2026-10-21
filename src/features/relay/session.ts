@@ -12,22 +12,18 @@ import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
+  setupWork,
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
 import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
-import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
-import {
-  channelIdentityUnsupported,
-  MAX_CHANNEL_LABELS,
-  validChannelLabel,
-} from "./channel-labels";
+import { channelIdentityUnsupported } from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -100,8 +96,6 @@ import {
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
-  type LocalEvents,
-  type OutgoingEvent,
   type OutboxStorage,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
@@ -130,97 +124,6 @@ export type EventViewSnapshot = Readonly<{
   error?: string | undefined;
 }>;
 
-type PendingChannelCreation = Readonly<{
-  signature: string;
-  id: string;
-  operation: string;
-  input: ChannelCreationInput;
-}>;
-const channelId =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-function restoredChannelCreation(
-  events: LocalEvents | undefined,
-  owned?: (id: string) => boolean,
-): PendingChannelCreation | undefined {
-  for (const item of [...(events?.snapshot() ?? [])].reverse()) {
-    const restored = parseChannelCreation(item);
-    if (restored && !owned?.(restored.id)) return restored;
-  }
-}
-
-function parseChannelCreation(
-  item: OutgoingEvent,
-): PendingChannelCreation | undefined {
-  if (item.event.kind !== 9007) return;
-  const tags = item.event.tags.filter(([name]) => name !== "client-id");
-  const firstLabel = tags.findIndex(([name]) => name === "t");
-  const labelTags = firstLabel < 0 ? [] : tags.slice(firstLabel);
-  const [h, name, visibility, channelType, ...optional] =
-    firstLabel < 0 ? tags : tags.slice(0, firstLabel);
-  const labels = labelTags.map(([, label]) => label ?? "");
-  const id = h?.[1];
-  const channelName = name?.[1];
-  const channelVisibility = visibility?.[1];
-  const optionalNames = optional.map(([key]) => key);
-  const validOptionalOrder = [[], ["about"], ["ttl"], ["about", "ttl"]].some(
-    (names) =>
-      names.length === optionalNames.length &&
-      names.every((key, index) => key === optionalNames[index]),
-  );
-  if (
-    item.event.content !== "" ||
-    h?.length !== 2 ||
-    h[0] !== "h" ||
-    id === undefined ||
-    !channelId.test(id) ||
-    name?.length !== 2 ||
-    name[0] !== "name" ||
-    channelName === undefined ||
-    !canonicalDetailsName(channelName) ||
-    visibility?.length !== 2 ||
-    visibility[0] !== "visibility" ||
-    channelVisibility === undefined ||
-    !["open", "private"].includes(channelVisibility) ||
-    channelType?.length !== 2 ||
-    channelType[0] !== "channel_type" ||
-    (channelType[1] !== "stream" && channelType[1] !== "system") ||
-    !validOptionalOrder ||
-    optional.some((tag) => tag.length !== 2) ||
-    labelTags.some(
-      (tag) => tag.length !== 2 || tag[0] !== "t" || !validChannelLabel(tag[1]),
-    ) ||
-    labels.length > MAX_CHANNEL_LABELS ||
-    new Set(labels).size !== labels.length
-  )
-    return;
-  // Solo chats start only through channel writes.
-  if (labels.includes(SOLO_LABEL)) return;
-  const description = optional.find(([key]) => key === "about")?.[1]?.trim();
-  const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
-  const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
-  if (
-    ttlSeconds !== undefined &&
-    (!Number.isInteger(ttlSeconds) ||
-      ttlSeconds <= 0 ||
-      ttlSeconds > 2_147_483_647)
-  )
-    return;
-  const input: ChannelCreationInput = Object.freeze({
-    name: canonicalDetailsName(channelName),
-    visibility: channelVisibility as "open" | "private",
-    ...(description ? { description } : {}),
-    ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
-    ...(labels.length ? { labels: Object.freeze(labels) } : {}),
-    ...(channelType[1] === "system" ? { system: true as const } : {}),
-  });
-  return Object.freeze({
-    signature: JSON.stringify(input),
-    id,
-    operation: item.event.id,
-    input,
-  });
-}
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 export function createRelaySession(
   transport: ReadTransport | null,
@@ -419,13 +322,7 @@ export function createRelaySession(
       // Purge before notifying: callbacks must not be able to reseed denied data.
       for (const id of revoked) recent.delete(id);
       channels.purgeAccess((events) => events.filter(visibility(events)));
-      // An undismissed ordinary creation receipt is recovery intent until
-      // creator membership completes. Session receipts remain revocable.
-      writes?.purgeConfirmed(
-        (event) =>
-          !!parseChannelCreation({ event, delivery: "seen" }) ||
-          (event.kind !== 0 && visible(event)),
-      );
+      writes?.purgeConfirmed((event) => event.kind !== 0 && visible(event));
       profiles.clear();
       emoji.clear();
       statuses.clear();
@@ -1675,44 +1572,50 @@ export function createRelaySession(
           },
         })
       : undefined;
-  let pendingChannelCreation: PendingChannelCreation | undefined =
-    restoredChannelCreation(writes?.local, channelSetup?.owns);
-  let restoredOperation = pendingChannelCreation?.operation;
-  const pendingCreation = () => {
-    const restored = restoredChannelCreation(writes?.local, channelSetup?.owns);
-    if (restored?.operation !== restoredOperation) {
-      restoredOperation = restored?.operation;
-      pendingChannelCreation = restored;
-    }
-    return pendingChannelCreation;
+  // This session's last unconfirmed ordinary Create. Only an identical request
+  // reuses it, so a retry cannot make a second channel; nothing restores it.
+  let unconfirmed:
+    | Readonly<{
+        signature: string;
+        id: string;
+        operation: string;
+        input: ChannelCreationInput;
+      }>
+    | undefined;
+  const abandon = () => {
+    const attempt = unconfirmed;
+    unconfirmed = undefined;
+    if (attempt) void writes?.outbox.dismiss(attempt.operation).catch(() => {});
   };
   const channelCreation = Object.freeze({
     available: channelWrites.available,
     subscribe: (listener: () => void) => {
-      const local = writes?.local.subscribe(listener);
       setupListeners.add(listener);
       return () => {
-        local?.();
         setupListeners.delete(listener);
       };
     },
-    snapshot: () => channelSetup?.snapshot() ?? pendingCreation()?.input,
     notices: () => setupNotices,
     dismissNotice(id: string) {
       setupNotices = setupNotices.filter((item) => item.id !== id);
       notifySetup();
     },
+    /** Drops an unconfirmed attempt once its form closes. */
+    forget() {
+      channelSetup?.forget();
+      abandon();
+    },
     async create(input: ChannelCreationInput) {
       input = { ...input, name: canonicalDetailsName(input.name) };
       if (!transport) throw new Error("The community connection changed.");
       // A relay without NIP-CL drops label tags and refuses system channels:
-      // refuse before any new write. A saved creation that was already signed
-      // may still be retried below.
+      // refuse before any new write. An identical attempt that was already
+      // signed may still be retried below.
       const unsupported =
         (!!input.labels?.length || input.system === true) &&
         !transport.channelIdentity;
       await writes?.ready;
-      if (channelSetup && !pendingCreation()) {
+      if (channelSetup) {
         if (unsupported) throw channelIdentityUnsupported();
         const run = channelSetup.run(input, transport.viewer);
         let opened: string | undefined;
@@ -1727,7 +1630,7 @@ export function createRelaySession(
         opened = await run.admission;
         return opened;
       }
-      if (input.setup)
+      if (setupWork(input.setup))
         throw new Error("Template setup is unavailable on this host");
       const normalized: ChannelCreationInput = {
         name: input.name,
@@ -1744,16 +1647,11 @@ export function createRelaySession(
         ...(input.system ? { system: true as const } : {}),
       };
       const signature = JSON.stringify(normalized);
-      await writes?.ready;
-      const existing = pendingCreation();
-      if (existing?.signature !== signature) {
-        if (existing)
-          throw new Error(
-            "Another channel is still awaiting confirmation. Retry it before changing the details.",
-          );
+      if (unconfirmed?.signature !== signature) {
+        abandon();
         if (unsupported) throw channelIdentityUnsupported();
         const id = crypto.randomUUID();
-        pendingChannelCreation = {
+        unconfirmed = {
           signature,
           id,
           input: Object.freeze(normalized),
@@ -1767,10 +1665,8 @@ export function createRelaySession(
             { labels: normalized.labels, system: normalized.system },
           ),
         };
-        restoredOperation = pendingChannelCreation.operation;
       }
-      const pending = pendingChannelCreation;
-      if (!pending) throw new Error("Channel creation could not be prepared.");
+      const pending = unconfirmed;
       try {
         await channelWrites.delivered(
           pending.operation,
@@ -1784,24 +1680,12 @@ export function createRelaySession(
           false,
         );
         await writes?.outbox.dismiss(pending.operation);
-        pendingChannelCreation = undefined;
-        if (channelSetup?.recovered(pending.id)) {
-          setupNotices = [
-            ...setupNotices,
-            {
-              id: pending.id,
-              name: pending.input.name,
-              error:
-                "Channel confirmed. Saved setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
-            },
-          ];
-          notifySetup();
-        }
+        if (unconfirmed === pending) unconfirmed = undefined;
         return pending.id;
       } catch (error) {
         if (channelWrites.failed(pending.operation)) {
           await channelWrites.discardFailed(pending.operation);
-          pendingChannelCreation = undefined;
+          if (unconfirmed === pending) unconfirmed = undefined;
         }
         throw error;
       }

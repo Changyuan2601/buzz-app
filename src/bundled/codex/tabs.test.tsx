@@ -265,18 +265,18 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   const save = vi.fn();
   render(<f.tabs.ActivityTab {...f.props(defaults, save)} />);
   const viewButton = (index: number) =>
-    screen.getAllByRole("button", { name: "View transcript" })[
+    screen.getAllByRole("button", { name: /^View transcript/ })[
       index
     ] as HTMLElement;
-  expect(screen.getByText(/#general · thread eeeeeeee/)).toBeVisible();
+  expect(screen.getByTitle("#general · thread eeeeeeee")).toBeVisible();
   fireEvent.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute(
-      "data-loading",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Refresh transcript" }),
+    ).not.toHaveAttribute("data-loading"),
   );
   expect(screen.getByText("Two files.")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Back to profile" }));
@@ -312,9 +312,9 @@ it("sets the conversation the profile was opened from apart from recent conversa
   );
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
-    within(opened).getByRole("button", { name: "View transcript" }),
+    within(opened).getByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
-  expect(screen.getByText(/#general · channel/)).toBeVisible();
+  expect(screen.getByTitle("#general · channel")).toBeVisible();
   expect(screen.queryByText(/thread eeeeeeee/)).toBeNull();
 });
 
@@ -358,7 +358,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
     user.click(
       within(screen.getByRole("region", { name: "This thread" })).getByRole(
         "button",
-        { name: "View transcript" },
+        { name: /^View transcript/ },
       ),
     );
   const transcript = "#general · thread eeeeeeee";
@@ -424,7 +424,7 @@ it("finds the thread's Codex session another build started", async () => {
   );
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
-    await within(opened).findByRole("button", { name: "View transcript" }),
+    await within(opened).findByRole("button", { name: /^View transcript/ }),
   );
   expect(await screen.findByText("what changed?")).toBeVisible();
 });
@@ -1475,4 +1475,70 @@ it("keeps the recommended model inherited when only effort changes", async () =>
       effort: "high",
     }),
   );
+});
+
+it("keeps same-channel recent threads visibly distinguishable", () => {
+  const saved = Object.fromEntries(
+    ["e", "f"].map((char) => [
+      JSON.stringify(["channel", char.repeat(64)]),
+      { threadId: char, workspace: "/w", at: 1 },
+    ]),
+  );
+  const f = fixture({ saved });
+  render(<f.tabs.ActivityTab {...f.props()} />);
+  const rows = screen.getAllByRole("listitem");
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => row.textContent)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("Thread eeeeeeee"),
+      expect.stringContaining("Thread ffffffff"),
+    ]),
+  );
+});
+
+it.each(["Needs attention", "Session could not be saved"])(
+  "keeps %s diagnostics visible and multiline",
+  (status) => {
+    const f = fixture();
+    vi.spyOn(f.runtime, "sessions").mockReturnValue([
+      { key: "unbound", status, detail: "First line\nSecond line" },
+    ]);
+    render(<f.tabs.ActivityTab {...f.props()} />);
+    const diagnostic = screen.getByText("First line Second line");
+    expect(diagnostic.closest("details")).toBeNull();
+    expect(diagnostic.textContent).toBe("First line\nSecond line");
+    expect(diagnostic).toHaveClass("whitespace-pre-wrap");
+  },
+);
+
+it("collapses Working command details", () => {
+  const f = fixture();
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key: "unbound", status: "Working", detail: "git status" },
+  ]);
+  render(<f.tabs.ActivityTab {...f.props()} />);
+  expect(screen.getByText("git status").closest("details")).not.toHaveAttribute(
+    "open",
+  );
+  expect(screen.getByText("Latest activity")).toBeVisible();
+});
+
+it("shows the recent empty state when only the current runtime session exists", () => {
+  const key = JSON.stringify(["channel", "channel"]);
+  const f = fixture({
+    saved: { [key]: { threadId: "current", workspace: "/w", at: 1 } },
+  });
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Working", detail: "git status" },
+  ]);
+  render(
+    <f.tabs.ActivityTab
+      {...f.props()}
+      conversation={{ channelId: "channel" }}
+    />,
+  );
+  expect(
+    screen.getByText("No other conversations saved in this app yet."),
+  ).toBeVisible();
+  expect(screen.queryByRole("list")).not.toBeInTheDocument();
 });

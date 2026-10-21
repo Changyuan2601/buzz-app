@@ -6,11 +6,15 @@ Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
 [development setup](../README.md#relay-channels), then run `just web` or
 `just desktop` (one at a time); the development broker starts with the dev server.
 Add a community using the top-left community switcher, open Messages and click a supported GitHub URL in a message to open its object
-in a side panel. Pull requests show title, state, author, branches, change counts,
-and description; issues, commits, and repositories show their relevant details.
-The panel reads GitHub's public API on demand. Private or unavailable objects and
-API limits show an explanation with a direct GitHub link. File and branch links
-continue to open normally. No GitHub account connection is configured yet.
+in a side panel. Pull requests show their change summary and a one-page checklist
+of checks, reviews, unresolved threads and merge state; issues, commits, and
+repositories show their relevant details. On desktop, the panel reads through the
+signed-in `gh` CLI, so private repositories you can see load, and pull requests
+can be merged, marked ready or converted to draft, set to merge automatically and
+have their branch updated, as your GitHub account. Without `gh` (on the web, or
+when it isn't signed in), the panel reads GitHub's public API and offers no
+actions. Private or unavailable objects and API limits show an explanation with a
+direct GitHub link. File and branch links continue to open normally.
 
 Descriptions support GitHub-flavored Markdown with inline images, video, and
 audio. Other files remain links; media that cannot load keeps a fallback link.
@@ -212,18 +216,15 @@ with rendered placement.
 
 Sidebar create-channel dialogs stay available on other pages. Channel admission
 (creation plus verified viewer membership) is fenced to the originating relay
-session and navigates to a normal conversation destination. Remaining setup from a
-receipt saved by an earlier build continues in that session; failure produces a dismissible notice without
-navigating again. Frozen setup receipts and delivery evidence remain saved, but
-there is no setup Resume or automatic startup continuation. An uncertain
-admission keeps the original form locked to its channel identity. **Retry channel**
-checks that creation first; if delivery remains unknown, an explicit click may
-republish only the exact saved Create event, with the same UUID and signature.
-It never continues setup writes or retries in the background. Successful recovery opens that channel and reports
-any unfinished setup for manual inspection. Closing/reopening retains the attempt;
-after session replacement, unresolved ordinary creations (including pre-upgrade
-Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
-setups do not occupy a new Create form. New-chat intent uses the Channels version-1
+session and navigates to a normal conversation destination. Create does not
+recover attempts. A failed or uncertain admission shows its error and leaves the
+form editable. Creating again with identical details republishes the same signed
+Create event, with the same UUID and signature, so a delivered first attempt is
+not duplicated; changed details abandon that attempt and sign a new one. Closing
+the dialog forgets the attempt and dismisses its Outbox entry. Nothing restores
+after reopening, reload or session replacement, so a stale Create can never lock
+the form; an entry left behind by a reload stays unretried in the Outbox. Setup failures after admission produce a dismissible notice
+without navigating again; setup is never continued in the background. New-chat intent uses the Channels version-1
 page route `{ kind: "solo-draft", project?, agent? }` (see [Solo](solo/README.md));
 only that intent, never draft text, enters history.
 Preparing-DM suppression captures the pre-open roster and exact member set, hiding
@@ -570,7 +571,8 @@ focus as described above, and their final focus remains sidebar-owned.
 
 Existing pending operations continue to block dismissal. Members remains closable
 while session-owned invitations/recovery continue. Canvas keeps its local draft;
-uncertain Create/Edit and lifecycle outcomes retain their existing recovery rules.
+closing an uncertain Create abandons it as described above; Edit and lifecycle
+outcomes retain their existing recovery rules.
 No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 ## Editing channel details
@@ -649,8 +651,8 @@ footer with matching enabled/disabled label treatment. Both forms use a compact
 workflow.
 
 Both forms show Description immediately; Create opens with Name focused and keeps
-Description optional. The workflows intentionally remain distinct: Create owns
-frozen creation retry; Edit shows the
+Description optional. The workflows intentionally remain distinct: Create retries only
+an identical attempt while open; Edit shows the
 saved description, retains custom durations, and owns authority/conflict checks,
 Save/Cancel and check-only uncertainty recovery. Create still trims optional
 Description on submission; Edit preserves its exact text and can explicitly clear it.
@@ -658,9 +660,8 @@ Description on submission; Edit preserves its exact text and can explicitly clea
 Both dialogs opt into backdrop dismissal and guard Close, Escape and backdrop
 dismissal with an in-dialog discard confirmation when the draft differs. Comparison covers raw
 text, staged privacy and effective duration. Reverting
-all fields removes the warning. Pending operations still block dismissal, and
-frozen/uncertain requests remain owned by recovery rather than being offered for
-discard. Returning from a discard confirmation focuses Name and retains the draft.
+all fields removes the warning. Pending operations still block dismissal; once
+settled, closing abandons any uncertain Create. Returning from a discard confirmation focuses Name and retains the draft.
 
 Create has no destination picker. Opening from a saved group's sidebar + fixes
 that destination for the draft and titles the modal **Create a channel in [icon]
@@ -673,18 +674,18 @@ the channel icon column. The creation heading reuses the decorative emoji slot
 and inherits the heading's typography.
 Starred placement uses the existing preference writer after channel admission;
 unavailable placement blocks a new create, while a later placement failure reports
-partial setup without creating a second channel. Frozen retries preserve their
-original destination and retain the same observe-only setup recovery as groups.
+partial setup without creating a second channel. An identical retry rechecks its
+Create without continuing the template's setup writes; agents or Canvas that
+changed underneath an untouched form do not count as new details.
 Group placement remains managed through the left-nav Move action.
-Frozen retry input remains unchanged; unavailable groups
-block a new create rather than silently falling back to a different destination.
+Unavailable groups block a new create rather than silently falling back to a
+different destination.
 
 Create's session and existing creation helper also use `canonicalDetailsName`,
-including ordinary recovery matching. New frozen intent and
-signed names retain the relay's Unicode rules: trim Unicode White_Space and leading
+including identical-retry matching. Signed names retain the relay's Unicode rules: trim Unicode White_Space and leading
 hashes, preserve U+FEFF, then enforce the code-point limit. This is cleanup, not a
-new invisible-character policy. Recovery derives its comparison name without
-rewriting a saved command: retry still publishes the exact original signed event.
+new invisible-character policy. An identical retry still publishes the exact
+original signed event.
 
 Editing requires fresh relay-authored metadata (`39000`), administrators (`39001`)
 and membership (`39002`) for the exact channel, plus current session participation.
@@ -712,8 +713,8 @@ same community/viewer scope, using the existing view-state storage. Existing opt
 for either direction also skip both warnings. Cancel, Escape,
 Close and backdrop dismissal do not remember it. If storage is unavailable or invalid,
 the warning remains enabled. Skipping the warning still only stages the choice:
-Create/Save, authorization and discard protection are unchanged. Busy/frozen creation
-cannot open confirmation, and restoring a frozen attempt dismisses an open confirmation.
+Create/Save, authorization and discard protection are unchanged. A busy creation
+cannot open confirmation.
 In Edit, visibility is sent only when changed (`private` or `open`);
 text-only edits omit it so they do not reopen the channel in the remaining write race.
 The relay remains the final authority.
@@ -721,8 +722,7 @@ The relay remains the final authority.
 Temporary defaults to seven days without activity, matching Create. Existing custom
 positive durations are shown accurately and retained until explicitly adjusted;
 minus/plus selects the nearest offered shorter/longer step without silently rounding
-on open. Frozen Create recovery displays the exact original duration and disables
-adjustment. Editing text or toggling back to the original lifetime does not reset
+on open. Editing text or toggling back to the original lifetime does not reset
 the relay cleanup deadline. A duration change
 emits the existing `ttl` command (positive seconds for Temporary, empty to clear for
 Ongoing). Absent signed metadata TTL means Ongoing; malformed/duplicate TTL fails

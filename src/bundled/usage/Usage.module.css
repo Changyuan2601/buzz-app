@@ -77,11 +77,18 @@
   align-items: center;
   gap: var(--space-1);
 }
+/* The icon is a line tall, so it centers on the first line when text wraps. */
 .footnote {
+  display: flex;
+  gap: var(--space-1);
   color: var(--text-metadata);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+.footnote svg {
+  flex-shrink: 0;
+  block-size: 1lh;
 }
 .tiles {
   display: grid;

@@ -3745,3 +3745,25 @@ async fn artifact_signing_through_ipc_admits_a_maximum_config_event_and_bounds_t
         serde_json::json!("Relay event is too large")
     );
 }
+
+#[test]
+fn media_cors_allows_only_the_window_origin() {
+    for (page, origin) in [
+        ("tauri://localhost/index.html", Some("tauri://localhost")),
+        ("http://tauri.localhost/", Some("http://tauri.localhost")),
+        (
+            "http://localhost:41884/#/channel",
+            Some("http://localhost:41884"),
+        ),
+        ("data:text/html,hi", None),
+    ] {
+        let url = Url::parse(page).unwrap();
+        assert_eq!(
+            window_origin(&url)
+                .as_ref()
+                .map(|value| value.to_str().unwrap()),
+            origin,
+            "{page}"
+        );
+    }
+}

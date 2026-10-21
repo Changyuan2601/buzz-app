@@ -1,13 +1,17 @@
 import { Popover } from "@base-ui/react/popover";
-import { Slider } from "@base-ui/react/slider";
+import { EffortSlider } from "./composer-models/EffortSlider";
+import { avatarMedia } from "../../shared/avatar-source";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { selectProfiles } from "../relay/profile-selection";
+import type { ProfileQueries } from "../relay/profile-directory";
 import {
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
+  useSyncExternalStore,
   type Ref,
 } from "react";
 import {
@@ -16,11 +20,7 @@ import {
   useMentionModels,
 } from "../agents/react";
 import type { MentionModelChoice } from "../agents/react";
-import type {
-  Effort,
-  SessionPlace,
-  SessionControlAction,
-} from "../agents/service";
+import type { SessionPlace, SessionControlAction } from "../agents/service";
 import type { MentionPicks, RunPick } from "../relay/messages";
 import {
   CaretDownIcon,
@@ -44,6 +44,8 @@ import styles from "./ComposerModels.module.css";
  * that offers a choice. Session controls act immediately on this conversation. */
 export function ComposerModels({
   pubkeys,
+  profiles,
+  media,
   value,
   disabled,
   onChange,
@@ -52,6 +54,8 @@ export function ComposerModels({
   place,
 }: {
   pubkeys: readonly string[];
+  profiles: ProfileQueries;
+  media: Parameters<typeof avatarMedia>[1];
   value: MentionPicks;
   disabled: boolean;
   onChange(value: MentionPicks): void;
@@ -77,6 +81,21 @@ export function ComposerModels({
           })
         : mentioned,
     [mentioned, startsThread],
+  );
+  const profileKey = pubkeys.join(":");
+  const selection = useMemo(
+    () => selectProfiles(profiles, profileKey.split(":")),
+    [profiles, profileKey],
+  );
+  // A mentioned agent need not be a member yet, so its profile may not be loaded.
+  useEffect(() => {
+    if (profileKey)
+      void profiles.ensure(profileKey.split(":"), "background").catch(() => {});
+  }, [profiles, profileKey]);
+  const portraits = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
   );
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -164,6 +183,10 @@ export function ComposerModels({
               <AgentChoice
                 key={choice.pubkey}
                 choice={choice}
+                avatarSrc={avatarMedia(
+                  portraits.get(choice.pubkey)?.picture,
+                  media,
+                )}
                 place={place}
                 named={choices.length > 1}
                 value={value[choice.pubkey] ?? {}}
@@ -187,6 +210,7 @@ const runModel = (choice: MentionModelChoice, picked: string | undefined) =>
 
 function AgentChoice({
   choice,
+  avatarSrc,
   place,
   named,
   value,
@@ -195,6 +219,7 @@ function AgentChoice({
   thumb,
 }: {
   choice: MentionModelChoice;
+  avatarSrc: string | undefined;
   place: SessionPlace;
   named: boolean;
   value: RunPick;
@@ -205,7 +230,11 @@ function AgentChoice({
   const [feedback, setFeedback] = useState("");
   if (choice.loading)
     return (
-      <div className={styles.loading} role="status" aria-busy="true">
+      <div
+        className={`${styles.loading} floating-surface`}
+        role="status"
+        aria-busy="true"
+      >
         {named && <span>{choice.name}</span>}
         <span>Loading model and effort…</span>
       </div>
@@ -224,40 +253,48 @@ function AgentChoice({
       ...(effort ? { effort } : {}),
     });
   };
-  const model = several ? (
-    <div className={styles.model}>
-      <MenuRoot>
-        <MenuTrigger
-          disabled={disabled}
-          aria-label={`Model for ${choice.name}'s next run`}
-          render={
-            <Button variant="ghost" size="inline">
-              <span className={styles.about}>{runs.label}</span>
-              <CaretDownIcon aria-hidden="true" />
-            </Button>
-          }
-        />
-        <MenuPopup size="compact" side="top" align="end">
-          <MenuRadioGroup value={runs.id} onValueChange={chooseModel}>
-            {choice.models.map((item) => (
-              <MenuRadioItem key={item.id} value={item.id} closeOnClick>
-                {item.label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuPopup>
-      </MenuRoot>
-    </div>
-  ) : (
-    <span className={styles.about}>{runs.label}</span>
-  );
+  const model = (level?: string) =>
+    several ? (
+      <div className={styles.model}>
+        <MenuRoot>
+          <MenuTrigger
+            disabled={disabled}
+            aria-label={`Model for ${choice.name}'s next run`}
+            render={
+              <Button variant="subtle" size="sm">
+                <span className={styles.about}>{runs.label}</span>
+                {level && <span className={styles.level}>{level}</span>}
+                <CaretDownIcon size={12} aria-hidden="true" />
+              </Button>
+            }
+          />
+          <MenuPopup size="compact" side="top" align="end">
+            <MenuRadioGroup value={runs.id} onValueChange={chooseModel}>
+              {choice.models.map((item) => (
+                <MenuRadioItem key={item.id} value={item.id} closeOnClick>
+                  {item.label}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuPopup>
+        </MenuRoot>
+      </div>
+    ) : (
+      <span className={styles.fixedModel}>
+        {runs.label}
+        {level && <span className={styles.level}>{level}</span>}
+      </span>
+    );
   return (
-    <div className={styles.agent}>
-      {named && <span className={styles.about}>{choice.name}</span>}
+    <div
+      className={`${styles.agent} floating-surface`}
+      data-agent-model-card=""
+    >
       <div className={styles.controls}>
         {runs.efforts.length > 0 ? (
           <EffortSlider
             name={choice.name}
+            avatarSrc={avatarSrc}
             model={model}
             efforts={runs.efforts}
             resting={runs.effort}
@@ -273,7 +310,16 @@ function AgentChoice({
           />
         ) : (
           // Without a slider the model sits on its own tab, not on the thread.
-          <div className={styles.solo}>{model}</div>
+          <div className={styles.solo}>
+            <Avatar
+              src={avatarSrc}
+              alt={choice.name}
+              fallback={choice.name}
+              size="small"
+            />
+            <span className={styles.about}>{choice.name}</span>
+            {model()}
+          </div>
         )}
         {choice.session && (
           <SessionRail
@@ -290,79 +336,6 @@ function AgentChoice({
         </span>
       )}
     </div>
-  );
-}
-
-function EffortSlider({
-  name,
-  model,
-  efforts,
-  resting,
-  value,
-  disabled,
-  pick,
-  thumb,
-}: {
-  name: string;
-  model: ReactNode;
-  efforts: readonly Effort[];
-  /** The effort the run uses without a pick, when known. */
-  resting: string | undefined;
-  value: string | undefined;
-  disabled: boolean;
-  pick(effort: string | undefined): void;
-  thumb?: Ref<HTMLInputElement>;
-}) {
-  const index = efforts.findIndex((effort) => effort.id === value);
-  const set = index >= 0;
-  const own = efforts.findIndex((effort) => effort.id === resting);
-  const at = set ? index : Math.max(own, 0);
-  const last = Math.max(efforts.length - 1, 1);
-  const known = set || own >= 0;
-  const level = known ? (efforts[at]?.label ?? "") : "Default";
-  // A tap on the thumb's resting stop changes no value, so commits pick too.
-  // The run's own effort is no pick.
-  const choose = (next: number) => {
-    const effort = efforts[next]?.id;
-    pick(effort === resting ? undefined : effort);
-  };
-  return (
-    <Slider.Root
-      className={styles.slider}
-      data-unknown={known ? undefined : ""}
-      value={at}
-      min={0}
-      max={efforts.length - 1}
-      step={1}
-      thumbAlignment="edge"
-      disabled={disabled}
-      onValueChange={choose}
-      onValueCommitted={choose}
-    >
-      {/* Keep the model outside the drag target, on the track's attached tab. */}
-      <div className={styles.tab}>
-        {model}
-        <span aria-hidden="true">{level}</span>
-      </div>
-      <Slider.Control className={styles.control}>
-        <Slider.Track className={styles.track}>
-          <Slider.Indicator className={styles.indicator} />
-          {efforts.map((effort, stop) => (
-            <span
-              key={effort.id}
-              className={styles.stop}
-              style={{ "--stop": stop / last } as CSSProperties}
-            />
-          ))}
-          <Slider.Thumb
-            className={styles.thumb}
-            inputRef={thumb}
-            aria-label={`Effort for ${name}'s next run`}
-            getAriaValueText={() => level}
-          />
-        </Slider.Track>
-      </Slider.Control>
-    </Slider.Root>
   );
 }
 

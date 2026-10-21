@@ -656,7 +656,7 @@ fn reload_rejects_replaced_source_folder_symlink() {
     );
 }
 #[test]
-fn rollback_swaps_reload_sources_and_same_byte_reload_refreshes_source() {
+fn rollback_restores_reload_source_and_same_byte_reload_refreshes_source() {
     let (temp, manager, source) = fixture();
     let first = manager
         .install(&source)
@@ -690,6 +690,21 @@ fn rollback_swaps_reload_sources_and_same_byte_reload_refreshes_source() {
         .clone();
     assert_ne!(second, first);
     manager.change("rollback", "example.page").unwrap();
+    // Rollback consumes its target rather than turning the rejected update into a forward toggle.
+    let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+    let catalog = reopened.catalog().unwrap();
+    let plugin = catalog
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(plugin.revision, first);
+    assert!(plugin.previous.is_none());
+    assert!(reopened
+        .change("rollback", "example.page")
+        .err()
+        .unwrap()
+        .contains("No previous revision"));
     fs::write(source.join("plugin.js"), "export const firstReload = true;").unwrap();
     let catalog = manager.reload("example.page").unwrap();
     let plugin = catalog
@@ -1117,7 +1132,10 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         .any(|plugin| plugin.manifest.id == "buzz.inbox"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
-        let default = !matches!(id, "buzz.bestie" | "buzz.todos" | "buzz.usage");
+        let default = !matches!(
+            id,
+            "buzz.bestie" | "buzz.todos" | "buzz.usage" | "buzz.relay-notes"
+        );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {
             assert!(manager.change("disable", id).is_err());

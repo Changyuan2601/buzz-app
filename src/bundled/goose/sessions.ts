@@ -26,7 +26,11 @@ export const IDLE_MS = 15 * 60_000;
  * every plugin, so other plugins keep room. */
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
-const LATE: Settled = { ok: false, error: "goose did not start in time" };
+const LATE: Settled = {
+  ok: false,
+  error: "goose did not start in time",
+  undelivered: true,
+};
 /** Saved conversations per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -211,7 +215,10 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
-   * `title` names a session opened for it; `model`, one of the agent's
+   * `title` names a session opened for it, except that the conversation's
+   * first one is left for goose to name, if it names sessions, when `named`
+   * takes that name;
+   * `model`, one of the agent's
    * provider's, is what its turn runs on. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
@@ -223,6 +230,7 @@ export class AgentSessions {
       steer = text,
       fresh,
       title,
+      named,
       signal,
       model,
       ...activity
@@ -230,13 +238,14 @@ export class AgentSessions {
       steer?: string;
       fresh?: () => Promise<string>;
       title?: string;
+      named?: (title: string) => void;
       signal?: AbortSignal;
       model?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
-      if (this.disposed) return STOPPED;
+      if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
       if (opening) {
@@ -269,12 +278,16 @@ export class AgentSessions {
     // Reserved before anything is awaited, so a message that comes meanwhile
     // waits for this session instead of opening another.
     const starting = (async () => {
+      const first = !this.had.has(key);
       // Perhaps built for a session closed since, which had been shown the rest.
-      if (this.had.has(key) && fresh) text = await fresh();
+      if (!first && fresh) text = await fresh();
+      // Naming costs a model call: goose names only the conversation's start.
+      const naming = first ? named : undefined;
       const live = await this.open(
         key,
         title,
         (live) => this.disposed || this.adopt(key, live),
+        naming,
       );
       if (this.disposed) {
         void this.close(live);
@@ -289,15 +302,21 @@ export class AgentSessions {
       if (this.opening.get(key) === starting) this.opening.delete(key);
     };
     starting.then(opened, opened);
+    // Every failure here comes before a turn takes the message in.
+    let started: Awaited<typeof starting>;
     try {
-      const { settled } = await abortable(starting, signal);
-      return settled ? await settled : LATE;
+      started = await abortable(starting, signal);
     } catch (error) {
-      if (this.disposed) return STOPPED;
+      if (this.disposed) return { ...STOPPED, undelivered: true };
       if (signal?.aborted) return LATE;
       console.warn("goose could not start", error);
-      return { ok: false, error: `goose could not start: ${message(error)}` };
+      return {
+        ok: false,
+        error: `goose could not start: ${message(error)}`,
+        undelivered: true,
+      };
     }
+    return started.settled ?? LATE;
   }
 
   /** Stops the turn running in conversation `key`, if any, once a session
@@ -402,6 +421,7 @@ export class AgentSessions {
     key: string,
     title: string | undefined,
     use: (live: Live) => unknown,
+    named?: (title: string) => void,
   ): Promise<Live> {
     const { pool, resolveDirectory } = this.options;
     // Read before `launch` reads the settings, so it never describes newer ones.
@@ -428,6 +448,7 @@ export class AgentSessions {
         cwd,
         systemPrompt: launch.systemPrompt,
         ...(title ? { title } : {}),
+        ...(named ? { named } : {}),
         tools: this.options.tools,
         choice: this.options.choice,
       });
@@ -454,7 +475,7 @@ export class AgentSessions {
     if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);
-      return this.open(key, title, use);
+      return this.open(key, title, use, named);
     }
     use(live);
     return live;

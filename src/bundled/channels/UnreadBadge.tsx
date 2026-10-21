@@ -72,14 +72,15 @@ export function UnreadBadge({
   channelId: string;
   dm?: boolean;
   label?: ReactNode;
-  /** Solo labels emphasize every unread message, including directed attention. */
+  /** Solo labels emphasize every unread message, so attention adds no dot. */
   labelUnread?: "ordinary" | "all";
 }) {
   const { snapshot, activity, count, manual, unread, ordinary, threadCount } =
     useUnreadState(session, channelId, dm);
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
-  const showUnreadDot = priority && threadCount === 0;
+  const showUnreadDot =
+    priority && threadCount === 0 && labelUnread === "ordinary";
   const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
     : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;

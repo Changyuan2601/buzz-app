@@ -51,11 +51,20 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   expect(
     await name.evaluate(
       (element, portrait) =>
-        element.getBoundingClientRect().left >=
-        portrait.getBoundingClientRect().right,
+        element.getBoundingClientRect().top >=
+        portrait.getBoundingClientRect().bottom,
       await portrait.elementHandle(),
     ),
   ).toBe(true);
+  await expect
+    .poll(async () => {
+      const heading = await name.boundingBox();
+      const image = await portrait.boundingBox();
+      return Math.abs(
+        heading.x + heading.width / 2 - image.x - image.width / 2,
+      );
+    })
+    .toBeLessThan(1);
   expect(
     await page.evaluate(() => window.profilesFixture.report.media),
   ).toContainEqual(["https://images.test/avatar.png", "small"]);
@@ -84,9 +93,47 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     "Could not copy. Select the public key above to copy it.",
   );
   await expect(key).toHaveText(npubs.viewer);
+  await page.clock.install();
   await page.getByRole("region", { name: "Profile details" }).press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(avatar).toBeFocused();
+  // Settle the preview's timer before testing the one-Escape handoff.
+  await page.clock.runFor(600);
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeHidden();
+  // Cover both a stationary pointer and an exit while Profile obscures the
+  // avatar. Returning focus stays quiet; a fresh hover visit still works.
+  for (const pointerVisit of ["stationary", "away", "back"]) {
+    await page.mouse.move(0, 0);
+    await avatar.hover();
+    await expect(preview).toBeVisible();
+    await avatar.click();
+    await expect(key).toHaveText(npubs.viewer);
+    if (pointerVisit !== "stationary") await page.mouse.move(0, 0);
+    if (pointerVisit === "back") {
+      const rect = await avatar.boundingBox();
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    }
+    await page.getByRole("region", { name: "Profile details" }).press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(avatar).toBeFocused();
+    if (pointerVisit === "stationary") {
+      const rect = await avatar.boundingBox();
+      await page.mouse.move(
+        rect.x + rect.width / 2 + 1,
+        rect.y + rect.height / 2,
+      );
+    }
+    await page.clock.runFor(600);
+    await expect(preview).toBeHidden();
+  }
+  await page.clock.resume();
+  // A deliberate new hover visit still opens the avatar preview after return.
+  await page.mouse.move(0, 0);
+  await avatar.hover();
+  await expect(preview).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(preview).toBeHidden();
   const mention = page.getByRole("button", {
     name: "View Mic profile",
     exact: true,
@@ -144,30 +191,30 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(
     identity.getByRole("button", { name: "Open owner profile: Viewer (you)" }),
   ).toBeVisible();
-  // Existing navigation journey also proves row hover/focus affordances and host toast wiring.
+  // Existing navigation journey also proves keyboard copy and host toast wiring.
   await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   await expect(panel.getByRole("tab", { name: "Runtime" })).toHaveCount(0);
   await expect(
     panel.getByRole("button", { name: /^Copy Agent type:/ }),
   ).toHaveCount(0);
   const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
-  await expect(nip05).toHaveText("NIP-05pinky@example.test");
-  // Keyboard modality, so :focus-visible reveals the copy affordance.
+  await expect(
+    panel.getByText("pinky@example.test", { exact: true }),
+  ).toBeVisible();
+  await expect(nip05).toHaveText("Copy");
+  // The explicit copy action remains keyboard reachable.
   await nip05.focus();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab");
   await expect(nip05).toBeFocused();
-  await expect(nip05.locator("[data-copied]")).toHaveCSS("opacity", "1");
+  await expect(nip05).toBeVisible();
   await page.evaluate(() => {
     navigator.clipboard.writeText = async (value) =>
       window.profileCopies.push(value);
   });
   await nip05.press("Enter");
   await expect(page.getByText("Copied nip-05", { exact: true })).toBeVisible();
-  await expect(nip05.locator("[data-copied]")).toHaveAttribute(
-    "data-copied",
-    "true",
-  );
+  await expect(nip05).toHaveText("Copied");
   expect(await page.evaluate(() => window.profileCopies.slice(-1))).toEqual([
     "pinky@example.test",
   ]);
@@ -409,6 +456,18 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(body).toHaveCSS("border-top-width", "0px");
       await expect(body).toHaveCSS("overflow-y", "hidden");
       await expect(body).toHaveCSS("padding-bottom", "0px");
+      // Establish the dialog's actual entrance boundary before saving geometry.
+      await dialog.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished),
+        );
+      });
       const surfaceBounds = await surface.boundingBox();
       const frameBounds = await list.boundingBox();
       // A footerless flex body must not double the outer bottom gutter.
@@ -741,4 +800,61 @@ test("member Send message navigates a human DM without sending or returning focu
     await page.evaluate(() => window.profilesFixture.report.publications),
   ).toBe(0);
   expect(errors.unexplained()).toEqual([]);
+});
+
+// Positioning and CSS motion must be checked in rendering engines, including
+// the persisted interface scale that changes popup geometry before first open.
+test("profile preview fits enlarged text and stops its status with reduced motion", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-font-scale.v1", "2"),
+  );
+  await page.goto("/tests/fixtures/profiles.html?long-status");
+  const avatar = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
+  await expect(avatar).toBeVisible();
+  await page.getByRole("button", { name: "Toggle appearance" }).focus();
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press("Tab");
+    if (await avatar.evaluate((node) => node === document.activeElement)) break;
+  }
+  await expect(avatar).toBeFocused();
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS("transform", "none");
+  const ticker = preview.locator('[title="🇺🇸 Working EST hours until Oct 23"]');
+  await expect(ticker).toHaveAttribute("data-overflow");
+  await expect(preview).toBeInViewport({ ratio: 1 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(ticker.locator(":scope > span")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await expect(ticker.locator(":scope > span")).toHaveCSS("transform", "none");
+  await expect(preview).toBeInViewport({ ratio: 1 });
+  await preview.screenshot({
+    path: testInfo.outputPath("preview-reduced-light.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await preview.screenshot({
+    path: testInfo.outputPath("preview-reduced-dark.png"),
+  });
+  const profileAction = preview.getByRole("button", {
+    name: "View profile",
+    exact: true,
+  });
+  await avatar.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(profileAction).toBeFocused();
+  await profileAction.click();
+  await expect(
+    page.getByRole("complementary", { name: "Profile", exact: true }),
+  ).toBeVisible();
 });

@@ -1,3 +1,6 @@
+import { ProfileBackdrop } from "../features/profiles/ProfileBackdrop";
+import hero from "../features/profiles/ProfileHero.module.css";
+import { useAvatarPreview } from "../features/profiles/use-avatar-preview";
 import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import type { RelaySession } from "../features/relay/session";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
@@ -218,6 +221,12 @@ export function ProfileSettings({
     communities,
     communityId,
   )?.media;
+  const backdrop = useAvatarPreview(
+    profile.picture,
+    community?.id,
+    "small",
+    thumbnailMedia,
+  );
   return (
     <section aria-labelledby="profile-settings-title">
       <Header
@@ -270,42 +279,40 @@ export function ProfileSettings({
               inert={!previewReady}
               aria-hidden={!previewReady || undefined}
             >
+              <section aria-label="Profile preview" className={hero.hero}>
+                <ProfileBackdrop src={backdrop} />
+                <div>
+                  <AvatarEditor
+                    size="compact"
+                    value={profile.picture}
+                    name={profile.name}
+                    community={community?.id}
+                    {...(thumbnailMedia ? { thumbnailMedia } : {})}
+                    disabled={saving || !previewReady}
+                    onBusyChange={setUploading}
+                    onChange={(picture) => {
+                      // Apply only the completed picture, never the upload's old name/bio.
+                      setDraft((current) => ({
+                        ...(current ?? latestPersisted.current),
+                        picture,
+                      }));
+                      setSaved(false);
+                      setError("");
+                    }}
+                  />
+                </div>
+                <div className={styles.previewCopy}>
+                  <h3 className="text-body-lg">
+                    {profile.name.trim() || "Your profile"}
+                  </h3>
+                  {profile.about?.trim() ? (
+                    <p className={`${styles.about} text-body-sm text-muted`}>
+                      {profile.about.trim()}
+                    </p>
+                  ) : null}
+                </div>
+              </section>
               <SettingsGroup layout="form">
-                <section
-                  aria-label="Profile preview"
-                  className={styles.preview}
-                >
-                  <div>
-                    <AvatarEditor
-                      size="compact"
-                      value={profile.picture}
-                      name={profile.name}
-                      community={community?.id}
-                      {...(thumbnailMedia ? { thumbnailMedia } : {})}
-                      disabled={saving || !previewReady}
-                      onBusyChange={setUploading}
-                      onChange={(picture) => {
-                        // Apply only the completed picture, never the upload's old name/bio.
-                        setDraft((current) => ({
-                          ...(current ?? latestPersisted.current),
-                          picture,
-                        }));
-                        setSaved(false);
-                        setError("");
-                      }}
-                    />
-                  </div>
-                  <div className={styles.previewCopy}>
-                    <h3 className="text-label-sm">
-                      {profile.name.trim() || "Your profile"}
-                    </h3>
-                    {profile.about?.trim() ? (
-                      <p className={`${styles.about} text-body-sm text-muted`}>
-                        {profile.about.trim()}
-                      </p>
-                    ) : null}
-                  </div>
-                </section>
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();

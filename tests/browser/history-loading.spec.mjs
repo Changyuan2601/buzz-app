@@ -217,16 +217,25 @@ test.describe("pages inside one second", () => {
       const pending = await reading(page, app, depth);
       const before = await anchor(page);
       const height = await history(page).evaluate((e) => e.scrollHeight);
-      pending.release();
-      await expect
-        .poll(() => history(page).evaluate((e) => e.scrollHeight))
-        .toBeGreaterThan(height);
+      // A live append can arrive before the older page's deferred row
+      // measurements. Hold that boundary explicitly instead of racing frames.
+      const deferred = depth === 1400;
+      if (deferred) await holdFrames(page);
+      try {
+        pending.release();
+        await expect
+          .poll(() => history(page).evaluate((e) => e.scrollHeight))
+          .toBeGreaterThan(height);
+        if (!deferred) await settle(page);
+        await expectAnchor(page, before);
+        // History is not new; a live message still is.
+        await expect(latest(page)).toHaveText("Jump to latest");
+        app.append("primary", "alpha", undefined, true, false);
+        await expect(latest(page)).toHaveText("1 new message");
+      } finally {
+        if (deferred) await page.evaluate(() => window.releaseFrames());
+      }
       await settle(page);
-      await expectAnchor(page, before);
-      // History is not new; a live message still is.
-      await expect(latest(page)).toHaveText("Jump to latest");
-      app.append("primary", "alpha", undefined, true, false);
-      await expect(latest(page)).toHaveText("1 new message");
       await expectAnchor(page, before);
     });
 

@@ -335,11 +335,15 @@ function Timeline({
     paging: boolean;
   }>({ order: [], ids: new Set(), floor: 0, paging: false });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{ id: string | undefined; top: number }>({
+  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
     id: undefined,
     top: 0,
+    y: 0,
   });
   const intent = useRef(0);
+  const heldReader = useRef<
+    { id: string; y: number; intent: number } | undefined
+  >(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
   const touchY = useRef<number | undefined>(undefined);
@@ -547,10 +551,17 @@ function Timeline({
   const reading = previous.slice(
     handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
   );
-  const held = previous.indexOf(savedPosition.current?.anchor?.id ?? "");
+  const retained =
+    heldReader.current?.intent === intent.current
+      ? heldReader.current
+      : undefined;
+  const held = previous.indexOf(
+    retained?.id ?? savedPosition.current?.anchor?.id ?? "",
+  );
   reader.current = {
     id: previous[held],
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
+    y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
   };
   const prepend =
     !!previous.length &&
@@ -567,6 +578,7 @@ function Timeline({
     const element = scroller.current;
     const list = element?.querySelector("ol");
     const index = rows.findIndex((row) => row.id === reader.current.id);
+    if (index < 0) heldReader.current = undefined;
     if (
       prepend ||
       !settled.current ||
@@ -579,17 +591,32 @@ function Timeline({
       return;
     const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
-    if (!moved || !id) return;
+    if (
+      !id ||
+      (!moved &&
+        !(
+          heldReader.current?.id === id &&
+          heldReader.current.intent === intent.current
+        ))
+    )
+      return;
+    // A tail append can replace this effect before the previous page's rows
+    // finish measuring. Keep their anchor even when this render moves it by 0.
     correctScrollTop(element, moved);
     const top = () =>
       element
         .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
         ?.getBoundingClientRect().top;
     // The row's offset from the viewport, as last placed by the reader.
-    let y = savedPosition.current?.anchor?.y ?? 0;
+    // A live append must not choose a newly inserted row while the older
+    // page is still measuring; keep the reader's original row and offset.
+    let y = reader.current.y;
+    const anchor = { id, y, intent: intent.current };
+    heldReader.current = anchor;
     const read = () => {
       const row = top();
-      if (row !== undefined) y = row - element.getBoundingClientRect().top;
+      if (row !== undefined)
+        anchor.y = y = row - element.getBoundingClientRect().top;
     };
     let height = list.style.height;
     const since = intent.current;
@@ -601,7 +628,7 @@ function Timeline({
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         measured = true;
-        if (ended) frame = requestAnimationFrame(release);
+        if (ended) frame = requestAnimationFrame(() => release());
       });
     });
     const hold = new MutationObserver(() => {
@@ -614,7 +641,9 @@ function Timeline({
           row - element.getBoundingClientRect().top - y,
         );
     });
-    const release = () => {
+    const release = (keepAnchor = false) => {
+      if (!keepAnchor && heldReader.current === anchor)
+        heldReader.current = undefined;
       cancelAnimationFrame(frame);
       hold.disconnect();
       element.removeEventListener("scroll", read);
@@ -636,7 +665,7 @@ function Timeline({
     // A drag can end outside the scroller.
     element.ownerDocument.addEventListener("pointerup", done);
     element.ownerDocument.addEventListener("pointercancel", done);
-    return release;
+    return () => release(true);
   }, [rows, prepend]);
   useLayoutEffect(() => {
     const element = scroller.current;

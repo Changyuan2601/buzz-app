@@ -112,7 +112,7 @@ test("GitHub API errors offer prominent external opening before retry", async ({
   context,
   app,
 }, testInfo) => {
-  const target = `${github}#issuecomment-1`;
+  const target = github;
   const detailsUrl = "https://api.github.com/repos/block/buzz/pulls/1";
   // Permit only this injected response's engine console report, once by exact URL.
   app.report.githubFailures = [detailsUrl];
@@ -204,7 +204,7 @@ test("message link context menus bypass the pane and return keyboard focus", asy
   context,
   app,
 }, testInfo) => {
-  const target = `${github}?view=all#issuecomment-1`;
+  const target = `${github}?view=all`;
   for (const destination of [github, ordinary]) {
     await context.route(`${destination}**`, (route) =>
       route.fulfill({
@@ -776,8 +776,7 @@ test("GitHub owns status mappings while shared colors and accent stay independen
   });
 });
 
-// Last updated remains useful independently of the separate Checks feature.
-test("PR Last updated remains relative in the built pane without Checks", async ({
+test("PR Last updated remains relative in the built pane beside its checklist", async ({
   page,
   app,
 }, testInfo) => {
@@ -791,17 +790,19 @@ test("PR Last updated remains relative in the built pane without Checks", async 
       const path = new URL(route.request().url()).pathname;
       requests.push(path);
       return route.fulfill({
-        json: /\/(?:comments|reviews)$/.test(path)
-          ? []
-          : {
-              title: "A small improvement",
-              state: "open",
-              updated_at: updatedAt,
-              head: { sha: "head-sha" },
-              additions: 174,
-              deletions: 28,
-              changed_files: 6,
-            },
+        json: path.endsWith("/check-runs")
+          ? { total_count: 0, check_runs: [] }
+          : path.endsWith("/status")
+            ? { total_count: 0, statuses: [] }
+            : {
+                title: "A small improvement",
+                state: "open",
+                updated_at: updatedAt,
+                head: { sha: "head-sha" },
+                additions: 174,
+                deletions: 28,
+                changed_files: 6,
+              },
       });
     },
   );
@@ -814,24 +815,19 @@ test("PR Last updated remains relative in the built pane without Checks", async 
     exact: true,
   });
   await expect(
-    panel.getByRole("region", { name: "Pull request conversation" }),
+    panel.getByRole("list", { name: "Pull request checklist" }),
   ).toBeVisible();
-  await expect(panel.getByText(/some sources are incomplete/)).toHaveCount(0);
   await expect(panel.locator("time")).toHaveCSS("font-size", "12px");
   await expect(panel.locator("time")).toHaveText("3 minutes ago");
   await expect(panel.locator("time")).toHaveAttribute("datetime", updatedAt);
-  await expect(
-    panel.getByRole("tab", { name: "Discussion", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    panel.getByRole("tab", { name: "Checks", exact: true }),
-  ).toHaveAttribute("aria-selected", "false");
-  await expect(panel.locator("[data-check-state]")).toHaveCount(0);
-  expect(requests.sort()).toEqual([
-    "/repos/sample/project/issues/6/comments",
-    "/repos/sample/project/pulls/6",
-    "/repos/sample/project/pulls/6/reviews",
-  ]);
+  // Without gh, the checklist reads CI on the head commit and nothing else.
+  await expect
+    .poll(() => requests.slice().sort())
+    .toEqual([
+      "/repos/sample/project/commits/head-sha/check-runs",
+      "/repos/sample/project/commits/head-sha/status",
+      "/repos/sample/project/pulls/6",
+    ]);
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);

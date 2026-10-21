@@ -34,6 +34,9 @@ import {
 import { profileTarget } from "../../src/features/profiles/target";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
+import { createAppearance } from "../../src/shared/theme/service";
+
+createAppearance();
 
 const viewer = keypair(),
   authority = keypair(),
@@ -189,6 +192,21 @@ function session() {
                   ["d", "two"],
                   ["name", "Two"],
                   ["t", "stream"],
+                ],
+              }),
+            ];
+          if (
+            filter.kinds?.includes(30315) &&
+            filter.authors?.includes(viewer.pubkey) &&
+            new URLSearchParams(location.search).has("long-status")
+          )
+            return [
+              signed(viewer, {
+                kind: 30315,
+                content: "Working EST hours until Oct 23",
+                tags: [
+                  ["d", "general"],
+                  ["emoji", "🇺🇸"],
                 ],
               }),
             ];

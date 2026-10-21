@@ -34,7 +34,7 @@ import {
   canonicalPublicKey,
   formatPublicKey,
 } from "../../shared/identity/public-key";
-import { AgentPortrait } from "./AgentCard";
+import { AgentCardBackdrop, AgentPortrait } from "./AgentCard";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -159,7 +159,7 @@ function SharedAgentList({
         {agents.map((agent) => (
           <SurfaceButton
             key={agent.id}
-            className={cardStyles.card}
+            className={`${cardStyles.card} ${cardStyles.agentCard}`}
             aria-label={agent.name}
             aria-current={selectedId === agent.id || undefined}
             data-selected={selectedId === agent.id || undefined}
@@ -167,16 +167,19 @@ function SharedAgentList({
               onSelect({ agent, session, community }, event.currentTarget)
             }
           >
+            <AgentCardBackdrop agent={agent} community={community} />
             <span className={cardStyles.portrait} aria-hidden="true">
               <AgentPortrait agent={agent} community={community} />
             </span>
-            <span className={`${cardStyles.name} text-label`}>
-              {agent.name}
-            </span>
-            <span className={cardStyles.detail}>
-              <ModelIcon model={agent.model} />
-              <span className={cardStyles.detailText}>
-                {agent.model || "Shared agent"}
+            <span className={cardStyles.identity}>
+              <span className={`${cardStyles.name} text-label`}>
+                {agent.name}
+              </span>
+              <span className={cardStyles.detail}>
+                <ModelIcon model={agent.model} />
+                <span className={cardStyles.detailText}>
+                  {agent.model || "Shared agent"}
+                </span>
               </span>
             </span>
           </SurfaceButton>

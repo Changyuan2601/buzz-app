@@ -302,32 +302,44 @@ it("seeks the review video from a timecode reply when the thread has one video",
   expect(pause).not.toHaveBeenCalled();
 });
 
-it("opens the sole reply video from a timestamp in the thread at the requested frame", async () => {
-  const { user, attachmentOwner, openReview } = await setupReview({
-    kind: "video",
-    fromThread: true,
-    attachmentInReply: true,
-    replies: (viewer, root) => [
-      message(viewer, "one", "[00:42.5] Seek the reply video", 3, [
-        ["e", root.id, "", "reply"],
-      ]),
-    ],
-  });
-  expect(await screen.findByText("Seek the reply video")).toBeVisible();
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "00:42.5" }));
-  expect(openReview).toHaveBeenCalledExactlyOnceWith(
-    attachmentOwner.id,
-    expect.objectContaining({ kind: "video" }),
-    42.5,
-    true,
-  );
-  const dialog = await screen.findByRole("dialog", { name: "Video review" });
-  const video = dialog.querySelector("video");
-  assert.exists(video);
-  fireEvent.loadedMetadata(video);
-  expect(video.currentTime).toBe(42.5);
-});
+it.each([
+  ["00:00", 2, 0],
+  ["00:01", 2, 0],
+  ["00:03", 10, 0],
+  ["00:42.5", 60, 39.5],
+])(
+  "opens a thread timestamp %s with three seconds of context (duration %s)",
+  async (timestamp, duration, expectedTime) => {
+    const { user, attachmentOwner, openReview } = await setupReview({
+      kind: "video",
+      fromThread: true,
+      attachmentInReply: true,
+      replies: (viewer, root) => [
+        message(viewer, "one", `[${timestamp}] Seek the reply video`, 3, [
+          ["e", root.id, "", "reply"],
+        ]),
+      ],
+    });
+    expect(await screen.findByText("Seek the reply video")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: timestamp }));
+    expect(openReview).toHaveBeenCalledExactlyOnceWith(
+      attachmentOwner.id,
+      expect.objectContaining({ kind: "video" }),
+      expectedTime,
+      true,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Video review" });
+    const video = dialog.querySelector("video");
+    assert.exists(video);
+    Object.defineProperty(video, "duration", {
+      configurable: true,
+      value: duration,
+    });
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(expectedTime);
+  },
+);
 
 it("keeps thread timestamps noninteractive when a reply video conflicts with a root video", async () => {
   const { openReview } = await setupReview({

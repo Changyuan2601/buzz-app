@@ -1155,6 +1155,18 @@ test("member helper aligns with content and Owner stays beside a person's name",
       });
       const heading = dialog.getByRole("heading", { name: /^People ·/ });
       await expect(heading).toBeVisible();
+      // Measure resting layout, not separate frames of the dialog entrance.
+      await dialog.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished),
+        );
+      });
       if (visitor) {
         const helper = dialog.getByText(
           "Join this channel to add people and agents.",
@@ -1190,8 +1202,14 @@ test("member helper aligns with content and Owner stays beside a person's name",
           (await avatar.boundingBox()).x,
           0,
         );
-        const nameBounds = await name.boundingBox();
-        const ownerBounds = await owner.boundingBox();
+        // Read both boxes in one frame: the dialog can still be entering.
+        const [nameBounds, ownerBounds] = await name.evaluate(
+          (node, badge) => [
+            node.getBoundingClientRect().toJSON(),
+            badge.getBoundingClientRect().toJSON(),
+          ],
+          await owner.elementHandle(),
+        );
         expect(ownerBounds.x).toBeGreaterThan(nameBounds.x + nameBounds.width);
         expect(ownerBounds.y + ownerBounds.height / 2).toBeCloseTo(
           nameBounds.y + nameBounds.height / 2,

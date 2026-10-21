@@ -2074,6 +2074,8 @@ function Composer({
               !submission &&
               !!value.recipients.length && (
                 <ComposerModels
+                  profiles={session.profiles}
+                  media={session.media}
                   pubkeys={value.recipients.map((item) => item.pubkey)}
                   value={picks}
                   disabled={editingDisabled}
