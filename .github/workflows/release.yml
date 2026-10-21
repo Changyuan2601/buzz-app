@@ -120,6 +120,7 @@ jobs:
           test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Contents/Info.plist")"
           codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true || { echo '::error::Signed app is missing microphone entitlement'; exit 1; }
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.disable-library-validation' "$RUNNER_TEMP/signed-entitlements.plist")" = true || { echo '::error::Signed app is missing library-validation exemption needed for MeshLLM runtimes'; exit 1; }
           goose="$app/Contents/Resources/bin/goose-acp"
           test -x "$goose" || { echo '::error::Signed app is missing goose-acp'; exit 1; }
           test "$(lipo -archs "$goose")" = arm64 || { echo '::error::goose-acp is not arm64'; exit 1; }
