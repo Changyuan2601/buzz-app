@@ -1,10 +1,5 @@
 import type { JsonValue } from "../navigation/targets";
 import { relayPartition } from "../relay/partition";
-import {
-  emptyArtifact,
-  receiveRevision,
-  type StoredArtifact,
-} from "./revisions";
 import type {
   ArtifactBatch,
   ArtifactCollectionDefinition,
@@ -14,16 +9,17 @@ import type {
   ArtifactPageQuery,
   HostArtifactCollection,
   ArtifactSnapshot,
+  SavedArtifact,
 } from "./types";
 
 const DB = "buzz-artifacts-v1";
-const STORES = ["records", "preferences", "entries", "metadata", "members"];
-type Row = StoredArtifact & {
+const STORES = ["records", "preferences", "entries", "metadata"];
+type Row = {
+  record: SavedArtifact;
   scope: string;
   collection: string;
   id: string;
-  sequence?: number | undefined;
-  homes?: Record<string, string>;
+  generation?: string;
 };
 type StoredPreference = { value: JsonValue };
 
@@ -31,11 +27,7 @@ function sameSnapshot(
   left: ArtifactSnapshot | undefined,
   right: ArtifactSnapshot,
 ) {
-  return (
-    left?.source === right.source &&
-    left.generation === right.generation &&
-    left.captureSequence === right.captureSequence
-  );
+  return left?.source === right.source && left.generation === right.generation;
 }
 
 /** Same IndexedDB transaction boundary as the relay journals. No head-cache eviction. */
@@ -50,22 +42,23 @@ export function createArtifactStore(viewer: string, relay: string) {
     if (closed) throw new Error("Artifact storage closed");
     if (!opening) {
       const attempt = new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(DB, 1);
+        const request = indexedDB.open(DB, 2);
         let blocked = false;
         request.onupgradeneeded = () => {
           const db = request.result;
+          if (db.objectStoreNames.contains("members"))
+            db.deleteObjectStore("members");
           for (const name of STORES) {
+            if (db.objectStoreNames.contains(name)) continue;
             const store = db.createObjectStore(name, {
               keyPath:
                 name === "entries"
                   ? ["scope", "collection", "index", "value", "order", "id"]
-                  : name === "members"
-                    ? ["scope", "collection", "source", "id"]
-                    : name === "metadata"
-                      ? ["scope", "collection", "key"]
-                      : ["scope", "collection", "id"],
+                  : name === "metadata"
+                    ? ["scope", "collection", "key"]
+                    : ["scope", "collection", "id"],
             });
-            if (name === "entries" || name === "members")
+            if (name === "entries")
               store.createIndex("record", ["scope", "collection", "id"]);
           }
         };
@@ -177,6 +170,7 @@ export function createArtifactStore(viewer: string, relay: string) {
     const range = (parts: IDBValidKey[]) =>
       IDBKeyRange.bound(parts, [...parts, []]);
     let disposed = false;
+    const lifetime = new AbortController();
     const listeners = new Set<() => void>();
     const channel = new BroadcastChannel(`${DB}:${JSON.stringify(prefix)}`);
     const changed = () => {
@@ -220,40 +214,47 @@ export function createArtifactStore(viewer: string, relay: string) {
         },
       );
     }
-    const ready = transact<void>("readwrite", (tx, then, done) => {
-      const metadata = tx.objectStore("metadata");
-      then(metadata.get(key("schema")), (schema) => {
-        if (schema?.type && schema.type !== definition.type)
-          throw new Error("Artifact collection type changed");
-        if (schema?.version === definition.version) {
-          done();
-          return;
-        }
-        if (schema?.version > definition.version)
-          throw new Error("Artifact collection requires a newer plugin");
-        const request = tx.objectStore("records").openCursor(range(prefix));
-        then(request, (cursor) => {
-          if (!cursor) {
-            metadata.put({
-              scope,
-              collection,
-              key: "schema",
-              version: definition.version,
-              type: definition.type,
-            });
+    const ready = transact<void>(
+      "readwrite",
+      (tx, then, done) => {
+        const metadata = tx.objectStore("metadata");
+        then(metadata.get(key("schema")), (schema) => {
+          if (schema?.type && schema.type !== definition.type)
+            throw new Error("Artifact collection type changed");
+          if (schema?.version === definition.version) {
             done();
             return;
           }
-          then(
-            tx.objectStore("preferences").get(key(cursor.value.id)),
-            (pref: StoredPreference | undefined) =>
-              reindex(tx, then, cursor.value, pref?.value, () =>
-                cursor.continue(),
-              ),
-          );
+          if (schema?.version > definition.version)
+            throw new Error("Artifact collection requires a newer plugin");
+          metadata.delete(key("source"));
+          metadata.delete(key("snapshot"));
+          metadata.delete(key("checkpoint"));
+          const request = tx.objectStore("records").openCursor(range(prefix));
+          then(request, (cursor) => {
+            if (!cursor) {
+              metadata.put({
+                scope,
+                collection,
+                key: "schema",
+                version: definition.version,
+                type: definition.type,
+              });
+              done();
+              return;
+            }
+            then(
+              tx.objectStore("preferences").get(key(cursor.value.id)),
+              (pref: StoredPreference | undefined) =>
+                reindex(tx, then, cursor.value, pref?.value, () =>
+                  cursor.continue(),
+                ),
+            );
+          });
         });
-      });
-    });
+      },
+      lifetime.signal,
+    );
     // Keep an unopened handle's initialization rejection observable by its first operation.
     void ready.catch(() => {});
     async function run<T>(
@@ -272,8 +273,38 @@ export function createArtifactStore(viewer: string, relay: string) {
             work(tx, then, done);
           });
         },
-        signal,
+        signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal,
       );
+    }
+    function bindSource(
+      tx: IDBTransaction,
+      then: Then,
+      source: string,
+      next: () => void,
+    ) {
+      if (!source) throw new Error("Artifact source is empty");
+      const metadata = tx.objectStore("metadata");
+      then(metadata.get(key("source")), (saved) => {
+        if (saved && saved.value !== source)
+          throw new Error("Artifact collection query changed");
+        if (!saved)
+          metadata.put({ scope, collection, key: "source", value: source });
+        next();
+      });
+    }
+    function checkSnapshot(
+      tx: IDBTransaction,
+      then: Then,
+      snapshot: ArtifactSnapshot,
+      next: () => void,
+    ) {
+      bindSource(tx, then, snapshot.source, () => {
+        then(tx.objectStore("metadata").get(key("snapshot")), (saved) => {
+          if (!sameSnapshot(saved?.value, snapshot))
+            throw new Error("Artifact snapshot changed");
+          next();
+        });
+      });
     }
     function readEntry(
       tx: IDBTransaction,
@@ -312,7 +343,12 @@ export function createArtifactStore(viewer: string, relay: string) {
           tx.objectStore("preferences").get(key(id)),
           (pref: StoredPreference | undefined) => {
             const result = change(
-              saved ?? { ...emptyArtifact(id), scope, collection, id },
+              saved ?? {
+                record: { id, availability: { state: "unknown" } },
+                scope,
+                collection,
+                id,
+              },
               pref?.value,
             );
             tx.objectStore("records").put(result.row);
@@ -419,9 +455,7 @@ export function createArtifactStore(viewer: string, relay: string) {
                 record.id,
                 (row) => ({
                   row:
-                    row.record.local !== undefined ||
-                    row.record.current ||
-                    row.heads.length
+                    row.record.local !== undefined || row.record.current
                       ? row
                       : {
                           ...row,
@@ -467,6 +501,31 @@ export function createArtifactStore(viewer: string, relay: string) {
             (row) => done(row?.value === true),
           ),
         ),
+      refreshError: () =>
+        run<string | null>("readonly", (tx, then, done) =>
+          then(tx.objectStore("metadata").get(key("refresh-error")), (row) =>
+            done(row?.value ?? null),
+          ),
+        ),
+      async setRefreshError(snapshot, message, signal) {
+        if (!message) throw new Error("Artifact refresh error is empty");
+        await run<void>(
+          "readwrite",
+          (tx, then, done) => {
+            checkSnapshot(tx, then, snapshot, () => {
+              tx.objectStore("metadata").put({
+                scope,
+                collection,
+                key: "refresh-error",
+                value: message,
+              });
+              done();
+            });
+          },
+          signal,
+        );
+        publish();
+      },
       checkpoint: () =>
         run<string | null>("readonly", (tx, then, done) =>
           then(tx.objectStore("metadata").get(key("checkpoint")), (row) =>
@@ -477,16 +536,12 @@ export function createArtifactStore(viewer: string, relay: string) {
         if (!source)
           return Promise.reject(new Error("Artifact source is empty"));
         return run<ArtifactSnapshot>("readwrite", (tx, then, done) => {
-          then(tx.objectStore("metadata").get(key("sequence")), (row) => {
-            const snapshot = {
-              source,
-              generation: crypto.randomUUID(),
-              captureSequence: row?.value ?? 0,
-            };
+          bindSource(tx, then, source, () => {
+            const snapshot = { source, generation: crypto.randomUUID() };
             tx.objectStore("metadata").put({
               scope,
               collection,
-              key: JSON.stringify(["snapshot", source]),
+              key: "snapshot",
               value: snapshot,
             });
             done(snapshot);
@@ -497,261 +552,178 @@ export function createArtifactStore(viewer: string, relay: string) {
         await run<void>(
           "readwrite",
           (tx, then, done) => {
-            const metadata = tx.objectStore("metadata");
-            then(
-              metadata.get(key(JSON.stringify(["snapshot", snapshot.source]))),
-              (saved) => {
-                if (!sameSnapshot(saved?.value, snapshot))
-                  throw new Error("Artifact snapshot changed");
-                then(metadata.get(key("checkpoint")), (row) => {
-                  if ((row?.value ?? null) !== checkpoint.expected)
-                    throw new Error("Artifact checkpoint changed");
-                  const request = tx
-                    .objectStore("members")
-                    .openCursor(range([...prefix, snapshot.source]));
-                  then(request, function visit(cursor) {
-                    if (!cursor) {
-                      metadata.put({
-                        scope,
-                        collection,
-                        key: "checkpoint",
-                        value: checkpoint.next,
-                      });
-                      metadata.delete(
-                        key(JSON.stringify(["snapshot", snapshot.source])),
-                      );
-                      done();
-                      return;
-                    }
-                    const member = cursor.value;
-                    if (member.generation === snapshot.generation) {
-                      cursor.continue();
-                      return;
-                    }
-                    then(
-                      tx.objectStore("records").get(key(member.id)),
-                      (saved: Row | undefined) => {
-                        if (!saved)
-                          throw new Error("Snapshot member has no record");
-                        if ((saved.sequence ?? 0) > snapshot.captureSequence) {
-                          cursor.continue();
-                          return;
-                        }
-                        cursor.delete();
-                        then(
-                          tx
-                            .objectStore("members")
-                            .index("record")
-                            .count(IDBKeyRange.only(key(member.id))),
-                          (remaining) => {
-                            if (remaining) {
-                              cursor.continue();
-                              return;
-                            }
-                            mutate(
-                              tx,
-                              then,
-                              member.id,
-                              (row) => ({
-                                row: {
-                                  ...row,
-                                  record: {
-                                    ...row.record,
-                                    availability: {
-                                      state: "unavailable",
-                                      reason: "Absent from completed snapshot",
-                                    },
-                                  },
-                                },
-                              }),
-                              () => cursor.continue(),
-                            );
+            checkSnapshot(tx, then, snapshot, () => {
+              const metadata = tx.objectStore("metadata");
+              then(metadata.get(key("checkpoint")), (row) => {
+                if ((row?.value ?? null) !== checkpoint.expected)
+                  throw new Error("Artifact checkpoint changed");
+                const request = tx
+                  .objectStore("records")
+                  .openCursor(range(prefix));
+                then(request, function visit(cursor) {
+                  if (!cursor) {
+                    metadata.put({
+                      scope,
+                      collection,
+                      key: "checkpoint",
+                      value: checkpoint.next,
+                    });
+                    metadata.delete(key("snapshot"));
+                    metadata.delete(key("refresh-error"));
+                    done();
+                    return;
+                  }
+                  const saved: Row = cursor.value;
+                  if (
+                    !saved.record.current ||
+                    saved.generation === snapshot.generation ||
+                    saved.record.availability.state === "unavailable"
+                  ) {
+                    cursor.continue();
+                    return;
+                  }
+                  mutate(
+                    tx,
+                    then,
+                    saved.id,
+                    (row) => ({
+                      row: {
+                        ...row,
+                        record: {
+                          ...row.record,
+                          availability: {
+                            state: "unavailable",
+                            reason: "Absent from completed snapshot",
                           },
-                        );
+                        },
                       },
-                    );
-                  });
+                    }),
+                    () => cursor.continue(),
+                  );
                 });
-              },
-            );
+              });
+            });
           },
           signal,
         );
         publish();
       },
-      async applyBatch(batch: ArtifactBatch) {
-        await run<void>("readwrite", (tx, then, done) => {
-          const jobs: (() => void)[] = [];
-          const next = series(jobs);
-          let sequence = 0;
-          if (!batch.source) throw new Error("Artifact source is empty");
-          if (batch.snapshot)
-            jobs.push(() => {
-              const snapshot = batch.snapshot;
-              if (!snapshot || snapshot.source !== batch.source)
-                throw new Error("Artifact snapshot source mismatch");
-              then(
-                tx
-                  .objectStore("metadata")
-                  .get(key(JSON.stringify(["snapshot", batch.source]))),
-                (row) => {
-                  if (!sameSnapshot(row?.value, snapshot))
-                    throw new Error("Artifact snapshot changed");
-                  next();
-                },
-              );
-            });
-          jobs.push(() =>
-            then(tx.objectStore("metadata").get(key("sequence")), (row) => {
-              sequence = (row?.value ?? 0) + 1;
-              tx.objectStore("metadata").put({
-                scope,
-                collection,
-                key: "sequence",
-                value: sequence,
-              });
-              next();
-            }),
-          );
-          jobs.push(() =>
-            then(tx.objectStore("metadata").get(key("checkpoint")), (row) => {
-              if (
-                batch.checkpoint &&
-                (row?.value ?? null) !== batch.checkpoint.expected
-              )
-                throw new Error("Artifact checkpoint changed");
-              next();
-            }),
-          );
-          for (const incoming of batch.records ?? [])
+      async applyBatch(batch: ArtifactBatch, signal) {
+        await run<void>(
+          "readwrite",
+          (tx, then, done) => {
+            const jobs: (() => void)[] = [];
+            const next = series(jobs);
+            if (!batch.snapshot || batch.source !== batch.snapshot.source)
+              throw new Error("Artifact snapshot source mismatch");
+            jobs.push(() => checkSnapshot(tx, then, batch.snapshot, next));
             jobs.push(() =>
-              mutate(
-                tx,
-                then,
-                incoming.id,
-                (row) => {
-                  if (row.record.type && row.record.type !== incoming.type)
-                    throw new Error("Artifact type mismatch");
-                  if (incoming.type !== definition.type)
-                    throw new Error("Artifact type does not match collection");
-                  tx.objectStore("members").put({
-                    scope,
-                    collection,
-                    source: batch.source,
-                    id: incoming.id,
-                    generation: batch.snapshot?.generation ?? null,
-                  });
-                  const homes = {
-                    ...row.homes,
-                    [incoming.revision.id]: incoming.channelId,
-                  };
-                  const received = receiveRevision(row, incoming.revision);
-                  if (
-                    batch.snapshot &&
-                    !row.superseded.includes(incoming.revision.id) &&
-                    received.heads.some(
-                      (head) => head.id === incoming.revision.id,
-                    ) &&
-                    (row.sequence ?? 0) <= batch.snapshot.captureSequence
-                  ) {
+              then(tx.objectStore("metadata").get(key("checkpoint")), (row) => {
+                if (
+                  batch.checkpoint &&
+                  (row?.value ?? null) !== batch.checkpoint.expected
+                )
+                  throw new Error("Artifact checkpoint changed");
+                next();
+              }),
+            );
+            for (const incoming of batch.records ?? [])
+              jobs.push(() =>
+                mutate(
+                  tx,
+                  then,
+                  incoming.id,
+                  (row) => {
+                    if (incoming.type !== definition.type)
+                      throw new Error(
+                        "Artifact type does not match collection",
+                      );
                     if (
-                      row.record.current &&
-                      row.record.current.id !== incoming.revision.id
+                      !incoming.channelId ||
+                      !incoming.revision.id ||
+                      typeof incoming.revision.content !== "string"
                     )
-                      received.superseded = [
-                        ...new Set([
-                          ...received.superseded,
-                          row.record.current.id,
-                        ]),
-                      ];
-                    received.record = {
-                      ...received.record,
-                      current: incoming.revision,
-                      conflicts: received.heads.filter(
-                        (head) => head.id !== incoming.revision.id,
-                      ),
-                    };
-                  }
-                  return {
-                    row: {
-                      ...row,
-                      ...received,
-                      homes,
-                      sequence: batch.snapshot ? row.sequence : sequence,
-                      record: {
-                        ...received.record,
-                        ...(received.record.current &&
-                        homes[received.record.current.id]
-                          ? { channelId: homes[received.record.current.id] }
-                          : {}),
-                        type: incoming.type,
-                      },
-                    },
-                  };
-                },
-                next,
-              ),
-            );
-          for (const seen of batch.seen ?? [])
-            jobs.push(() => {
-              if (!batch.snapshot)
-                throw new Error("Seen members require a snapshot");
-              then(
-                tx.objectStore("records").get(key(seen.id)),
-                (row: Row | undefined) => {
-                  if (!row || !Object.hasOwn(row.ancestry, seen.revisionId))
-                    throw new Error("Snapshot revision is not saved");
-                  tx.objectStore("members").put({
-                    scope,
-                    collection,
-                    source: batch.source,
-                    id: seen.id,
-                    generation: batch.snapshot?.generation,
-                  });
-                  next();
-                },
-              );
-            });
-          for (const availability of batch.availability ?? [])
-            jobs.push(() =>
-              mutate(
-                tx,
-                then,
-                availability.id,
-                (row) => ({
-                  row:
-                    (row.record.current?.id ?? null) !==
-                      availability.expectedRevision ||
-                    (batch.snapshot &&
-                      (row.sequence ?? 0) > batch.snapshot.captureSequence)
-                      ? row
-                      : {
-                          ...row,
-                          sequence: batch.snapshot ? row.sequence : sequence,
-                          record: {
-                            ...row.record,
-                            availability: availability.value,
-                          },
+                      throw new Error("Invalid authoritative artifact");
+                    return {
+                      row: {
+                        scope,
+                        collection,
+                        id: incoming.id,
+                        generation: batch.snapshot.generation,
+                        record: {
+                          id: incoming.id,
+                          channelId: incoming.channelId,
+                          type: incoming.type,
+                          current: incoming.revision,
+                          availability: row.record.availability,
+                          ...(row.record.local !== undefined
+                            ? { local: row.record.local }
+                            : {}),
                         },
-                }),
-                next,
-              ),
-            );
-          jobs.push(() => {
-            if (batch.checkpoint)
-              tx.objectStore("metadata").put({
-                scope,
-                collection,
-                key: "checkpoint",
-                value: batch.checkpoint.next,
-              });
-            done();
-          });
-          next();
-        });
+                      },
+                    };
+                  },
+                  next,
+                ),
+              );
+            for (const seen of batch.seen ?? [])
+              jobs.push(() =>
+                then(
+                  tx.objectStore("records").get(key(seen.id)),
+                  (row: Row | undefined) => {
+                    if (!row || row.record.current?.id !== seen.revisionId)
+                      throw new Error("Snapshot revision is not saved");
+                    tx.objectStore("records").put({
+                      ...row,
+                      generation: batch.snapshot.generation,
+                    });
+                    next();
+                  },
+                ),
+              );
+            for (const availability of batch.availability ?? [])
+              jobs.push(() =>
+                mutate(
+                  tx,
+                  then,
+                  availability.id,
+                  (row) => {
+                    if (
+                      (row.record.current?.id ?? null) !==
+                      availability.expectedRevision
+                    )
+                      throw new Error("Artifact revision changed");
+                    return {
+                      row: {
+                        ...row,
+                        record: {
+                          ...row.record,
+                          availability: availability.value,
+                        },
+                      },
+                    };
+                  },
+                  next,
+                ),
+              );
+            jobs.push(() => {
+              if (batch.checkpoint)
+                tx.objectStore("metadata").put({
+                  scope,
+                  collection,
+                  key: "checkpoint",
+                  value: batch.checkpoint.next,
+                });
+              done();
+            });
+            next();
+          },
+          signal,
+        );
         publish();
       },
       close() {
+        lifetime.abort(new Error("Artifact collection closed"));
         disposed = true;
         listeners.clear();
         channel.close();

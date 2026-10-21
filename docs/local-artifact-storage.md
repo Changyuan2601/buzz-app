@@ -1,10 +1,8 @@
 # Local artifact storage
 
-`ctx.artifactStorage` gives plugins durable local reads. It uses IndexedDB in the
-host window. It does not request relay data. Shared writes use the host delivery
-service. The bounded channel cache remains separate.
-
-A plugin opens a collection for its current identity and community:
+`ctx.artifactStorage` gives plugins durable local reads through IndexedDB. The
+bounded channel cache stays separate. The host delivery service owns shared edits.
+The plugin owns task fields, parent rules, search tokens, and device preferences.
 
 ```ts
 const tasks = ctx.artifactStorage.open({
@@ -22,82 +20,95 @@ const next = page.next
   : undefined;
 ```
 
-The host derives the plugin identity from Cordis. The saved community selection
-supplies the viewer and relay origin, including while the network is unavailable.
-A collection captures that scope. Its read-only `scope` descriptor supplies
-`viewer`, normalized `relay`, and the legacy `partition` string for migration.
-A handle rejects calls after the identity or relay changes.
-Close the handle when its view ends. Subscribe before the first read. Notifications
-follow a committed transaction and reach other windows through BroadcastChannel.
-They carry no saved content. Each window reads IndexedDB again.
+## Scope and indexes
 
-The projector defines index names, exact string values, and lexical order keys.
-Several entries can index the same record. Pages use an exclusive `(order, id)`
-cursor. Each page reads only its selected records, with a maximum of 1,000 rows.
-Pages are independent transactions. A change between pages can move a row; restart
-the query after a notification. All windows must use the same collection type,
-version, and projector. Projection behavior, index definitions, and query semantics
-tied to saved state must stay fixed within a version. Changes require a version
-increase. The host checks the declared version in each read or write transaction.
-It cannot detect undeclared changes to a projector. Increase the version to rebuild
-saved indexes in one transaction. A failed rebuild preserves the saved version and
-data. An incompatible type fails explicitly. An older handle then rejects further
-reads and writes. If opening the database
-fails, close the failed handle and open another after the cause clears.
+Cordis supplies the plugin identity. The saved community selection supplies the
+viewer and normalized relay, including while offline. The read-only `scope`
+contains `viewer`, `relay`, and the legacy `partition` string for migration.
+A handle closes when its identity or community changes. Close it when its view ends.
 
-`get(id)` returns a saved artifact and its separate preference. A record contains
-the current revision, conflicting heads, unresolved ancestry, known availability,
-and an optional local snapshot. A cached body is not proof of current access.
-A missing parent remains unresolved. An older revision cannot replace a known
-descendant. Conflicting heads preserve the last usable view. A descendant of all
-heads resolves the conflict. The host retains ancestry edges for comparison.
+Records and preferences are isolated by viewer, relay, plugin, and collection.
+Each collection admits one artifact type and one fixed authoritative query. Sync
+binds that query through its opaque `source` string. A different source fails.
+Change the collection version when projection behavior, index definitions, or
+saved query semantics change. The host checks the declared version in each read
+and write transaction. It cannot detect undeclared changes to projector behavior.
+An incompatible type fails explicitly. An index rebuild commits atomically; a
+failure preserves the saved version and data. Old handles then reject operations.
 
-`preferences.update(id, change)` reads the latest value, calls the synchronous
-callback, saves its result, and rebuilds that row's indexes in one transaction.
-Preferences remain in a separate store. Values such as `false` and `null` remain
+The projector defines exact string index values and lexical order keys. Several
+entries can index a record. Pages use an exclusive `(order, id)` cursor and read
+only selected records, with a maximum of 1,000 rows. Pages are independent
+transactions. Restart a query after a notification when rows can move between pages.
+Notifications follow commit and reach other windows through BroadcastChannel.
+They contain no saved content. Subscribe before the first read, then read again.
+
+## Device data
+
+`preferences.update(id, change)` reads the latest preference, calls the synchronous
+callback, saves the result, and rebuilds that row's indexes in one transaction.
+Preferences stay in a separate store. Values such as `false` and `null` remain
 explicit. The callback must return JSON and must not start asynchronous work.
 
-`importBatch` supports migration of device data. It inserts missing local snapshots
-and preferences. It does not invent a shared revision or replace later edits. The
-plugin owns the snapshot fields, including origin. Its optional completion marker
-commits with the last batch. `imported(marker)` confirms that commit. Keep the
-source data until this check succeeds.
+`importBatch` inserts absent local snapshots and preferences. Retries preserve
+later edits. It does not invent a shared revision. A completion marker commits
+with the last batch. Keep migration source data until `imported(marker)` succeeds.
 
-The host collection adds these operations for sync:
+## Confirmed shared state
 
-- `applyBatch` saves verified revisions, availability changes, and a checkpoint
-  in one strict transaction. The checkpoint compares its expected value first.
-- `checkpoint` reads the saved checkpoint for owner transfer.
-- `beginSnapshot(source)` captures a local commit sequence and a new generation.
-- `applyBatch({ source, snapshot, ... })` marks received IDs seen in that generation.
-  Its `seen` entries can reference revisions already saved on this device.
-  Snapshot authority can select a current head when history is missing. It keeps
-  unresolved ancestry and competing heads. A capture sequence fences later writes.
-  Superseded heads cannot become current through a late snapshot.
-- Availability updates compare `expectedRevision` with the saved current revision.
-  Snapshot availability also uses the capture sequence. Validated current revisions
-  can update the saved channel home.
-- `completeSnapshot(snapshot, checkpoint)` reconciles absent records for only that
-  source, then commits the checkpoint. Live and confirmed writes after capture
-  remain available. A record remains available while another source still contains
-  it. Content, local snapshots, and preferences remain saved.
+The relay supplies one authoritative current revision per artifact. The store
+saves that result without an ancestry graph, inferred conflicts, revision homes,
+or timestamp ordering. `get(id)` returns the current revision, availability,
+optional plugin-owned local snapshot, and separate preference. Cached content
+alone does not establish current access. Publication conflicts are delivery errors;
+the delivery view retains the user's attempted edit for correction.
 
-`source` is an exact authoritative query scope supplied by sync. The sync owner
-must validate server completion and current access before it calls
-`completeSnapshot`. Pass the live interval's AbortSignal to cancel the local
-transaction if continuity fails or the owner closes. A failed or invalidated snapshot must not complete. A new
-snapshot for the same source invalidates the old generation. Checkpoints are
-opaque strings; this store does not require a durable server cursor.
+`ArtifactStorageService.onOpen` supplies the host with the real collection
+definition, its handle, scope, and lifetime AbortSignal. Sync uses one Web Lock per
+`{viewer, relay, owner, collectionName}`. Only a window with that definition can
+own its sync. Outbox ownership stays separate. The owner cancels its work before
+it releases the lock. The collection also aborts its pending transactions on close.
 
-`ArtifactStorageService.onOpen` lets host sync attach to a collection and its type
-descriptor and a lifetime AbortSignal. Closing the handle or changing identity or
-community aborts that signal. Sync uses one Web Lock per
-`{viewer, relay, owner, collectionName}`. Only a window with the real collection
-definition can own that work. Checkpoints and snapshot completion stay within that
-collection and its exact source query. The owner cancels work before it releases
-the lock. A late response cannot commit after the owner closes. Outbox ownership
-uses its separate host service. Records, preferences, and source membership are
-isolated by collection. Leaving a community purges only its saved partition.
-Plugins receive the read, preference, and migration contract. They do
-not receive `applyBatch` or transport access. The task plugin owns task fields,
-parent rules, search tokens, and the meaning of device preferences.
+The host-only contract provides:
+
+- `beginSnapshot(source)` binds the fixed query and starts a fresh local generation.
+  A newer generation retires the previous one.
+- `applyBatch({source, snapshot, records, seen, availability, checkpoint}, signal)`
+  commits a validated page atomically. It requires the active generation. `seen`
+  reuses a body only when its exact current revision ID is saved. Availability
+  checks the expected revision. An optional checkpoint compares its expected value.
+- `completeSnapshot(snapshot, checkpoint, signal)` runs only after sync validates
+  server completion. In one transaction, it marks absent shared records
+  unavailable, commits the checkpoint, and clears the refresh error. Saved bodies,
+  local snapshots, and preferences remain. Device-only records stay device-only.
+- `setRefreshError(snapshot, message, signal)` saves an error for the active
+  generation and publishes a notification. Plugins read `refreshError()` and show
+  a nonempty error. A new attempt retains that error until successful completion.
+- `checkpoint()` reads the saved opaque checkpoint.
+
+No raw live event, accepted edit, or per-artifact write can change confirmed
+shared state. Live events request an automatic background refresh. Reconnect also
+starts a refresh. A failed capture may leave validated bodies for exact-ID reuse.
+Only validated completion can infer absence. Generation, query, schema, checkpoint,
+and cancellation checks run inside the transaction. An old owner cannot commit
+late pages, completion, or errors after cancellation or a generation change.
+
+## Immediate local feedback
+
+Device preferences update immediately. Shared edits use the existing delivery
+journal and appear immediately in the plugin's pending view. Relay acceptance
+starts a fresh capture. A pre-acceptance capture cannot reconcile that pending
+edit. A successful capture begun after acceptance can show the accepted edit, a
+later revision, or legitimate absence. Reconciling an older operation must preserve
+any newer pending edit. Sync and delivery own this boundary; the row store does not
+merge optimistic edits into confirmed state. Offline shared edits remain undecided.
+
+## Storage costs
+
+Writes request strict durability. Transactions span all four object stores, so
+large batches can delay other collections' reads or writes. A changed row rewrites
+its indexes. Index upgrades and absence reconciliation scan the collection.
+Ancestry comparison and separate source-membership writes are absent. The database
+upgrade removes the obsolete membership store and preserves records and device
+preferences. Leaving a community purges only its saved partition. If database
+opening fails, close that handle and open another after the cause clears.
