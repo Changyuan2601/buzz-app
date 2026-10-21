@@ -375,6 +375,14 @@
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
   }
+  .buzz-tooltip-positioner[popover] {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+  }
   .buzz-tooltip {
     @apply text-caption;
     max-width: min(24rem, calc(100vw - 2rem));

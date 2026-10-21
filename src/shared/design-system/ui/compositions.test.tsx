@@ -1,6 +1,7 @@
 import { SidebarNavigation } from "./SidebarNavigation";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import "../../../../tests/popover-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   cleanup,

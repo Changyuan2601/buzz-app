@@ -92,6 +92,123 @@ test("sent Markdown files open in the panel host and fit enlarged narrow layouts
   await expect(
     page.getByRole("region", { name: `Preview: ${filename}`, exact: true }),
   ).toHaveCount(0);
+  const onlyName = `attachment-only-${filename}`;
+  const onlyEvent = app.append(
+    "primary",
+    "htian-playground",
+    "",
+    true,
+    true,
+    undefined,
+    undefined,
+    [
+      [
+        "imeta",
+        `url ${url}`,
+        "m text/markdown",
+        `filename ${onlyName}`,
+        `size ${Buffer.byteLength(markdown)}`,
+      ],
+    ],
+  );
+  const onlyRow = page.locator(`[data-message-id="${onlyEvent.id}"]`);
+  const onlyDownload = onlyRow.getByRole("link", {
+    name: `Download ${onlyName}`,
+    exact: true,
+  });
+  const onlyActions = onlyRow.getByRole("group", {
+    name: "Message actions",
+    includeHidden: true,
+  });
+  const openings = await page.evaluateHandle(() => {
+    const opened = [];
+    const record = (event) => {
+      if (event.newState === "open") opened.push(event.target);
+    };
+    document.addEventListener("beforetoggle", record, true);
+    return {
+      opened,
+      dispose: () => document.removeEventListener("beforetoggle", record, true),
+    };
+  });
+  try {
+    await onlyDownload.hover();
+    const hint = page.getByRole("tooltip", { name: `Download ${onlyName}` });
+    await expect(hint).toBeVisible();
+    await expect
+      .poll(() => onlyActions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        openings.evaluate(
+          ({ opened }, name) =>
+            opened.at(-1)?.querySelector('[role="tooltip"]')?.textContent ===
+            `Download ${name}`,
+          onlyName,
+        ),
+      )
+      .toBe(true);
+    await page.mouse.move(0, 0);
+    await expect(hint).toHaveCount(0);
+    await onlyRow
+      .getByRole("button", { name: `Preview ${onlyName}`, exact: true })
+      .hover();
+    await expect
+      .poll(() => onlyActions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(true);
+    await onlyDownload.hover();
+    await expect(hint).toBeVisible();
+    await expect
+      .poll(() =>
+        openings.evaluate(
+          ({ opened }, name) =>
+            opened.at(-1)?.querySelector('[role="tooltip"]')?.textContent ===
+            `Download ${name}`,
+          onlyName,
+        ),
+      )
+      .toBe(true);
+    await page.keyboard.press("ControlOrMeta+k");
+    const search = page.getByRole("dialog", { name: "Search Buzz" });
+    await expect(search).toBeVisible();
+    await expect(hint).not.toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await page.setViewportSize({ width: 1440, height: 480 });
+    await onlyRow
+      .locator("xpath=ancestor::*[@data-message-scroller]")
+      .evaluate((scroller) => {
+        scroller.scrollTop = scroller.scrollHeight;
+      });
+    await onlyDownload.hover();
+    app.edit("primary", "htian-playground", onlyEvent, "Added caption");
+    await expect(onlyRow).toContainText("Added caption");
+    await expect(onlyDownload).toBeVisible();
+    await expect
+      .poll(() => onlyDownload.evaluate((node) => node.matches(":hover")))
+      .toBe(true);
+    await expect
+      .poll(() => onlyActions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(false);
+    app.edit(
+      "primary",
+      "htian-playground",
+      { ...onlyEvent, created_at: onlyEvent.created_at + 1 },
+      "",
+    );
+    await expect(onlyRow).not.toContainText("Added caption");
+    await expect
+      .poll(() => onlyDownload.evaluate((node) => node.matches(":hover")))
+      .toBe(true);
+    await expect
+      .poll(() => onlyActions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(true);
+  } finally {
+    await openings.evaluate(({ dispose }) => dispose());
+    await openings.dispose();
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
   await trigger.focus();
   await page.keyboard.press("Enter");
   const preview = page.getByRole("region", {

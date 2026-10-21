@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/popover-dom";
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";

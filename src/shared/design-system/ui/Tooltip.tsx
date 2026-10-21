@@ -2,11 +2,15 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
+  useRef,
+  useCallback,
   useState,
   type AriaAttributes,
   type ReactElement,
   type ReactNode,
 } from "react";
+
+import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
 
 /** A short supplementary hint. The trigger still owns its accessible name. */
 export function Tooltip({
@@ -38,6 +42,16 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
+  const triggerRef = useRef<HTMLElement>(null);
+  const promote = useCallback((positioner: HTMLDivElement) => {
+    const update = () => {
+      const trigger = triggerRef.current;
+      if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
+      else positioner.showPopover?.();
+    };
+    update();
+    return observeOverlays(update);
+  }, []);
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
   const expanded =
@@ -59,6 +73,9 @@ export function Tooltip({
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
+        ref={(trigger: HTMLElement | null) => {
+          triggerRef.current = trigger;
+        }}
         delay={delay}
         closeOnClick={closeOnClick}
         // Base UI merges render-element props last. Put the combined link on
@@ -75,6 +92,8 @@ export function Tooltip({
           // Fixed hints never add page scroll width, even while WebKit keeps
           // one open across a resize.
           positionMethod="fixed"
+          popover="manual"
+          ref={promote}
           className="buzz-tooltip-positioner"
         >
           <BaseTooltip.Popup

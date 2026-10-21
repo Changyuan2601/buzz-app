@@ -252,11 +252,12 @@ for a destructive menu action; its icon inherits the danger color and highlighte
 rows use the matching danger affordance. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
-Native top-layer message actions and hover previews yield to interactive menus,
+Native top-layer message actions, hints, and hover previews yield to interactive menus,
 pickers, and dialogs through the shared overlay-layer policy. An originating
 toolbar keeps its anchor geometry but is hidden and cannot intercept popup clicks;
 its target message remains highlighted while that toolbar's menu or picker is open.
-Hover previews inside the active popup remain available. Do not add per-menu
+Control hints paint above message actions. Hints and hover previews inside the
+active popup remain available. Do not add per-menu
 suppression rules or a second overlay registry.
 For choices that must stay within a modal, pass its element to
 `Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it

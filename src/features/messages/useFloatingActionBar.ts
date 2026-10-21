@@ -157,10 +157,10 @@ export function useFloatingActionBar(
     };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(
-      `:is(${contentSelector(row)}):hover`,
-    );
-    let hovered = !!initialContent || bar.matches(":hover");
+    let selector = contentSelector(row);
+    const pointerOverContent = () =>
+      !!row.querySelector(`:is(${selector}):hover`) || bar.matches(":hover");
+    let hovered = pointerOverContent();
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -204,6 +204,11 @@ export function useFloatingActionBar(
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
+      const nextSelector = contentSelector(row);
+      if (selector !== nextSelector) {
+        selector = nextSelector;
+        hovered = pointerOverContent();
+      }
       // Recheck focus if a control is removed without dispatching focusout.
       update();
     });

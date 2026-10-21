@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/popover-dom";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
