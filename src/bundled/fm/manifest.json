@@ -1,0 +1,23 @@
+{
+  "id": "buzz.fm",
+  "name": "Apple Foundation Model",
+  "apiVersion": 1,
+  "description": "Run agents on Apple's on-device Foundation Model, with no internet connection.",
+  "discovery": {
+    "category": "agents"
+  },
+  "host": {
+    "processes": [
+      {
+        "id": "respond",
+        "program": "fm",
+        "args": ["respond", "--no-stream"]
+      },
+      {
+        "id": "available",
+        "program": "fm",
+        "args": ["available"]
+      }
+    ]
+  }
+}

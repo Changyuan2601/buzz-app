@@ -1134,7 +1134,12 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(
             id,
-            "buzz.bestie" | "buzz.pi" | "buzz.todos" | "buzz.usage" | "buzz.relay-notes"
+            "buzz.bestie"
+                | "buzz.fm"
+                | "buzz.pi"
+                | "buzz.todos"
+                | "buzz.usage"
+                | "buzz.relay-notes"
         );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {
