@@ -478,7 +478,10 @@ async fn plugin_reload(
     manager: tauri::State<'_, PluginManager>,
     id: String,
 ) -> Result<InstallationResult, String> {
-    with_manager(manager, move |m| m.reload(&id).map(|catalog| ready(&m, catalog))).await
+    with_manager(manager, move |m| {
+        m.reload(&id).map(|catalog| ready(&m, catalog))
+    })
+    .await
 }
 #[tauri::command]
 async fn plugin_module(

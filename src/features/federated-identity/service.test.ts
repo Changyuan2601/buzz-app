@@ -2,10 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  FederatedIdentityService,
-  type SessionSnapshot,
-} from "./service";
+import { FederatedIdentityService, type SessionSnapshot } from "./service";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -89,4 +86,3 @@ it("fails closed when the native session event listener cannot be registered", a
   );
   expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot");
 });
-
