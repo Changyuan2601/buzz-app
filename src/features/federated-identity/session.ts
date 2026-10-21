@@ -55,6 +55,7 @@ export function createFederatedSession(service: FederatedIdentity) {
         throw new Error("Sign in first");
       return identity;
     },
+    request: service.request.bind(service),
     signIn: () => service.signIn(),
     cancel: () => service.cancelSignIn(),
     signOut: () => service.signOut(),

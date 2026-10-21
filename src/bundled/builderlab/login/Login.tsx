@@ -1,7 +1,7 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { Button } from "../../../shared/design-system/ui/Button";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 
 export function Login({
   session,
@@ -10,7 +10,7 @@ export function Login({
   showHeading = true,
   unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
 }: {
-  session: OAuthSession;
+  session: BuilderlabSession;
   available: boolean;
   active(): boolean;
   showHeading?: boolean;
@@ -21,9 +21,11 @@ export function Login({
     session.snapshot,
     session.snapshot,
   );
+  const [error, setError] = useState("");
   useEffect(
     () => () => {
-      if (session.snapshot().status === "pending") session.cancel();
+      if (session.snapshot().status === "pending")
+        void session.cancel().catch(() => {});
     },
     [session],
   );
@@ -32,15 +34,15 @@ export function Login({
       {showHeading ? (
         <Header
           title="Builderlab"
-          subtitle="Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz."
+          subtitle="Connect your Builderlab account. Buzz keeps the session in your OS secure storage."
         />
       ) : (
         <p className="m-0 text-body-sm text-secondary">
-          Connect your Builderlab account. Your credential stays in memory until
-          you sign out or close Buzz.
+          Connect your Builderlab account. Buzz keeps the session in your OS
+          secure storage.
         </p>
       )}
-      {!available ? (
+      {!available || !session.available() ? (
         <p role="status" className="text-body-sm text-secondary">
           {unavailableReason}
         </p>
@@ -55,18 +57,30 @@ export function Login({
                   : "Signed in to Builderlab."
                 : "Sign in securely in your browser."}
           </p>
-          {state.error && (
+          {(state.error || error) && (
             <p role="alert" className="text-body-sm text-danger">
-              {state.error}
+              {state.error || error}
             </p>
           )}
           <Button
             variant={state.status === "signed-out" ? "prominent" : "outline"}
             onClick={() => {
               if (!active()) return;
-              if (state.status === "pending") session.cancel();
-              else if (state.status === "signed-in") session.signOut();
-              else void session.signIn();
+              setError("");
+              const operation =
+                state.status === "pending"
+                  ? session.cancel()
+                  : state.status === "signed-in"
+                    ? session.signOut()
+                    : session.signIn();
+              void operation.catch((failure: unknown) => {
+                if (active())
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : "Sign-in failed. Try again.",
+                  );
+              });
             }}
           >
             {state.status === "pending"

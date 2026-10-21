@@ -28,7 +28,7 @@ fn default_method() -> String {
     "GET".into()
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct HostResponse {
     status: u16,
     headers: BTreeMap<String, String>,
@@ -126,7 +126,7 @@ fn validate_request(
     Ok((url, method, headers))
 }
 
-async fn send_request(
+pub(crate) async fn send_request(
     url: reqwest::Url,
     method: reqwest::Method,
     headers: HeaderMap,
@@ -288,26 +288,19 @@ mod tests {
     }
 
     #[test]
-    fn bundled_hosted_communities_reach_only_the_builderlab_origin() {
+    fn bundled_hosted_communities_reach_no_origin_directly() {
+        // Its account calls go through the shared NIP-FI session, not host HTTP.
         let temp = tempfile::tempdir().unwrap();
         let manager =
             buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager
             .host_grants("block.hosted-communities", "bundled")
             .unwrap();
-        assert_eq!(grants.network_origins, ["https://app.builderlab.xyz"]);
+        assert!(grants.network_origins.is_empty());
         assert!(grants.commands.is_empty());
-        for (url, allowed) in [
-            ("https://app.builderlab.xyz/api/goose/v1/auth/me", true),
-            ("https://builderlab.xyz/api/goose/v1/auth/me", false),
-            (
-                "https://app.builderlab.xyz:8443/api/goose/v1/auth/me",
-                false,
-            ),
-        ] {
-            let (url, _, _) = validate_request(&request(url)).unwrap();
-            assert_eq!(allows_origin(&grants, &url), allowed, "{url}");
-        }
+        let (url, _, _) =
+            validate_request(&request("https://app.builderlab.xyz/api/goose/v1/auth/me")).unwrap();
+        assert!(!allows_origin(&grants, &url));
     }
 
     #[tokio::test]

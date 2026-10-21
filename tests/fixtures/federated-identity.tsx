@@ -28,6 +28,7 @@ const publish = (patch: Partial<SessionSnapshot>) => {
   for (const listener of listeners) listener();
 };
 const identity: FederatedIdentity = {
+  apiAvailable: false,
   snapshot: () => state,
   subscribe(listener) {
     listeners.add(listener);
@@ -53,6 +54,9 @@ const identity: FederatedIdentity = {
       email: null,
       failure: null,
     });
+  },
+  async request() {
+    throw new Error("Fixture has no API");
   },
 };
 const session = createFederatedSession(identity);

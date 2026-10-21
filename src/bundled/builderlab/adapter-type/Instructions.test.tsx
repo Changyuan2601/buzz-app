@@ -4,12 +4,14 @@ import type { RelayData } from "../../../features/relay/service";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
-import type { Host, HostResponse } from "../../../features/host/service";
+import type { HostResponse } from "../../../features/host/service";
+import type { AuthenticatedRequest } from "../../../features/federated-identity/service";
 import { createAgentClient } from "../agents/client";
-import { createOAuthSession } from "../oauth/session";
+import { federatedFixture } from "../../../features/federated-identity/testing";
+import { createBuilderlabSession } from "../session";
 import { deferred } from "../test-helpers";
 import { builderlabType } from "./index";
 
@@ -51,21 +53,24 @@ const response = (): HostResponse => ({
     ],
   }),
 });
-beforeEach(() =>
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
-);
-afterEach(() => {
-  cleanup();
-  vi.unstubAllEnvs();
-});
+afterEach(cleanup);
 function fixture() {
-  let subject = "account-a";
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
-  }));
-  const request = vi.fn<Host["request"]>().mockResolvedValue(response());
-  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
+  const federated = federatedFixture("user", "account-a");
+  const session = createBuilderlabSession(federated.session);
+  // Beekeeper calls go to `request`; the permission read is always allowed.
+  const request = vi.fn(async (_input: AuthenticatedRequest) => response());
+  federated.request.mockImplementation(async (input) =>
+    input.path.endsWith("/v1/auth/me")
+      ? {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({
+            capabilities: { can_use_remote_agents: true },
+          }),
+        }
+      : request(input),
+  );
+  const client = createAgentClient(session);
   const type = {
     ...builderlabType(client, session, {
       snapshot: () => ({ status: "disconnected", generation: 0 }),
@@ -81,9 +86,17 @@ function fixture() {
     Tab,
     type,
     request,
+    signOut: () => session.signOut(),
     changeAccount: () => {
-      subject = "account-b";
-      session.signOut();
+      void session.signOut();
+      vi.mocked(federated.service.signIn).mockImplementation(async () => {
+        federated.publish({
+          status: "signed-in",
+          revision: "user:b",
+          email: "account-b",
+        });
+        return federated.service.snapshot();
+      });
     },
   };
 }
@@ -190,4 +203,14 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
   expect(
     screen.getByRole("button", { name: "Save instructions" }),
   ).toBeEnabled();
+});
+it("links to the signed-in NIP-FI origin and hides the link without one", async () => {
+  const h = fixture();
+  render(<h.Tab agent={agent()} save={vi.fn()} />);
+  expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
+    "href",
+    "https://builderlab.example",
+  );
+  await act(async () => h.signOut());
+  expect(screen.queryByRole("link", { name: "Builderlab" })).toBeNull();
 });
