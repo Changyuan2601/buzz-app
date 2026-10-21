@@ -247,6 +247,11 @@ type Runner = {
   /** Watched events whose channel roster is not confirmed yet, by id: they are
    * matched again once it is (see `RunnerHost.member`). */
   readonly held: Map<string, { event: RelayEvent; channelId?: string }>;
+  /** Notes plugins left for its next turn, grouped by channel and targeted root. */
+  readonly notes: Map<
+    string,
+    readonly { text: string; root: string | undefined }[]
+  >;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
@@ -546,6 +551,17 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
   }
+  /** Leaves `text` for the agent's next turn in this conversation, while this copy
+   * runs it. */
+  note(pubkey: string, channelId: string, text: string, root?: string) {
+    const runner = this.runners.get(pubkey);
+    if (!runner || !this.runs(pubkey)) return false;
+    runner.notes.set(channelId, [
+      ...(runner.notes.get(channelId) ?? []),
+      { text, root },
+    ]);
+    return true;
+  }
   /** The agent's handle outside any run, while this copy runs it with a
    * type of `pluginId`, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
@@ -659,6 +675,7 @@ export class AgentRunners {
       typing: new Map(),
       transitioning: false,
       held: new Map(),
+      notes: new Map(),
       mayHold: true,
       epoch: 0,
       classifying: 0,
@@ -2097,6 +2114,27 @@ export class AgentRunners {
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
+      notes: (channelId: string, root?: string) => {
+        const pending = runner.notes.get(channelId) ?? [];
+        const matches = (note: { root: string | undefined }) =>
+          root === undefined || note.root === root;
+        const notes = pending.filter(matches);
+        const kept = pending.filter((note) => !matches(note));
+        if (kept.length) runner.notes.set(channelId, kept);
+        else runner.notes.delete(channelId);
+        return notes.map((note) => note.text);
+      },
+      restoreNotes: (
+        channelId: string,
+        notes: readonly string[],
+        root?: string,
+      ) => {
+        if (notes.length)
+          runner.notes.set(channelId, [
+            ...notes.map((text) => ({ text, root })),
+            ...(runner.notes.get(channelId) ?? []),
+          ]);
+      },
       attention: this.attention(agent.pubkey),
     });
   }

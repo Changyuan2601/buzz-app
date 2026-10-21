@@ -1102,6 +1102,33 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
   }
 });
 
+// Browser-only: opening the inspector must retain the catalog's actual scrollport.
+test("plugin details preserves the catalog scroll position on open and close", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const catalog = settingsDialog(page).locator(".buzz-settings-page");
+  const trigger = button(page, "View Usage details");
+  await trigger.scrollIntoViewIfNeeded();
+  const before = await catalog.evaluate((element) => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+  await trigger.click();
+  const close = button(page, "Close plugin details");
+  await expect(close).toBeFocused();
+  await expect
+    .poll(() => catalog.evaluate((element) => element.scrollTop))
+    .toBe(before);
+  await close.click();
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => catalog.evaluate((element) => element.scrollTop))
+    .toBe(before);
+  await expect(button(page, "More actions for Usage")).toHaveCount(0);
+});
+
 // Real shell + shared presentation + browser storage across reload. State/error
 // permutations stay in the communities and Local settings component tests.
 test("Local settings saves a device name without changing the community identity", async ({

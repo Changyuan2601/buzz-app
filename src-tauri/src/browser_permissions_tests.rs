@@ -115,6 +115,8 @@ fn native_command_permissions_isolate_webviews() {
         "media_stream_base",
         "get_os_idle_seconds",
         "plugin_import_folder",
+        "plugin_update_check",
+        "plugin_update_preview",
         "plugin_import_git",
         "plugin_import_install",
         "plugin_import_discard",

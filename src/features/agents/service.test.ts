@@ -1747,6 +1747,57 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   expect(plugin.agents.handle(bot)).toBeUndefined();
 });
 
+it("leaves a plugin's note for an agent's next turn in a channel, once, while this copy runs it", async () => {
+  const { service, ctx, run, emit } = await setup();
+  expect(ctx.agents.note(bot, channel, "early")).toBe(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(ctx.agents.note(bot, channel, "(I interrupted your reply)")).toBe(
+      true,
+    ),
+  );
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  expect(agent?.notes?.("elsewhere")).toEqual([]);
+  expect(agent?.notes?.(channel)).toEqual(["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([]);
+  // A turn that never began puts its notes back ahead of newer ones.
+  ctx.agents.note(bot, channel, "(newer)");
+  agent?.restoreNotes?.(channel, ["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([
+    "(I interrupted your reply)",
+    "(newer)",
+  ]);
+});
+
+it("isolates thread notes and restores them to the same conversation", async () => {
+  const { service, ctx, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(ctx.agents.note(bot, channel, "channel")).toBe(true),
+  );
+  const first = "a".repeat(64);
+  const second = "b".repeat(64);
+  ctx.agents.note(bot, channel, "first", first);
+  ctx.agents.note(bot, channel, "second", second);
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  expect(agent?.notes?.(channel, second)).toEqual(["second"]);
+  expect(agent?.notes?.(channel, second)).toEqual([]);
+  expect(agent?.notes?.(channel, first)).toEqual(["first"]);
+  ctx.agents.note(bot, channel, "newer first", first);
+  agent?.restoreNotes?.(channel, ["first"], first);
+  expect(agent?.notes?.(channel, second)).toEqual([]);
+  expect(agent?.notes?.(channel, first)).toEqual(["first", "newer first"]);
+  expect(agent?.notes?.(channel)).toEqual(["channel"]);
+  // A channel-scoped session consumes notes for any thread in its channel.
+  ctx.agents.note(bot, channel, "first again", first);
+  ctx.agents.note(bot, channel, "second again", second);
+  expect(agent?.notes?.(channel)).toEqual(["first again", "second again"]);
+});
+
 it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
   const { service, plugin, ctx, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

@@ -29,6 +29,8 @@ import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+/** The channel types a channel list can ask for, as NIP-CL names them. */
+const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const tool = (
   name: string,
   description: string,
@@ -128,10 +130,20 @@ export const TOOLS: readonly Tool[] = [
       },
     },
   ),
-  tool("channels", "Channels you are in; with all, every one you can see.", {
-    q: str,
-    all: { type: "boolean" },
-  }),
+  tool(
+    "channels",
+    "Channels you are in; with all, every one you can see. types lists only channels of those types; system channels are listed only when types has system.",
+    {
+      q: str,
+      all: { type: "boolean" },
+      types: {
+        type: "array",
+        items: { type: "string", enum: CHANNEL_TYPES },
+        minItems: 1,
+        uniqueItems: true,
+      },
+    },
+  ),
   tool(
     "channel",
     "Channel details (default: current), or an action on it. create may use your owner's template, by name. delete is permanent.",
@@ -152,7 +164,12 @@ export const TOOLS: readonly Tool[] = [
       name: str,
       about: str,
       visibility: { type: "string", enum: ["open", "private"] },
-      type: { type: "string", enum: ["stream", "forum"] },
+      type: {
+        type: "string",
+        enum: ["stream", "forum", "system"],
+        description:
+          "system: left out of ordinary channel lists. An open one is still found by anyone who lists system channels.",
+      },
       ttl: {
         type: "integer",
         description: "Seconds without a message before it archives; 0: never.",
@@ -584,14 +601,34 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async channels(tools, args) {
     const { client } = tools;
     const ids = new Set<string>();
-    const membershipsComplete = await tools.scan(
-      { kinds: [39002], "#p": [client.pubkey] },
-      (event) => {
-        const id = tag(event, "d");
-        if (id) ids.add(id);
-        return true;
-      },
-    );
+    // Each channel-state event carries its type in its first `t` tag. The
+    // relay leaves system channels out unless `#t` asks for them.
+    const types = args.types === undefined ? undefined : list(args.types);
+    if (
+      types &&
+      (!Array.isArray(args.types) ||
+        !types.length ||
+        types.length !== args.types.length ||
+        types.some((type) => !CHANNEL_TYPES.includes(type)))
+    )
+      throw new Error(`types must list some of ${CHANNEL_TYPES.join(", ")}.`);
+    const scope = types ? { "#t": [...new Set(types)] } : {};
+    // Membership must not depend on the type tag: a roster signed before
+    // NIP-CL has none. So the type filter applies to the channel read only,
+    // and the membership read uses `#t` only to opt in to system channels.
+    const member = (event: BuzzEvent) => {
+      const id = tag(event, "d");
+      if (id) ids.add(id);
+      return true;
+    };
+    const memberships = { kinds: [39002], "#p": [client.pubkey] };
+    let membershipsComplete = true;
+    if (!types || types.some((type) => type !== "system"))
+      membershipsComplete = await tools.scan(memberships, member);
+    if (types?.includes("system"))
+      membershipsComplete =
+        (await tools.scan({ ...memberships, "#t": ["system"] }, member)) &&
+        membershipsComplete;
     const all = args.all === true;
     const q = text(args.q)?.toLowerCase();
     const rows: string[] = [];
@@ -602,7 +639,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       !ids.size && !all
         ? true
         : await tools.scan(
-            all ? { kinds: [39000] } : { kinds: [39000], "#d": [...ids] },
+            all
+              ? { kinds: [39000], ...scope }
+              : { kinds: [39000], "#d": [...ids], ...scope },
             (event) => {
               const id = tag(event, "d") ?? "";
               const flags = [
@@ -1245,8 +1284,8 @@ class Tools {
     if (args.visibility !== "open" && args.visibility !== "private")
       throw new Error("visibility must be open or private.");
     const type = args.type ?? "stream";
-    if (type !== "stream" && type !== "forum")
-      throw new Error("type must be stream or forum.");
+    if (type !== "stream" && type !== "forum" && type !== "system")
+      throw new Error("type must be stream, forum or system.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined

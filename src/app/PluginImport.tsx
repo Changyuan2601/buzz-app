@@ -4,24 +4,27 @@ import { Input } from "../shared/design-system/ui/Input";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
-import { Accordion } from "../shared/design-system/ui/Accordion";
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { readPluginFolder } from "./plugin-folder-drop";
 import styles from "./PluginImport.module.css";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
-  FolderOpenIcon,
-  GlobeIcon,
-  PlugIcon,
-  TerminalWindowIcon,
-  MonitorIcon,
-} from "../shared/design-system/icons/index";
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { FolderOpenIcon } from "../shared/design-system/icons/index";
+import { PluginAccessReview } from "./PluginAccessReview";
 import type { PluginManager } from "../plugins/manager";
-import type { Catalog, ImportPreview } from "../plugins/types";
-import type { PluginManifest } from "../plugins/api";
+import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 
-function importLocation(preview: ImportPreview, path: string | undefined) {
+function importLocation(
+  preview: Pick<ImportPreview, "source" | "commit">,
+  path: string | undefined,
+) {
   if (!path || path === ".") return preview.source;
   if (preview.commit) return `${preview.source} · ${path}`;
   const windows = /^(?:[a-z]:\\|\\\\)/i.test(preview.source);
@@ -30,141 +33,34 @@ function importLocation(preview: ImportPreview, path: string | undefined) {
   return `${source}${separator}${path.replaceAll("/", separator)}`;
 }
 
-function ProgramDetails({
-  program,
-  args,
-}: {
-  program: string;
-  args: readonly string[];
-}) {
-  return (
-    <>
-      <p className="mb-2 mt-1">
-        Program: <code>{program}</code>
-      </p>
-      <p className="mb-1 mt-0">Arguments{args.length ? ":" : ": none"}</p>
-      {args.length > 0 && (
-        <ol className="m-0 list-decimal space-y-2 pl-6">
-          {args.map((argument, index) => (
-            <li
-              // biome-ignore lint/suspicious/noArrayIndexKey: Argument position is its identity; repeated values are valid.
-              key={index}
-              aria-label={`Argument ${index + 1}`}
-            >
-              <pre className="m-0 whitespace-pre-wrap break-words">
-                <code>{argument}</code>
-              </pre>
-            </li>
-          ))}
-        </ol>
-      )}
-    </>
-  );
-}
-
-function hostDeclarations(manifest: PluginManifest) {
-  return [
-    ...(manifest.host?.commands ?? []).map((command) => ({
-      signature: `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
-      title: `Command ${command.id}:`,
-      label: `Run ${command.program}`,
-      hint: "Run a program on your computer.",
-      icon: TerminalWindowIcon,
-      details: (
-        <>
-          <ProgramDetails program={command.program} args={command.args} />
-          <p className="mb-0 mt-2">
-            Input:{" "}
-            {command.maxInputBytes === undefined
-              ? "none"
-              : `up to ${command.maxInputBytes} bytes`}
-          </p>
-          <p className="m-0">
-            Output: up to {command.maxOutputBytes ?? 4096} bytes
-          </p>
-        </>
-      ),
-    })),
-    ...(manifest.host?.networkOrigins ?? []).map((origin) => ({
-      signature: `HTTPS origin: ${origin}`,
-      title: "HTTPS origin:",
-      name: `HTTPS origin ${origin}`,
-      label: `Connect to ${origin}`,
-      hint: "Buzz can make HTTPS requests to this address for the plugin.",
-      icon: GlobeIcon,
-      details: <code className="break-words">{origin}</code>,
-    })),
-    ...(manifest.host?.processes ?? []).map((process) => ({
-      signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,
-      title: `Process ${process.id}:`,
-      label: `Start ${process.program}`,
-      hint: "Can start a background process with additional arguments, using your account’s full access.",
-      icon: TerminalWindowIcon,
-      details: (
-        <>
-          <ProgramDetails program={process.program} args={process.args ?? []} />
-          {process.bundled && <p className="mb-0 mt-2">Bundled with Buzz.</p>}
-          <p className="mb-0 mt-2">
-            Allows further arguments and standard input, with your account’s
-            full access.
-          </p>
-        </>
-      ),
-    })),
-    ...(manifest.host?.mcp
-      ? [
-          {
-            signature:
-              "MCP servers: tools served to local agents over loopback HTTP",
-            title: "MCP servers:",
-            label: "Provide tools to local agents",
-            hint: "Exposes plugin tools through Buzz’s local MCP server.",
-            icon: PlugIcon,
-            details: (
-              <p className="m-0">
-                Tools served to local agents over loopback HTTP.
-              </p>
-            ),
-          },
-        ]
-      : []),
-    ...(manifest.host?.files
-      ? [
-          {
-            signature:
-              "Files: read any file and resolve folders · full user access",
-            title: "Files:",
-            label: "Read your files",
-            hint: "Can read any file your account can, and create folders it resolves.",
-            icon: FolderOpenIcon,
-            details: (
-              <p className="m-0">
-                Reads files and resolves folders with your account’s full
-                access.
-              </p>
-            ),
-          },
-        ]
-      : []),
-  ];
-}
-
 export function PluginImport({
+  initialUpdateAvailable = false,
   plugins,
   catalog,
   busy,
   authorizeGit,
   actionTarget,
+  statusTarget,
   updateId,
   onClosed,
+  onOpenInstalled,
+  onUpdateAvailableChange,
+  reviewRequested = false,
+  onReviewHandled,
   returnFocus,
 }: {
+  initialUpdateAvailable?: boolean;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
   actionTarget?: HTMLElement | null;
+  statusTarget?: HTMLElement | null;
   updateId?: string;
   onClosed?: () => void;
+  onOpenInstalled?: (id: string) => void;
+  onUpdateAvailableChange?: (available: boolean) => void;
+  reviewRequested?: boolean;
+  onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
@@ -172,16 +68,38 @@ export function PluginImport({
   ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
-  const [open, setOpen] = useState(!!updateId);
+  const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [repository, setRepository] = useState("");
-  const [reference, setReference] = useState("");
+  const checkAgain = useRef<HTMLButtonElement>(null);
+  const currentPlugin = catalog.plugins.find(
+    (item) => item.manifest.id === updateId,
+  );
+  const savedSource = currentPlugin?.updateSource;
+  const [repository, setRepository] = useState(
+    savedSource && "repository" in savedSource ? savedSource.repository : "",
+  );
+  const [reference, setReference] = useState(
+    savedSource && "reference" in savedSource ? savedSource.reference : "",
+  );
+  // Snapshot at review entry: our own install catalog refresh must not turn a
+  // new install into an update while its enable operation is still pending.
+  const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
-  const [discarding, setDiscarding] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [checkedRevision, setCheckedRevision] = useState<string>();
+  const [checking, setChecking] = useState(false);
+  const checkPending = useRef(false);
+
+  const [discarding, setDiscarding] = useState(false);
   const [selected, setSelected] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const unchangedTrigger = useRef<HTMLButtonElement>(null);
+  const unchangedBack = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    (showUnchanged ? unchangedBack.current : unchangedTrigger.current)?.focus();
+  }, [showUnchanged]);
   const previewRegion = useRef<HTMLElement>(null);
   const [error, setError] = useState<string | null>(null);
   const browse = useRef<HTMLButtonElement>(null);
@@ -198,13 +116,19 @@ export function PluginImport({
             '[role="radio"][aria-checked="true"], input[type="radio"]:checked',
           )
         : null;
-      (checked ?? previewBack.current)?.focus();
+      (
+        checked ?? (updateId ? installButton.current : previewBack.current)
+      )?.focus();
     } else if (sourceTrigger.current) {
-      if (sourceTrigger.current === document.body) browse.current?.focus();
+      if (
+        sourceTrigger.current === document.body ||
+        !sourceTrigger.current.isConnected
+      )
+        browse.current?.focus();
       else sourceTrigger.current.focus();
       sourceTrigger.current = null;
     }
-  }, [open, preview, loading, discarding, reviewing]);
+  }, [open, preview, loading, discarding, reviewing, updateId]);
   const errorTrigger = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (busy || loading || discarding) return;
@@ -229,14 +153,116 @@ export function PluginImport({
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
+  async function checkSource(operation: () => Promise<string>) {
+    if (checkPending.current) return;
+    checkPending.current = true;
+    const current = lifetime.current;
+    setChecking(true);
+    try {
+      const revision = await operation();
+      if (current.active) {
+        setCheckedRevision(revision);
+        setError(null);
+      }
+    } catch (reason) {
+      if (current.active) setError(String(reason));
+    } finally {
+      checkPending.current = false;
+      if (current.active) setChecking(false);
+    }
+  }
+  const startSavedFolder = useEffectEvent(() => {
+    if (
+      imports &&
+      savedSource &&
+      "root" in savedSource &&
+      updateId &&
+      !open &&
+      !busy &&
+      document.visibilityState !== "hidden"
+    )
+      void checkSource(() => imports.checkFolder(updateId));
+  });
   useEffect(() => {
     const current = { active: true, token: "" };
     lifetime.current = current;
+    // Defer until effects settle so Strict Mode's retired mount never acquires.
+    queueMicrotask(() => {
+      if (current.active) startSavedFolder();
+    });
     return () => {
       current.active = false;
       if (current.token) void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
+
+  const localFolder = !!savedSource && "root" in savedSource;
+  useEffect(() => {
+    if (!localFolder) return;
+    const timer = setInterval(() => startSavedFolder(), 5_000);
+    const resume = () => startSavedFolder();
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("focus", resume);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("focus", resume);
+    };
+  }, [localFolder]);
+
+  const candidate = preview?.candidates.find((p) => p.path === selected);
+  const updating = !!existing;
+  const duplicate = updating && !updateId;
+  const upToDate =
+    // An identical package can still establish a missing source. Native keeps
+    // its enabled state and existing rollback target for the same revision.
+    !(updateId && !savedSource) &&
+    !!existing &&
+    candidate?.revision ===
+      (updateId
+        ? catalog.plugins.find((item) => item.manifest.id === updateId)
+            ?.revision
+        : existing.revision);
+  const updateAvailable =
+    !error &&
+    (preview
+      ? !upToDate
+      : checkedRevision !== undefined
+        ? checkedRevision !== currentPlugin?.revision
+        : initialUpdateAvailable);
+  const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
+    onUpdateAvailableChange?.(available),
+  );
+  useEffect(() => {
+    if (error || preview || checkedRevision !== undefined)
+      notifyUpdateAvailable(updateAvailable);
+  }, [updateAvailable, checkedRevision, preview, error]);
+  useEffect(() => {
+    if (!reviewRequested || loading) return;
+    if (error) {
+      onReviewHandled?.();
+      return;
+    }
+    if (!preview) return;
+    setOpen(true);
+    onReviewHandled?.();
+  }, [reviewRequested, loading, preview, error, onReviewHandled]);
+
+  const startRequestedReview = useEffectEvent(() => {
+    if (!savedSource) {
+      setOpen(true);
+      onReviewHandled?.();
+      return;
+    }
+    if (!preview && !pending.current) prepareReview();
+  });
+  useEffect(() => {
+    if (!reviewRequested) return;
+    const current = lifetime.current;
+    queueMicrotask(() => {
+      if (current.active) startRequestedReview();
+    });
+  }, [reviewRequested]);
 
   const blocked = busy || loading || discarding;
   if (!imports) return null;
@@ -248,17 +274,22 @@ export function PluginImport({
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
-    setError(null);
+    if (!savedSource) setError(null);
     setPreview(null);
+    setShowUnchanged(false);
     setEnableOnInstall(true);
     try {
       const result = await operation();
+      if (!result && updateId && savedSource)
+        throw new Error("No update source found. Try again.");
       const next =
         result && updateId
           ? {
               ...result,
               candidates: result.candidates.filter(
-                (item) => item.manifest.id === updateId,
+                (item) =>
+                  item.manifest.id === updateId &&
+                  (!savedSource || item.path === savedSource.path),
               ),
             }
           : result;
@@ -271,13 +302,33 @@ export function PluginImport({
         if (!next.candidates.length) {
           await imports?.discard(next.token);
           current.token = "";
+          const prefix =
+            savedSource?.path === "."
+              ? "Selected folder:"
+              : `${savedSource?.path}:`;
+          const warning = next.warnings.find((warning) =>
+            warning.startsWith(prefix),
+          );
           throw new Error(
-            "This source does not contain the selected plugin. Choose its built folder or repository.",
+            warning ??
+              (savedSource
+                ? "The saved folder or repository no longer contains this plugin at its installed path."
+                : "This source does not contain the installed plugin. Choose a source with the same plugin ID."),
           );
         }
       }
+      setError(null);
+      if (updateId && next?.candidates.length === 1)
+        setCheckedRevision(next.candidates[0]?.revision);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
+      setExisting(
+        next?.candidates.length === 1
+          ? catalog.plugins.find(
+              (item) => item.manifest.id === next.candidates[0]?.manifest.id,
+            )
+          : undefined,
+      );
       setSelected(
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
@@ -285,7 +336,9 @@ export function PluginImport({
       if (current.active) showError(reason, returnTo);
     } finally {
       pending.current = false;
-      if (current.active) setLoading(false);
+      if (current.active) {
+        setLoading(false);
+      }
     }
   }
   async function dismiss() {
@@ -296,6 +349,7 @@ export function PluginImport({
       await imports?.discard(preview.token);
       lifetime.current.token = "";
       setPreview(null);
+      setShowUnchanged(false);
     } catch (reason) {
       showError(reason, previewBack.current);
     } finally {
@@ -304,7 +358,7 @@ export function PluginImport({
     }
   }
   async function close() {
-    if (blocked || pending.current) return;
+    if (blocked || pending.current) return false;
     const returnTo = document.activeElement;
     pending.current = true;
     setDiscarding(true);
@@ -316,75 +370,70 @@ export function PluginImport({
       errorTrigger.current = null;
       setError(null);
       setDragging(false);
+      setShowUnchanged(false);
       setOpen(false);
       onClosed?.();
+      return true;
     } catch (reason) {
       showError(reason, returnTo);
+      return false;
     } finally {
       pending.current = false;
       setDiscarding(false);
     }
   }
-  const candidate = preview?.candidates.find((p) => p.path === selected);
-  const existing = catalog.plugins.find(
-    (p) => p.manifest.id === candidate?.manifest.id,
-  );
-  const rollbackNotice =
+  const rollbackWarning =
     candidate?.publisher && existing && !existing.hasSignature
       ? "You cannot roll back to the unsigned revision after this update."
       : candidate?.revision === existing?.revision &&
           existing?.rollbackBlockedReason
         ? `${existing.rollbackBlockedReason}.`
-        : existing?.previous || existing?.revision !== candidate?.revision
-          ? "You can still roll back."
-          : "There is no earlier revision to roll back to.";
-  const declaredDetails = candidate ? hostDeclarations(candidate.manifest) : [];
-  const previousDetails = existing ? hostDeclarations(existing.manifest) : [];
-  const declaredGrants = declaredDetails.map((grant) => grant.signature);
-  const previousGrants = previousDetails.map((grant) => grant.signature);
-  const removedDetails = previousDetails.filter(
-    (grant) => !declaredGrants.includes(grant.signature),
-  );
-  function scopeItem(
-    grant: ReturnType<typeof hostDeclarations>[number],
-    removed = false,
-  ) {
-    const changed =
-      !!updateId &&
-      !!existing &&
-      !removed &&
-      !previousGrants.includes(grant.signature);
-    const Icon = grant.icon;
-    return {
-      value: grant.signature,
-      title: (
-        <span className="flex items-start gap-3 text-left text-body-sm break-words">
-          <Icon size={20} aria-hidden="true" className="shrink-0 text-muted" />
-          <span className="min-w-0">
-            <span className="block font-medium">
-              {removed ? "Removed: " : ""}
-              {grant.label}
-              {changed ? " (new or changed)" : ""}
-            </span>
-            <span className="block text-muted">{grant.hint}</span>
-          </span>
-        </span>
-      ),
-      content: (
-        <section
-          aria-label={`${removed ? "Removed " : ""}${"name" in grant ? grant.name : grant.title.slice(0, -1)} details`}
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Scroll owner supports keyboard access to long command details.
-          tabIndex={0}
-          className={styles.technicalDetails}
-        >
-          <p className="m-0 font-medium">
-            {grant.title}
-            {changed ? " (new or changed)" : ""}
-          </p>
-          {grant.details}
-        </section>
-      ),
+        : null;
+  function prepareReview() {
+    if (!imports) return;
+    setOpen(true);
+    if (savedSource && "root" in savedSource && updateId) {
+      void load(() => imports.previewFolder(updateId));
+      return;
+    }
+    checkSavedGit(false);
+  }
+  function checkSavedGit(checkOnly = true) {
+    const source = savedSource;
+    if (!imports || !source || !("repository" in source)) return;
+    const acquire = async () => {
+      if (!checkOnly && lifetime.current.token) {
+        await imports.discard(lifetime.current.token);
+        lifetime.current.token = "";
+      }
+      const signed = await authorizeGit?.(source.repository);
+      return (checkOnly ? imports.checkGit : imports.git)(
+        signed?.repository ?? source.repository,
+        source.reference,
+        signed?.token,
+      );
     };
+    if (!checkOnly) {
+      void load(acquire);
+      return;
+    }
+    void checkSource(async () => {
+      const result = await acquire();
+      if (!result) throw new Error("No update source found");
+      const candidate = result.candidates.find(
+        (item) => item.manifest.id === updateId && item.path === source.path,
+      );
+      if (!candidate)
+        throw new Error(
+          result.warnings.find((warning) =>
+            warning.startsWith(
+              `${source.path === "." ? "Selected folder" : source.path}:`,
+            ),
+          ) ??
+            "The saved repository no longer contains this plugin at its installed path.",
+        );
+      return candidate.revision;
+    });
   }
   const addButton = (
     <Button
@@ -396,49 +445,164 @@ export function PluginImport({
           : undefined
       }
       disabled={blocked}
-      onClick={() => setOpen(true)}
+      loading={discarding && !open}
+      onClick={async () => {
+        if (blocked || pending.current) return;
+        pending.current = true;
+        setDiscarding(true);
+        try {
+          setOpen(true);
+        } catch (reason) {
+          showError(reason, trigger.current);
+          setOpen(true);
+        } finally {
+          pending.current = false;
+          setDiscarding(false);
+        }
+      }}
     >
       {updateId ? "Update" : "Add"}
     </Button>
+  );
+  const updateActions = (
+    <>
+      {!savedSource && !preview && addButton}
+      {savedSource &&
+        "repository" in savedSource &&
+        !(preview && !error && !upToDate) && (
+          <Button
+            ref={checkAgain}
+            variant="subtle"
+            size="sm"
+            disabled={blocked || checking}
+            onClick={() => checkSavedGit()}
+          >
+            Check for updates
+          </Button>
+        )}
+      {updateAvailable && (
+        <Button
+          ref={trigger}
+          variant="prominent"
+          size="sm"
+          disabled={blocked || checking}
+          onClick={() => {
+            prepareReview();
+          }}
+        >
+          Update
+        </Button>
+      )}
+    </>
   );
   return (
     <>
       {!updateId &&
         (actionTarget ? createPortal(addButton, actionTarget) : addButton)}
+      {updateId && (
+        <section aria-label="Plugin updates" className="text-body-sm">
+          <h3 className={`${styles.sourceHeading} text-caption`}>
+            {savedSource && "repository" in savedSource
+              ? "Source repository"
+              : "Source folder"}
+          </h3>
+          {savedSource ? (
+            <code className={styles.sourcePath}>
+              {"root" in savedSource
+                ? importLocation(
+                    { source: savedSource.root, commit: null },
+                    savedSource.path,
+                  )
+                : `${savedSource.repository} · ${savedSource.reference || "Repository default"} · ${savedSource.path}`}
+            </code>
+          ) : (
+            <p className="m-0 text-muted">
+              No saved source. Choose a folder or repository to update this
+              plugin.
+            </p>
+          )}
+          <LoadingRegion
+            pending={checking || (loading && !open)}
+            label="Checking for updates…"
+          >
+            {null}
+          </LoadingRegion>
+          {error && !open ? (
+            <p role="alert">
+              Source{" "}
+              {savedSource && "repository" in savedSource
+                ? "repository"
+                : "folder"}{" "}
+              unavailable. {error}
+            </p>
+          ) : null}
+          {(preview || checkedRevision !== undefined) &&
+          !open &&
+          !error &&
+          !updateAvailable ? (
+            statusTarget ? (
+              createPortal(<span role="status">Up to date</span>, statusTarget)
+            ) : (
+              <p role="status">Up to date</p>
+            )
+          ) : null}
+          {actionTarget
+            ? createPortal(updateActions, actionTarget)
+            : updateActions}
+        </section>
+      )}
       <Dialog
         open={open}
         onOpenChange={(next) => {
           if (!next) void close();
         }}
         title={
-          error || !preview
-            ? updateId
-              ? "Update plugin"
-              : "Add a plugin"
-            : reviewing
-              ? "Review plugin access"
-              : preview.candidates.length
-                ? "Choose a plugin"
-                : "No plugins found"
+          showUnchanged
+            ? "Unchanged declarations"
+            : error || !preview
+              ? updateId
+                ? "Update plugin"
+                : "Add a plugin"
+              : reviewing
+                ? duplicate
+                  ? "Already installed"
+                  : existing
+                    ? `Update ${existing.manifest.name}`
+                    : "Review plugin access"
+                : preview.candidates.length
+                  ? "Choose a plugin"
+                  : "No plugins found"
         }
         description={
-          error
+          error || showUnchanged
             ? undefined
             : preview
               ? reviewing
-                ? "Only install code you trust."
+                ? updating
+                  ? undefined
+                  : "Only install code you trust."
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
               : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error ? "compact" : "wide"}
+        size={error || (reviewing && updating) ? "compact" : "wide"}
         leadingActions={
+          !error &&
+          !showUnchanged &&
           reviewing &&
+          updateId &&
           candidate &&
-          !updateId &&
-          (!existing || loading) &&
-          !error ? (
+          currentPlugin?.source === "external" &&
+          !currentPlugin.enabled ? (
+            <p className="m-0 text-body-sm text-muted">
+              This plugin will stay disabled.
+            </p>
+          ) : reviewing &&
+            candidate &&
+            !updateId &&
+            (!existing || loading) &&
+            !error ? (
             <Switch
               label="Enable plugin"
               checked={enableOnInstall}
@@ -452,199 +616,263 @@ export function PluginImport({
             <Button
               ref={errorBack}
               type="button"
-              disabled={blocked}
-              onClick={() => setError(null)}
+              disabled={busy || discarding}
+              loading={loading}
+              onClick={() => {
+                if (!preview && savedSource) prepareReview();
+                else setError(null);
+              }}
             >
+              {!preview && savedSource ? "Try again" : "Back"}
+            </Button>
+          ) : showUnchanged ? (
+            <Button ref={unchangedBack} onClick={() => setShowUnchanged(false)}>
               Back
             </Button>
           ) : preview ? (
             <>
-              <Button
-                ref={previewBack}
-                type="button"
-                disabled={blocked}
-                onClick={() => {
-                  if (reviewing && preview.candidates.length > 1) {
-                    setReviewing(false);
-                  } else void dismiss();
-                }}
-              >
-                Back
-              </Button>
+              {!(reviewing && updating) && (
+                <Button
+                  ref={previewBack}
+                  type="button"
+                  disabled={blocked}
+                  onClick={() => {
+                    if (
+                      reviewing &&
+                      preview.candidates.length > 1 &&
+                      !(savedSource && "root" in savedSource)
+                    ) {
+                      setReviewing(false);
+                    } else void dismiss();
+                  }}
+                >
+                  Back
+                </Button>
+              )}
+              {reviewing && duplicate && onOpenInstalled && (
+                <Button
+                  variant="prominent"
+                  disabled={blocked}
+                  onClick={async () => {
+                    const id = existing.manifest.id;
+                    if (await close()) onOpenInstalled(id);
+                  }}
+                >
+                  Open in Buzz
+                </Button>
+              )}
+              {reviewing && (duplicate ? !onOpenInstalled : upToDate) && (
+                <Button disabled={blocked} onClick={() => void close()}>
+                  Done
+                </Button>
+              )}
               {!reviewing && preview.candidates.length > 1 && (
                 <Button
                   variant="prominent"
                   type="button"
                   disabled={blocked || !candidate}
-                  onClick={() => setReviewing(true)}
+                  onClick={() => {
+                    setExisting(
+                      catalog.plugins.find(
+                        (item) => item.manifest.id === candidate?.manifest.id,
+                      ),
+                    );
+                    setReviewing(true);
+                  }}
                 >
                   Continue
                 </Button>
               )}
-              {reviewing && candidate && (
-                <Button
-                  ref={installButton}
-                  variant="prominent"
-                  type="button"
-                  disabled={blocked || (!!existing && !updateId)}
-                  onClick={async () => {
-                    if (blocked || pending.current) return;
-                    const current = lifetime.current;
-                    pending.current = true;
-                    setLoading(true);
-                    setError(null);
-                    try {
-                      const success = await plugins.installImport(
-                        preview.token,
-                        candidate.path,
-                      );
-                      if (!current.active) return;
-                      if (!success) {
-                        showError(
-                          plugins.snapshot().error ??
-                            "Plugin installation wasn’t confirmed. Check the preview and try again.",
-                          installButton.current,
+              {reviewing &&
+                candidate &&
+                !upToDate &&
+                (!existing || !!updateId) && (
+                  <Button
+                    ref={installButton}
+                    variant="prominent"
+                    type="button"
+                    disabled={blocked || existing?.source === "bundled"}
+                    onClick={async () => {
+                      if (blocked || pending.current) return;
+                      const current = lifetime.current;
+                      pending.current = true;
+                      setLoading(true);
+                      setError(null);
+                      try {
+                        const success = await plugins.installImport(
+                          preview.token,
+                          candidate.path,
                         );
-                        return;
+                        if (!current.active) return;
+                        if (!success) {
+                          showError(
+                            plugins.snapshot().error ??
+                              "Plugin installation wasn’t confirmed. Check the preview and try again.",
+                            installButton.current,
+                          );
+                          return;
+                        }
+                        // Native keeps the prepared preview after install.
+                        current.token = "";
+                        await imports.discard(preview.token).catch(() => {});
+                        if (!existing && enableOnInstall)
+                          await plugins.change("enable", candidate.manifest.id);
+                        if (!current.active) return;
+                        if (!updateId) setPreview(null);
+                        else if (existing)
+                          setExisting({
+                            ...existing,
+                            revision: candidate.revision,
+                          });
+                        setOpen(false);
+                        onClosed?.();
+                      } finally {
+                        pending.current = false;
+                        if (current.active) setLoading(false);
                       }
-                      // Native keeps the prepared preview after install.
-                      current.token = "";
-                      void imports.discard(preview.token).catch(() => {});
-                      if (!existing && enableOnInstall)
-                        await plugins.change("enable", candidate.manifest.id);
-                      if (!current.active) return;
-                      setPreview(null);
-                      setOpen(false);
-                      onClosed?.();
-                    } finally {
-                      pending.current = false;
-                      if (current.active) setLoading(false);
-                    }
-                  }}
-                >
-                  {updateId ? "Update plugin" : "Install plugin"}
-                </Button>
-              )}
+                    }}
+                  >
+                    {updating ? "Update" : "Install plugin"}
+                  </Button>
+                )}
             </>
           ) : undefined
         }
+        onEscape={() => {
+          if (!showUnchanged) return false;
+          setShowUnchanged(false);
+          return true;
+        }}
         dismissOnOutsideClick
         preventClose={blocked}
-        finalFocus={() => returnFocus?.() ?? trigger.current}
+        finalFocus={() =>
+          returnFocus?.() ?? trigger.current ?? checkAgain.current
+        }
       >
         {error && (
           <p role="alert" className="error break-words">
             {error}
           </p>
         )}
-        <div hidden={!!error}>
-          <div hidden={!!preview}>
-            <div className={styles.columns}>
-              <section
-                aria-label="Add from folder"
-                className={styles.folder}
-                data-dragging={dragging || undefined}
-                onDragOver={(event) => {
-                  if (!event.dataTransfer.types.includes("Files")) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                  setDragging(!blocked);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setDragging(false);
-                  const items = Array.from(event.dataTransfer.items);
-                  const entry =
-                    items.length === 1 ? items[0]?.webkitGetAsEntry?.() : null;
-                  const current = lifetime.current;
-                  void load(async () => {
-                    if (!entry?.isDirectory)
-                      throw new Error("Drop one folder, or choose Browse.");
-                    const upload = await readPluginFolder(entry);
-                    if (!current.active) return null;
-                    const next = await imports.files(
-                      upload.source,
-                      upload.files,
-                    );
-                    return next
-                      ? {
-                          ...next,
-                          warnings: [...upload.warnings, ...next.warnings],
-                        }
-                      : null;
-                  });
-                }}
-              >
-                <FolderOpenIcon size={32} aria-hidden="true" />
-                <p className="m-0 text-body-sm">Drop a plugin folder here</p>
-                <Button
-                  size="sm"
-                  ref={browse}
-                  aria-label="Browse plugin folder"
-                  disabled={blocked}
-                  onClick={() => void load(imports.folder)}
-                >
-                  Browse
-                </Button>
-              </section>
-              <form
-                aria-label="Add from Git"
-                className={styles.git}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (repository.trim())
+        {showUnchanged && candidate && (
+          <PluginAccessReview
+            manifest={candidate.manifest}
+            previousManifest={existing?.manifest}
+            unchangedOnly
+          />
+        )}
+        <div hidden={!!error || showUnchanged}>
+          <div hidden={!!preview || (!!updateId && !!savedSource)}>
+            {(!updateId || !savedSource) && (
+              <div className={styles.columns}>
+                <section
+                  aria-label="Add from folder"
+                  className={styles.folder}
+                  data-dragging={dragging || undefined}
+                  onDragOver={(event) => {
+                    if (!event.dataTransfer.types.includes("Files")) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = blocked ? "none" : "copy";
+                    setDragging(!blocked);
+                  }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDragging(false);
+                    const items = Array.from(event.dataTransfer.items);
+                    const entry =
+                      items.length === 1
+                        ? items[0]?.webkitGetAsEntry?.()
+                        : null;
+                    const current = lifetime.current;
                     void load(async () => {
-                      const signed = await authorizeGit?.(repository);
-                      return signed
-                        ? imports.git(
-                            signed.repository,
-                            reference,
-                            signed.token,
-                          )
-                        : imports.git(repository, reference);
+                      if (!entry?.isDirectory)
+                        throw new Error("Drop one folder, or choose Browse.");
+                      const upload = await readPluginFolder(entry);
+                      if (!current.active) return null;
+                      const next = await imports.files(
+                        upload.source,
+                        upload.files,
+                      );
+                      return next
+                        ? {
+                            ...next,
+                            warnings: [...upload.warnings, ...next.warnings],
+                          }
+                        : null;
                     });
-                }}
-              >
-                <SettingsGroup layout="form">
-                  <Field label="Git or GitHub repository">
-                    <Input
-                      required
-                      value={repository}
-                      disabled={blocked}
-                      placeholder="https://github.com/owner/repository"
-                      onChange={(event) => setRepository(event.target.value)}
-                    />
-                  </Field>
-                  <Field label="Branch or tag (optional)">
-                    <Input
-                      value={reference}
-                      disabled={blocked}
-                      placeholder="Repository default"
-                      onChange={(event) => setReference(event.target.value)}
-                    />
-                  </Field>
-                  <p className="m-0 text-caption text-muted">
-                    HTTPS or SSH; GitHub owner/repository also works. SSH uses
-                    your agent and known hosts. Password prompts and credential
-                    helpers are not used. Buzz git repositories in this
-                    community sign in with your account.
-                  </p>
-                  <div className="justify-self-start">
-                    <Button
-                      type="submit"
-                      size="sm"
-                      aria-label="Find plugins"
-                      disabled={blocked || !repository.trim()}
-                    >
-                      Find
-                    </Button>
-                  </div>
-                </SettingsGroup>
-              </form>
-            </div>
+                  }}
+                >
+                  <FolderOpenIcon size={32} aria-hidden="true" />
+                  <p className="m-0 text-body-sm">Drop a plugin folder here</p>
+                  <Button
+                    size="sm"
+                    ref={browse}
+                    aria-label="Browse plugin folder"
+                    disabled={blocked}
+                    onClick={() => void load(() => imports.folder())}
+                  >
+                    Browse
+                  </Button>
+                </section>
+                <form
+                  aria-label="Add from Git"
+                  className={styles.git}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (repository.trim())
+                      void load(async () => {
+                        const signed = await authorizeGit?.(repository);
+                        return signed
+                          ? imports.git(
+                              signed.repository,
+                              reference,
+                              signed.token,
+                            )
+                          : imports.git(repository, reference);
+                      });
+                  }}
+                >
+                  <SettingsGroup layout="form">
+                    <Field label="Git or GitHub repository">
+                      <Input
+                        required
+                        value={repository}
+                        disabled={blocked}
+                        placeholder="https://github.com/owner/repository"
+                        onChange={(event) => setRepository(event.target.value)}
+                      />
+                    </Field>
+                    <Field label="Branch or tag (optional)">
+                      <Input
+                        value={reference}
+                        disabled={blocked}
+                        placeholder="Repository default"
+                        onChange={(event) => setReference(event.target.value)}
+                      />
+                    </Field>
+                    <p className="m-0 text-caption text-muted">
+                      HTTPS or SSH; GitHub owner/repository also works. SSH uses
+                      your agent and known hosts. Password prompts and
+                      credential helpers are not used. Buzz git repositories in
+                      this community sign in with your account.
+                    </p>
+                    <div className="justify-self-start">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        aria-label="Find plugins"
+                        disabled={blocked || !repository.trim()}
+                      >
+                        Find
+                      </Button>
+                    </div>
+                  </SettingsGroup>
+                </form>
+              </div>
+            )}
           </div>
           {loading && !preview && (
             <p role="status">
@@ -653,7 +881,7 @@ export function PluginImport({
           )}
           {loading && preview && (
             <p role="status">
-              {updateId ? "Updating plugin…" : "Installing plugin…"}
+              {updating ? "Updating plugin…" : "Installing plugin…"}
             </p>
           )}
           {preview && (
@@ -664,7 +892,10 @@ export function PluginImport({
                     <div className="min-w-0 text-body-sm">
                       {preview.candidates.length === 0 && (
                         <p className="m-0 break-all text-caption text-muted">
-                          Source: {preview.source}
+                          Source:{" "}
+                          <code className={styles.sourcePath}>
+                            {preview.source}
+                          </code>
                         </p>
                       )}
                       {preview.commit && (
@@ -699,8 +930,10 @@ export function PluginImport({
                           label={item.manifest.name}
                           description={
                             <span className="block break-all text-caption text-muted">
-                              {importLocation(preview, item.path)} ·{" "}
-                              {item.manifest.id}
+                              <code className={styles.sourcePath}>
+                                {importLocation(preview, item.path)}
+                              </code>{" "}
+                              · {item.manifest.id}
                             </span>
                           }
                         />
@@ -728,115 +961,51 @@ export function PluginImport({
                       </ul>
                     </section>
                   )}
+                {reviewing && updating && (
+                  <section
+                    aria-label="Update source"
+                    className="text-body-sm mb-4"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-muted">
+                        {preview.commit ? "Source" : "Source folder"}
+                      </span>
+                    </div>
+                    <code className={styles.sourcePath}>
+                      {importLocation(preview, candidate?.path)}
+                    </code>
+                  </section>
+                )}
+                {reviewing && updating && !updateId && (
+                  <p>
+                    This plugin is already installed. Open its details to manage
+                    it.
+                  </p>
+                )}
                 {reviewing &&
                   candidate &&
-                  (!existing || updateId || loading) && (
-                    <section
-                      aria-label="Computer access"
-                      className="text-body-sm"
-                    >
-                      <Accordion
-                        animate
-                        key={`computer-${selected}`}
-                        items={[
-                          {
-                            value: "computer-access",
-                            title: (
-                              <span className="flex items-start gap-3 text-left text-body-sm">
-                                <MonitorIcon
-                                  size={20}
-                                  className="shrink-0 text-muted"
-                                  aria-hidden="true"
-                                />
-                                <span>
-                                  <span className="block font-medium">
-                                    Computer access
-                                  </span>
-                                  <span className="block text-muted">
-                                    Can access files and run programs on your
-                                    computer.
-                                  </span>
-                                </span>
-                              </span>
-                            ),
-                            content: (
-                              <section
-                                aria-label="Plugin safety"
-                                className="max-w-prose pl-8 text-body"
-                              >
-                                <h4 className="mb-2 mt-0 text-label">
-                                  Access beyond this list
-                                </h4>
-                                <p className="m-0">
-                                  Plugins aren’t sandboxed. They can access your
-                                  computer beyond these declarations, even when
-                                  no additional capabilities are listed.
-                                </p>
-                                <p className="mb-0 mt-3 text-muted">
-                                  These declarations describe what the plugin
-                                  asks Buzz to do. They don’t limit what its
-                                  code can do.
-                                </p>
-                              </section>
-                            ),
-                          },
-                        ]}
-                      />
-                      {updateId &&
-                        existing &&
-                        (declaredGrants.some(
-                          (grant) => !previousGrants.includes(grant),
-                        ) ||
-                          previousGrants.some(
-                            (grant) => !declaredGrants.includes(grant),
-                          )) && (
-                          <p className="my-2">
-                            Computer access changes with this update. Expand a
-                            scope to review its exact declaration.
-                          </p>
-                        )}
-                      {declaredDetails.length ? (
-                        <section aria-label="Declared scopes">
-                          <Accordion
-                            animate
-                            key={selected}
-                            items={declaredDetails.map((grant) =>
-                              scopeItem(grant),
-                            )}
-                          />
-                        </section>
-                      ) : (
-                        <p className="m-0">
-                          No additional capabilities declared.
-                        </p>
-                      )}
-                      {updateId && removedDetails.length > 0 && (
-                        <section
-                          aria-label="Removed declarations"
-                          className="mt-4"
-                        >
-                          <p className="m-0 font-medium">Removed:</p>
-                          <Accordion
-                            animate
-                            items={removedDetails.map((grant) =>
-                              scopeItem(grant, true),
-                            )}
-                          />
-                        </section>
-                      )}
-                    </section>
+                  (existing?.source !== "bundled" || loading) &&
+                  (!existing || !!updateId) && (
+                    <PluginAccessReview
+                      manifest={candidate.manifest}
+                      previousManifest={existing?.manifest}
+                      unchangedTrigger={unchangedTrigger}
+                      onShowUnchanged={() => setShowUnchanged(true)}
+                    />
                   )}
-                {reviewing && existing && !updateId && !loading && (
+                {reviewing && existing?.source === "bundled" && !loading && (
                   <p className="m-0 text-body-sm">
-                    This plugin is already installed. Use Update from its row on
-                    the Plugins page.
+                    This plugin is included with Buzz. Update Buzz to get its
+                    latest version.
                   </p>
                 )}
-                {reviewing && candidate && existing && updateId && (
-                  <p className="m-0 text-body-sm">
-                    {`This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`}
-                  </p>
-                )}
+                {reviewing &&
+                  updateId &&
+                  candidate &&
+                  existing?.source === "external" &&
+                  rollbackWarning && (
+                    <p className="m-0 text-body-sm">{rollbackWarning}</p>
+                  )}
               </div>
             </section>
           )}

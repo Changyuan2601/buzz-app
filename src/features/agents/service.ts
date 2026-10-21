@@ -328,6 +328,16 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** Takes notes for this conversation, oldest first. A thread session passes
+   * its root; a channel session omits it and takes all notes in the channel. */
+  notes?(channelId: string, root?: string): readonly string[];
+  /** Puts back notes taken for a turn that never began, ahead of any left
+   * since, targeting the same conversation that took them. */
+  restoreNotes?(
+    channelId: string,
+    notes: readonly string[],
+    root?: string,
+  ): void;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -877,6 +887,14 @@ export type Agents = {
     pubkey: string,
     place: Readonly<{ channelId: string; threadRootId: string }>,
   ): Promise<boolean>;
+  /** Leaves private context for the agent's next turn in a conversation: text at
+   * the end of that turn's prompt that nobody else sees, such as what the
+   * owner did since its last turn. False unless this copy runs the agent,
+   * so the plugin can say it another way. Notes are not saved: one left
+   * when the app quits is gone. Pass a thread root for a thread conversation;
+   * omit it for a channel conversation, including Solo chats. Thread sessions
+   * never take notes addressed only to their channel. */
+  note(pubkey: string, channelId: string, text: string, root?: string): boolean;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -1504,6 +1522,9 @@ export class AgentsService extends Service implements Agents {
   handle(pubkey: string) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(pubkey, owner.id);
+  }
+  note(pubkey: string, channelId: string, text: string, root?: string) {
+    return this.runners.note(pubkey, channelId, text, root);
   }
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");

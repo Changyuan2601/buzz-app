@@ -120,6 +120,16 @@ typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
 and shows no activity row or Stop.
 
+A plugin leaves context for a later turn with
+`ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
+or publishing a message. Pass the thread root for a thread conversation.
+Channel-scoped sessions, DMs and Solo chats consume notes across their channel;
+thread-scoped sessions take only notes addressed to their root. Notes are
+consumed once when the harness is ready to deliver the turn, and restored to
+the same conversation ahead of newer notes if delivery definitely never began.
+They remain in memory only, and the call returns false unless this copy runs
+the agent.
+
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
 `Settings` destination and supplies the current type identity plus retype

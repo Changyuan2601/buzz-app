@@ -401,7 +401,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 : (document.getElementById("main-content") ?? false);
             }}
           >
-            <div id="settings-content" tabIndex={-1}>
+            <div id="settings-content" className="h-full" tabIndex={-1}>
               {(!route.state.ingress && route.failure) ||
               route.state.status === "failed" ? (
                 destinationFailure

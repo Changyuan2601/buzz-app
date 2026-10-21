@@ -114,6 +114,8 @@ fn main() {
             "workspace_pick_folder",
             "repositories_folder_validate",
             "plugin_import_folder",
+            "plugin_update_check",
+            "plugin_update_preview",
             "plugin_import_git",
             "plugin_import_install",
             "plugin_import_discard",

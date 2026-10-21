@@ -479,12 +479,9 @@ export class ClaudeRuntime {
             label: "@mention",
             ...(wake ? { wake } : {}),
           });
-          return this.review(
-            entry,
-            trigger.type === "mention" && trigger.resumed
-              ? `${text}\n\n${RESUMED_PROMPT}`
-              : text,
-          );
+          return trigger.type === "mention" && trigger.resumed
+            ? `${text}\n\n${RESUMED_PROMPT}`
+            : text;
         };
         // A turn keeps the posting policy it was admitted with: a request under
         // the other policy waits for the conversation's turns to settle rather
@@ -500,11 +497,19 @@ export class ClaudeRuntime {
             delivered = Promise.resolve({ ok: true });
             return;
           }
-          const text = await prompt(false);
+          const prepared = await prompt(false);
           if (interrupted) {
             delivered = Promise.resolve({ ok: true });
             return;
           }
+          // Plugins' notes wait until the turn is handed over, so one that
+          // fails or is cancelled before then leaves them for the next.
+          const noteRoot =
+            key === channel
+              ? undefined
+              : (threadReference(event)?.rootId ?? event.id);
+          const notes = agent.notes?.(channel, noteRoot) ?? [];
+          const text = this.review(entry, prepared, notes);
           // A conversation's tools default to its thread; a session shared by
           // several threads is told which to reply in instead.
           entry.contexts.set(
@@ -517,7 +522,7 @@ export class ClaudeRuntime {
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             steer: steerPrompt(text),
-            fresh: () => prompt(true),
+            fresh: async () => this.review(entry, await prompt(true), notes),
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),
@@ -529,6 +534,13 @@ export class ClaudeRuntime {
               ...(effort ? { effort } : {}),
             },
           });
+          void delivered.then(
+            (result) => {
+              if (result.undelivered)
+                agent.restoreNotes?.(channel, notes, noteRoot);
+            },
+            () => undefined,
+          );
         })();
         const done = handed.then(
           () => delivered,
@@ -621,21 +633,24 @@ export class ClaudeRuntime {
   async runOnce({
     delivery,
     key,
+    signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
     const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    const done = entry.sessions.runOnce(key, prompt);
+    const done = entry.sessions.runOnce(key, prompt, signal);
     this.notify();
     return done.finally(() => this.notify());
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
-    return note ? `${text}\n\n${note}` : text;
+  /** `text` with the notes plugins left for the turn and the Buzz tools'
+   * end-of-turn note, when there are any. */
+  private review(entry: Entry, text: string, notes: readonly string[] = []) {
+    return [text, ...notes, turnNote(entry.handle)]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   private watch(

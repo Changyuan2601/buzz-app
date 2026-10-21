@@ -41,6 +41,8 @@ export type Settled = Readonly<{
   error?: string;
   /** What goose wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
+  /** The message gave up before any turn took it in. */
+  undelivered?: true;
 }>;
 
 export type ActivityReceipt = Readonly<{

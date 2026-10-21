@@ -7,9 +7,9 @@
 // goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
-import type { Context, Memories } from "../../buzz-mcp/client";
+import type { Context } from "../../buzz-mcp/client";
 import {
-  abortable,
+  MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
@@ -28,6 +28,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
+import { ownerReads } from "../../features/agents/reads";
 import { soloChat } from "../../features/agents/solo-chat";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
@@ -137,7 +138,7 @@ export class GooseRuntime {
     },
     (handler) => this.serve(handler),
   );
-  private readonly reading = new Map<string, Promise<Memories>>();
+  private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
     string,
@@ -357,18 +358,15 @@ export class GooseRuntime {
           : where.dm
             ? "DM"
             : where.id.slice(0, 8),
-        text: this.review(
-          entry,
-          turnPrompt({
-            ...turn,
-            agent: agent.pubkey,
-            label: "@mention",
-            ...(wake ? { wake } : {}),
-          }),
-        ),
+        text: turnPrompt({
+          ...turn,
+          agent: agent.pubkey,
+          label: "@mention",
+          ...(wake ? { wake } : {}),
+        }),
       };
     };
-    const { key, text, place } = await prompt(false);
+    const { key, text: prepared, place } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -377,6 +375,14 @@ export class GooseRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        // Plugins' notes wait until the turn is handed over, so one that
+        // fails or is cancelled before then leaves them for the next.
+        const noteRoot =
+          key === channel
+            ? undefined
+            : (threadReference(event)?.rootId ?? event.id);
+        const notes = agent.notes?.(channel, noteRoot) ?? [];
+        const text = this.review(entry, prepared, notes);
         entry.contexts.set(
           key,
           topLevel
@@ -387,7 +393,8 @@ export class GooseRuntime {
         );
         const done = entry.sessions.deliver(key, text, event.created_at, {
           steer: steerPrompt(text),
-          fresh: async () => (await prompt(true)).text,
+          fresh: async () =>
+            this.review(entry, (await prompt(true)).text, notes),
           title: sessionTitle(entry.name, place, key.split("/")[1]),
           // A Solo chat takes the name goose gives its first session.
           ...(topLevel && named ? { named } : {}),
@@ -405,6 +412,8 @@ export class GooseRuntime {
         this.notify();
         void done
           .then((result) => {
+            if (result.undelivered)
+              agent.restoreNotes?.(channel, notes, noteRoot);
             // Of the messages one turn answered, only one has its error or text.
             if (result.error !== undefined)
               return this.report(agent, channel, event, result.error, topLevel);
@@ -452,10 +461,12 @@ export class GooseRuntime {
     return done.finally(() => this.notify());
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
-    return note ? `${text}\n\n${note}` : text;
+  /** `text` with the notes plugins left for the turn and the Buzz tools'
+   * end-of-turn note, when there are any. */
+  private review(entry: Entry, text: string, notes: readonly string[] = []) {
+    return [text, ...notes, turnNote(entry.handle)]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. */
@@ -618,8 +629,9 @@ export class GooseRuntime {
     // handle and the conversation's place as they are when called.
     const tools: ToolServer = async (conversation, message) => {
       const handle = entry.handle;
-      const client = handle && {
-        ...appClient(handle, {
+      const client =
+        handle &&
+        appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
           audienceAuthorityCommunity:
             this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
@@ -628,12 +640,8 @@ export class GooseRuntime {
           read: async (path) =>
             this.desktop.readFile(path, { cwd: entry.config.workspace }),
           memories: (slug) => this.memories(pubkey, slug),
-        }),
-        remember: async (slug: string, body: string, after: number) => {
-          await handle.remember(slug, body, after);
-          this.forgetMemories(pubkey);
-        },
-      };
+          remembered: () => this.forget(pubkey),
+        });
       const context = (conversation && entry.contexts.get(conversation)) || {};
       return respond(client, context, message, this.added());
     };
@@ -683,35 +691,21 @@ export class GooseRuntime {
     return entry;
   }
 
-  /** The agent's memory, or only entry `slug`, read back through the owner's
-   * session: it is encrypted to the owner, so no agent key is needed. */
-  private memories(pubkey: string, slug?: string): Promise<Memories> {
-    const key = `${pubkey}\0${slug ?? ""}`;
-    let reading = this.reading.get(key);
-    if (!reading) {
-      const started = this.readMemories(pubkey, slug).finally(() => {
-        if (this.reading.get(key) === started) this.reading.delete(key);
-      });
-      this.reading.set(key, started);
-      reading = started;
-    }
-    // The shared read keeps its own bound, so a caller that stops waiting
-    // sooner cannot cut it short for the others.
-    return abortable(reading, AbortSignal.timeout(READ_TIMEOUT_MS));
-  }
-  /** After a memory write, a read that may have started before it is not
-   * shared with later callers. */
-  private forgetMemories(pubkey: string) {
-    for (const key of this.reading.keys())
-      if (key.startsWith(`${pubkey}\0`)) this.reading.delete(key);
-  }
-  private async readMemories(pubkey: string, slug?: string): Promise<Memories> {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    return snapshot.session.agentMemories.read(
+  /** The agent's memory, or only entry `slug`, as the owner's reads of its
+   * community give it: it is encrypted to the owner, so no agent key is
+   * needed. */
+  private memories(pubkey: string, slug?: string) {
+    const reads = ownerReads(this.relay(pubkey), pubkey);
+    if (!reads) return Promise.reject(new Error("Buzz is not connected"));
+    return this.memoryReads.read(
+      reads,
       pubkey,
       AbortSignal.timeout(READ_TIMEOUT_MS),
       slug,
     );
+  }
+  private forget(pubkey: string) {
+    const reads = ownerReads(this.relay(pubkey), pubkey);
+    if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }

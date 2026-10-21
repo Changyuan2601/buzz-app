@@ -804,7 +804,14 @@ has a 30-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
 
-The import preview lists declarations and marks added or changed access on updates.
+New-install review lists declarations. Update review compares against the installed
+revision and leads with added, changed and removed declarations; changed commands and
+processes include previous and replacement details. Equivalent default limits and
+reordered declarations do not count as changes. Unchanged updates say so explicitly,
+and View unchanged declarations opens a separate view inside the same dialog. Back
+returns to the summary without acquiring or discarding the prepared update.
+Update review names the plugin, keeps the trust warning visible, and avoids nesting
+declarations inside an additional disclosure.
 The install/update action accepts that displayed version; an enabled update may run
 immediately. These declarations help review and catch mistakes. Plugins share the
 main WebView and can invoke app commands directly, so the declarations do not
@@ -876,17 +883,16 @@ HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional bran
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
-folders. Choose one and explicitly install/update; the same preview can install
-another plugin without fetching again. New plugins stay disabled. Updates match
-**manifest ID**, even across repositories, and preserve the saved enabled state:
-an enabled update may activate immediately except in safe mode. The UI warns before
-that action and shows declared host access, including changes. Installed artifacts do
+folders. Choose one and explicitly install. An already-installed plugin offers
+Open in Buzz, which discards the preview and opens its installed details. Choosing
+another source still requires deleting the plugin and adding it again. New plugins
+enable by default, with an opt-out in the review footer; successful installation closes the dialog. Updates match
+**manifest ID** and preserve the saved enabled state:
+an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Manage plugins → Reload while disabled;
-reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Reload rejects changed host declarations; use Load from folder to review and
-install that revision. Enabled plugins must be disabled before reload so memory-only
-plugin state, such as credentials, is not discarded by replacing the running module.
+path for automatic checks in Settings → Plugins → Manage plugins. Changed packages
+offer Update, which opens access review before explicit confirmation, preserving
+the saved enabled state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
 folder plugin while preserving its enabled state. The running desktop observes the
 shared profile catalog every second and disposes the previous revision before
@@ -897,7 +903,47 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
-Git installs and older installs without saved folder metadata must be imported again.
+
+Opening an installed plugin's details checks its remembered folder. A matching
+package shows Up to date in the pane. Local folders are checked every five seconds
+while the pane is open and the app is visible, and again when the app becomes active.
+Checks pause during review or pending management operations. Folder checks resolve
+the saved source by installed plugin ID and return only a revision or build diagnostic,
+without reserving the native import slot. Add can prepare its own preview while a
+folder check is pending. Choosing Update acquires a fresh immutable preview; checks
+never supply installation bytes. A changed package offers
+Update, which opens access review before explicit confirmation. A known update takes
+the prominent action position in both the pane and its list row; Enable/Disable
+moves into their ellipsis menus while Update is available. The row retains the latest
+check result for the installed revision and opens the pane’s review, checking the
+saved source again when the pane reopens. Known Git results remain visible on reopen;
+Git is checked explicitly through a read-only acquisition that never locks or replaces the shared import preview. Choosing
+Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
+The menus also offer Review access, reusing the import review’s disclosures
+for the installed manifest, and Delete with confirmation. These menus appear only for
+manual/external plugins; bundled plugins keep their Enable/Disable control.
+The list row shows no freshness status label. Failed activation shows Retry beside the error for an enabled,
+unpaused plugin. Retry activates the installed revision after its previous cleanup
+finishes; it does not acquire source files, install a package, or change saved state.
+Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
+requires deleting the plugin and adding it again. Git checks remain explicit in the
+pane, using the remembered repository and branch/tag with fresh authorization;
+credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
+and `user@host:owner/repository.git` shorthand, including organization-specific
+usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
+known hosts, with interactive prompts and SSH config disabled. If normal Git uses
+an `IdentityAgent` from SSH config, launch the app with that socket in
+`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+immutable installation preview. The source
+follows the current revision through update and rollback. Rollback requires confirmation
+in Settings and consumes the previous revision: it cannot toggle forward again. The
+enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
+plugin identities/paths leave the installation unchanged. Older Git installs and
+dropped-folder snapshots without saved source information can use Update to choose
+a folder or repository. Only candidates with the installed plugin ID are offered;
+confirmation updates in place, preserves the enabled state and retains rollback
+history under the normal update rules. The selected source is saved with the new
+revision. Git sources remain ineligible for folder Reload.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

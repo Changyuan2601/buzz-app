@@ -79,6 +79,8 @@
     "allow-plugin-import-git",
     "allow-plugin-import-install",
     "allow-plugin-import-discard",
+    "allow-plugin-update-check",
+    "allow-plugin-update-preview",
     "allow-plugin-catalog",
     "allow-plugin-change",
     "allow-plugin-reload",

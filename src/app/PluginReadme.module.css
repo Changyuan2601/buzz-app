@@ -77,6 +77,15 @@
 .readme code {
   font-family: var(--font-mono);
   font-size: var(--text-mono-sm);
+  line-height: var(--text-mono-sm--line-height);
+  letter-spacing: var(--text-mono-sm--letter-spacing);
+}
+
+.readme :not(pre) > code {
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  padding: var(--space-half) var(--space-1h);
+  box-decoration-break: clone;
 }
 
 .readme :is(pre, table) {

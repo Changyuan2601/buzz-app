@@ -57,6 +57,7 @@ import {
 import {
   AppServer,
   listModels,
+  Refused,
   type Spawn,
   type ToolCall,
   type ToolReply,
@@ -92,6 +93,9 @@ type Request = {
   failActivity(reason: string): void;
   /** Given again after a reload stopped its turn partway. */
   resumed?: true;
+  /** Notes plugins left for this turn, taken when its input is first built:
+   * one that fails or is cancelled before then leaves them for the next. */
+  notes?: readonly string[];
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
  * saved before it existed have none. `tools` is the `addedKey` of the
@@ -190,10 +194,25 @@ const titlePrompt = (text: string) =>
   `Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.\n\nUser prompt:\n${[...text].slice(0, 800).join("")}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** Puts back the notes a request took, for a turn that never took it in. */
+function restoreNotes(request: Request) {
+  if (request.notes)
+    request.agent.restoreNotes?.(
+      request.conversation.channelId,
+      request.notes,
+      request.conversation.root,
+    );
+}
 /** The note at the end of a request's turn input, if any. */
 function noteOf(request: Request) {
+  request.notes ??=
+    request.agent.notes?.(
+      request.conversation.channelId,
+      request.conversation.root,
+    ) ?? [];
   const notes = [
     request.resumed ? RESUMED_PROMPT : undefined,
+    ...request.notes,
     turnNote(request.agent),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
@@ -793,6 +812,8 @@ export class CodexRuntime {
                 queue();
                 return;
               }
+              // A refused steer took nothing in, so its notes are the next turn's.
+              if (error instanceof Refused) restoreNotes(request);
               request.failActivity(
                 `Steering was not accepted: ${message(error)}`,
               );
@@ -1571,6 +1592,8 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      // Refused before any turn began, it took nothing in.
+      if (error instanceof Refused && !active.turnId) restoreNotes(request);
       for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
       active.finished = true;
