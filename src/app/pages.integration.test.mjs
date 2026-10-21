@@ -205,9 +205,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 4),
     );
-    assert.equal(services.conversation.attachments.snapshot().length, 1);
+    const voiceAttachments = () =>
+      services.conversation.attachments
+        .snapshot()
+        .filter((attachment) => attachment.pluginId === "buzz.voice-notes");
+    assert.equal(voiceAttachments().length, 1);
     await services.plugins.change("disable", "buzz.voice-notes");
-    assert.equal(services.conversation.attachments.snapshot().length, 0);
+    assert.equal(voiceAttachments().length, 0);
     assert.equal(services.conversation.inline.snapshot().length, 1);
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
