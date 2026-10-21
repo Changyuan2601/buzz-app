@@ -27,8 +27,10 @@ export function withoutStartingAgents(
   agents: ReadonlySet<string>,
   complete: boolean,
 ): readonly ChannelMessage[] {
-  if (!complete || !owner) return rows;
   const first = rows.findIndex((row) => !row.membership);
+  // With no message loaded yet, the chat is still at its start, even while
+  // history is loading; waiting for it would show the arrival, then hide it.
+  if ((!complete && first !== -1) || !owner) return rows;
   const start = first === -1 ? rows.length : first;
   const starting = (row: ChannelMessage) =>
     (row.membership?.type === "member_joined" ||

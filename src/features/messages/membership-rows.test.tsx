@@ -328,10 +328,12 @@ it("omits only the owner's starting agents once history reaches the start", () =
   // Partial history cannot prove a leading arrival started the chat.
   expect(withoutStartingAgents(rows, wes, agents, false)).toBe(rows);
   expect(withoutStartingAgents(rows, undefined, agents, true)).toBe(rows);
-  // A chat with no messages yet still started with its agents.
-  expect(
-    withoutStartingAgents([added("only", wes, pinky)], wes, agents, true),
-  ).toEqual([]);
+  // A chat with no messages yet still started with its agents, even before
+  // its history finishes loading.
+  for (const complete of [true, false])
+    expect(
+      withoutStartingAgents([added("only", wes, pinky)], wes, agents, complete),
+    ).toEqual([]);
   // Setup churn hides as a whole, so no removal outlives its hidden addition.
   expect(
     withoutStartingAgents(
