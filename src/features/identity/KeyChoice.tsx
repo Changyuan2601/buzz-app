@@ -4,7 +4,7 @@ import { Button } from "../../shared/design-system/ui/Button";
  * Pause after the backed-up-key lookup found nothing: who looks after the key.
  * The first two choices create the key next; the third brings an existing one.
  * Without `onManaged` (this sign-in cannot back a key up) the first is not
- * offered, nor is Builderlab's copy mentioned.
+ * offered, nor is Builderlab's copy mentioned, and the second is the primary.
  */
 export function KeyChoice({
   email,
@@ -42,7 +42,11 @@ export function KeyChoice({
           </Button>
         )}
         {/* Secondary choices are deliberately smaller than the primary. */}
-        <Button size="sm" onClick={onOwn}>
+        <Button
+          variant={onManaged ? "subtle" : "primary"}
+          size={onManaged ? "sm" : "lg"}
+          onClick={onOwn}
+        >
           I want to manage my own key
         </Button>
         <Button size="sm" onClick={onImport}>

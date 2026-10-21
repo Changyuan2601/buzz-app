@@ -50,7 +50,8 @@ can keep a copy so you can sign in on other devices, and offers **Manage my
 keys for me** and two smaller choices, **I want to manage my own key** and
 **I already have a key**. A sign-in that cannot back a key up (see
 [automatic backup](#automatic-backup-and-optional-recovery)) gets neither the
-copy sentence nor Manage my keys for me. Manage runs **Creating keys**, which
+copy sentence nor Manage my keys for me; I want to manage my own key then
+takes the primary place. Manage runs **Creating keys**, which
 generates a Nostr key through the same native create command as the key setup
 screen, so
 the next launch opens as a returning user; then **Linking your key**, which
@@ -333,6 +334,13 @@ backup the user asked for; leaving the failed page through Show my key or Not
 now turns it off for that key. First run offers backup only when this build's
 uploader can back up to Builderlab and the user signed in at the build's own
 portal: a tenant's sign-in is never handed to the uploader.
+
+**Settings → Identity** shows the uploader's latest status as a read-only **Key
+backup** row, using first run's failure wording, by the same rule: the row
+appears only when this build's uploader can back up to Builderlab and a
+Builderlab sign-in would be at the build's own portal, as the Settings one is.
+Idle is what a fresh launch or a window reload reports, not evidence that no
+backup exists. The row has no consent or retry control.
 
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees

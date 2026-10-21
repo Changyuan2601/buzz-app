@@ -2818,6 +2818,16 @@ it("a sign-in that cannot back a key up offers neither Manage my keys for me nor
     screen.queryByRole("button", { name: "Manage my keys for me" }),
   ).toBeNull();
   expect(screen.queryByText(/Builderlab can keep a copy/)).toBeNull();
+  // The first remaining choice is the page's primary action, still above import.
+  const choices = screen
+    .getAllByRole("button")
+    .filter((button) => button.textContent?.startsWith("I "));
+  expect(
+    choices.map((button) => [button.textContent, button.dataset.variant]),
+  ).toEqual([
+    ["I want to manage my own key", "prominent"],
+    ["I already have a key", "subtle"],
+  ]);
   await user.click(
     screen.getByRole("button", { name: "I want to manage my own key" }),
   );

@@ -107,6 +107,26 @@ function owned(community: NonNullable<Reply["communities"]>[number]) {
 }
 
 /**
+ * Whether this build backs a key up for a Builderlab sign-in at `origin` (the
+ * build's own portal when omitted, where Settings signs in). The uploader
+ * accepts credentials only from that portal, so a tenant's status is never
+ * read, and runs only when the status says Builderlab backup is allowed. First
+ * run and Settings → Identity share this rule. Any error answers false.
+ */
+export async function backupOfferedFor(
+  backup: Pick<Identity["backup"], "ready">,
+  origin?: string,
+) {
+  try {
+    if (new URL(oauthTarget(origin)).origin !== new URL(oauthTarget()).origin)
+      return false;
+    return (await backup.ready()).builderlab;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The real reads and binding, against the kgoose sign-in used
  * (`<origin>/api/goose`; the build URL when no tenant was chosen),
  * authenticated with the first-run session credential and sent through the
@@ -225,15 +245,7 @@ export function builderlabAccount(
         "Could not load the communities this account owns.",
         (reply) => reply?.communities?.flatMap(owned) ?? [],
       ),
-    async backupOffered() {
-      try {
-        // The uploader accepts credentials only from the build's own portal.
-        if (portal !== new URL(oauthTarget()).origin) return false;
-        return (await identity.backup.ready()).builderlab;
-      } catch {
-        return false;
-      }
-    },
+    backupOffered: () => backupOfferedFor(identity.backup, origin),
     backUp: (pubkey) => backUpWith(identity, pubkey, credential.value),
     declineBackup: (pubkey) =>
       identity.setBackupChoice(pubkey, false).then(
