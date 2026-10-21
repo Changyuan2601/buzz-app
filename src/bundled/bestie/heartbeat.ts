@@ -111,19 +111,6 @@ export async function ensureHeartbeat({
         );
       if (next === existing.yaml) return existing.id;
       yaml = next;
-    } else {
-      // A save still in the outbox must not be sent twice.
-      const pending = session.outbox
-        ?.snapshot()
-        .find(
-          (item) =>
-            item.event.kind === 30620 &&
-            marks(item.event.content, agent) &&
-            item.event.tags.some(
-              ([tag, id]) => tag === "h" && id === channelId,
-            ),
-        );
-      if (pending) yaml = pending.event.content;
     }
     const eventId = workflows.save({
       channelId,

@@ -189,7 +189,7 @@ it("schedules no wake that would also ping an owner with Bestie's name", async (
   expect(kinds(h, 30620)).toHaveLength(0);
   expect(h.bestie.snapshot().record?.wakeProblem).toMatch(/both named Bestie/);
   // Renaming the owner retries on the next look.
-  h.rename("owner", "Riley");
+  h.rename("owner", "Ada");
   await h.restart();
   await vi.waitFor(() => expect(kinds(h, 30620)).toHaveLength(1));
   await vi.waitFor(() =>
