@@ -1,62 +1,64 @@
-/** Existing accent identities, reused by plugin artwork. */
+/** Palette metadata for Appearance references and proposed plugin artwork. */
 export const BRAND_SHADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
-export const BRAND_FAMILIES = [
-  { id: "cobalt", hue: 266.6948 },
-  { id: "iris", hue: 284.502 },
-  { id: "magenta", hue: 355.6028 },
-  { id: "flame", hue: 34.6181 },
-  { id: "jade", hue: 169.9836 },
-  { id: "chartreuse", hue: 109.5919 },
+/** Canonical Appearance order; re-exported by shared/theme/accent.ts. */
+export const ACCENTS = [
+  "bee",
+  "magenta",
+  "iris",
+  "cobalt",
+  "citrus",
+  "mono",
 ] as const;
-/** Cross-color pairs preserve the plugin artwork direction; accent ramps above
- * remain the existing Appearance choices, not replacements for these endpoints. */
+/** Retained artwork palettes are independent of selectable Appearance accents. */
+export const PALETTE_FAMILIES = [...ACCENTS, "flame", "jade"] as const;
+/** Proposed artwork mapping uses existing theme-aware palette families independently
+ * of the existing Appearance choices above. */
 export const BRAND_GRADIENTS = [
   {
     name: "Communication",
     category: "communication",
-    from: "cyan",
-    to: "blue",
-    fromHue: 220,
-    toHue: 255,
+    start: "cyan-9",
+    end: "jade-9",
+    compromise:
+      "Cyan to jade gives Communication a teal/green identity distinct from Agents.",
   },
   {
     name: "Agents",
     category: "agents",
-    from: "violet",
-    to: "indigo",
-    fromHue: 295,
-    toHue: 260,
+    start: "blue-9",
+    end: "iris-9",
+    compromise:
+      "Existing Iris supplies violet beneath lighter blue in both themes.",
   },
   {
     name: "Agent tools",
     category: "agent-tools",
-    from: "fuchsia",
-    to: "purple",
-    fromHue: 335,
-    toHue: 300,
+    start: "purple-9",
+    end: "magenta-9",
+    compromise:
+      "Purple to the existing Magenta fill gives agent tools a violet-to-rose identity.",
   },
   {
     name: "Developer tools & integrations",
     category: "developer-tools-and-integrations",
-    from: "coral",
-    to: "pink",
-    fromHue: 375,
-    toHue: 340,
+    start: "orange-9",
+    end: "flame-9",
+    compromise:
+      "Orange to the existing Flame fill gives developer tools a warm ember identity.",
   },
   {
     name: "People & communities",
     category: "people-and-communities",
-    from: "scarlet",
-    to: "orange",
-    fromHue: 380,
-    toHue: 415,
+    start: "red-9",
+    end: "magenta-9",
+    compromise:
+      "Red to existing Magenta gives people a scarlet-to-rose identity.",
   },
   {
     name: "Productivity",
     category: "productivity",
-    from: "gold",
-    to: "lime",
-    fromHue: 420,
-    toHue: 455,
+    start: "amber-9",
+    end: "green-9",
+    compromise: "Preserves the approved yellow-to-green transition.",
   },
 ] as const;

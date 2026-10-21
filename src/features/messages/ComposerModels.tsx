@@ -1,19 +1,32 @@
 import { Popover } from "@base-ui/react/popover";
-import { Slider } from "@base-ui/react/slider";
+import { EffortSlider } from "./composer-models/EffortSlider";
+import { avatarMedia } from "../../shared/avatar-source";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { selectProfiles } from "../relay/profile-selection";
+import type { ProfileQueries } from "../relay/profile-directory";
 import {
+  useContext,
+  useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
+  useSyncExternalStore,
   type Ref,
 } from "react";
-import { useMentionModels } from "../agents/react";
+import {
+  AgentsContext,
+  useSessionState,
+  useMentionModels,
+} from "../agents/react";
 import type { MentionModelChoice } from "../agents/react";
-import type { Effort } from "../agents/service";
+import type { SessionPlace, SessionControlAction } from "../agents/service";
 import type { MentionPicks, RunPick } from "../relay/messages";
 import {
   CaretDownIcon,
+  ArrowsInIcon,
+  ArrowCounterClockwiseIcon,
+  StopIcon,
   GaugeIcon,
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -28,28 +41,73 @@ import {
 import styles from "./ComposerModels.module.css";
 
 /** Model and effort for the next run of each mentioned agent of the viewer's
- * that offers a choice. Unpicked agents run with their own. */
+ * that offers a choice. Session controls act immediately on this conversation. */
 export function ComposerModels({
   pubkeys,
+  profiles,
+  media,
   value,
   disabled,
   onChange,
   onResolved,
+  startsThread,
+  place,
 }: {
   pubkeys: readonly string[];
+  profiles: ProfileQueries;
+  media: Parameters<typeof avatarMedia>[1];
   value: MentionPicks;
   disabled: boolean;
   onChange(value: MentionPicks): void;
   onResolved(value: MentionPicks): void;
+  /** The message starts a thread of its own, as a channel's top-level one
+   * does, so a thread-scoped agent has no session to act on. */
+  startsThread: boolean;
+  place: SessionPlace;
 }) {
   const [open, setOpen] = useState(false);
-  const choices = useMentionModels(pubkeys);
+  const mentioned = useMentionModels(pubkeys);
+  const choices = useMemo<readonly MentionModelChoice[]>(
+    () =>
+      startsThread
+        ? mentioned.flatMap((choice) => {
+            if (choice.session !== "thread") return [choice];
+            const { session: _, ...rest } = choice;
+            return rest.loading ||
+              rest.models.length > 1 ||
+              rest.models.some((model) => model.efforts.length)
+              ? [rest]
+              : [];
+          })
+        : mentioned,
+    [mentioned, startsThread],
+  );
+  const profileKey = pubkeys.join(":");
+  const selection = useMemo(
+    () => selectProfiles(profiles, profileKey.split(":")),
+    [profiles, profileKey],
+  );
+  // A mentioned agent need not be a member yet, so its profile may not be loaded.
+  useEffect(() => {
+    if (profileKey)
+      void profiles.ensure(profileKey.split(":"), "background").catch(() => {});
+  }, [profiles, profileKey]);
+  const portraits = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: Record<string, RunPick> = { ...value };
+    const resolved: Record<string, RunPick> = Object.fromEntries(
+      Object.entries(value).map(([pubkey, { model, effort }]) => [
+        pubkey,
+        { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      ]),
+    );
     for (const choice of choices) {
       if (choice.loading || !choice.sendDefaults) continue;
       const saved = value[choice.pubkey] ?? {};
@@ -84,6 +142,9 @@ export function ComposerModels({
     const { [pubkey]: _, ...rest } = value;
     onChange(next.model || next.effort ? { ...rest, [pubkey]: next } : rest);
   };
+  const label = choices.some((choice) => choice.session)
+    ? "Model, effort, and session controls"
+    : "Model and effort for the next run";
   return (
     <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
       <Popover.Trigger
@@ -95,11 +156,9 @@ export function ComposerModels({
             type="button"
             disabled={disabled}
             data-selected={picked.length ? "" : undefined}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             title={
-              picked.length
-                ? `Next run: ${picked.join(", ")}`
-                : "Model and effort for the next run"
+              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
             }
             icon={<GaugeIcon size={18} aria-hidden="true" />}
           />
@@ -117,13 +176,18 @@ export function ComposerModels({
         >
           <Popover.Popup
             className={styles.popup}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             initialFocus={thumb}
           >
             {choices.map((choice, index) => (
               <AgentChoice
                 key={choice.pubkey}
                 choice={choice}
+                avatarSrc={avatarMedia(
+                  portraits.get(choice.pubkey)?.picture,
+                  media,
+                )}
+                place={place}
                 named={choices.length > 1}
                 value={value[choice.pubkey] ?? {}}
                 disabled={disabled}
@@ -146,6 +210,8 @@ const runModel = (choice: MentionModelChoice, picked: string | undefined) =>
 
 function AgentChoice({
   choice,
+  avatarSrc,
+  place,
   named,
   value,
   disabled,
@@ -153,15 +219,22 @@ function AgentChoice({
   thumb,
 }: {
   choice: MentionModelChoice;
+  avatarSrc: string | undefined;
+  place: SessionPlace;
   named: boolean;
   value: RunPick;
   disabled: boolean;
   pick(next: RunPick): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
+  const [feedback, setFeedback] = useState("");
   if (choice.loading)
     return (
-      <div className={styles.loading} role="status" aria-busy="true">
+      <div
+        className={`${styles.loading} floating-surface`}
+        role="status"
+        aria-busy="true"
+      >
         {named && <span>{choice.name}</span>}
         <span>Loading model and effort…</span>
       </div>
@@ -180,129 +253,162 @@ function AgentChoice({
       ...(effort ? { effort } : {}),
     });
   };
-  const model = several ? (
-    <div className={styles.model}>
-      <MenuRoot>
-        <MenuTrigger
-          disabled={disabled}
-          aria-label={`Model for ${choice.name}'s next run`}
-          render={
-            <Button variant="ghost" size="inline">
-              <span className={styles.about}>{runs.label}</span>
-              <CaretDownIcon aria-hidden="true" />
-            </Button>
-          }
-        />
-        <MenuPopup size="compact" side="top" align="end">
-          <MenuRadioGroup value={runs.id} onValueChange={chooseModel}>
-            {choice.models.map((item) => (
-              <MenuRadioItem key={item.id} value={item.id} closeOnClick>
-                {item.label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuPopup>
-      </MenuRoot>
-    </div>
-  ) : (
-    <span className={styles.about}>{runs.label}</span>
-  );
+  const model = (level?: string) =>
+    several ? (
+      <div className={styles.model}>
+        <MenuRoot>
+          <MenuTrigger
+            disabled={disabled}
+            aria-label={`Model for ${choice.name}'s next run`}
+            render={
+              <Button variant="subtle" size="sm">
+                <span className={styles.about}>{runs.label}</span>
+                {level && <span className={styles.level}>{level}</span>}
+                <CaretDownIcon size={12} aria-hidden="true" />
+              </Button>
+            }
+          />
+          <MenuPopup size="compact" side="top" align="end">
+            <MenuRadioGroup value={runs.id} onValueChange={chooseModel}>
+              {choice.models.map((item) => (
+                <MenuRadioItem key={item.id} value={item.id} closeOnClick>
+                  {item.label}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuPopup>
+        </MenuRoot>
+      </div>
+    ) : (
+      <span className={styles.fixedModel}>
+        {runs.label}
+        {level && <span className={styles.level}>{level}</span>}
+      </span>
+    );
   return (
-    <div className={styles.agent}>
-      {named && <span className={styles.about}>{choice.name}</span>}
-      {runs.efforts.length > 0 ? (
-        <EffortSlider
-          name={choice.name}
-          model={model}
-          efforts={runs.efforts}
-          resting={runs.effort}
-          value={value.effort}
-          disabled={disabled}
-          pick={(effort) =>
-            pick({
-              ...(value.model ? { model: value.model } : {}),
-              ...(effort ? { effort } : {}),
-            })
-          }
-          {...(thumb ? { thumb } : {})}
-        />
-      ) : (
-        // Without a slider the model sits on its own tab, not on the thread.
-        <div className={styles.solo}>{model}</div>
+    <div
+      className={`${styles.agent} floating-surface`}
+      data-agent-model-card=""
+    >
+      <div className={styles.controls}>
+        {runs.efforts.length > 0 ? (
+          <EffortSlider
+            name={choice.name}
+            avatarSrc={avatarSrc}
+            model={model}
+            efforts={runs.efforts}
+            resting={runs.effort}
+            value={value.effort}
+            disabled={disabled}
+            pick={(effort) =>
+              pick({
+                ...(value.model ? { model: value.model } : {}),
+                ...(effort ? { effort } : {}),
+              })
+            }
+            {...(thumb ? { thumb } : {})}
+          />
+        ) : (
+          // Without a slider the model sits on its own tab, not on the thread.
+          <div className={styles.solo}>
+            <Avatar
+              src={avatarSrc}
+              alt={choice.name}
+              fallback={choice.name}
+              size="small"
+            />
+            <span className={styles.about}>{choice.name}</span>
+            {model()}
+          </div>
+        )}
+        {choice.session && (
+          <SessionRail
+            pubkey={choice.pubkey}
+            name={choice.name}
+            place={place}
+            onFeedback={setFeedback}
+          />
+        )}
+      </div>
+      {feedback && (
+        <span className={styles.about} role="status">
+          {feedback}
+        </span>
       )}
     </div>
   );
 }
 
-function EffortSlider({
+function SessionRail({
+  pubkey,
   name,
-  model,
-  efforts,
-  resting,
-  value,
-  disabled,
-  pick,
-  thumb,
+  place,
+  onFeedback,
 }: {
+  pubkey: string;
   name: string;
-  model: ReactNode;
-  efforts: readonly Effort[];
-  /** The effort the run uses without a pick, when known. */
-  resting: string | undefined;
-  value: string | undefined;
-  disabled: boolean;
-  pick(effort: string | undefined): void;
-  thumb?: Ref<HTMLInputElement>;
+  place: SessionPlace;
+  onFeedback(message: string): void;
 }) {
-  const index = efforts.findIndex((effort) => effort.id === value);
-  const set = index >= 0;
-  const own = efforts.findIndex((effort) => effort.id === resting);
-  const at = set ? index : Math.max(own, 0);
-  const last = Math.max(efforts.length - 1, 1);
-  const known = set || own >= 0;
-  const level = known ? (efforts[at]?.label ?? "") : "Default";
-  // A tap on the thumb's resting stop changes no value, so commits pick too.
-  // The run's own effort is no pick.
-  const choose = (next: number) => {
-    const effort = efforts[next]?.id;
-    pick(effort === resting ? undefined : effort);
+  const agents = useContext(AgentsContext);
+  const state = useSessionState(agents, [pubkey], place);
+  const act = async (action: SessionControlAction) => {
+    onFeedback("");
+    try {
+      await agents?.session(pubkey, place, action);
+      onFeedback(
+        action === "compact"
+          ? "Session compacted"
+          : action === "new"
+            ? "New session started"
+            : "Interrupt requested",
+      );
+    } catch (error) {
+      onFeedback(
+        error instanceof Error ? error.message : "Session action failed",
+      );
+    }
   };
   return (
-    <Slider.Root
-      className={styles.slider}
-      data-unknown={known ? undefined : ""}
-      value={at}
-      min={0}
-      max={efforts.length - 1}
-      step={1}
-      thumbAlignment="edge"
-      disabled={disabled}
-      onValueChange={choose}
-      onValueCommitted={choose}
-    >
-      {/* Keep the model outside the drag target, on the track's attached tab. */}
-      <div className={styles.tab}>
-        {model}
-        <span aria-hidden="true">{level}</span>
-      </div>
-      <Slider.Control className={styles.control}>
-        <Slider.Track className={styles.track}>
-          <Slider.Indicator className={styles.indicator} />
-          {efforts.map((effort, stop) => (
-            <span
-              key={effort.id}
-              className={styles.stop}
-              style={{ "--stop": stop / last } as CSSProperties}
-            />
-          ))}
-          <Slider.Thumb
-            className={styles.thumb}
-            inputRef={thumb}
-            aria-label={`Effort for ${name}'s next run`}
-            getAriaValueText={() => level}
+    <fieldset className={styles.rail} aria-label={`${name}'s session`}>
+      {(
+        [
+          ["compact", "Compact session", ArrowsInIcon],
+          ["new", "Start a new session", ArrowCounterClockwiseIcon],
+          ["interrupt", "Interrupt", StopIcon],
+        ] as const
+      ).map(([action, label, Icon]) => {
+        const enabled =
+          action === "interrupt"
+            ? state === "active" || state === "compacting"
+            : state === "idle";
+        const title =
+          state === "unavailable"
+            ? `${label}: session controls unavailable. Check the agent's connection and the app running it.`
+            : state === "compacting"
+              ? action === "interrupt"
+                ? "Interrupt compaction"
+                : "Compacting session. Wait for it to finish, or interrupt it."
+              : enabled
+                ? label
+                : action === "interrupt"
+                  ? "Nothing to interrupt. The session is idle."
+                  : `Wait for the active turn to finish before ${action === "compact" ? "compacting" : "starting a new session"}.`;
+        return (
+          <IconButton
+            key={action}
+            size="sm"
+            type="button"
+            icon={<Icon aria-hidden="true" />}
+            aria-label={label}
+            title={title}
+            disabled={!enabled}
+            loading={action === "compact" && state === "compacting"}
+            focusableWhenDisabled
+            onClick={() => void act(action)}
           />
-        </Slider.Track>
-      </Slider.Control>
-    </Slider.Root>
+        );
+      })}
+    </fieldset>
   );
 }

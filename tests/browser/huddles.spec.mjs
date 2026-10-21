@@ -423,6 +423,17 @@ test("capsule and companion presentation share mute and leave", async ({
           .map((animation) => animation.finished),
       );
     });
+    // A spring can briefly cross its final size before overshooting. Wait for
+    // Motion to remove the arrival/layout transform, not that transient crossing.
+    await expect
+      .poll(() =>
+        roster.evaluate((el) =>
+          [...el.querySelectorAll("[data-huddle-avatar]")].every(
+            (avatar) => getComputedStyle(avatar).transform === "none",
+          ),
+        ),
+      )
+      .toBe(true);
     const geometry = await roster.evaluate((el) => {
       const area = el.getBoundingClientRect();
       const bounds = (node) => {
@@ -444,23 +455,33 @@ test("capsule and companion presentation share mute and leave", async ({
         ].map((person) =>
           Math.abs(
             person.getBoundingClientRect().height -
-              person.querySelector("[role=img]").getBoundingClientRect().height,
+              person
+                .querySelector("[data-huddle-avatar]")
+                .getBoundingClientRect().height,
           ),
         ),
         peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
       };
     });
     const portraits = [geometry.self, ...geometry.peers];
-    expect(
-      (Math.min(...portraits.map((p) => p.left)) +
-        Math.max(...portraits.map((p) => p.right))) /
-        2,
-    ).toBeCloseTo(geometry.width / 2, 0);
-    expect(
-      (Math.min(...portraits.map((p) => p.top)) +
-        Math.max(...portraits.map((p) => p.bottom))) /
-        2,
-    ).toBeCloseTo(geometry.height / 2, 0);
+    if (portraits.length > 3) {
+      expect(geometry.self.center).toBeCloseTo(geometry.width / 2, 0);
+      expect((geometry.self.top + geometry.self.bottom) / 2).toBeCloseTo(
+        geometry.height / 2,
+        0,
+      );
+    } else {
+      expect(
+        (Math.min(...portraits.map((p) => p.left)) +
+          Math.max(...portraits.map((p) => p.right))) /
+          2,
+      ).toBeCloseTo(geometry.width / 2, 0);
+      expect(
+        (Math.min(...portraits.map((p) => p.top)) +
+          Math.max(...portraits.map((p) => p.bottom))) /
+          2,
+      ).toBeCloseTo(geometry.height / 2, 0);
+    }
     expect(geometry.portraitGaps.every((gap) => gap < 0.1)).toBe(true);
     await expectNamesClear();
     for (const bubble of [geometry.self, ...geometry.peers]) {
@@ -484,7 +505,7 @@ test("capsule and companion presentation share mute and leave", async ({
   await expectNamesClear();
   await expect
     .poll(async () => (await jo.boundingBox()).y)
-    .toBeGreaterThan(neighbor.y);
+    .toBeCloseTo(neighbor.y, 0);
   expect((await alex.boundingBox()).y).toBeCloseTo(original.y, 0);
   await page.mouse.move(0, 0);
   await expect(alex.locator("[data-name]")).toHaveCSS("opacity", "0");
@@ -518,6 +539,14 @@ test("capsule and companion presentation share mute and leave", async ({
   const speaker = roster.locator(`[data-participant="${"cd".repeat(32)}"]`);
   const speakerHalo = roster.locator(`[data-speaker="${"cd".repeat(32)}"]`);
   await expect(speakerHalo).toHaveAttribute("data-speaking", "true");
+  // The glow reuses the actual portrait, including the shared image loader.
+  await expect(speakerHalo.locator("img")).toHaveAttribute(
+    "data-loaded",
+    "true",
+  );
+  expect(await speakerHalo.locator("img").getAttribute("src")).toBe(
+    await speaker.getByRole("img").locator("img").getAttribute("src"),
+  );
   await expect(roster.locator('[data-speaking="true"]')).toHaveCount(1);
   await expect(
     speaker.getByRole("img", { name: "Alex, speaking", exact: true }),
@@ -532,6 +561,28 @@ test("capsule and companion presentation share mute and leave", async ({
     el.style.height = "400px";
   });
   await expectNamesClear();
+  // At the narrow host size, all five controls remain aligned and inside padding.
+  const controls = await companion
+    .locator("footer button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          centerY: rect.top + rect.height / 2,
+        };
+      }),
+    );
+  const shell = await companion.locator("main").boundingBox();
+  expect(controls).toHaveLength(5);
+  for (const control of controls) {
+    expect(control.left).toBeGreaterThan(shell.x);
+    expect(control.right).toBeLessThan(shell.x + shell.width);
+    expect(Math.abs(control.centerY - controls[2].centerY)).toBeLessThan(1);
+  }
+  for (let i = 1; i < controls.length; i++)
+    expect(controls[i].left).toBeGreaterThanOrEqual(controls[i - 1].right);
   for (const person of await roster.locator("[data-participant]").all()) {
     await person.hover();
     await expect(person.locator("[data-name]")).toHaveCSS("opacity", "1");
@@ -541,10 +592,7 @@ test("capsule and companion presentation share mute and leave", async ({
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(() => window.huddleFixture.speak("cd".repeat(32)));
-  await expect(speakerHalo).toHaveCSS(
-    "transform",
-    "matrix(1.15, 0, 0, 1.15, 0, 0)",
-  );
+  await expect(speakerHalo).toHaveCSS("transform", "none");
   await page.evaluate(
     (keys) => window.huddleFixture.participants(keys),
     keys.slice(0, 1),
@@ -889,9 +937,7 @@ test("Huddle chat expands beside the call and stays separate from Live transcrip
     .getByRole("tab", { name: "Live transcript", exact: true })
     .click();
   await expect(
-    panel.getByText(
-      "Speech transcription isn’t connected in this version yet.",
-    ),
+    panel.getByRole("heading", { name: "No live transcript", exact: true }),
   ).toBeVisible();
   await expect(composer).toHaveCount(0);
   await panel.getByRole("tab", { name: "Thread", exact: true }).click();
@@ -1280,6 +1326,8 @@ test("DM requests share window and capsule controls without capturing audio unti
         .getByRole("button", { name: "Decline", exact: true })
         .boundingBox();
       expect(Math.abs(join.width - decline.width)).toBeLessThan(1);
+      // The compact prompt retains solid call colors; the window uses glass icons.
+      if (surface === request) continue;
       for (const [name, tone] of [
         ["Join", "join"],
         ["Decline", "decline"],
@@ -1661,6 +1709,47 @@ test("audio settings mirror device choices between compact and window controls",
   await expect(
     capsule.getByRole("button", { name: "Audio settings" }),
   ).toBeFocused();
+
+  // Real layout: the native minimum width must retain all five controls at 125% text.
+  await page.setViewportSize({ width: 408, height: 800 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+  await expect
+    .poll(() =>
+      companion.locator("footer button").evaluateAll((buttons) => {
+        const shell = buttons[0].closest("main").getBoundingClientRect();
+        const boxes = buttons.map((button) => button.getBoundingClientRect());
+        return boxes.every(
+          (box, i) =>
+            box.left >= shell.left &&
+            box.right <= shell.right &&
+            boxes.every(
+              (other, j) =>
+                i === j ||
+                box.right <= other.left ||
+                box.left >= other.right ||
+                box.bottom <= other.top ||
+                box.top >= other.bottom,
+            ),
+        );
+      }),
+    )
+    .toBe(true);
+  await companion.getByRole("button", { name: "Audio settings" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Audio settings", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await companion
+    .getByRole("button", { name: "Minimize Huddle to compact controls" })
+    .focus();
+  await expect(
+    companion.getByRole("button", {
+      name: "Minimize Huddle to compact controls",
+    }),
+  ).toBeFocused();
 });
 
 // Browser coverage owns the shell geometry and actual launcher integration.
@@ -1770,6 +1859,7 @@ test("pending companion attachment send survives a transcript tab switch", async
 test("an inactive call error does not suppress the next incoming call", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto(`${origin}/tests/fixtures/huddles.html?chrome`);
   await page
     .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
@@ -1780,6 +1870,9 @@ test("an inactive call error does not suppress the next incoming call", async ({
   await expect(
     page.getByRole("region", { name: "App notifications" }),
   ).toContainText("Previous call failed");
+  // The real clip may finish while WebKit renders the request. Freeze the
+  // repeat timer so the first-play assertion cannot race the next ring.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.evaluate(() =>
     window.huddleFixture.request("00000000-0000-4000-8000-000000000099"),
   );
@@ -1789,4 +1882,211 @@ test("an inactive call error does not suppress the next incoming call", async ({
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.ringPlays))
     .toBe(1);
+});
+
+test("huddle panel finishes its exit before resizing and can reverse a pending close", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto(`${origin}/tests/fixtures/huddles.html?chrome`);
+  await page
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  const companion = page.getByRole("complementary", {
+    name: "Huddle window preview",
+    exact: true,
+  });
+  const chat = companion.getByRole("button", {
+    name: "Huddle chat",
+    exact: true,
+  });
+  await chat.click();
+  const dock = companion.locator("[data-panel-dock]");
+  await expect(
+    companion.getByRole("complementary", { name: "Huddle chat panel" }),
+  ).toBeVisible();
+  // Hold the actual CSS exit, rather than relying on the test runner beating it.
+  await page.evaluate(() => {
+    window.heldHuddleExits = [];
+    const original = Element.prototype.getAnimations;
+    window.huddleGetAnimations = original;
+    Element.prototype.getAnimations = function (...args) {
+      const animations = original.apply(this, args);
+      if (this.matches("[data-panel-dock][data-closing]")) {
+        for (const animation of animations) animation.pause();
+        window.heldHuddleExits.push(...animations);
+      }
+      return animations;
+    };
+  });
+  const width = (await companion.boundingBox()).width;
+  try {
+    await chat.click();
+    await expect(dock).toHaveAttribute("inert", "");
+    await expect
+      .poll(() => page.evaluate(() => window.heldHuddleExits.length))
+      .toBeGreaterThan(0);
+    expect((await companion.boundingBox()).width).toBe(width);
+    await chat.click();
+    await expect(dock).not.toHaveAttribute("inert", "");
+    await expect(chat).toHaveAttribute("aria-expanded", "true");
+    await chat.click();
+    await expect(dock).toHaveAttribute("inert", "");
+  } finally {
+    await page.evaluate(() => {
+      Element.prototype.getAnimations = window.huddleGetAnimations;
+      for (const animation of window.heldHuddleExits) {
+        if (animation.playState !== "idle") animation.finish();
+      }
+    });
+  }
+  await expect(dock).toHaveCount(0);
+  await expect
+    .poll(async () => (await companion.boundingBox()).width)
+    .toBeLessThan(width);
+  await chat.press("Enter");
+  await expect(dock).toBeVisible();
+  // A dispatched close cannot be canceled locally: delay its host presentation.
+  const waiting = await page.evaluate(
+    () => window.huddleFixture.stats.layoutWaiting,
+  );
+  await page.evaluate(() => window.huddleFixture.holdLayout());
+  try {
+    await chat.click();
+    await expect
+      .poll(() => page.evaluate(() => window.huddleFixture.stats.layoutWaiting))
+      .toBe(waiting + 1);
+    await chat.click();
+  } finally {
+    await page.evaluate(() => window.huddleFixture.releaseLayout());
+  }
+  await expect
+    .poll(async () => (await companion.boundingBox()).width)
+    .toBe(width);
+  await expect(chat).toHaveAttribute("aria-expanded", "true");
+  await expect(dock).toBeVisible();
+  await chat.press("Enter");
+  await expect(dock).toHaveCount(0);
+});
+
+test("portraits can be tossed within the stage and return home, with reduced motion immediate", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto(`${origin}/tests/fixtures/huddles.html`);
+  await page
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  await page.evaluate(() =>
+    window.huddleFixture.participants(["ab".repeat(32)]),
+  );
+  const stage = page.getByRole("region", { name: "Huddle participants" });
+  // Measure the circular layout, not the rotated artwork's rectangular bounding box.
+  const portrait = stage.locator("[data-huddle-avatar]");
+  await expect(portrait).toBeVisible();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(16);
+      return portrait.evaluate(
+        (element) => getComputedStyle(element).transform,
+      );
+    })
+    .toBe("none");
+  await portrait.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .closest("[data-self]")
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    );
+  });
+  const home = await portrait.boundingBox();
+  const area = await stage.boundingBox();
+  const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };
+  // Release close to the wall so the gesture exercises a collision at this fixture size.
+  const throwDistance = Math.round(
+    (area.x + area.width - home.x - home.width) * 0.9,
+  );
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 3; i++) {
+    await page.mouse.move(start.x + (i * throwDistance) / 3, start.y - i * 6);
+    await page.clock.runFor(16);
+  }
+  const dragged = await portrait.boundingBox();
+  expect(dragged.x - home.x).toBeCloseTo(throwDistance, 0);
+  await page.mouse.up();
+  const frames = [];
+  for (let i = 0; i < 120; i++) {
+    await page.clock.runFor(16);
+    const box = await portrait.boundingBox();
+    frames.push(box);
+    if (i === 12) {
+      // Tapping a returning portrait must resume its spring, not snap home.
+      expect(Math.abs(box.x - home.x)).toBeGreaterThan(1);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.clock.runFor(16);
+      const resumed = await portrait.boundingBox();
+      expect(Math.abs(resumed.x - home.x)).toBeGreaterThan(
+        Math.abs(box.x - home.x) / 2,
+      );
+    }
+    if (!(await stage.locator("[data-avatar-moving]").count())) break;
+  }
+  expect(frames.some((box) => box.x > dragged.x + 5)).toBe(true);
+  // The throw reaches the wall before reversing and returning to its layout slot.
+  expect(
+    frames.some((box) => Math.abs(box.x + box.width - area.x - area.width) < 1),
+  ).toBe(true);
+  for (const box of frames) {
+    expect(box.x).toBeGreaterThanOrEqual(area.x - 1);
+    expect(box.y).toBeGreaterThanOrEqual(area.y - 1);
+    expect(box.x + box.width).toBeLessThanOrEqual(area.x + area.width + 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(area.y + area.height + 1);
+  }
+  await expect(stage.locator("[data-avatar-moving]")).toHaveCount(0);
+  const resting = await portrait.boundingBox();
+  expect(Math.abs(resting.x - home.x)).toBeLessThan(1);
+  expect(Math.abs(resting.y - home.y)).toBeLessThan(1);
+  // Motion delivers drag-end in postRender, after React handles pointercancel.
+  // A cancelled gesture must stay reset through that callback and later frames.
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 3; i++) {
+    await page.mouse.move(start.x + (i * throwDistance) / 3, start.y);
+    await page.clock.runFor(16);
+  }
+  expect((await portrait.boundingBox()).x - home.x).toBeCloseTo(
+    throwDistance,
+    0,
+  );
+  await stage.locator("[data-avatar-moving]").dispatchEvent("pointercancel", {
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+    bubbles: true,
+  });
+  for (let i = 0; i < 4; i++) {
+    await page.clock.runFor(16);
+    expect(Math.abs((await portrait.boundingBox()).x - home.x)).toBeLessThan(1);
+  }
+  await expect(stage.locator("[data-avatar-moving]")).toHaveCount(0);
+  await page.mouse.up();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + throwDistance, start.y + 30);
+  await page.clock.runFor(32);
+  expect((await portrait.boundingBox()).x - home.x).toBeCloseTo(
+    throwDistance,
+    0,
+  );
+  await page.mouse.up();
+  await page.clock.runFor(16);
+  await expect(stage.locator("[data-avatar-moving]")).toHaveCount(0);
+  expect(Math.abs((await portrait.boundingBox()).x - home.x)).toBeLessThan(1);
 });

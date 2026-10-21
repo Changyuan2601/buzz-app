@@ -35,5 +35,9 @@
 }
 .composer {
   flex-shrink: 0;
-  padding: var(--space-3);
+}
+
+.tabs {
+  flex-shrink: 0;
+  padding: var(--space-4);
 }

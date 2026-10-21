@@ -59,6 +59,7 @@ export function RemindDialog({
   };
   return (
     <Dialog
+      size="compact"
       open
       dismissOnOutsideClick={false}
       onOpenChange={(open) => !open && close()}

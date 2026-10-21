@@ -51,6 +51,7 @@ it("releases unsent files on close while retaining the saved panel text draft", 
       supports: () => true,
       snapshot: () => pending,
       subscribe: () => () => {},
+      observeDismiss: () => () => {},
       observeSend: () => () => {},
       ready: async () => {},
       send: () => {

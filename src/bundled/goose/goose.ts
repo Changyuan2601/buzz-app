@@ -15,6 +15,11 @@ export type Spawn = (
   options?: HostProcessOptions,
 ) => Promise<HostProcess>;
 export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
+/** The desktop host's `spawn` and `resolveDirectory`, which goose starts with. */
+export type GooseHost = Readonly<{
+  spawn: Spawn;
+  resolveDirectory(path: string): Promise<string>;
+}>;
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
 const WRITTEN_LIMIT = 20_000;
@@ -66,13 +71,11 @@ export type PlatformExtension = Readonly<{
   available_tools?: readonly string[];
 }>;
 
-/** What every `goose-acp` runs with: tools run without asking, sessions are
- * not named (one model call per turn, not two), and no Buzz identity reaches
- * it from the app's environment. Nor does a provider or model, which goose
- * would prefer to each session's. */
+/** What every `goose-acp` runs with: tools run without asking, and no Buzz
+ * identity reaches it from the app's environment. Nor does a provider or
+ * model, which goose would prefer to each session's. */
 export const ENV: Readonly<Record<string, string | null>> = {
   GOOSE_MODE: "auto",
-  GOOSE_DISABLE_SESSION_NAMING: "true",
   BUZZ_PRIVATE_KEY: null,
   BUZZ_AUTH_TAG: null,
   BUZZ_RELAY_URL: null,
@@ -123,6 +126,9 @@ export class GooseProcess {
   private buffer = "";
   private stderr = "";
   private alive = true;
+  /** goose names an untitled session with a model call, unless its config
+   * sets `GOOSE_DISABLE_SESSION_NAMING`; `names` reads it once. */
+  private naming: Promise<boolean> | undefined;
 
   private constructor(
     private readonly process: HostProcess,
@@ -200,14 +206,16 @@ export class GooseProcess {
   }
 
   /** Opens a new session in `cwd`, named `title`, whose system prompt has
-   * `systemPrompt` appended. `tools` answers its Buzz tools; without them it
-   * has no tools at all. Each turn runs on the provider and model `choice`
-   * gives as it starts. */
+   * `systemPrompt` appended. With `named`, goose names it instead when it
+   * names sessions, and `named` takes that name. `tools` answers its Buzz
+   * tools; without them it has no tools at all. Each turn runs on the
+   * provider and model `choice` gives as it starts. */
   async open(
     launch: Readonly<{
       cwd: string;
       systemPrompt: string;
       title?: string;
+      named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
       /** goose built-ins beside the Buzz tools; developer when left out. */
@@ -217,6 +225,9 @@ export class GooseProcess {
       replacePrompt?: boolean;
     }>,
   ): Promise<GooseSession> {
+    const named =
+      launch.named && (await this.names()) ? launch.named : undefined;
+    const title = named ? undefined : launch.title;
     const provider = launch.choice?.().provider ?? "";
     let server: HostMcpServer | undefined;
     // goose connects while it opens the session, before it is known here.
@@ -263,7 +274,7 @@ export class GooseProcess {
                   { type: "mcp", server: buzz },
                 ]
               : [],
-            ...(launch.title ? { sessionTitle: launch.title } : {}),
+            ...(title ? { sessionTitle: title } : {}),
             // On the provider's default model, whatever goose's config holds.
             ...(provider ? { provider } : {}),
           },
@@ -278,6 +289,7 @@ export class GooseProcess {
       provider,
       model: "",
     });
+    session.named = named;
     this.sessions.set(sessionId, session);
     if (stopped) {
       void this.close(session);
@@ -309,6 +321,21 @@ export class GooseProcess {
       throw error;
     }
     return session;
+  }
+
+  private names() {
+    this.naming ??= this.request(
+      "_goose/unstable/config/read",
+      { key: "GOOSE_DISABLE_SESSION_NAMING", isSecret: false },
+      REQUEST_TIMEOUT_MS,
+    ).then(
+      (result) => {
+        const { value } = result as { value?: unknown };
+        return value !== true && value !== "true";
+      },
+      () => true,
+    );
+    return this.naming;
   }
 
   /** Ends a session. Its turn, if any, is cancelled first. */
@@ -464,6 +491,8 @@ export class GooseProcess {
 export class GooseSession {
   /** The conversation it serves. */
   conversation: string | undefined;
+  /** Takes the first name goose generates for it; a titled session gets none. */
+  named: ((title: string) => void) | undefined;
   /** goose's id for the running turn, which a steer must name. */
   private runId: string | undefined;
   /** Steers waiting for the running turn's id, which goose sends just after
@@ -496,6 +525,7 @@ export class GooseSession {
   private stopped:
     | { waiters: Waiter[]; receipts: Set<ActivityReceipt> }
     | undefined;
+  private idlers: (() => void)[] = [];
 
   constructor(
     private readonly goose: GooseProcess,
@@ -510,12 +540,22 @@ export class GooseSession {
   get busy() {
     return this.pending > 0;
   }
+  get working() {
+    return !this.quiet();
+  }
   get open() {
     return !this.closed;
   }
   /** The thinking level it was put on; empty while it runs on goose's own. */
   get effort() {
     return this.chosen.effort ?? "";
+  }
+  /** Resolves once nothing runs, waits to run or waits for its answer:
+   * unlike `busy`, it waits out the model call goose makes after a final
+   * `send` too. */
+  idle(): Promise<void> {
+    if (this.quiet()) return Promise.resolve();
+    return new Promise((resolve) => this.idlers.push(resolve));
   }
 
   /** Sends one user message, whose turn runs on `model` of the provider when
@@ -563,7 +603,7 @@ export class GooseSession {
    * A turn not yet sent is never sent. The work then ends as goose ends it;
    * a message sent before it has runs as a new turn after. */
   interrupt() {
-    if (!this.busy || this.closed) return;
+    if (!this.working || this.closed) return;
     this.queue.length = 0;
     this.stopped = {
       waiters: [...this.waiters],
@@ -586,6 +626,12 @@ export class GooseSession {
         this.written = (this.written + content.text).slice(0, WRITTEN_LIMIT);
     }
     if (kind === "session_info_update") {
+      const title = typeof update.title === "string" ? update.title.trim() : "";
+      const named = this.named;
+      if (title && named) {
+        this.named = undefined;
+        named(title);
+      }
       const goose = (update._meta as { goose?: { activeRunId?: unknown } })
         ?.goose;
       if (goose && "activeRunId" in goose) {
@@ -681,6 +727,7 @@ export class GooseSession {
       this.ranAs(undefined);
     }
     if (!this.steering && !this.closed) this.done();
+    this.wake();
   }
 
   /** Puts the session on the provider, model and thinking level chosen now,
@@ -796,6 +843,16 @@ export class GooseSession {
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))
       resolve(resolve === owner ? settled : { ok: settled.ok });
+    this.wake();
+  }
+  private quiet() {
+    return (
+      this.closed ||
+      (!this.prompting && !this.steering && !this.pending && !this.queue.length)
+    );
+  }
+  private wake() {
+    if (this.quiet()) for (const resolve of this.idlers.splice(0)) resolve();
   }
 }
 

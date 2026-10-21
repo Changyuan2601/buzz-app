@@ -274,7 +274,7 @@ export function MemberRow({
               <MenuTrigger
                 render={
                   <IconButton
-                    variant="ghost"
+                    variant="bare"
                     size="sm"
                     shape="row-end"
                     aria-label={`Actions for ${name}`}

@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 afterEach(() => vi.restoreAllMocks());
 
 it("observes saved conversations with the status of open sessions", () => {
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
   vi.spyOn(GooseRuntime.prototype, "conversations").mockReturnValue([
     { key: "room/r", at: 3 },
     { key: "dm", at: 2 },
@@ -34,6 +34,16 @@ it("observes saved conversations with the status of open sessions", () => {
     },
     effect: vi.fn(),
   } as never);
+  expect(
+    type?.importShared?.({
+      runtime: "goose",
+      provider: "databricks_v2",
+      model: "shared-model",
+    }),
+  ).toMatchObject({ provider: "databricks_v2", model: "shared-model" });
+  expect(
+    type?.importShared?.({ runtime: "buzz-agent", model: "shared-model" }),
+  ).toBeUndefined();
   expect(type?.sessions?.list("a".repeat(64))).toEqual([
     { channelId: "new", at: 4, status: "Working" },
     { channelId: "room", root: "r", at: 3, status: "Working" },

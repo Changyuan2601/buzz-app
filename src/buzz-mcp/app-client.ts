@@ -1,6 +1,6 @@
 import { parseAudienceAuthority } from "../features/sessions/audience-authority";
 // The Buzz tools' client inside the app: the agent's native-held key signs and
-// reads through its Agents handle, files are read by a declared process, and
+// reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
@@ -15,12 +15,12 @@ const READ_TIMEOUT_MS = 60_000;
 export function appClient(
   agent: AgentHandle,
   options: Readonly<{
-    spawn: Spawn;
+    /** The file at `path`, absolute, `~/…` or relative to the agent's working
+     * directory. */
+    read(path: string): Promise<Uint8Array>;
     relayAuthor?: string | undefined;
     signingAuthority?: string | undefined;
     audienceAuthorityCommunity?: string | undefined;
-    /** Where relative paths start: the agent's working directory. */
-    cwd: string;
     memories(slug?: string): Promise<Memories>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
@@ -43,6 +43,7 @@ export function appClient(
   const authorityCommunity = options.audienceAuthorityCommunity;
   return {
     pubkey: agent.pubkey,
+    owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
     attention: agent.attention,
@@ -87,9 +88,13 @@ export function appClient(
       check();
       return agent.media(url);
     },
+    gitAuth: (owner, repo) => {
+      check();
+      return agent.gitAuth(owner, repo);
+    },
     read: (path) => {
       check();
-      return readFile(options.spawn, options.cwd, path, options.signal);
+      return options.read(path);
     },
     memories: (slug) => {
       check();

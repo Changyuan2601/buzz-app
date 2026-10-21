@@ -3,6 +3,7 @@ import { Button, type ButtonProps } from "./Button";
 
 type IconButtonVariant =
   | NonNullable<ButtonProps["variant"]>
+  | "destructive-quiet"
   | "solid"
   | "tint"
   | "chrome"
@@ -14,7 +15,7 @@ type IconButtonSize =
   | "xs"
   | "toolbar"
   | "large";
-type IconButtonShape = "control" | "round" | "row-end" | "squircle";
+type IconButtonShape = "inset" | "control" | "round" | "row-end" | "squircle";
 
 export type IconButtonProps = Omit<
   ComponentProps<typeof Button>,
@@ -38,15 +39,17 @@ export function IconButton({
     <Button
       {...props}
       variant={
-        variant === "solid"
-          ? "prominent"
-          : variant === "tint" ||
-              variant === "chrome" ||
-              variant === "avatar" ||
-              variant === "media" ||
-              variant === "bare"
-            ? "ghost"
-            : variant
+        variant === "destructive-quiet"
+          ? "destructive"
+          : variant === "solid"
+            ? "prominent"
+            : variant === "tint" ||
+                variant === "chrome" ||
+                variant === "avatar" ||
+                variant === "media" ||
+                variant === "bare"
+              ? "ghost"
+              : variant
       }
       size={
         size === "xs" || size === "toolbar"

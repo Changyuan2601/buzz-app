@@ -261,7 +261,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos and Usage are off by default. Feedback, Diff viewer, Identity
+Todos and Usage & costs are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Shared compute, Membership, and Moderation are on by default, but optional. Both browser and
@@ -767,6 +767,17 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access and no sandbox; the import preview says so.
 
+A plugin that declares `"files": true` under `host` reads files and resolves
+directories natively, the same on every platform, rather than starting a
+program such as `base64` or `pwd` that Windows lacks.
+`ctx.host.readFile(path, { cwd })` returns the bytes of a file of at most 50 MB;
+`path` is absolute, `~/…`, or relative to `cwd`, which is absolute or `~/…`. A
+missing file rejects with an error whose message contains "No such file".
+`ctx.host.resolveDirectory(path)` returns an absolute or `~/…` directory as an
+absolute path without symbolic links, in the platform's ordinary form, and
+creates it if missing, as a process's `cwd` is. Both act with the user's full
+access; the import preview says so.
+
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external
@@ -1214,7 +1225,12 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands.
+`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
+and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
+draft order, so a tool can act for whoever the draft addresses. There is one entry
+per mention, so a person mentioned twice appears twice. Recipients the host adds
+at send time, such as a Solo channel's sole agent, are not included. The array
+keeps its identity until the recipients change.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
 The host serializes successive commands using the latest draft and selection,

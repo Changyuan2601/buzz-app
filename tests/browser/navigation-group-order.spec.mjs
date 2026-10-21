@@ -79,6 +79,22 @@ test("dragging a group header moves the whole group, keeps its state, and persis
     page.locator('[data-sidebar-section="group:missing"]'),
   ).toHaveAttribute("data-drop-edge", "before");
   await page.mouse.move(x, y, { steps: 4 });
+  // Deliver a click in the drop's event turn, before dnd-kit can remove its
+  // document guard. stopPropagation alone must not toggle the native summary.
+  await header(page, "laptop").evaluate((element) => {
+    element.ownerDocument.addEventListener(
+      "pointerup",
+      () =>
+        element.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            detail: 1,
+          }),
+        ),
+      { once: true },
+    );
+  });
   // Returning the pointer does not mean dnd-kit has rendered its new target.
   // Release only after the old neighbour's insertion edge is gone.
   await expect(page.locator("[data-drop-edge]")).toHaveCount(0);

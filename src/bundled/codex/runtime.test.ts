@@ -5,6 +5,7 @@ import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -24,7 +25,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
-const scope = "https://relay.test:owner";
+const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -46,7 +47,12 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
-  configured: { model?: string; model_reasoning_effort?: string } = {},
+  configured: {
+    model?: string;
+    model_reasoning_effort?: string;
+    model_reasoning_summary?: string;
+  } = {},
+  repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -311,6 +317,7 @@ function fixture(
     store,
     config,
     () => added,
+    repositories,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -1000,6 +1007,70 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const f = fixture();
+  const fresh = f.delivery("@Codex fix the build");
+  await f.runtime.run({
+    ...fresh,
+    trigger: { ...fresh.trigger, resumed: true } as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toContain("fix the build");
+  expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
+});
+it.each([
+  [undefined, "auto"],
+  ["detailed", undefined],
+  ["none", undefined],
+])(
+  "asks for reasoning summaries unless the user set %s",
+  async (setting, expected) => {
+    const f = fixture([], undefined, false, {
+      ...(setting ? { model_reasoning_summary: setting } : {}),
+    });
+    await f.runtime.run(f.delivery("@Codex think"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const [start] = f.starts();
+    const params = start?.params as { summary?: string } | undefined;
+    expect(params?.summary).toBe(expected);
+  },
+);
+it("asks for reasoning summaries on a resumed turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("@Codex second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(true);
+  expect(f.starts()[1]?.params).toMatchObject({ summary: "auto" });
+});
+it("asks for reasoning summaries on a standalone watch turn", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  f.objects.set("interest/ops", { type: "interest", instructions: "Watch" });
+  const watch = {
+    type: "event",
+    enabled: true,
+    interest_id: "ops",
+    since: 0,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  f.objects.set("watch/deploys", watch);
+  const base = f.delivery("someone else's message");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  const event = { ...base.trigger.event, pubkey: "f".repeat(64) };
+  f.wake({
+    ...base,
+    trigger: { type: "watch", event, slug: "watch/deploys", watch },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.starts()[0]?.params).toMatchObject({ summary: "auto" });
+  await f.complete(0, "");
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -2115,7 +2186,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3", "v5"])(
+it.each(["v2", "v3", "v5", "v6"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();
@@ -2135,8 +2206,13 @@ it.each(["v2", "v3", "v5"])(
     ).toHaveLength(0);
     const thread = f.sent.find((wire) => wire.method === "thread/start")
       ?.params as { dynamicTools: { tools: { name: string }[] }[] };
-    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
-      "media_get",
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "media_get",
+        "notes_get",
+        "notes_set",
+        "notes_rm",
+      ]),
     );
     f.complete();
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -2826,7 +2902,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2863,7 +2939,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -2984,7 +3060,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -3390,6 +3466,77 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
   ]);
 });
 
+it("titles a new Solo chat once, from its first message on an ephemeral read-only thread", async () => {
+  const f = fixture();
+  asSoloChat(f);
+  const named = vi.fn();
+  const titling = () =>
+    f.sent.filter(
+      (wire) =>
+        wire.method === "thread/start" &&
+        (wire.params as { ephemeral?: boolean }).ephemeral,
+    );
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Without Codex's title model in the catalog, the chat's own model titles it.
+  expect(titling()[0]?.params).toMatchObject({
+    model: "test-model",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    threadId: "thread-2",
+    model: "test-model",
+    effort: "low",
+    outputSchema: { required: ["title"] },
+  });
+  expect(inputText(f.starts()[1])).toContain("fix the login bug");
+  f.emit({
+    method: "item/completed",
+    params: {
+      threadId: "thread-2",
+      item: { type: "agentMessage", text: '{"title":" Fix login bug "}' },
+    },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-2",
+      turn: { id: "turn-2", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Fix login bug"));
+  await vi.waitFor(() =>
+    expect(
+      f.sent.find((wire) => wire.method === "thread/unsubscribe")?.params,
+    ).toEqual({ threadId: "thread-2" }),
+  );
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A resumed conversation is not new, so it is not titled again.
+  await f.runtime.run({ ...f.delivery("@Codex later"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(titling()).toHaveLength(1);
+  expect(named).toHaveBeenCalledOnce();
+});
+
+it("does not title a conversation outside a Solo chat", async () => {
+  const f = fixture();
+  const named = vi.fn();
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  expect(named).not.toHaveBeenCalled();
+});
+
 it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
   const soloChannels = asSoloChat(f);
@@ -3567,4 +3714,175 @@ const canvasHead = (content: string, author = owner) => ({
   created_at: 1,
   tags: [],
   content,
+});
+it.each(["completed", "failed"])(
+  "accepts a mention during compaction without blocking another conversation or expiring its handover (%s)",
+  async (outcome) => {
+    const f = fixture();
+    const first = f.delivery("first");
+    const agent = { ...first.agent, config: first.config } as unknown as Agent;
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.sessionState(agent, { channelId: "channel", root }),
+      ).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, { channelId: "channel", root }, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+        true,
+      ),
+    );
+    const handover = new AbortController();
+    let returned = false;
+    const accepted = f.runtime
+      .run({ ...f.delivery("queued after compact"), signal: handover.signal })
+      .then(() => {
+        returned = true;
+      });
+    try {
+      await vi.waitFor(() => expect(returned).toBe(true));
+      handover.abort(new Error("Handover expired"));
+      await f.runtime.run(f.delivery("another conversation", "d".repeat(64)));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain("another conversation");
+      await f.complete(1);
+    } finally {
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "compact" } },
+      });
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: {
+            id: "compact",
+            status: outcome,
+            ...(outcome === "failed"
+              ? { error: { message: "Compaction failed" } }
+              : {}),
+          },
+        },
+      });
+      const result = await compacted;
+      if (outcome === "failed") expect(result).toBeInstanceOf(Error);
+      else expect(result).toBeUndefined();
+      await accepted;
+    }
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(inputText(f.starts()[2])).toContain("queued after compact");
+    await f.complete(2);
+  },
+);
+
+describe("session actions", () => {
+  const methods = (f: ReturnType<typeof fixture>) =>
+    f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
+
+  it("compacts immediately, and keeps the session active until an early interrupt ends its turn", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(methods(f)).toContain("thread/compact/start"),
+    );
+    expect(f.starts()).toHaveLength(1);
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    await f.runtime.session(agent, place, "interrupt");
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    const later = f.runtime.run(f.delivery("after interrupt"));
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    expect(await compacted).toBeInstanceOf(Error);
+    await later;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.find((wire) => wire.method === "turn/interrupt")?.params,
+    ).toEqual({ threadId: "thread-1", turnId: "compact" });
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+  });
+
+  it("resets durably without a message, and preserves the binding if the write fails", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    vi.spyOn(f.storage, "set").mockImplementationOnce(() => {
+      throw new Error("Disk full");
+    });
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "Disk full",
+    );
+    await f.runtime.run(f.delivery("still the old session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    await f.runtime.session(agent, place, "new");
+    expect(f.starts()).toHaveLength(2);
+    expect(
+      [...f.storage.values()].some((value) =>
+        value.includes('"threadId":"thread-1"'),
+      ),
+    ).toBe(false);
+    await f.runtime.run(f.delivery("new session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
+    await f.complete();
+  });
+});
+
+it("updates Codex repository context from the agent’s captured community, including default restoration", async () => {
+  let folder = "/code/codex";
+  const repositories = vi.fn(
+    () => `<community-repositories>${folder}</community-repositories>`,
+  );
+  const f = fixture([], undefined, false, {}, repositories);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(repositories).toHaveBeenCalledWith(scope);
+  expect(
+    JSON.stringify(f.sent.filter((wire) => wire.method === "turn/start")),
+  ).toContain("/code/codex");
+  folder = "REPOS in your own workspace";
+  await f.runtime.run(f.delivery("second", "d".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turns = f.sent.filter((wire) => wire.method === "turn/start");
+  expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
+  expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });

@@ -31,6 +31,8 @@ export type ToolItem = Base & {
   completedAt?: number;
   truncated: boolean;
   permission?: { options: string[]; outcome?: string };
+  /** Calls recorded while this script was executing, in recorded order. */
+  children?: TranscriptItem[];
 };
 export type TranscriptItem =
   | (Base & { type: "system"; sections: PromptSection[] })

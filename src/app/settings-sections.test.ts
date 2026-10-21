@@ -80,6 +80,7 @@ it.each([
         "Community",
         [
           "profile",
+          "local-settings",
           "buzz.emoji/custom-emoji",
           "example/groups",
           "other/groups",
@@ -120,6 +121,7 @@ it("classifies built-in sections apart from plugin card keys", () => {
   for (const id of [
     "profile",
     "identity",
+    "local-settings",
     "plugins",
     "leave-community",
     ...app.filter((id) => id !== "buzz.channels/templates"),
@@ -134,4 +136,16 @@ it("classifies built-in sections apart from plugin card keys", () => {
     "administration",
   ])
     expect(isBuiltInSettingsSection(id)).toBe(false);
+});
+
+it("keeps Local settings after Profile under the host’s Community heading", () => {
+  const model = settingsSections(cards, {
+    name: "Saved",
+    publishedName: "Published",
+    localName: "Local label",
+  });
+  expect(model.groups[0]?.label).toBe("Community");
+  expect(
+    model.groups[0]?.sections.slice(0, 2).map((section) => section.id),
+  ).toEqual(["profile", "local-settings"]);
 });

@@ -15,7 +15,7 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
@@ -60,6 +60,7 @@ function setup(
     title?: string;
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -131,7 +132,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://agent.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
@@ -155,6 +161,7 @@ function setup(
     storage,
     config,
     () => added,
+    options.repositories,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -197,7 +204,10 @@ function setup(
   const stale = new Set<string>();
   // What the host holds: a delivered watch or timer, and its Interest.
   const objects = new Map<string, Record<string, unknown>>();
-  const deliver = (trigger: Delivery["trigger"]) => {
+  const deliver = (
+    trigger: Delivery["trigger"],
+    picks: Partial<Delivery> = {},
+  ) => {
     if (trigger.type !== "mention") {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
@@ -218,6 +228,7 @@ function setup(
       workingUntil,
       interruptible,
       ...(options.named ? { named: options.named } : {}),
+      ...picks,
       // The host's answer, as it is when asked.
       current: () =>
         trigger.type === "mention" ||
@@ -314,6 +325,7 @@ it("hands a mention to its thread's session", async () => {
     `Alice (${alice}) (1970-01-01T00:01:40.000Z): Build is red`,
   );
   expect(prompt).toContain("Content: @Claude can you look?");
+  expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
   expect(claude?.options).not.toHaveProperty("agent");
   expect(claude?.options.args).toContain("--mcp-config");
@@ -355,6 +367,22 @@ it("hands the host a stopper that interrupts the mention's running turn", async 
   expect(interrupts()).toHaveLength(1);
   claude?.finish();
   await flush(10);
+});
+
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const mention = message("2", "@Claude fix the build", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes } = setup([mention]);
+  await deliver({ type: "mention", event: mention, resumed: true });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("Content: @Claude fix the build");
+  expect(prompt).toContain(RESUMED_PROMPT);
 });
 
 const EFFORTS = [
@@ -1752,4 +1780,150 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.options.args).not.toContain("--add-dir");
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
+});
+
+it("controls an idle Claude session without sending a message, and rejects reset while active", async () => {
+  const f = setup([], { hold: true });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver({ type: "mention", event: root });
+    const process = f.claudes()[0];
+    if (!process) throw new Error("Expected Claude process");
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    process.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() =>
+      expect(process.prompts).toEqual([expect.any(String), "/compact"]),
+    );
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    process.finish();
+    await compacted;
+    await f.runtime.session(agent, place, "new");
+    expect(process.killed).toBe(true);
+    expect(f.claudes()).toHaveLength(1);
+    await f.deliver({
+      type: "mention",
+      event: message("2", "hello again", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+    });
+    expect(f.claudes()).toHaveLength(2);
+    expect(f.claudes()[1]?.options.args).not.toContain("--resume");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("interrupts a turn still loading its prompt before Claude receives it", async () => {
+  const f = setup();
+  let release!: (events: readonly EventData[]) => void;
+  const history = new Promise<readonly EventData[]>((resolve) => {
+    release = resolve;
+  });
+  f.read.mockImplementationOnce(async () => history);
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  const delivered = f.deliver({
+    type: "mention",
+    event: message("2", "followup", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    }),
+  });
+  try {
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await f.runtime.session(agent, place, "interrupt");
+  } finally {
+    release([]);
+  }
+  try {
+    await delivered;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("hands a session its own community repositories without changing its workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/own</community-repositories>",
+  );
+  const { runtime, deliver, claudes } = setup([], { repositories });
+  try {
+    await deliver({ type: "mention", event: message("1", "@Claude work") });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
+    expect(JSON.stringify(process?.received)).toContain("/code/own");
+    expect(process?.options.cwd).toBe("~/.buzz");
+  } finally {
+    runtime.dispose();
+  }
+});
+
+it("keeps an accepted Claude handoff past its deadline while compaction runs", async () => {
+  const f = setup([], { hold: true });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  const handover = new AbortController();
+  let finishCompaction: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: root });
+    const process = f.claudes()[0];
+    if (!process) throw new Error("Expected Claude process");
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+    process.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() => expect(process.prompts.at(-1)).toBe("/compact"));
+    finishCompaction = () => process.finish();
+    const reply = message("2", "queued after compact", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    let returned = false;
+    const admitted = Promise.resolve(
+      f.deliver({ type: "mention", event: reply }, { signal: handover.signal }),
+    ).then(() => {
+      returned = true;
+    });
+    try {
+      await vi.waitFor(() => expect(returned).toBe(true));
+      handover.abort(new Error("Handover expired"));
+    } finally {
+      process.finish();
+      finishCompaction = undefined;
+      await compacted;
+      await admitted;
+    }
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(3));
+    expect(process.prompts[2]).toContain("queued after compact");
+    process.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+  } finally {
+    finishCompaction?.();
+    f.runtime.dispose();
+  }
 });

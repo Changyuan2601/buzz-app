@@ -127,7 +127,7 @@ it("reads the agent's sessions in its workspace through goose, every page", asyn
         saved("own", [user("Tidy my notes"), work]),
         saved("mine", [user(ask()), work]),
       ],
-    }).spawn,
+    }),
   );
   const sessions = await readUsage(
     history,
@@ -160,7 +160,7 @@ it("stops goose when a read is cancelled while an export is pending", async () =
   });
   const controller = new AbortController();
   const reading = readUsage(
-    new GooseHistory(goose.spawn),
+    new GooseHistory(goose),
     agent,
     "~/.buzz",
     Date.parse("2026-06-01T00:00:00Z"),
@@ -198,7 +198,7 @@ it.each(["session/list", "_goose/unstable/session/export"])(
       silent: [method],
     });
     const reading = readUsage(
-      new GooseHistory(goose.spawn),
+      new GooseHistory(goose),
       agent,
       "~/.buzz",
       Date.parse("2026-06-01T00:00:00Z"),

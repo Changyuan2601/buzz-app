@@ -1,11 +1,12 @@
+import { HuddleAvatarToss } from "./HuddleAvatarToss";
 import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import {
-  Fragment,
   useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type HTMLAttributes,
+  type RefObject,
 } from "react";
 import type { HuddleView } from "../../features/huddle/window";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -38,10 +39,24 @@ function arrange(
   hasSelf: boolean,
   anchor?: ActiveName,
 ) {
-  const scale = Math.min(width / 360, height / 340);
-  const meanX =
-    slots.reduce((sum, [x, , size]) => sum + x + size / 2, 0) /
-    (slots.length || 1);
+  // Small calls use the available stage; larger groups retain the cloud's spacing.
+  const spanX = slots.length
+    ? Math.max(...slots.map(([x, , size]) => x + size)) -
+      Math.min(...slots.map(([x]) => x))
+    : 0;
+  const spanY = slots.length
+    ? Math.max(...slots.map(([, y, size]) => y + size)) -
+      Math.min(...slots.map(([, y]) => y))
+    : 0;
+  const scale = Math.min(
+    width / Math.max(150, spanX + 16),
+    height / Math.max(180, spanY + 48),
+  );
+  const meanX = slots.length
+    ? (Math.min(...slots.map(([x]) => x)) +
+        Math.max(...slots.map(([x, , size]) => x + size))) /
+      2
+    : 0;
   const meanY =
     slots.reduce((sum, [, y, size]) => sum + y + size / 2, 0) /
     (slots.length || 1);
@@ -62,7 +77,12 @@ function arrange(
     portraits.push({
       x: stageWidth * 0.17,
       y: 0,
-      r: Math.max(48, Math.min(stageWidth * 0.2, height * 0.55, 100)) / 2,
+      r:
+        Math.min(
+          stageWidth * (slots.length === 1 ? 0.42 : 0.34),
+          height * 0.7,
+          slots.length === 1 ? 240 : 200,
+        ) / 2,
     });
   const offset = portraits.length
     ? ({
@@ -149,17 +169,40 @@ function arrange(
     ),
   };
 }
+// Fit a single composition, reserving space for speech growth and name badges.
+function arrangeAroundSelf(count: number, width: number, height: number) {
+  const radius = 125;
+  const peerSize = Math.min(80, 2 * radius * Math.sin(Math.PI / count) - 16);
+  const diameter = 2 * radius + peerSize;
+  const scale = Math.max(
+    0,
+    Math.min((width - 32) / diameter, (height - 56) / diameter, 1.5),
+  );
+  return {
+    offset: { "--self-size": `${120 * scale}px` } as CSSProperties,
+    positions: Array.from({ length: count }, (_, index) => {
+      const angle = -Math.PI / 2 + (index * 2 * Math.PI) / count;
+      return {
+        "--bubble-x": `${Math.cos(angle) * radius * scale}px`,
+        "--bubble-y": `${Math.sin(angle) * radius * scale}px`,
+        width: `${peerSize * scale}px`,
+      } as CSSProperties;
+    }),
+  };
+}
 type Person = HuddleView["participants"][number];
 
 export function HuddleAvatarCloud({
   participants,
   muted,
 }: Pick<HuddleView, "participants" | "muted">) {
+  const stage = useRef<HTMLElement>(null);
   const [active, setActive] = useState<ActiveName>();
   const activeKey = active?.key;
   const self = participants.find((person) => person.own);
   const peers = participants.filter((person) => !person.own);
   const hasPeers = peers.length > 0;
+  const centered = !!self && participants.length > 3;
   const visible = peers.slice(0, slots.length);
   const hidden = peers.length - visible.length;
   const occupied = [
@@ -204,16 +247,18 @@ export function HuddleAvatarCloud({
     if (name) observer.observe(name);
     return () => observer.disconnect();
   }, [hasPeers]);
-  const { positions, offset } = arrange(
-    occupied,
-    bounds.width,
-    bounds.height,
-    bounds.rem,
-    bounds.labelHeight,
-    visible.findIndex((person) => person.key === activeKey),
-    !!self,
-    active,
-  );
+  const { positions, offset } = centered
+    ? arrangeAroundSelf(occupied.length, bounds.width, bounds.height)
+    : arrange(
+        occupied,
+        bounds.width,
+        bounds.height,
+        bounds.rem,
+        bounds.labelHeight,
+        visible.findIndex((person) => person.key === activeKey),
+        !!self,
+        active,
+      );
   const revealName = (key: string, element: HTMLDivElement) => {
     if (activeKey === key) return;
     const portrait = element.getBoundingClientRect();
@@ -248,16 +293,14 @@ export function HuddleAvatarCloud({
   });
   return (
     <section
+      ref={stage}
       className={styles.avatarStage}
       aria-label="Huddle participants"
       data-has-peers={hasPeers}
+      data-duet={peers.length === 1 || undefined}
+      data-centered={centered || undefined}
       style={hasPeers ? offset : undefined}
     >
-      {self && (
-        <div className={styles.selfBubble} aria-hidden="true">
-          <SpeakingHalo level={muted ? 0 : self.level} peer={self.key} />
-        </div>
-      )}
       {self && (
         <div
           className={`${styles.selfBubble} ${styles.avatarForeground}`}
@@ -266,30 +309,22 @@ export function HuddleAvatarCloud({
           data-name-active={activeKey === self.key}
           {...nameInteraction(self.key)}
         >
-          <Bubble person={self} muted={muted} />
+          <Bubble person={self} muted={muted} stage={stage} />
         </div>
       )}
       {hasPeers && (
         <div ref={cloud} className={styles.remoteCloud} data-has-self={!!self}>
           {visible.map((person, index) => (
-            <Fragment key={person.key}>
-              <div
-                className={styles.cloudBubble}
-                style={positions[index]}
-                aria-hidden="true"
-              >
-                <SpeakingHalo level={person.level} peer={person.key} />
-              </div>
-              <div
-                className={`${styles.cloudBubble} ${styles.avatarForeground}`}
-                style={positions[index]}
-                data-participant={person.key}
-                data-name-active={activeKey === person.key}
-                {...nameInteraction(person.key)}
-              >
-                <Bubble person={person} muted={false} />
-              </div>
-            </Fragment>
+            <div
+              key={person.key}
+              className={`${styles.cloudBubble} ${styles.avatarForeground}`}
+              style={positions[index]}
+              data-participant={person.key}
+              data-name-active={activeKey === person.key}
+              {...nameInteraction(person.key)}
+            >
+              <Bubble person={person} muted={false} stage={stage} />
+            </div>
           ))}
           {hidden > 0 && (
             <div
@@ -317,21 +352,39 @@ export function HuddleAvatarCloud({
   );
 }
 
-function Bubble({ person, muted }: { person: Person; muted: boolean }) {
+function Bubble({
+  person,
+  muted,
+  stage,
+}: {
+  person: Person;
+  muted: boolean;
+  stage: RefObject<HTMLElement | null>;
+}) {
   const level = muted ? 0 : Math.max(0, Math.min(1, person.level));
   const label = `${person.name}${person.own ? (muted ? " (you, muted)" : " (you)") : ""}${level > 0 ? ", speaking" : ""}`;
   return (
-    <span className={styles.bubbleArtwork}>
-      <HuddleAvatarMotion participant={person.key}>
-        <Avatar
-          size="fill"
-          src={person.picture}
-          fallback={person.name}
-          alt={label}
-        />
-      </HuddleAvatarMotion>
-      <NameBadge name={person.name} />
-    </span>
+    <HuddleAvatarToss stage={stage}>
+      <span
+        className={styles.bubbleArtwork}
+        style={
+          {
+            "--voice-scale": 1 + Math.min(level, 0.6) * 0.06,
+          } as CSSProperties
+        }
+      >
+        <SpeakingHalo level={level} person={person} />
+        <HuddleAvatarMotion participant={person.key} playful level={level}>
+          <Avatar
+            size="fill"
+            src={person.picture}
+            fallback={person.name}
+            alt={label}
+          />
+        </HuddleAvatarMotion>
+        <NameBadge name={person.name} />
+      </span>
+    </HuddleAvatarToss>
   );
 }
 
@@ -348,18 +401,24 @@ function NameBadge({ name }: { name: string }) {
   );
 }
 
-function SpeakingHalo({ level, peer }: { level: number; peer: string }) {
+function SpeakingHalo({ level, person }: { level: number; person: Person }) {
   return (
     <span
       className={styles.speakingHalo}
       data-speaking={level > 0}
-      data-speaker={peer}
+      data-speaker={person.key}
       aria-hidden="true"
-      style={
-        {
-          "--speaker-scale": 1.12 + Math.max(0, Math.min(1, level)) * 0.9,
-        } as CSSProperties
-      }
-    />
+    >
+      {person.picture && (
+        <span className={styles.speakingArtwork}>
+          <Avatar
+            size="fill"
+            src={person.picture}
+            fallback={person.name}
+            alt=""
+          />
+        </span>
+      )}
+    </span>
   );
 }

@@ -341,7 +341,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -397,6 +397,43 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     assert!(agent
         .http_auth(&key, "https://elsewhere.test/events", b"{}")
         .is_err());
+}
+
+#[test]
+fn signs_git_auth_for_one_repository_in_its_own_community() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let owner = "a".repeat(64);
+    let (url, auth) = agent.git_auth(&key, &owner, "hive").unwrap();
+    assert_eq!(url, format!("{}/git/{owner}/hive.git", agent.endpoint("")));
+    assert_eq!(auth["kind"], 27235);
+    assert_eq!(auth["pubkey"], agent.pubkey);
+    let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
+    assert_eq!(
+        tags,
+        [
+            vec!["u".to_owned(), url],
+            vec!["method".to_owned(), "GET".to_owned()],
+            saved
+        ]
+    );
+    for (owner, repo) in [
+        (owner.as_str(), ""),
+        (owner.as_str(), ".hive"),
+        (owner.as_str(), "a..b"),
+        (owner.as_str(), "a/b"),
+        (owner.as_str(), "hive?x=1"),
+        (owner.as_str(), &"h".repeat(65)),
+        ("not-a-key", "hive"),
+        (&"A".repeat(64), "hive"),
+    ] {
+        assert!(agent.git_auth(&key, owner, repo).is_err(), "{owner}/{repo}");
+    }
+    let other = Secret::generate().unwrap();
+    assert!(agent.git_auth(&other, &owner, "hive").is_err());
 }
 
 #[test]

@@ -74,7 +74,7 @@
     }
     [data-preference-description-layout="wide"]
       .buzz-preference-row[data-has-icon] {
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr) var(--preference-row-trailing);
       row-gap: var(--space-1);
     }
     [data-preference-description-layout="wide"] .buzz-preference-row-content {

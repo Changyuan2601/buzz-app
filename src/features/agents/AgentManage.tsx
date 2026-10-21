@@ -52,6 +52,7 @@ export function AgentDelete({
         </Button>
       )}
       <Dialog
+        size="compact"
         open={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}

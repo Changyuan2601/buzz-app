@@ -287,7 +287,7 @@ test("hovering a sidebar row inks only that row, not its siblings", async ({
   // Buzzin' light is where hover ink differs from resting navigation ink.
   await page.evaluate(() => {
     document.documentElement.dataset.colorMode = "light";
-    document.documentElement.dataset.colorLevel = "full";
+    document.documentElement.dataset.colorLevel = "high";
   });
   const pages = page.getByRole("navigation", { name: "Pages", exact: true });
   const inbox = pages.getByRole("button", { name: "Inbox", exact: true });

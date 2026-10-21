@@ -1,3 +1,5 @@
+import { ACCENTS, BRAND_GRADIENTS, PALETTE_FAMILIES } from "./brand";
+
 /**
  * Documentation metadata for the shared tokens: names, purposes, sources,
  * and adoption status. The viewer renders these entries; token guards check
@@ -125,6 +127,26 @@ export const PALETTE: PaletteHue[] = [
   })),
 }));
 
+// Existing Appearance ramps are palette owners in both modes.
+PALETTE.push(
+  ...PALETTE_FAMILIES.map((id) => ({
+    id,
+    usedBy: BRAND_GRADIENTS.some(
+      ({ start, end }) =>
+        start.startsWith(`${id}-`) || end.startsWith(`${id}-`),
+    )
+      ? ACCENTS.some((family) => family === id)
+        ? "Appearance and artwork"
+        : "artwork"
+      : "Appearance",
+    steps: STEP_JOBS.map((job, index) => ({
+      step: index + 1,
+      variable: `--${id}-${index + 1}`,
+      job,
+    })),
+  })),
+);
+
 export const BACKDROP_TREATMENTS: BackdropTreatment[] = [
   {
     id: "sky-field",
@@ -249,6 +271,35 @@ export const RAMPS: Ramp[] = [
 /** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
   {
+    id: "plugin-artwork",
+    name: "Plugin artwork (proposed)",
+    description:
+      "Palette-backed category artwork used by the Settings plugin catalog.",
+    roles: BRAND_GRADIENTS.flatMap((gradient) =>
+      (["start", "end", "gradient"] as const).map(
+        (part): Role => ({
+          token: `art-plugin-${gradient.category}-${part}`,
+          variable: `--art-plugin-${gradient.category}-${part}`,
+          pointsAt:
+            part === "gradient"
+              ? `${gradient.start} → ${gradient.end}`
+              : part === "start"
+                ? `--${gradient.start}`
+                : `--${gradient.end}`,
+          use: `${gradient.name} decorative artwork ${part}.`,
+          status: "proposed",
+          owner: "Settings plugin catalog",
+          ...(part === "gradient"
+            ? {
+                exception:
+                  "Complete decorative composition of palette-backed endpoints.",
+              }
+            : {}),
+        }),
+      ),
+    ),
+  },
+  {
     id: "semantic-surface",
     name: "Surface",
     description: "Shared surface roles, with values for both themes.",
@@ -298,7 +349,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt: "accent step 4 at Hummin’; step 9 at Buzzin’",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
         use: "Own message bubbles; pair with --text-message-own.",
         status: "core",
       },
@@ -487,16 +538,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt:
-          "blue-11 at Snoozin’; the family link partner from Hummin’ (chartreuse: blue-11 light, bright chartreuse dark)",
+        pointsAt: "the family link partner at every vibe level",
         use: "Inline links in prose. Mentions use text-mention on a highlight instead.",
         status: "core",
       },
       {
         token: "text-message-own",
         variable: "--text-message-own",
-        pointsAt:
-          "text-standard at Neutral; accent 12, or contrast ink at Buzzin’",
+        pointsAt: "accent 12 at low contrast; accent ink at high contrast",
+
         use: "Prose on the selected outgoing message surface.",
         status: "core",
       },
@@ -504,7 +554,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-link-own",
         variable: "--text-message-link-own",
         pointsAt:
-          "text-link on neutral bubbles; accent ink on the brand-filled bubble from Swarmin’",
+          "text-link on neutral bubbles; accent ink on solid Buzzin’ bubbles",
         use: "Links on the selected outgoing message surface.",
         status: "core",
       },
@@ -519,7 +569,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-mention-own",
         variable: "--text-mention-own",
         pointsAt:
-          "text-mention; the own bubble's ink from Swarmin’ (tone-on-tone chip)",
+          "text-mention; the own bubble's ink at Buzzin’ (tone-on-tone chip)",
         use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
         status: "core",
       },
@@ -737,9 +787,40 @@ export const ROLE_GROUPS: RoleGroup[] = [
     description: "Shared affordance roles, with values for both themes.",
     roles: [
       {
+        token: "bg-surface-control-selected",
+        variable: "--surface-control-selected",
+        pointsAt:
+          "neutral panel at Snoozin’; accent 4 at Hummin’; accent 9 at Buzzin’",
+        use: "Persistent segmented selection; pair with text-control-selected.",
+        status: "core",
+      },
+      {
+        token: "text-control-selected",
+        variable: "--text-control-selected",
+        pointsAt:
+          "standard ink at Snoozin’; accent 11 at Hummin’; accent contrast at Buzzin’",
+        use: "Labels and icons on surface-control-selected.",
+        status: "core",
+      },
+      {
+        token: "--surface-navigation-selected",
+        variable: "--surface-navigation-selected",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
+        use: "Selected navigation fill, paired with text-navigation-selected.",
+        status: "core",
+      },
+      {
+        token: "--text-navigation-selected",
+        variable: "--text-navigation-selected",
+        pointsAt: "accent 11 at low contrast; accent contrast at high contrast",
+        use: "Labels and icons on selected navigation.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-prominent",
         variable: "--affordance-prominent",
-        pointsAt: "accent step 9 at every accent level",
+        pointsAt: "accent step 9 in both modes",
+
         use: "The main action fill.",
         status: "core",
       },
@@ -1021,14 +1102,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-mention-own",
         variable: "--affordance-mention-own",
-        pointsAt: "affordance-mention; accent 10 from Swarmin’",
+        pointsAt: "affordance-mention; accent 10 at Buzzin’",
         use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-own-hover",
         variable: "--affordance-mention-own-hover",
-        pointsAt: "affordance-mention-hover; accent pressed from Swarmin’",
+        pointsAt: "affordance-mention-hover; accent pressed at Buzzin’",
         use: "Own-bubble mention chip under the pointer.",
         status: "core",
       },

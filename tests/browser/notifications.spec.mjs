@@ -235,6 +235,41 @@ test("explicit Allow releases the first fresh alert; master off preserves catego
   expect(await systemCount(page)).toBe(1);
 });
 
+// Layout and real focus retention need an engine; Vitest covers check ordering.
+test("keyboard permission check keeps focus and geometry while busy", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await ready(page, app);
+  const status = page.locator("#setting-delivery").getByRole("status");
+  await expect(status).toHaveCount(0);
+  const button = page.getByRole("button", {
+    name: "Check permission",
+    exact: true,
+  });
+  const before = await button.boundingBox();
+  await page.evaluate(() => {
+    window.Notification.permission = "denied";
+  });
+  await button.focus();
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  await page.keyboard.press("Enter");
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(100);
+  // A screenshot crosses a real rendered frame, where a disabled control blurs.
+  await button.screenshot();
+  await expect(button).toBeFocused();
+  expect(await button.boundingBox()).toEqual(before);
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await page.clock.runFor(400);
+  await expect(button).not.toHaveAttribute("aria-busy", "true");
+  await expect(button).toBeFocused();
+  await expect(status).toHaveText(
+    "Notifications are off. Turn them on in your browser or system settings.",
+  );
+});
+
 test("a fully visible incoming row stays quiet without publishing read intent", async ({
   page,
   app,

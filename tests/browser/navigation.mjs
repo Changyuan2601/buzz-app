@@ -123,9 +123,10 @@ export async function selectSettingsSection(page, name, regionName = name) {
 }
 
 export async function chooseColorMode(page, name) {
-  const choice = page.getByRole("radio", { name, exact: true });
-  await page.locator("label").filter({ has: choice }).click();
-  await expect(choice).toBeChecked();
+  const choice = page.getByRole("combobox", { name: "Mode", exact: true });
+  await choice.click();
+  await page.getByRole("option", { name, exact: true }).click();
+  await expect(choice).toHaveText(name);
 }
 
 // Secondary panels enter with a short horizontal transform. Positions compared

@@ -164,6 +164,15 @@ Setup, by a repository admin:
 
 ## Prerequisites
 
+### Builderlab URL
+
+The **Desktop previews** workflow sets `BUZZ_BUILDERLAB_URL` for all platform
+builds, including candidate-only runs. It defaults to `https://app.builderlab.xyz`.
+To override it, set the repository's non-secret Actions variable
+`BUZZ_BUILDERLAB_URL`; an unset or empty variable uses the production default.
+
+### Signing
+
 Deploy [the signing infrastructure](https://github.com/squareup/tf-mobuild-workers/pull/1398)
 and set these repository Actions secrets:
 

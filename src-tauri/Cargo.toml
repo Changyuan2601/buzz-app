@@ -42,6 +42,7 @@ tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-ut
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
+dunce = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }

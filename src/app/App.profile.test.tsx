@@ -173,26 +173,11 @@ it("opens profile settings from the account menu header", async () => {
       "Update this community’s profile. Other community profiles stay unchanged.",
     ),
   ).toBeVisible();
-  await within(settings).findByRole("textbox", { name: "Display name" });
-  await user.click(
-    within(settings).getByRole("button", { name: "Close Settings" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
-  );
-  if (!services) throw new Error("Missing services");
-  await act(async () => {
-    void services?.navigation.open({
-      version: 1,
-      kind: "settings",
-      section: "profile",
-    });
-  });
-  const reopened = screen.getByRole("dialog", { name: "Settings" });
   expect(
-    within(reopened).getByRole("textbox", { name: "Display name" }),
+    await within(settings).findByRole("textbox", { name: "Display name" }),
   ).toHaveValue("Community name");
-  expect(within(reopened).queryByText(/Loading your profile/)).toBeNull();
+  // Dismiss/reopen belongs to the unsaved-edits journey below; cached loading
+  // is covered with a held refresh in ProfileSettings.test.tsx.
 });
 
 it("opens Plugins from the account menu and switches back to profile settings", async () => {

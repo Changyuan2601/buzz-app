@@ -2,7 +2,8 @@
 //! stdin stays open for the plugin, and stdout and stderr stream back as they
 //! arrive. A process belongs to the plugin that started it and to the page that
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
-//! app exits. It runs with the user's own access: there is no sandbox.
+//! app exits. A page that reloaded hears nothing of it after. It runs with the
+//! user's own access: there is no sandbox.
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
@@ -112,7 +113,7 @@ impl HostProcesses {
         #[cfg(windows)]
         let mut child = job
             .spawn_hidden(&mut command)
-            .ok_or_else(|| format!("Could not start {program}"))?;
+            .map_err(|error| format!("Could not start {program}: {error}"))?;
         #[cfg(not(windows))]
         let mut child = command
             .spawn()
@@ -187,10 +188,17 @@ impl HostProcesses {
             for reader in readers.into_iter().flatten() {
                 let _ = reader.await;
             }
-            state.registry().entries.remove(&handle);
-            let _ = on_event.send(ProcessEvent::Exit {
-                code: status.and_then(|status| status.code()),
-            });
+            let mut registry = state.registry();
+            registry.entries.remove(&handle);
+            // A page that reloaded is told nothing: it stopped the process by
+            // going, and may run until it unloads, taking the exit for a failure.
+            let reloaded = registry.page != page;
+            drop(registry);
+            if !reloaded {
+                let _ = on_event.send(ProcessEvent::Exit {
+                    code: status.and_then(|status| status.code()),
+                });
+            }
         });
         Ok(handle)
     }
@@ -230,7 +238,7 @@ impl HostProcesses {
         }
         Ok(())
     }
-    /// Stops every process: the page that owned them is gone.
+    /// Stops every process, without telling the page: it is gone.
     pub(crate) fn stop_all(&self) {
         let mut registry = self.registry();
         registry.page += 1;
@@ -427,10 +435,16 @@ fn program_path(
     Ok(resources.join("bin").join(&declared.program))
 }
 
-fn expand_home(directory: &str) -> Result<PathBuf, String> {
+/// The rest of a path written `~/…`, or on Windows also `~\…`.
+pub(crate) fn under_home(path: &str) -> Option<&str> {
+    path.strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\").filter(|_| cfg!(windows)))
+}
+
+pub(crate) fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?
-    } else if let Some(rest) = directory.strip_prefix("~/") {
+    } else if let Some(rest) = under_home(directory) {
         home()?.join(rest)
     } else {
         PathBuf::from(directory)
@@ -441,8 +455,15 @@ fn expand_home(directory: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    // Windows' own profile folder, never a `HOME` another tool set, such as
+    // Git for Windows' `/c/Users/…`.
+    #[cfg(windows)]
+    let order = ["USERPROFILE", "HOME"];
+    #[cfg(not(windows))]
+    let order = ["HOME", "USERPROFILE"];
+    order
+        .into_iter()
+        .find_map(std::env::var_os)
         .map(PathBuf::from)
         .ok_or_else(|| "No home directory".into())
 }

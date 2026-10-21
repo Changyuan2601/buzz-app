@@ -432,6 +432,7 @@ export function SidebarSection({
           )}
           {canRemove && (
             <Dialog
+              size="compact"
               open={removeOpen}
               onOpenChange={setRemoveOpen}
               dismissOnOutsideClick

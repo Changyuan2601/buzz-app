@@ -146,8 +146,14 @@ standalone consequential confirmation. “Modal” is the interaction mode, not 
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
 
-Compose title and optional useful description, task body, then actions. Put the
-completion action in the `actions` footer, with Cancel/Close before it. Keep other
+Compose title and optional useful description together in the shared header
+heading, with Close aligned beside them. This lockup applies to both `Dialog`
+and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
+optional task content, then actions. Without task content, use the shared inset
+as the gap between the header and actions. Pass introductory copy through `description` and
+omit `children` when there is no task body; do not add an empty wrapper. Keep field
+help, status, warnings, and section-specific explanations with their content.
+Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
 task controls in the body; reserve `headerActions` for contextual utilities beside
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
@@ -155,27 +161,36 @@ close button, body padding, or footer with feature-specific markup.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
-| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
+| Short form or confirmation | `size="compact"` Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
 | Settings or another sectioned modal | `navigation={{ label, content }}` | Shared flush sidebar and detail scrollports; stacked navigation at narrow widths |
 | Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
 
-Centered navigated modals use direct viewport insets and settle at `transform: none`,
-so text does not remain inside a transformed surface. Starting styles must override
-the same settled placement selector, including portalled first paint. Their surface and contents
-enter together from 0.99 scale in one `duration-fast` fade with `easing-enter`,
-with no blank-card stage or delayed content. Scale is entry-only; exit stays a fade. The scrim retains its shared fade; exit uses `duration-fast`.
-Keyboard, reduced-motion and `motion="none"` stay immediate. Their header uses the shared
-panel-header minimum height, space-2 vertical padding and centered title/actions.
-Leading dialog padding keeps the title aligned with navigation content; trailing
-space-2 padding gives the Close control an even top, bottom and outer-edge gutter.
-`container` optionally fills a positioned host element instead of the viewport;
-pass null while that element is mounting. Keep query containment and transforms
-inside a sibling content region, not above this portal, so fixed backdrops still
-block the whole window. Other dialogs retain their existing motion; keyboard and
-reduced-motion preferences still suppress transitions.
+Dialogs and modals share a `2rem` inset, reduced to `1rem` at viewport widths
+of `30rem` or less, and a secondary (`subtle`) Close button. The responsive inset
+applies to headers, bodies, actions, and navigation panes; search keeps its
+documented field framing.
+Use `size="compact"` for a short form or confirmation: a centered `25rem` maximum
+width. Standard modals use `40rem`, wide modals `55rem`, and expanded modals `72rem`.
+Modals start `8rem` from the viewport top, with a `1rem` bottom/side gutter and
+viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
+`1rem` so actions remain reachable, including with enlarged text.
+Expanded modals support tables, two-column content, or integrated navigation.
+When a short window or enlarged text leaves too little room below navigation
+chrome, the whole modal scrolls while retaining at least one control-height pane
+inside its insets. Navigation headers and each pane use the same inset; list
+rows retain their shared padding and align through the existing wrapper offset.
+
+Surface and contents enter together with a `0.75rem` upward fade over
+`duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses
+`duration-fast` (`120ms`). The settled surface has no animation transform.
+Keyboard, reduced-motion and `motion="none"` stay immediate. Base UI owns
+transition presence, focus and dismissal. Search retains its documented compact
+field framing but shares modal placement and motion. Right-side inspectors and
+host-contained surfaces retain their established placement; fullscreen media
+retains renderer-owned geometry.
 
 These are starting choices, not permission to combine every option. Default to
 content height; reserve stable height when changing results would otherwise make
@@ -198,6 +213,11 @@ remains an outside dismissal; actual dragging keeps the modal open without enabl
 blocked controls underneath. The host owns
 platform APIs and exact drag-region hit testing, not the design system.
 
+AlertDialog leaves initial focus selection to Base UI, excluding header Close
+until focus enters. This preserves body-field or first-action focus; Base UI
+retains ownership of touch behavior. Explicit `initialFocus` overrides remain
+authoritative. Close then participates in the normal Tab cycle.
+
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
 loses work. Keep failure and recovery in the modal with entered values intact.
@@ -207,10 +227,11 @@ closes. If automatic restoration loses the trigger, pass the surviving trigger
 through the shared `finalFocus` contract; preserve the shared guard against
 stealing focus after the person moves elsewhere.
 
-The geometry options above belong to `Dialog`; `AlertDialog` does not expose the
-same props or structured body yet. Its visual parity is an
-[open shared-owner gap](../../../docs/design-system-adoption.md#gaps-to-address-when-migrating-owners).
-Do not compensate with a private modal shell or silently switch confirmation semantics.
+`AlertDialog` uses the compact geometry and the same header/body/action framing.
+It retains alert-dialog semantics and pending dismissal protection. Pass
+`initialFocus` when a confirmation has an established first-action focus target;
+the header Close button must not silently replace that flow. Do not switch
+confirmation semantics just to select a visual size.
 
 ### Menus, popovers, and pickers
 
@@ -719,6 +740,11 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
 
+An Input that must retain focus during asynchronous work can pair `readOnly` with
+`aria-disabled="true"` to use the shared disabled appearance without removing
+keyboard focus. Its feature owner must prevent edits and keep `aria-busy` on the
+working region; `aria-disabled` alone does not prevent native input.
+
 Navigation labels are controls, not selectable document text. `NavigationItem`,
 tabs, and sidebar section/project disclosure headings prevent text selection,
 including when opening a context menu. Keep this behavior on the navigation
@@ -756,6 +782,15 @@ whose light gray fill holds up over the list where glass would disappear.
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.
 
+Secondary actions on rows inside a compact inset container, currently queued
+follow-ups, use Button `subtle-muted` with `size="caption"`: a 32px control
+with caption text in `--text-subtle` that strengthens on hover, press and
+focus. Their removal glyph uses IconButton `destructive-quiet`, resting in
+`--text-quiet-control` (non-text contrast) and turning danger on hover and
+press. `shape="inset"` takes the container's `--control-inset-radius`
+(container radius minus inset) so nested corners stay concentric. Reuse these
+only for the same row-action role.
+
 Button labels stay on one line and do not shrink in flex layouts (`whitespace-nowrap
 shrink-0`). Parents must reflow whole controls or provide
 scrolling when space is limited. Composite reply summaries may reflow whole
@@ -763,6 +798,9 @@ avatar/count groups without wrapping individual labels. Thread reply summaries
 use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
+Proposed: medium labelled buttons with a leading icon use 12px leading and 16px
+trailing padding for optical balance. Text-only and icon-only buttons retain their
+existing insets.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
@@ -851,9 +889,11 @@ selection-mark slot in every option so selecting the widest label cannot resize 
 Compact choices can pass `valueSuffix` for short metadata that must stay visible,
 such as an agent card's Default source. It sits directly after the value on the
 same line; only the value truncates. Keep the full choice in the popup and value
-hint. The caller owns its column width. `align="end"` anchors a trailing choice popup
-to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. An option may include one concise supporting
+hint. The caller owns its column width; in PreferenceRow a compact choice takes at
+most 60% of the row, beyond its min-content width, so a long value ellipsizes
+before the row title loses its words. Other trailing controls keep their width.
+`align="end"` anchors a trailing choice popup to the trigger’s right edge; the
+default remains `start`. Pass `disabled` explicitly when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
@@ -1094,7 +1134,7 @@ inline layer (such as an inspector) before dismissing the dialog. Nested modal
 layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
-at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
+at 55rem and preserves viewport gutters; `height="stable"` can reserve the body
 while changing catalog selection. Content-sized dialogs also scroll only their
 body when viewport-capped, without reserving extra height; their title and
 actions stay outside that scrollport. If enlarged title/actions alone cannot fit
@@ -1102,7 +1142,7 @@ the viewport, the outer dialog scrolls as a fallback so pointer access does not
 depend on focusing an offscreen control. Flow bodies retain at least one control
 height plus their padding, with scroll padding to reveal complete focused fields
 rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
-Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
+Use `size="expanded"` for large reading surfaces such as code diffs, capped at 72rem;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
 
@@ -1120,13 +1160,17 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal padding: `--space-5` (20px),
-or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
-on top of that body padding. Create/Edit channel forms opt into
+vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
+or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
+on top of that body padding. Footers following body content also reserve a fixed
+`--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
+meets the buttons directly. Header-only confirmations retain their header-to-action
+gap. Create/Edit channel forms opt into
 `headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
 other dialog compositions retain their default spacing. Their privacy confirmation
-steps also opt into `footerGap="compact"` for 8px between the final checkbox row
-and the actions; returning to the form restores the normal body-bottom padding.
+steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
+before the fixed footer gutter; returning to the form restores the normal
+body-bottom padding.
 Session settings uses content height and the default footer spacing, with one
 body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
@@ -1137,8 +1181,8 @@ administration errors sit outside that scrollport, below its fixed search contro
 Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
 body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
-The shared Dialog uses state opacity and settling transform tokens for a centered
-0.98-scale entrance, with fast timing on exit. Base UI owns transition presence;
+The shared Dialog uses `duration-settle` and `easing-enter` for a subtle upward
+fade, with `duration-fast` on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.
 Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
 `motion="none"` for frequently used surfaces such as the search palette.
@@ -1261,6 +1305,10 @@ NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+Its `text` variant is a text-only row action, such as a capped list's Show
+more and Show less: the base navigation item's type and padding with no fill, resting in
+`--text-subtle` and strengthening to `--text-standard` on hover and keyboard
+focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose one supplemental action through `actionRef`, such as copying
 an identity's full npub. Action previews open without a delay so immediate Tab
@@ -1389,76 +1437,61 @@ Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
 
-### Accent color and level
+### Accent color
 
-Two device-local choices decide color. **Accent color** picks a family:
-chartreuse (Buzz's brand color, #d7d72e, and the default), flame, magenta, iris,
-cobalt, jade, or gray (monochrome). **Accent level** decides how much of the app
-that family paints: Snoozin’ (neutral),
-Hummin’ (the default), Swarmin’ or Buzzin’ (full).
+One device-local accent choice colors actions, links, and selection states.
+The picker presents six families in one row: Honey, Magenta, Iris, Cobalt, Lime, and Mono. An inset white ring marks the selected
+swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
+Chromatic ramps blend 90% of the original palette with 10% of the Honey-based
+OKLCH lightness/chroma treatment, with solid fills adjusted for readable ink.
+Honey is a brighter golden yellow (`#f5c518`); Lime combines the former Lime and Pear ramps at their OKLCH midpoint.
+Saved Pear and Jade choices map to Lime; Flame maps to Honey. Their ramps keep a consistent hue in OKLCH and retain the established step roles.
+Mono remains achromatic.
+Honey uses golden yellow fills with black ink; Mono uses charcoal fills in light
+mode and pale gray fills in dark mode. Vibe level offers three device-local choices:
+Snoozin’ keeps your messages neutral, with accent actions, links, and subtle row states.
+Hummin’ (the default) adds soft accent fills to your messages and selected navigation.
+Buzzin’ uses solid accent fills for those same states. Received messages, app
+backgrounds, panels, and popovers stay neutral at every level. Saved Low/High
+contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values are ignored.
 
-The accent level uses the same `Select variant="compact"` in `PreferenceRow`
-as sound settings.
-`Select.leading` and option `leading` accept decorative icons, avatars, or custom
-UI in a 20px slot. Triggers with a leading accessory use 8px leading padding;
-text-only triggers retain their usual padding. Accent levels use a rounded
-rectangular accent chip at 25%, 50%, 75%, and
-100% opacity, as explicitly chosen for this decorative intensity preview.
-The level names and persisted values remain unchanged.
+Persistent control selections use `surface-control-selected` with
+`text-control-selected`: neutral at Snoozin’, soft accent at Hummin’, and solid
+accent with paired ink at Buzzin’. Segmented filters use this pair on neutral
+tracks. Selected ghost icon buttons use `surface-navigation-selected` with
+`text-navigation-selected`, keeping a distinct neutral fill against panels at
+Snoozin’ and the same accent treatment at higher levels. Panel tabs retain an
+underline, using the readable accent mark rather than a filled background.
+Snoozin’ keeps transient row/hover states neutral; Hummin’ and Buzzin’ use soft
+accent hover states. Hover never becomes a competing solid selection. Menus,
+choice cards, disabled controls, focus rings, and semantic status colors retain
+their existing treatments. Primary actions and checked controls carry the accent
+at all three levels; increasing the vibe adds persistent selection, not more
+competing primary actions.
 
-A family is a twelve-step ramp per mode with the palette's step contract (1–2
-backgrounds, 3–5 tints, 6–8 lines, 9–10 strong fill, 11–12 text), plus the ink on
-its strong fill, a pressed fill and its link color. Roles stack on steps, never on
-literals, so every family works at every level. Each mode's ramp is authored
-for its own surfaces: the same step reads correctly in light and dark.
+Use `surface-navigation-selected` with `text-navigation-selected` for selected
+navigation. High contrast pairs solid fills with the family’s contrast ink;
+message prose uses the family’s reading ink. Hover stays subtle and distinct from
+selection. Keep status colors independent; never recolor the whole shell.
 
-Accent levels switch whole **color groups** onto the accent ramp, never single
-roles, so nothing stays gray on a background that turned accent.
+Reuse the existing twelve-step ramps in each mode. Prominent controls use steps
+9–10 with their paired ink; links use the family’s link role. Row hover and
+selection use the authored tint steps and paired row text. Keep these foreground
+and background roles together. Send remains an ordinary prominent button.
+Lime’s strong fill takes black ink in both modes.
 
-| Group | Roles |
-| --- | --- |
-| Moments | Own messages, the links and mentions on them |
-| Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). Small status/count badges on a selected row use `surface-row-selected-detail` with `text-row-selected-detail`: a pale accent fill with black ink in light mode, and a neutral raised fill with the selected row’s ink in dark mode. The selected sidebar destination uses `affordance-navigation-selected` with `text-row-selected` and its subtle and metadata inks: in light mode the brand fill with its contrast ink, because only one row is ever selected and pale chartreuse reads as khaki. Hover stays neutral until Buzzin’. In dark mode fills stay neutral, because dark chartreuse has no vivid form, and the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
-| Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
-| Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
-| Lines | Separators, thread lines, scrollbars |
-| Secondary text | `text-subtle`, `text-metadata` |
-| Surfaces | Panes, popovers, recessed areas, received messages, chrome selection |
-| Text | Primary, navigation and unavailable text |
 
-| Accent level | Groups on the accent |
-| --- | --- |
-| Snoozin’ | None; accent tints, lines and accent text only |
-| Hummin’ | Links, strong, rows |
-| Swarmin’ | Adds your own messages, on the brand fill |
-| Buzzin’ | Adds the shell, controls, lines, secondary text, surfaces and primary text |
+Status colors, focus, categorical purple, shadows, and media-specific roles stay
+independent. Media pixels, the black viewing canvas, and white-on-dark media glass
+never follow the accent. Shared controls inside a nested dark scope use the dark
+ramp even when the app is light; gallery comments follow the app mode.
 
-Status colors, focus, categorical purple, shadows and media-specific roles stay
-fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
-material never follow the accent. Shared controls, menus and surrounding surfaces
-in a nested dark media scope do follow the selected accent level, using the dark
-ramp even when the app is light. The gallery comments pane follows the app mode.
-A new role belongs to the group of the ground it sits on; do not add a role for
-one component. Row hover is its own role because rows take color before
-resting controls do. The contrast check fails when a gray role sits on an accent
-ground.
+Do not mix colors or use opacity to invent lighter shades; choose a ramp step.
+Swatches carry `data-accent` and `data-color-mode`; their inset selection rings
+use the family’s paired `text-on-accent` ink. Appearance uses a compact Mode
+Select for System, Light, and Dark, with a live illustrative preview. The
+contrast check audits every family in both modes.
 
-When the shell is colored (Buzzin’), its dots use an accent step two
-steps from the background, never a gray mix. Chartreuse keeps its brand value as the strong fill in both modes. Controls on it
-take black ink; reading text on it, such as own messages from Swarmin’, takes the
-family's darkest olive. Send is an ordinary prominent button, never a separately
-colored one. On light surfaces its text and lines step down to olive. Status
-colors, focus and categorical purple stay independent of the accent. Dark-mode primary text stays white at Buzzin’ to preserve readability on the
-full range of floating-control states.
-
-Do not mix the accent with other colors or apply opacity to make a lighter shade;
-choose a step. The decorative Accent level preview chips above are the explicit
-exception; they do not carry text or convey selection on their own. A swatch
-that previews a family carries `data-accent` with
-`data-color-mode`. ThemePicker previews follow the selected family and accent level
-through their `.light`/`.dark` scopes. The contrast check audits every family at
-every level in both modes.
 
 ## Density and rhythm
 
@@ -1595,11 +1628,8 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
 
 ### Link contrast
 
-Inline links use `text-link`. At Snoozin’ that is Blue 11 with Blue 3 hover in
-both modes. From Hummin’ each accent family supplies a link partner that stays
-readable as text on its grounds: chartreuse keeps Blue 11 in light mode, because
-darkened chartreuse turns olive, and uses bright chartreuse in dark mode, where
-it can glow. Own messages use `text-message-link-own`, which pairs with that
+Inline links use `text-link`. Each accent family supplies a readable link color
+at every vibe level. Own messages use `text-message-link-own`, which pairs with that
 level's bubble fill. Components consume `text-link` or `text-message-link-own`;
 never pick a link color per component.
 
@@ -1611,7 +1641,7 @@ A mention of you asks for your attention and joins the strong group:
 `text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
 in light mode, and a neutral chip with the prominent mark as ink in dark mode,
 where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-brand-filled bubble (from Swarmin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
+solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
 name people as quiet text, never as chips.
 
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and

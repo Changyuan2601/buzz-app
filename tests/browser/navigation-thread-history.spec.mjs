@@ -86,31 +86,32 @@ test("Back restores each thread visit before the previous channel", async ({
     `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
   const feedback = await selectedTab.evaluateHandle((tab) => {
-    const state = { cue: null };
-    tab.addEventListener(
-      "animationstart",
-      (event) => {
-        if (!event.target.classList.contains("buzz-tabs-attention")) return;
-        state.cue = event.target;
-        for (const animation of state.cue.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-      },
-      { once: true },
-    );
+    const state = { cue: null, paint: null };
+    const start = (event) => {
+      if (!event.target.classList.contains("buzz-tabs-attention")) return;
+      tab.removeEventListener("animationstart", start);
+      state.cue = event.target;
+      for (const animation of state.cue.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      // Read the paint now. A slow renderer can deliver animationstart and
+      // animationend together, and the host removes the cue on animationend.
+      state.paint = {
+        tint: getComputedStyle(state.cue).backgroundColor,
+        resting: getComputedStyle(state.cue.parentElement).backgroundColor,
+        opacity: Number(getComputedStyle(state.cue).opacity),
+      };
+    };
+    tab.addEventListener("animationstart", start);
     return state;
   });
   await activate(threadButton(roots[1]));
   try {
     await expect
-      .poll(() => feedback.evaluate((state) => !!state.cue))
+      .poll(() => feedback.evaluate((state) => !!state.paint))
       .toBe(true);
-    const paint = await feedback.evaluate(({ cue }) => ({
-      tint: getComputedStyle(cue).backgroundColor,
-      resting: getComputedStyle(cue.parentElement).backgroundColor,
-      opacity: Number(getComputedStyle(cue).opacity),
-    }));
+    const paint = await feedback.evaluate(({ paint }) => paint);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {
@@ -355,10 +356,11 @@ test("choosing a thread tab resumes typing where its reply was left", async ({
   const tabValue = await selected.getAttribute("data-tab-value");
   await reply.click();
   await page.keyboard.type("here is a message");
-  for (let step = 0; step < 14; step++) await page.keyboard.press("ArrowLeft");
-  // On a slow runner the last caret move's selectionchange can arrive after
-  // the tab click has taken focus. Hold it back so every run covers that order.
-  await page.evaluate(() => {
+  await expect(reply).toHaveText("here is a message");
+  // Move the native caret without notifying ProseMirror, reproducing a pending
+  // selectionchange when a tab click takes focus. Set the selection directly
+  // so setup does not depend on delivery of fifteen separate caret key events.
+  await reply.evaluate((editor) => {
     window.holdSelectionChange = true;
     document.addEventListener(
       "selectionchange",
@@ -367,8 +369,24 @@ test("choosing a thread tab resumes typing where its reply was left", async ({
       },
       { capture: true },
     );
+    const text = document
+      .createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+      .nextNode();
+    if (!text) throw new Error("Reply text is missing");
+    document.getSelection().collapse(text, 2);
   });
-  await page.keyboard.press("ArrowLeft");
+  // Establish the native caret boundary before focus leaves; the deliberately
+  // blocked selectionchange still cannot update ProseMirror for us.
+  await expect
+    .poll(() =>
+      reply.evaluate((editor) => {
+        const selection = editor.ownerDocument.getSelection();
+        return selection?.focusNode && editor.contains(selection.focusNode)
+          ? selection.focusOffset
+          : -1;
+      }),
+    )
+    .toBe(2);
   await workspace
     .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="false"]')
     .click();

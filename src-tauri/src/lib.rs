@@ -32,6 +32,7 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_files;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -49,13 +50,17 @@ use nsec_backup::{
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+#[cfg(any(not(target_os = "macos"), test))]
+mod microphone;
 
 mod notifications;
 mod os_idle;
+mod repositories_folder;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
 use os_idle::get_os_idle_seconds;
+use repositories_folder::repositories_folder_validate;
 mod relay;
 mod relay_admin;
 mod sign_out;
@@ -86,6 +91,7 @@ use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use host_command::plugin_host_run_command;
+use host_files::{plugin_host_read_file, plugin_host_resolve_directory};
 use host_mcp::{
     plugin_host_mcp_close, plugin_host_mcp_reply, plugin_host_mcp_serve, HostMcpServers,
 };
@@ -510,6 +516,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_stream_base,
         get_os_idle_seconds,
         workspace_pick_folder,
+        repositories_folder_validate,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -527,6 +534,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_serve,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_read_file,
+        plugin_host_resolve_directory,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
@@ -553,6 +562,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_search_profiles,
         app_agents::app_agent_upload,
         app_agents::app_agent_media,
+        app_agents::app_agent_git_auth,
         app_agents::app_agent_remember,
         app_agents::app_agent_claim,
         app_agents::app_agent_release,
@@ -644,6 +654,15 @@ pub fn run() {
                 if let Some(settings) = gtk::Settings::default() {
                     settings.set_gtk_xft_hintstyle(Some("hintslight"));
                 }
+                // WebKitGTK hides `navigator.mediaDevices` unless media streams are on.
+                if let Some(main) = app.get_webview_window("main") {
+                    main.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        if let Some(settings) = webview.inner().settings() {
+                            settings.set_enable_media_stream(true);
+                        }
+                    })?;
+                }
             }
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
@@ -724,6 +743,21 @@ pub fn run() {
             ));
             Ok(())
         });
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.on_permission_request(|webview, kind| {
+        microphone::decide(
+            webview.label(),
+            webview.url().ok().as_ref(),
+            // Packaged builds keep `devUrl` in their config but never load it.
+            webview
+                .config()
+                .build
+                .dev_url
+                .as_ref()
+                .filter(|_| tauri::is_dev()),
+            kind,
+        )
+    });
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(TitleBarFillFrames::default())

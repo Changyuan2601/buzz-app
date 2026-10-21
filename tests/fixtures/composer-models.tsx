@@ -6,6 +6,7 @@ import { ComposerModels } from "../../src/features/messages/ComposerModels";
 import { AgentsContext } from "../../src/features/agents/react";
 import type { Agents } from "../../src/features/agents/service";
 import type { MentionPicks } from "../../src/features/relay/messages";
+import type { ProfileQueries } from "../../src/features/relay/profile-directory";
 import { createAppearance } from "../../src/shared/theme/service";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import "../../src/shared/styles/globals.css";
@@ -42,6 +43,13 @@ const agents = {
   snapshot: () => snapshot,
   types: () => types,
 } as unknown as Agents;
+// No profile picture: the handle shows initials and the fill stays the theme accent.
+const profiles: ProfileQueries = {
+  snapshot: () => new Map(),
+  subscribe: () => () => {},
+  ensure: async () => {},
+};
+const media = () => undefined;
 const ignoreResolved = () => {};
 function Fixture() {
   useKeyboardFocusVisibility();
@@ -54,6 +62,8 @@ function Fixture() {
         <form aria-label="Composer controls">
           <ComposerModels
             pubkeys={[pubkey]}
+            profiles={profiles}
+            media={media}
             value={picks}
             disabled={false}
             onChange={setPicks}

@@ -146,6 +146,7 @@
     --border: transparent;
   }
   .buzz-input:disabled,
+  .buzz-input[aria-disabled="true"],
   .buzz-textarea:disabled {
     color: var(--text-unavailable);
     background: var(--affordance-disabled);
@@ -161,6 +162,10 @@
     gap: var(--space-3);
     min-height: var(--size-control);
     cursor: pointer;
+  }
+  .buzz-choice > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .buzz-choice:is([data-variant="card"], [data-variant="tile"]) {
     padding: var(--space-4);

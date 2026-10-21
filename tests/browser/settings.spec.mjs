@@ -68,7 +68,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   page,
   app,
 }, testInfo) => {
-  await page.setViewportSize({ width: 480, height: 400 });
+  await page.setViewportSize({ width: 480, height: 320 });
   await page.addInitScript(() =>
     localStorage.setItem("buzz-font-scale.v1", "2"),
   );
@@ -182,7 +182,9 @@ for (const action of ["Remove from this device", "Leave community"]) {
     await page.keyboard.press("Enter");
     let dialog = page.getByRole("alertdialog");
     // Cancel must still restore the exact trigger rather than focus Profile.
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+    await expect(
+      dialog.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(trigger).toBeFocused();
     await page.keyboard.press("Enter");
@@ -201,8 +203,8 @@ for (const action of ["Remove from this device", "Leave community"]) {
     await expect(
       page.getByText(
         action === "Leave community"
-          ? "Left Primary."
-          : "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
+          ? "Left Primary — https://primary.example."
+          : "Primary — https://primary.example was removed from this device. Your membership wasn’t changed. You can add it again later.",
         { exact: true },
       ),
     ).toBeVisible();
@@ -505,6 +507,7 @@ confirmedPresence(
       await expect(sections).toBeVisible();
       await profile.focus();
       for (const name of [
+        "Local settings",
         "Custom emoji",
         "Shared compute",
         "Pair mobile",
@@ -540,7 +543,7 @@ confirmedPresence(
         const content = await pluginContent.boundingBox();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - scrollport.y).toBe(20);
+        expect(content.y - scrollport.y).toBe(32);
       } else {
         // Narrow Settings stacks its navigation above the detail.
         expect(navigation.y + navigation.height).toBeLessThanOrEqual(
@@ -564,6 +567,7 @@ confirmedPresence(
         await profile.focus();
       }
       for (const name of [
+        "Local settings",
         "Custom emoji",
         "Shared compute",
         "Pair mobile",
@@ -1085,4 +1089,70 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
     await expect(trigger).toBeFocused();
     await expect(trigger).toBeVisible();
   }
+});
+
+// Real shell + shared presentation + browser storage across reload. State/error
+// permutations stay in the communities and Local settings component tests.
+test("Local settings saves a device name without changing the community identity", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/*/icon-info", (route) =>
+    route.fulfill({
+      json: {
+        name: route.request().url().includes("primary")
+          ? "Published community"
+          : "Buzz Relay",
+      },
+    }),
+  );
+  await page.goto(app.origin);
+  await expect(
+    button(page, "Community switcher: Published community"),
+  ).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Local settings");
+  const region = page.getByRole("region", {
+    name: "Local settings",
+    exact: true,
+  });
+  const name = region.getByLabel("Display name", {
+    exact: true,
+  });
+  await expect(name).toHaveValue("");
+  await expect(name).toHaveAttribute("placeholder", "Published community");
+  await expect(
+    region.getByLabel("Community address", { exact: true }),
+  ).toHaveValue("https://primary.example");
+  await name.fill("My work");
+  await name.press("Enter");
+  await expect(region.getByRole("status")).toHaveText(
+    "Display name saved on this device.",
+  );
+  await closeSettings(page);
+  await expect(button(page, "Community switcher: My work")).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Local settings");
+  await page.reload();
+  await expect(name).toHaveValue("My work");
+  await selectSettingsSection(page, "Leave or remove");
+  await button(page, "Leave community").click();
+  const confirm = page.getByRole("alertdialog", {
+    name: "Leave Published community?",
+    exact: true,
+  });
+  await expect(
+    confirm.getByText("Shown as My work on this device", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    confirm.getByText("https://primary.example", { exact: true }),
+  ).toBeVisible();
+  await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+  await selectSettingsSection(page, "Local settings");
+  await region.getByRole("button", { name: "Reset name", exact: true }).click();
+  await expect(name).toHaveValue("");
+  await closeSettings(page);
+  await expect(
+    button(page, "Community switcher: Published community"),
+  ).toBeVisible();
 });

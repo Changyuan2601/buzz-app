@@ -335,7 +335,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
       await chooseColorMode(page, mode);
       await expect(appearance.getByRole("button")).toHaveCount(
-        scale === 100 ? 9 : 10,
+        scale === 100 ? 8 : 9,
       );
       await expect(
         appearance.getByRole("button", {
@@ -346,10 +346,11 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
       const colors = appearance.locator("[data-accent-colors] button");
+      await expect(colors).toHaveCount(6);
       await colors.first().focus();
       await page.keyboard.press("Shift+Tab");
       await page.keyboard.press("Tab");
-      for (let index = 0; index < 7; index++) {
+      for (let index = 0; index < 6; index++) {
         if (index) await page.keyboard.press("Tab");
         await expect(colors.nth(index)).toBeFocused();
         await expect

@@ -38,6 +38,9 @@ export type PluginManifest = Readonly<{
     }>[];
     /** The plugin may serve MCP servers to its agents with `host.serveMcp`. */
     mcp?: boolean;
+    /** The plugin may read files with `host.readFile` and resolve directories
+     * with `host.resolveDirectory`, with the user's own access. */
+    files?: boolean;
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.

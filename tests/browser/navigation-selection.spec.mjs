@@ -107,7 +107,9 @@ test("navigation menus do not highlight labels while message text and editors re
   });
   const chat = conversations.locator(`[data-solo-channel-id="${chatId}"]`);
   const chatLabel = chat.getByText("Solo conversation", { exact: true });
-  await expectNoSelection(page, chatLabel);
+  // A Solo double-click intentionally selects the inline name editor now.
+  // Its ordinary navigation label and context menu still suppress selection.
+  await expect(chat).toHaveCSS("user-select", "none");
   await chatLabel.click({
     button: "right",
     position: await textPosition(chatLabel),
@@ -120,6 +122,23 @@ test("navigation menus do not highlight labels while message text and editors re
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("");
   await page.keyboard.press("Escape");
   await expect(chatMenu).toHaveCount(0);
+
+  await chatLabel.dblclick({ position: await textPosition(chatLabel) });
+  const name = conversations.getByRole("textbox", {
+    name: "Chat name",
+    exact: true,
+  });
+  await expect(name).toBeFocused();
+  await expect(name).toHaveValue("Solo conversation");
+  await expect
+    .poll(() =>
+      name.evaluate((input) => [input.selectionStart, input.selectionEnd]),
+    )
+    .toEqual([0, "Solo conversation".length]);
+  await name.press("Escape");
+  await expect(name).toHaveCount(0);
+  await expect(chat).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
 
   // Chats and named projects share this disclosure control, not the row style.
   const heading = conversations.getByRole("button", {

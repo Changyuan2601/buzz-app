@@ -19,6 +19,7 @@ function fake(
     classifierKey,
     agents: [],
     running: [],
+    interrupted: [],
     teams: [],
   };
   const listeners = new Set<() => void>();

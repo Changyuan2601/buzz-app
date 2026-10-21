@@ -1,8 +1,10 @@
 import {
+  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type ComponentProps,
+  type RefObject,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { conversationTarget, soloDraftTarget } from "./routes";
@@ -10,9 +12,15 @@ import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPo
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
+import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
+import {
+  soloSharedMarkId,
+  useSharedWithPeople,
+} from "../../bundled/channels/SoloShare";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -47,6 +55,9 @@ export function SoloInventory({
   target: OpenTarget;
 }) {
   const list = useChannelList(session.channels);
+  const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const preferences = useSyncExternalStore(
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
@@ -102,6 +113,11 @@ export function SoloInventory({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
           (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
     );
+  // Capped workspaces never hide the open chat or one that needs the viewer.
+  const unreadChats = useUnreadChannelIds(
+    session.unread,
+    JSON.stringify(conversations.map((item) => item.id)),
+  );
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -129,8 +145,8 @@ export function SoloInventory({
                     <IconButton
                       ref={trigger}
                       size="compact"
-                      aria-label="New in Solo"
-                      title="New in Solo"
+                      aria-label="New chat or workspace"
+                      title="New chat or workspace"
                       icon={<PlusIcon size={15} strokeWidth={2.5} />}
                     />
                   }
@@ -189,17 +205,27 @@ export function SoloInventory({
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
+          pinned:
+            selected === item.id ||
+            workingChannels.has(item.id) ||
+            unreadChats.has(item.id),
         }))}
         onNew={newChat}
-        renderChat={(item) => (
+        renderChat={(item, rename) => (
           <SoloConversationRow
             key={item.id}
             session={session}
+            navigation={navigator}
+            pendingClick={pendingClick}
             id={item.id}
+            channel={conversations.find(
+              (conversation) => conversation.id === item.id,
+            )}
             title={item.title}
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
             onSelect={() => void open(item.id)}
+            onRename={rename}
             onOpenThread={(thread) =>
               openMessage(thread.channelId, thread.rootId)
             }
@@ -221,30 +247,43 @@ export function SoloInventory({
 
 function SoloConversationRow({
   session,
+  navigation,
+  pendingClick,
   id,
+  channel,
   title,
   selected,
   working,
   onSelect,
+  onRename,
   onOpenThread,
   onOpenWorkingAgent,
   onOpenAgentActivity,
 }: {
   session: RelaySession;
+  navigation: Navigation;
+  pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   id: string;
+  channel: ChannelSummary | undefined;
   title: string;
   selected: boolean;
   working: boolean;
   onSelect: () => void;
+  onRename: (() => boolean) | undefined;
 } & Pick<
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
 >) {
+  const click = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pointer = useRef<string | undefined>(undefined);
+  useEffect(() => () => clearTimeout(click.current), []);
   const { agents, agentProfiles, waiting } = useWorkingAgents(
     session,
     id,
     working,
   );
+  // Describe only by a mark that renders, using the same Shared evidence.
+  const shared = useSharedWithPeople(session, channel);
   return (
     <ChannelActivityPopover
       session={session}
@@ -261,7 +300,38 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          onClick={onSelect}
+          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
+          onPointerDown={(event) => {
+            pointer.current = event.pointerType;
+          }}
+          onClick={(event) => {
+            if (event.detail >= 2) return;
+            clearTimeout(pendingClick.current);
+            const touch = pointer.current === "touch";
+            pointer.current = undefined;
+            if (
+              event.detail === 1 &&
+              onRename &&
+              !touch &&
+              window.matchMedia("(max-width: 650px)").matches
+            ) {
+              // Keep the drawer present for a mouse double-click. Touch and
+              // keyboard activation, and wide layouts, navigate immediately.
+              const attempt = navigation.snapshot().attempt;
+              click.current = pendingClick.current = setTimeout(() => {
+                if (navigation.snapshot().attempt.id === attempt.id) onSelect();
+              }, 500);
+            } else onSelect();
+          }}
+          onDoubleClick={
+            onRename
+              ? () => {
+                  clearTimeout(pendingClick.current);
+                  if (!onRename()) onSelect();
+                }
+              : undefined
+          }
+          onContextMenu={() => clearTimeout(pendingClick.current)}
           icon={
             <span className={styles.conversationIcon} aria-hidden="true">
               <ChatCircleIcon size={16} />

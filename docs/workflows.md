@@ -9,11 +9,14 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- The landing is a card grid filtered in place by channel. Each card runs the
+- The landing groups compact workflow rows under prominent channel headings,
+  sorted by channel name and filtered in place by channel. The filter lists only
+  channels with loaded workflows; discovery still reads all eligible channels.
+  Creating a workflow can still target any eligible channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting
-  a card shows its detail, actions and run history in a resizable side pane, as
+  a row shows its detail, actions and run history in a resizable side pane, as
   on Agents; a created run rereads that history. Editing opens a modal over the
-  grid. Create begins with channel selection in that editor; the empty draft's
+  list. Create begins with channel selection in that editor; the empty draft's
   primary action adds its first step.
   Form mode uses a selectable flow and contextual inspector, with insertion
   menus and removal. On narrow screens the inspector is a nested side dialog.
@@ -79,15 +82,15 @@ runs stay unknown: only a returned run ID identifies a requested run.
 
 An empty successful deletion receipt is reconciled only by a fresh read started
 after that receipt: the workflow's owner/channel/UUID must be absent from a
-complete channel result. Grid deletion confirms on the grid without mounting an
+complete channel result. Landing deletion confirms on the list without mounting an
 editor. Confirming deletion in detail discards the local draft and returns to the
-grid immediately, including on a synchronous submission error. The session/outbox
+list immediately, including on a synchronous submission error. The session/outbox
 continues delivery; the landing remains mounted across channel/editor navigation
 and owns readback and recovery. There is no deletion progress in the editor.
 
-Pending cards remain visible with **Deleting…** and disabled actions. Confirmed
+Pending rows remain visible with **Deleting…** and disabled actions. Confirmed
 removal refreshes the landing without resubmitting deletion. Rejection restores
-card actions. Submission errors, rejection, and unconfirmed outcomes use the
+row actions. Submission errors, rejection, and unconfirmed outcomes use the
 existing toast stack; uncertain results offer **Check saved configuration**, which
 also resumes a paused read. Missing receipts, partial/failed reads, and retained
 legacy definitions never establish removal. Explicit **Dismiss notice** confirms
@@ -124,7 +127,7 @@ proof of an exhaustive runtime inventory.
 
 Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces
-per-channel loading placeholders, and loaded cards remain visible during refresh.
+per-channel loading placeholders, and loaded rows remain visible during refresh.
 Refresh deliberately rereads the current roster; save outcomes request readback
 only for their affected channels. Verified editor readback also refreshes that
 channel on the landing, including when the receipt arrived before the saved
@@ -155,7 +158,7 @@ fixed upstream paths and bounded history/receipt bodies.
 Offline regressions cover the editor, exact-save recovery, uncertain commands,
 session isolation, broker authorization and history. The real-session browser
 journeys cover navigating to the landing, exact readback both before and after
-the receipt, masked secret delivery, and automatic landing-card refresh in
+the receipt, masked secret delivery, and automatic landing-row refresh in
 Chromium and WebKit. Component tests
 cover sequential secrets, interruption, and purge after the dialog takes a value.
 This is not live acceptance:

@@ -77,6 +77,7 @@ function provideAgents(
     searchProfiles: vi.fn(),
     upload: vi.fn(),
     media: vi.fn(),
+    gitAuth: vi.fn(),
     remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),
@@ -124,13 +125,10 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
-      const user = userEvent.setup();
-      await user.click(
-        await screen.findByRole("button", { name: "New agent" }),
-      );
+      // With no agent type to create, the empty page's Create tile is off.
       expect(
-        await screen.findByRole("menuitem", { name: "Create a new agent" }),
-      ).toHaveAttribute("aria-disabled", "true");
+        await screen.findByRole("button", { name: "Create your first agent" }),
+      ).toBeDisabled();
     } finally {
       cleanup();
       await runtime.dispose();
@@ -654,9 +652,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     // Creating while signed out starts the same browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
-    await user.click(screen.getByRole("button", { name: "New agent" }));
     await user.click(
-      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+      screen.getByRole("button", { name: "Create your first agent" }),
     );
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     expect(

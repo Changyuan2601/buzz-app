@@ -37,7 +37,7 @@ export type SavedSession = Readonly<{
 export type SessionStore = {
   get(key: string): SavedSession | undefined;
   set(key: string, session: SavedSession): void;
-  delete(key: string): void;
+  delete(key: string): void | Promise<void>;
 };
 
 export type SessionsOptions = Readonly<{
@@ -70,7 +70,7 @@ export class AgentSessions {
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
-  private readonly opening = new Map<string, Promise<Live | undefined>>();
+  private readonly opening = new Map<string, Promise<Live | Settled>>();
   private discovery:
     | {
         fingerprint: string;
@@ -94,6 +94,17 @@ export class AgentSessions {
   /** What `seen` says this conversation's session has been shown. */
   seen(key: string) {
     return this.options.store.get(key)?.seen ?? 0;
+  }
+  active(key: string) {
+    return this.opening.has(key) || !!this.live.get(key)?.process.active;
+  }
+  async forget(key: string) {
+    // Commit the reset before dropping the live process; failed writes must
+    // not report success and resume the old session after restarting Buzz.
+    await this.options.store.delete(key);
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    this.options.onChange?.();
   }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
@@ -214,19 +225,9 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
-    const starting = this.start(saved?.id, key).catch((error) => {
-      console.warn("Claude could not start", error);
-      return undefined;
-    });
-    this.opening.set(key, starting);
-    live = await starting;
-    if (this.opening.get(key) === starting) this.opening.delete(key);
-    if (live && !this.disposed) this.adopt(key, live, seen);
-    if (!live) return { ok: false, error: "Claude could not start" };
-    if (this.disposed) {
-      void live.process.kill();
-      return { ok: false, error: "Claude was stopped" };
-    }
+    const opened = await this.open(key, saved?.id, seen);
+    if (!("process" in opened)) return opened;
+    live = opened;
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),
@@ -238,7 +239,7 @@ export class AgentSessions {
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
-      this.options.store.delete(key);
+      await this.options.store.delete(key);
       this.drop(key, live);
       return this.deliver(key, fresh ? await fresh() : text, seen, {
         pick,
@@ -253,6 +254,28 @@ export class AgentSessions {
   async interrupt(key: string) {
     await this.opening.get(key);
     await this.live.get(key)?.process.interrupt();
+  }
+  /** Compacts the conversation's session, resuming it when its process has
+   * stopped. Without a session there is nothing to compact. */
+  async compact(key: string): Promise<Settled> {
+    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    let live = this.live.get(key);
+    const saved = this.options.store.get(key);
+    if (!live && !saved) return { ok: true };
+    if (!live) {
+      const opened = await this.open(key, saved?.id, 0);
+      if (!("process" in opened)) return opened;
+      live = opened;
+    }
+    // Claude takes the command in stream-json input as it does in a terminal.
+    const settled = await this.answer(key, live, "/compact", {});
+    // A saved session that no longer loads is the message's to start over.
+    if (!settled.ok && !live.process.started) {
+      await this.options.store.delete(key);
+      this.drop(key, live);
+      return { ok: true };
+    }
+    return settled;
   }
 
   /** Runs one turn in a new session, then stops its process. The session is
@@ -278,6 +301,7 @@ export class AgentSessions {
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
+      live.process.onActivity = this.options.onChange;
       this.once.set(key, live);
       const text = await prompt();
       if (text === undefined || this.disposed) return { ok: true };
@@ -328,6 +352,33 @@ export class AgentSessions {
     for (const live of this.once.values()) void live?.process.kill();
   }
 
+  /** Starts the conversation's process, resuming session `resume` when given;
+   * a message that arrives meanwhile waits for it, and is answered after the
+   * caller's. */
+  private open(
+    key: string,
+    resume: string | undefined,
+    seen: number,
+  ): Promise<Live | Settled> {
+    const opened = this.start(resume, key).then(
+      (live): Live | Settled => {
+        if (this.opening.get(key) === opened) this.opening.delete(key);
+        if (this.disposed) {
+          void live.process.kill();
+          return { ok: false, error: "Claude was stopped" };
+        }
+        this.adopt(key, live, seen);
+        return live;
+      },
+      (error) => {
+        if (this.opening.get(key) === opened) this.opening.delete(key);
+        console.warn("Claude could not start", error);
+        return { ok: false, error: "Claude could not start" };
+      },
+    );
+    this.opening.set(key, opened);
+    return opened;
+  }
   private async start(resume: string | undefined, key?: string): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
@@ -358,6 +409,7 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
+    live.process.onActivity = this.options.onChange;
     // Not a stop: a turn that reports finished work may be about to start.
     live.process.onQuiet = () => {
       if (this.live.get(key) === live) this.touch(key, live);
@@ -553,27 +605,19 @@ export function localSessions(
     const kept = Object.entries(sessions)
       .sort(([, a], [, b]) => b.at - a.at)
       .slice(0, SAVED_LIMIT);
-    const warn = (error: unknown) =>
-      console.warn("Claude sessions were not saved", error);
     const own = storage.set(key, JSON.stringify(Object.fromEntries(kept)));
-    // The old shared value drops this agent once its own key is saved: until
-    // then it holds the only saved copy.
-    if (!(agent in object(storage.get(name)))) {
-      void own.catch(warn);
-      return;
-    }
-    void own
-      .then(() => {
-        const legacy = object(storage.get(name));
-        if (!(agent in legacy)) return;
-        delete legacy[agent];
-        return storage.set(
-          name,
-          Object.keys(legacy).length ? JSON.stringify(legacy) : null,
-        );
-      })
-      .catch(warn);
+    // Drop the legacy copy only after the agent's own value is durable.
+    return own.then(async () => {
+      const legacy = object(storage.get(name));
+      if (!(agent in legacy)) return;
+      delete legacy[agent];
+      await storage.set(
+        name,
+        Object.keys(legacy).length ? JSON.stringify(legacy) : null,
+      );
+    });
   };
+
   return {
     list: () =>
       Object.entries(read())
@@ -583,10 +627,13 @@ export function localSessions(
       const saved = read()[conversation];
       return saved && typeof saved.id === "string" ? saved : undefined;
     },
-    set: (conversation, session) =>
-      update((sessions) => {
+    set: (conversation, session) => {
+      void update((sessions) => {
         sessions[conversation] = session;
-      }),
+      }).catch((error) =>
+        console.warn("Claude sessions were not saved", error),
+      );
+    },
     delete: (conversation) =>
       update((sessions) => {
         delete sessions[conversation];

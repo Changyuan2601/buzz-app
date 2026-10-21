@@ -158,14 +158,12 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(
       thread.getByRole("link", { name: "Open image attachment", exact: true }),
     ).toBeFocused();
-    // The app can go fully colorful without tinting the media canvas. Shared
-    // controls and surrounding surfaces remain themed; only media roles stay fixed.
-    await other.getByRole("combobox", { name: "Accent level" }).click();
-    await other.getByRole("option", { name: "Buzzin’", exact: true }).click();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-color-level",
-      "full",
-    );
+    // Accent changes propagate without tinting the media canvas.
+    await other
+      .getByRole("button", { name: "Cobalt accent color", exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+
     await chooseColorMode(other, "Dark");
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-mode",
@@ -175,7 +173,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await thread
       .getByRole("link", { name: "Open image attachment", exact: true })
       .press("Enter");
-    // Buzzin’ themes the comments pane but the image stage remains pure black.
+    // Comments follow the app surface; the image stage remains pure black.
     await expect(comments).toHaveCSS(
       "background-color",
       await hostColor(page, "--surface-panel"),

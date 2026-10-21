@@ -26,7 +26,7 @@ export type HuddleBridge = {
   send(id: string, samples: number[]): Promise<void>;
 };
 export const nativeHuddles: HuddleBridge = {
-  available: isTauri() && /Mac/.test(navigator.platform),
+  available: isTauri(),
   open(id, destination, room, receive) {
     const updates = new Channel<HuddleUpdate>();
     updates.onmessage = receive;

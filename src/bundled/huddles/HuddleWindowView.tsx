@@ -1,8 +1,10 @@
+import { HuddleMinimizeIcon } from "./HuddleMinimizeIcon";
 import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { useHuddleRequestFocus } from "./useHuddleRequestFocus";
 import { HuddleAudioSettings } from "./HuddleAudioSettings";
 import { LayoutGroup } from "motion/react";
-import { useId } from "react";
+import { useId, useEffectEvent } from "react";
+import { PanelDock } from "../../features/panels/PanelDock";
 import { HuddleRequestView } from "./HuddleRequestView";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -12,10 +14,9 @@ import { HuddleDiscussionView } from "./HuddleDiscussionView";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ChatCircleIcon,
-  ArrowsInSimpleIcon,
   MicrophoneIcon,
   MicrophoneSlashIcon,
-  PhoneDisconnectIcon,
+  PhoneEndIcon,
 } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
@@ -44,6 +45,9 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
   const layout = useRef<HTMLDivElement>(null);
   const call = useRef<HTMLElement>(null);
   const open = !!view.discussion;
+  const [closing, setClosing] = useState(false);
+  const closeDispatched = useRef(false);
+  const reopenAfterClose = useRef(false);
   const [hold, setHold] = useState<{
     width: number;
     open: boolean;
@@ -52,8 +56,43 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
     if (hold && open === hold.open) setHold(undefined);
   }, [open, hold]);
   useLayoutEffect(() => {
-    if (error) setHold(undefined);
+    if (error) {
+      closeDispatched.current = false;
+      reopenAfterClose.current = false;
+      setHold(undefined);
+      setClosing(false);
+    }
   }, [error]);
+  const requestToggle = useEffectEvent(() => {
+    act("thread");
+  });
+  useLayoutEffect(() => {
+    if (!open) {
+      setClosing(false);
+      closeDispatched.current = false;
+      if (reopenAfterClose.current) {
+        reopenAfterClose.current = false;
+        requestToggle();
+      }
+    }
+    if (!closing || !open) return;
+    // Finish the shared panel exit before the host shrinks the native window.
+    const panel =
+      layout.current?.querySelector<HTMLElement>("[data-panel-dock]");
+    const animations = panel?.getAnimations() ?? [];
+    let cancelled = false;
+    void Promise.allSettled(
+      animations.map((animation) => animation.finished),
+    ).then(() => {
+      if (!cancelled) {
+        closeDispatched.current = true;
+        requestToggle();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [closing, open]);
   if (
     view.phase === "incoming" ||
     (view.phase === "connecting" && incoming.current)
@@ -67,11 +106,29 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
       />
     );
   const toggleChat = () => {
-    if (call.current && layout.current)
+    if (closing) {
+      // Once sent, wait for the closed presentation before issuing its inverse.
+      if (closeDispatched.current) {
+        reopenAfterClose.current = !reopenAfterClose.current;
+        return;
+      }
+      setClosing(false);
+      setHold(undefined);
+      return;
+    }
+    if (call.current)
       setHold({
         width: call.current.getBoundingClientRect().width,
         open: !open,
       });
+    if (
+      open &&
+      !document.documentElement.hasAttribute("data-keyboard-input") &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      setClosing(true);
+      return;
+    }
     act("thread");
   };
   return (
@@ -86,34 +143,13 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
         className={styles.window}
         style={hold ? { flex: "0 0 auto", width: hold.width } : undefined}
       >
-        <header className={styles.windowHeader}>
-          <div className={styles.windowSettings}>
-            <HuddleAudioSettings
-              state={view.audioSettings}
-              refresh={() => act("refreshAudio")}
-              select={(kind, id) =>
-                act(kind === "input" ? "inputDevice" : "outputDevice", id)
-              }
-            />
-          </div>
-          <div className={styles.windowMinimize}>
-            <IconButton
-              size="large"
-              variant="subtle"
-              aria-label="Minimize Huddle to compact controls"
-              title="Minimize Huddle"
-              onClick={() => act("minimize")}
-              icon={<ArrowsInSimpleIcon size={22} />}
-            />
-          </div>
-          {view.phase !== "connected" && (
-            <p className="text-body text-secondary">
-              {view.phase === "connecting"
-                ? "Connecting your microphone…"
-                : "Leaving…"}
-            </p>
-          )}
-        </header>
+        {view.phase !== "connected" && (
+          <p role="status" className="text-body text-secondary">
+            {view.phase === "connecting"
+              ? "Connecting your microphone…"
+              : "Leaving…"}
+          </p>
+        )}
         <HuddleAvatarCloud
           participants={view.participants}
           muted={view.muted}
@@ -124,67 +160,87 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
               {error}
             </p>
           )}
-          <div className={styles.windowControls}>
-            <IconButton
-              size="large"
-              variant="subtle"
-              ref={focus.mute}
-              aria-label={view.muted ? "Unmute" : "Mute"}
-              title={view.muted ? "Unmute" : "Mute"}
-              aria-pressed={view.muted}
-              disabled={view.phase !== "connected"}
-              onClick={() => act("mute")}
-              icon={
-                view.muted ? (
-                  <MicrophoneSlashIcon size={22} />
-                ) : (
-                  <MicrophoneIcon size={22} />
-                )
+          <div className={styles.windowControlBar}>
+            <HuddleAudioSettings
+              quiet
+              state={view.audioSettings}
+              refresh={() => act("refreshAudio")}
+              select={(kind, id) =>
+                act(kind === "input" ? "inputDevice" : "outputDevice", id)
               }
             />
+            <div className={styles.windowControls}>
+              <IconButton
+                size="large"
+                variant="glass"
+                shape="round"
+                ref={focus.mute}
+                aria-label={view.muted ? "Unmute" : "Mute"}
+                title={view.muted ? "Unmute" : "Mute"}
+                aria-pressed={view.muted}
+                disabled={view.phase !== "connected"}
+                onClick={() => act("mute")}
+                icon={view.muted ? <MicrophoneSlashIcon /> : <MicrophoneIcon />}
+              />
+              <IconButton
+                size="large"
+                variant="glass"
+                shape="round"
+                aria-label="Huddle chat"
+                title="Huddle chat"
+                aria-expanded={open && !closing}
+                onClick={toggleChat}
+                icon={<ChatCircleIcon />}
+              />
+              <IconButton
+                size="large"
+                variant="glass"
+                shape="round"
+                data-huddle-leave=""
+                aria-label="Leave huddle"
+                title="Leave huddle"
+                disabled={view.phase === "leaving"}
+                onClick={() => act("leave")}
+                icon={<PhoneEndIcon />}
+              />
+            </div>
             <IconButton
               size="large"
-              variant="subtle"
-              aria-label="Huddle chat"
-              title="Huddle chat"
-              aria-expanded={!!view.discussion}
-              onClick={toggleChat}
-              icon={<ChatCircleIcon size={22} />}
-            />
-            <IconButton
-              size="large"
-              variant="subtle"
-              data-huddle-leave=""
-              aria-label="Leave huddle"
-              title="Leave huddle"
-              disabled={view.phase === "leaving"}
-              onClick={() => act("leave")}
-              icon={<PhoneDisconnectIcon size={22} />}
+              variant="ghost"
+              shape="round"
+              aria-label="Minimize Huddle to compact controls"
+              title="Minimize Huddle"
+              onClick={() => act("minimize")}
+              icon={<HuddleMinimizeIcon />}
             />
           </div>
         </footer>
       </main>
-      {view.discussion && (
-        <aside
-          className={styles.windowDiscussion}
-          aria-label="Huddle chat panel"
-        >
-          <HuddleDiscussionView
-            allowImageCopy={false}
-            discussion={view.discussion}
-            openLink={(url) => {
-              if (!isBuzzLink(url)) return false;
-              act("openLink", url);
-              return true;
-            }}
-            composer={composer}
-            older={() => act("older")}
-            retry={() => act("retry")}
-            recover={(id, dismiss) =>
-              act(dismiss ? "discardMessage" : "retryMessage", id)
-            }
-          />
-        </aside>
+      {open && (
+        <PanelDock open={!closing} className={styles.windowDiscussion}>
+          {view.discussion && (
+            <aside
+              className={styles.windowDiscussionBody}
+              aria-label="Huddle chat panel"
+            >
+              <HuddleDiscussionView
+                allowImageCopy={false}
+                discussion={view.discussion}
+                openLink={(url) => {
+                  if (!isBuzzLink(url)) return false;
+                  act("openLink", url);
+                  return true;
+                }}
+                composer={composer}
+                older={() => act("older")}
+                retry={() => act("retry")}
+                recover={(id, dismiss) =>
+                  act(dismiss ? "discardMessage" : "retryMessage", id)
+                }
+              />
+            </aside>
+          )}
+        </PanelDock>
       )}
     </div>
   );

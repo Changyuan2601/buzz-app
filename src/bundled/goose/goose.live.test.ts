@@ -222,20 +222,11 @@ async function live() {
   return { goose, cwd, tools, calls, requests, results, sends };
 }
 
-/** Setup on the real goose; it resolves `~` with the workspace process,
- * which prints the folder. */
+/** Setup on the real goose, with `~` as the home folder. */
 const homeSetup = () =>
-  new GooseSetup(async (id, options = {}) => {
-    if (id !== "workspace") return spawn(id, options);
-    queueMicrotask(() =>
-      options.onStdout?.(`${String(options.cwd).replace(/^~/, homedir())}\n`),
-    );
-    return {
-      write: async () => undefined,
-      end: async () => undefined,
-      kill: async () => undefined,
-      exited: Promise.resolve(0),
-    };
+  new GooseSetup({
+    spawn,
+    resolveDirectory: async (path) => path.replace(/^~/, homedir()),
   });
 
 describe.skipIf(!BIN)("goose-acp", () => {
@@ -387,6 +378,26 @@ describe.skipIf(!BIN)("goose-acp", () => {
         session.send("Reply in Buzz with the word again."),
       ).resolves.toEqual({ ok: true });
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain("again");
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("compacts a session, saying so in its text", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt: "You are a Buzz agent. Answer in one short sentence.",
+      });
+      await session.send("Remember the word pineapple.");
+      await expect(session.send("/compact")).resolves.toEqual({
+        ok: true,
+        text: "Compaction complete",
+      });
     } finally {
       await goose.kill();
     }

@@ -3,7 +3,7 @@ import { AgentDetails } from "./AgentDetails";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
-// Agents and teams, with creation, import and marketplace entry from New agent.
+// Agents, teams, and marketplace, with creation and import from their menus.
 import {
   useEffect,
   useRef,
@@ -12,9 +12,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
-import { AgentBrowse } from "./AgentBrowse";
+import {
+  AgentBrowse,
+  SharedAgentPanel,
+  type SharedAgentSelection,
+} from "./AgentBrowse";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
@@ -46,9 +51,9 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
+  CheckIcon,
   DotsThreeIcon,
   DownloadIcon,
-  StorefrontIcon,
   PlusIcon,
   RobotIcon,
   XIcon,
@@ -97,10 +102,23 @@ function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
   }
 }
 
-type Tab = "yours" | "teams";
+/** Pack avatars for the marketplace tile, apart from New agent's. */
+const MARKETPLACE_ART = [
+  "gloopies-7",
+  "fuzzies-10",
+  "pollies-9",
+  "gloopies-14",
+  "fuzzies-6",
+  "pollies-21",
+  "gloopies-11",
+  "fuzzies-15",
+];
+
+type Tab = "yours" | "teams" | "marketplace";
 const TABS = [
   { value: "yours", label: "Your agents", panelId: "agents-yours" },
   { value: "teams", label: "Your teams", panelId: "agents-teams" },
+  { value: "marketplace", label: "Marketplace", panelId: "agents-marketplace" },
 ] as const;
 
 export function AgentsPage({
@@ -121,15 +139,42 @@ export function AgentsPage({
     connection.status === "ready" ? connection.session.channels : undefined,
   );
   const [tab, setTab] = useState<Tab>("yours");
+  const [sharedSelection, setSharedSelection] =
+    useState<SharedAgentSelection>();
+  const sharedTrigger = useRef<HTMLButtonElement | null>(null);
+  const shared =
+    connection.status === "ready" &&
+    sharedSelection?.session === connection.session
+      ? sharedSelection
+      : undefined;
+  // Commit first: a narrow layout hides the list, and its tile, while open.
+  const closeShared = () => {
+    flushSync(() => setSharedSelection(undefined));
+    sharedTrigger.current?.focus();
+  };
   const [selectedKey, setSelectedKey] = useState<string>();
   const [creating, setCreating] = useState(false);
   // Which import the dialog shows follows the menu it was opened from.
-  const [flow, setFlow] = useState<"import" | "import-team" | "browse">();
+  const [flow, setFlow] = useState<"import" | "import-team">();
   // A team being edited by its id, or "new" for one being made.
   const [editingTeam, setEditingTeam] = useState<string>();
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
+  // What an owner with no agents yet can import, offered before anything else.
+  const [importable, setImportable] = useState<readonly PortableAgent[]>([]);
+  const firstAgent = snapshot.status === "ready" && !snapshot.agents.length;
+  useEffect(() => {
+    if (!firstAgent) return;
+    let live = true;
+    agents.portable().then(
+      (found) => live && setImportable(found.agents),
+      () => live && setImportable([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [agents, firstAgent]);
   const [localProviderKey, setLocalProviderKey] = useState<string>();
   const routed = !!navigation && !!navigator;
   const providerKey = routed
@@ -175,6 +220,7 @@ export function AgentsPage({
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
   const changeTab = (next: Tab) => {
     if (next !== "teams") setEditingTeam(undefined);
+    if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
   };
   const returnTo = (next: Tab) => () => {
@@ -189,49 +235,60 @@ export function AgentsPage({
       : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
+  const openImport = () => {
+    browse();
+    setFlow("import");
+  };
+  const openMarketplace = () => {
+    browse();
+    changeTab("marketplace");
+  };
+  // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
     <MenuRoot>
       <MenuTrigger
-        render={
-          toolbarAction ? (
-            <NewAgentTile ref={newAgentButton} variant="button" />
-          ) : (
-            <NewAgentTile
-              ref={newAgentButton}
-              labelRef={newAgentLabel}
-              fullWidth
-            />
-          )
-        }
+        render={<NewAgentTile ref={newAgentButton} variant="button" />}
       />
-      <MenuPopup
-        anchor={toolbarAction ? newAgentButton : newAgentLabel}
-        align={toolbarAction ? "end" : "center"}
-      >
+      <MenuPopup anchor={newAgentButton} align="end">
         <MenuItem
           disabled={snapshot.status !== "ready" || !types.length}
           onClick={() => setCreating(true)}
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new agent
         </MenuItem>
-        <MenuItem
-          onClick={() => {
-            browse();
-            setFlow("import");
-          }}
-        >
+        <MenuItem onClick={openImport}>
           <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            browse();
-            setFlow("browse");
-          }}
-        >
-          <StorefrontIcon size={16} aria-hidden="true" /> Browse the marketplace
         </MenuItem>
       </MenuPopup>
     </MenuRoot>
+  );
+  // With no agents yet, each way to get one is its own tile; importing the
+  // owner's own agents leads when there are any.
+  const canImport = firstAgent && importable.length > 0;
+  const starts = (
+    <div className={cardStyles.starts}>
+      {canImport && (
+        <NewAgentTile
+          fullWidth
+          crew={importable}
+          description="You have agents in a previous version of Buzz."
+          label="Import them now"
+          onClick={openImport}
+        />
+      )}
+      <NewAgentTile
+        label="Create your first agent"
+        secondary={canImport}
+        disabled={snapshot.status !== "ready" || !types.length}
+        onClick={() => setCreating(true)}
+      />
+      <NewAgentTile
+        label="Explore the marketplace"
+        art={MARKETPLACE_ART}
+        secondary={canImport}
+        onClick={openMarketplace}
+      />
+    </div>
   );
   // Teams have no marketplace, so New team offers only making and importing.
   const newTeamMenu = (
@@ -295,7 +352,7 @@ export function AgentsPage({
       typeOf,
       onSelect: browse,
       onBuild: build,
-      newAgent: !toolbarAction && newAgentMenu,
+      newAgent: !toolbarAction && starts,
     };
     return connection.status === "ready" ? (
       <DefaultAgentInventory
@@ -354,7 +411,8 @@ export function AgentsPage({
             onValueChange={changeTab}
             items={TABS}
           />
-          {toolbarAction &&
+          {tab !== "marketplace" &&
+            toolbarAction &&
             !(tab === "teams" && editing) &&
             (tab === "teams" ? newTeamMenu : newAgentMenu)}
         </div>
@@ -365,6 +423,15 @@ export function AgentsPage({
         >
           {tab === "yours" ? (
             yours
+          ) : tab === "marketplace" ? (
+            <AgentBrowse
+              relay={relay}
+              selectedId={shared?.agent.id}
+              onSelect={(selection, trigger) => {
+                sharedTrigger.current = trigger;
+                setSharedSelection(selection);
+              }}
+            />
           ) : (
             <Teams
               agents={agents}
@@ -386,7 +453,11 @@ export function AgentsPage({
         ref={split.ref}
         style={split.style}
         className={styles.browse}
-        data-side={panel && tab === "yours" ? "" : undefined}
+        data-side={
+          (panel && tab === "yours") || (shared && tab === "marketplace")
+            ? ""
+            : undefined
+        }
       >
         <div className={styles.main}>
           <Panel aria-label="Agents">
@@ -413,6 +484,41 @@ export function AgentsPage({
             </div>
           </Panel>
         </div>
+        {shared && tab === "marketplace" && (
+          <aside className={styles.side}>
+            {split.handle}
+            <Panel aria-label="Shared agent profile">
+              <PanelWorkspace
+                value={shared.agent.id}
+                select={() => {}}
+                items={[
+                  {
+                    id: shared.agent.id,
+                    label: shared.agent.name,
+                    close: closeShared,
+                    content: (
+                      <SharedAgentPanel
+                        key={shared.agent.id}
+                        selection={shared}
+                        agents={agents}
+                        types={runnable}
+                        // The panel and its trigger go with it, so focus
+                        // follows to the tab now shown.
+                        onImported={() => {
+                          flushSync(() => {
+                            setSharedSelection(undefined);
+                            returnToAgents();
+                          });
+                          document.getElementById("agents-yours-tab")?.focus();
+                        }}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </Panel>
+          </aside>
+        )}
         {panel && selected && (
           <aside className={styles.side} hidden={tab !== "yours"}>
             {split.handle}
@@ -438,13 +544,7 @@ export function AgentsPage({
       {flow && (
         <Dialog
           open
-          title={
-            flow === "import"
-              ? "Import an agent"
-              : flow === "import-team"
-                ? "Import a team"
-                : "Marketplace"
-          }
+          title={flow === "import" ? "Import an agent" : "Import a team"}
           size="wide"
           height="stable"
           preventClose={importing}
@@ -453,22 +553,15 @@ export function AgentsPage({
             if (!open) setFlow(undefined);
           }}
         >
-          {flow === "browse" ? (
-            <AgentBrowse
-              relay={relay}
-              agents={agents}
-              types={runnable}
-              onImported={returnToAgents}
-            />
-          ) : (
-            <ImportAgents
-              agents={agents}
-              types={runnable}
-              only={flow === "import" ? "agents" : "teams"}
-              onImported={returnTo(flow === "import" ? "yours" : "teams")}
-              onPendingChange={setImporting}
-            />
-          )}
+          <ImportAgents
+            agents={agents}
+            types={runnable}
+            only={flow === "import" ? "agents" : "teams"}
+            onImported={
+              flow === "import" ? () => changeTab("yours") : returnTo("teams")
+            }
+            onPendingChange={setImporting}
+          />
         </Dialog>
       )}
       {creating && (
@@ -810,24 +903,26 @@ function InventoryCard({
         )
       }
     >
-      <div
-        data-card-control=""
-        className="flex min-w-0 max-w-full flex-col items-center gap-2"
-      >
-        {Model && (
-          <Model
-            config={agent.config}
-            modelAppearance="subtle"
-            disabled={saving}
-            onChange={(config) => void save(config)}
-          />
-        )}
-        {error && (
-          <span role="alert" className="text-body-sm text-danger">
-            {error}
-          </span>
-        )}
-      </div>
+      {(Model || error) && (
+        <div
+          data-card-control=""
+          className="flex min-w-0 max-w-full flex-col items-center gap-2"
+        >
+          {Model && (
+            <Model
+              config={agent.config}
+              modelAppearance="subtle"
+              disabled={saving}
+              onChange={(config) => void save(config)}
+            />
+          )}
+          {error && (
+            <span role="alert" className="text-body-sm text-danger">
+              {error}
+            </span>
+          )}
+        </div>
+      )}
     </AgentCard>
   );
 }
@@ -1013,6 +1108,27 @@ function ImportAgents({
   const [type, setType] = useState(types[0]?.key ?? "");
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState("");
+  // Each agent the owner chose, in the order chosen: imports run one at a
+  // time and the dialog stays open, so several can be picked in a row.
+  const [ports, setPorts] = useState<ReadonlyMap<string, "queued" | "done">>(
+    new Map(),
+  );
+  // What did not come over, or why an import failed, by agent; choosing the
+  // agent again replaces it.
+  const [said, setSaid] = useState<ReadonlyMap<string, string>>(new Map());
+  const chosenPorts = useRef(new Set<string>());
+  const portLine = useRef(Promise.resolve());
+  // An import still waiting its turn when the dialog goes away is dropped:
+  // it would otherwise land in whatever community is selected by then.
+  const open = useRef(true);
+  useEffect(() => {
+    open.current = true;
+    return () => {
+      open.current = false;
+    };
+  }, []);
+  const queued = [...ports.values()].includes("queued");
+  useEffect(() => onPendingChange(queued), [queued, onPendingChange]);
   useEffect(() => {
     let live = true;
     agents.portable().then(
@@ -1028,33 +1144,46 @@ function ImportAgents({
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])
     named.set(agent.name, (named.get(agent.name) ?? 0) + 1);
-  const port = async (agent: PortableAgent) => {
-    if (!chosen || pending) return;
-    setPending(agent.pubkey);
-    onPendingChange(true);
-    setError("");
-    try {
-      const { notes } = await agents.port({
-        source: agent.source,
-        pubkey: agent.pubkey,
-        type: chosen.key,
-      });
-      setFound(
-        (last) =>
-          last && {
-            ...last,
-            agents: last.agents.filter((item) => item.pubkey !== agent.pubkey),
-          },
-      );
-      // Leaving would hide what did not come over.
-      if (notes.length) setError(notes.join(" "));
-      else onImported();
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setPending(undefined);
-      onPendingChange(false);
-    }
+  const setPort = (pubkey: string, state?: "queued" | "done") =>
+    setPorts((last) => {
+      const next = new Map(last);
+      if (state) next.set(pubkey, state);
+      else next.delete(pubkey);
+      return next;
+    });
+  const say = (pubkey: string, text?: string) =>
+    setSaid((last) => {
+      const next = new Map(last);
+      if (text) next.set(pubkey, text);
+      else next.delete(pubkey);
+      return next;
+    });
+  const port = (agent: PortableAgent) => {
+    if (!chosen || chosenPorts.current.has(agent.pubkey)) return;
+    chosenPorts.current.add(agent.pubkey);
+    setPort(agent.pubkey, "queued");
+    say(agent.pubkey);
+    const type = chosen.key;
+    portLine.current = portLine.current.then(async () => {
+      if (!open.current) return;
+      try {
+        const { notes } = await agents.port({
+          source: agent.source,
+          pubkey: agent.pubkey,
+          type,
+        });
+        setPort(agent.pubkey, "done");
+        if (notes.length) say(agent.pubkey, notes.join(" "));
+        onImported();
+      } catch (reason) {
+        chosenPorts.current.delete(agent.pubkey);
+        setPort(agent.pubkey);
+        say(
+          agent.pubkey,
+          `${agent.name} wasn't imported. ${sentence(message(reason))}`,
+        );
+      }
+    });
   };
   const portTeam = async (team: OldTeam) => {
     if (!chosen || pending) return;
@@ -1094,8 +1223,8 @@ function ImportAgents({
     <div className="flex flex-col gap-4">
       <p className="m-0 text-body-sm text-secondary">
         {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
-          : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
+          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
         An archived agent is unarchived here. Stop it where it runs now first,
         or both will answer.
       </p>
@@ -1104,7 +1233,7 @@ function ImportAgents({
           <Select
             label="Import as"
             value={chosen?.key ?? ""}
-            disabled={!!pending}
+            disabled={!!pending || queued}
             groups={[
               {
                 label: "Agent types",
@@ -1118,9 +1247,9 @@ function ImportAgents({
           />
         </div>
       )}
-      {error && (
+      {(error || said.size > 0) && (
         <p role="alert" className="m-0 text-body-sm text-danger">
-          {error}
+          {[error, ...said.values()].filter(Boolean).join(" ")}
         </p>
       )}
       {found?.warnings.map((warning) => (
@@ -1206,18 +1335,29 @@ function ImportAgents({
                     </Tooltip>
                   }
                 >
-                  <Button
-                    size="compact"
-                    variant="outline"
-                    aria-label={`Import ${agent.name}`}
-                    loading={pending === agent.pubkey}
-                    disabled={
-                      !chosen || (!!pending && pending !== agent.pubkey)
-                    }
-                    onClick={() => void port(agent)}
-                  >
-                    Import
-                  </Button>
+                  {ports.get(agent.pubkey) === "done" ? (
+                    <Button
+                      size="compact"
+                      variant="outline"
+                      aria-label={`${agent.name} imported`}
+                      disabled
+                      // Keeps the owner's place for the next import.
+                      focusableWhenDisabled
+                    >
+                      <CheckIcon size={16} aria-hidden="true" /> Imported
+                    </Button>
+                  ) : (
+                    <Button
+                      size="compact"
+                      variant="outline"
+                      aria-label={`Import ${agent.name}`}
+                      loading={ports.get(agent.pubkey) === "queued"}
+                      disabled={!chosen}
+                      onClick={() => port(agent)}
+                    >
+                      Import
+                    </Button>
+                  )}
                 </AgentCard>
               ))}
             </section>
@@ -1266,10 +1406,6 @@ function Teams({
   const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
     <div className="grid gap-4">
-      <p className="m-0 text-body-sm text-secondary">
-        Each member is told who its teammates are, and follows the team's
-        instructions after its own.
-      </p>
       <div className={cardStyles.grid}>
         {newTeam}
         {teams.length > 0 && (

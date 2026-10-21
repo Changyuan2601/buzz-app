@@ -136,7 +136,7 @@ it.each(["reply", "message", "message after reply"])(
     await chooseFilter("DMs");
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
-    expect(rows()[0]).toHaveTextContent("A direct reply");
+    expect(rows()[0]).toHaveTextContent("Fresh explicit DM mention");
   },
 );
 
@@ -794,6 +794,36 @@ it.each([
   },
 );
 
+it("Archive from the composer focuses the successor's tab while its message cannot be revealed", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = rows().find((item) =>
+    item.textContent?.includes("A thread update"),
+  );
+  if (!row) throw new Error("Missing fixture row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  (await screen.findByRole("textbox")).focus();
+  const release = h.holdHistory("room");
+  try {
+    await archiveOpened(h);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Please review this");
+    expect(rows()[0]).toHaveAttribute("data-selected");
+    expect(sideTabs()).toHaveLength(1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen
+          .getAllByRole("tablist")
+          .find((item) => item.getAttribute("aria-label") !== "Inbox tabs")
+          ?.querySelector('[role="tab"][aria-selected="true"]'),
+      ),
+    );
+  } finally {
+    await act(async () => release());
+  }
+});
+
 it("the Archive shortcut advances from an ordinary-reply visit after switching to Mentions", async () => {
   const h = fixture();
   const root = h.root;
@@ -1179,7 +1209,9 @@ it.each(["reply", "unrelated", "mention"] as const)(
         expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
       );
       expect(
-        rows().some((row) => row.textContent?.includes("A thread update")),
+        rows().some((row) =>
+          row.textContent?.includes(`Intervening ${update}`),
+        ),
       ).toBe(true);
       await chooseFilter("Archived", "Show");
       expect(rows()).toHaveLength(0);
@@ -2726,7 +2758,7 @@ it.each([false, true])(
     h.events.push(root, child);
     h.emit([root, child]);
     render(h.view);
-    await screen.findByText("Two-step root");
+    await screen.findByText("Two-step reply");
     await waitFor(() =>
       expect(
         screen.queryByText("Checking recent activity…"),
@@ -2749,7 +2781,7 @@ it.each([false, true])(
     const release = h.holdSave();
     try {
       const target = rows().find((row) =>
-        row.textContent?.includes("Two-step root"),
+        row.textContent?.includes("Two-step reply"),
       );
       if (!target) throw Error("Missing two-step row");
       fireEvent.click(within(target).getByRole("button", { name: /^Open / }));
@@ -2798,7 +2830,7 @@ it("two-step read access loss during its first save stops before the second step
   h.events.push(root, child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Cancelled root");
+  await screen.findByText("Cancelled reply");
   await waitFor(() =>
     expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
   );
@@ -2810,7 +2842,7 @@ it("two-step read access loss during its first save stops before the second step
   const release = h.holdSave();
   try {
     const row = rows().find((row) =>
-      row.textContent?.includes("Cancelled root"),
+      row.textContent?.includes("Cancelled reply"),
     );
     if (!row) throw Error("Missing two-step row");
     await user.click(within(row).getByRole("button", { name: /^Open / }));
@@ -3473,6 +3505,18 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
   expect(editor).toHaveValue("Choose someone first");
 });
 
+it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {
+  const h = fixture({ soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  expect(rows()[1]).toHaveTextContent("A thread update");
+  expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+});
+
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
   const h = fixture({
     withWriter: true,
@@ -3671,14 +3715,14 @@ it("a two-step read retries its rejected thread prefix without losing the saved 
   h.events.push(root, child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Partial root");
+  await screen.findByText("Partial reply");
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
   h.failThreadSave();
-  const row = rows().find((row) => row.textContent?.includes("Partial root"));
+  const row = rows().find((row) => row.textContent?.includes("Partial reply"));
   if (!row) throw Error("Missing two-step row");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -3754,6 +3798,61 @@ it("keeps the captured reply selected when its older root is verified", async ()
   expect(reopen).toHaveAttribute("aria-current", "page");
   expect(sideTabs()).toHaveLength(1);
   expect(h.open).not.toHaveBeenCalled();
+});
+
+it("a Solo chat row previewing unfinished workflow output that is not its evidence shows its placeholder", async () => {
+  const h = fixture({ soloChannel: true });
+  // Output attributed to the viewer without a workflow mention is not Inbox
+  // evidence, but the addressed feed still settles its stored overlays.
+  const output = signed(h.relayKey, {
+    kind: 9,
+    content: "OLD BODY",
+    created_at: 39,
+    tags: [
+      ["h", "room"],
+      ["p", h.viewer.pubkey],
+      ["buzz:workflow", "true"],
+      ["buzz:workflow-owner", h.viewer.pubkey],
+    ],
+  });
+  // Fill the bounded addressed page so the row's own mention stays settled.
+  h.events.unshift(
+    output,
+    ...Array.from({ length: 49 }, (_, i) =>
+      message(h.viewer, "room", `Note ${i}`, 1 + i, [["p", h.viewer.pubkey]]),
+    ),
+  );
+  const release = h.holdAux();
+  render(h.view);
+  act(() => h.emit([output]));
+  const timeline = () => {
+    const row = rows().find(
+      (item) => !item.textContent?.includes("A thread update"),
+    );
+    if (!row) throw Error("Missing timeline row");
+    return row;
+  };
+  try {
+    await waitFor(() =>
+      expect(h.owner.session.inboxFeed.snapshot().incomplete).toContain(
+        output.id,
+      ),
+    );
+    expect(h.owner.session.inboxFeed.snapshot().incomplete).not.toContain(
+      h.mention.id,
+    );
+    await waitFor(() =>
+      expect(timeline()).toHaveTextContent("Preview updating…"),
+    );
+    expect(timeline()).not.toHaveTextContent("OLD BODY");
+    h.failAux();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(timeline()).toHaveTextContent("Preview unavailable. Retry inbox."),
+  );
+  expect(timeline()).not.toHaveTextContent("OLD BODY");
 });
 
 it("shows only the exact unfinished row's placeholder through held edits and retry, never an unverified body", async () => {
@@ -3845,9 +3944,9 @@ it("freezes the top-level origin coordinate when read-state switches representat
   h.addEvent(reply);
   h.emit([root, reply]);
   render(h.view);
-  await screen.findByText("New root mention");
+  await screen.findByText("New reply mention");
   const row = rows().find((item) =>
-    item.textContent?.includes("New root mention"),
+    item.textContent?.includes("New reply mention"),
   );
   if (!row) throw Error("Missing root mention");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
@@ -3975,14 +4074,14 @@ it("retries the remaining captured prefix after a harmless new reply while the s
   h.addEvent(child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Retry root");
+  await screen.findByText("Retry reply");
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
   h.failThreadSave();
-  const row = rows().find((item) => item.textContent?.includes("Retry root"));
+  const row = rows().find((item) => item.textContent?.includes("Retry reply"));
   if (!row) throw Error("Missing retry row");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   expect(await screen.findByRole("alert")).toHaveTextContent(

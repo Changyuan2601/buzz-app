@@ -1,10 +1,11 @@
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
+import { PhoneIcon, PhoneEndIcon } from "../../shared/design-system/icons";
+import { HuddleMinimizeIcon } from "./HuddleMinimizeIcon";
 import type { useHuddleRequestFocus } from "./useHuddleRequestFocus";
 import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ArrowsInSimpleIcon } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
 export function HuddleRequestView({
@@ -22,17 +23,19 @@ export function HuddleRequestView({
   return (
     <main
       ref={focus.requestRef}
-      className={styles.window}
+      className={`${styles.window} ${styles.requestWindow}`}
       aria-label="Incoming Huddle request"
     >
+      <ProfileBackdrop src={caller?.picture} kind="human" />
       <header className={styles.windowHeader}>
         <div className={styles.windowMinimize}>
           <IconButton
             size="large"
-            variant="subtle"
+            shape="round"
+            variant="ghost"
             aria-label="Minimize Huddle request"
             onClick={() => act("minimize")}
-            icon={<ArrowsInSimpleIcon size={22} />}
+            icon={<HuddleMinimizeIcon />}
           />
         </div>
       </header>
@@ -45,16 +48,28 @@ export function HuddleRequestView({
                 src={caller.picture}
                 alt={caller.name}
                 fallback={caller.name}
+                fallbackContent={
+                  <svg
+                    className={styles.requestInitial}
+                    viewBox="0 0 100 100"
+                    aria-hidden="true"
+                  >
+                    <text
+                      x="50"
+                      y="50"
+                      dy=".35em"
+                      textAnchor="middle"
+                      fontSize="40"
+                      fill="currentColor"
+                    >
+                      {Array.from(caller.name.trim())[0]?.toUpperCase() || "?"}
+                    </text>
+                  </svg>
+                }
               />
             </HuddleAvatarMotion>
           </div>
         )}
-        <p className={`${styles.requestTitle} text-title text-primary`}>
-          <span className={styles.requestName}>
-            {caller?.name ?? "Someone"}
-          </span>{" "}
-          is calling
-        </p>
       </div>
       <footer className={styles.windowFooter}>
         {error && (
@@ -63,26 +78,45 @@ export function HuddleRequestView({
           </p>
         )}
         <div className={`${styles.windowControls} ${styles.requestActions}`}>
-          <Button
-            size="lg"
-            variant="subtle"
-            data-huddle-join=""
-            disabled={view.phase === "connecting"}
-            onClick={() => {
-              focus.cancel.current?.focus({ preventScroll: true });
-              act("join");
-            }}
-          >
-            Join
-          </Button>
-          <Button
-            size="lg"
-            variant="destructive"
-            ref={focus.cancel}
-            onClick={() => act("decline")}
-          >
-            {view.phase === "connecting" ? "Cancel" : "Decline"}
-          </Button>
+          <div className={styles.requestAction}>
+            <IconButton
+              size="large"
+              shape="round"
+              variant="glass"
+              aria-label={view.phase === "connecting" ? "Cancel" : "Decline"}
+              title={view.phase === "connecting" ? "Cancel" : "Decline"}
+              ref={focus.cancel}
+              onClick={() => act("decline")}
+              icon={<PhoneEndIcon className="text-call-leave" />}
+            />
+          </div>
+          <p className={`${styles.requestTitle} text-body-strong text-primary`}>
+            <span
+              className={styles.requestName}
+              title={caller?.name ?? "Someone"}
+            >
+              {caller?.name ?? "Someone"}
+            </span>{" "}
+            <span>is calling</span>
+          </p>
+          <div className={styles.requestAction}>
+            <IconButton
+              size="large"
+              shape="round"
+              variant="glass"
+              aria-label="Join"
+              title="Join"
+              data-huddle-join=""
+              disabled={view.phase === "connecting"}
+              onClick={() => {
+                focus.cancel.current?.focus({ preventScroll: true });
+                act("join");
+              }}
+              icon={
+                <PhoneIcon style={{ color: "var(--affordance-call-join)" }} />
+              }
+            />
+          </div>
         </div>
       </footer>
     </main>

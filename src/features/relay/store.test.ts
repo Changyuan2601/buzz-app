@@ -1,6 +1,7 @@
 import { assert, describe, expect, it, vi } from "vitest";
 import { ReadError } from "./errors";
 import { createRelaySession } from "./session";
+import type { LiveCallbacks } from "./live";
 import type { HeadPersistence } from "./persistence";
 import {
   bounds,
@@ -96,6 +97,64 @@ describe("channel store", () => {
     expect(queries.list().channels[0]).not.toBe(publicSummary);
     expect(queries.list().channels[0]?.private).toBe(true);
     store.dispose();
+  });
+  it("preserves summary identity on preview refreshes and detects same-length DM roster changes", () => {
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { now: () => 1_000 },
+    );
+    try {
+      const queries = owner.session.channels;
+      live.receive([
+        roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+        metadata(relay, "dm", "Direct", undefined, [["t", "dm"]]),
+        roster(relay, "other", [viewer.pubkey]),
+        metadata(relay, "other", "Other"),
+      ]);
+      const initial = queries.list().channels[0];
+      const other = queries.list().channels[1];
+      const listener = vi.fn();
+      queries.subscribeList(listener);
+      const incoming = message(alice, "dm", "hello", 10);
+      live.receive([incoming]);
+      const preview = queries.list();
+      const direct = preview.channels[0];
+      expect(direct).toMatchObject({ preview: "hello" });
+      expect(direct?.members).toBe(initial?.members);
+      expect(direct?.participants).toBe(initial?.participants);
+      expect(preview.channels[1]).toBe(other);
+      expect(listener).toHaveBeenCalledOnce();
+
+      live.receive([incoming]);
+      expect(queries.list()).toBe(preview);
+      expect(listener).toHaveBeenCalledOnce();
+      live.receive([
+        roster(relay, "dm", [alice.pubkey, viewer.pubkey], 1_700_000_001),
+      ]);
+      expect(queries.list().channels[0]).toBe(direct);
+
+      const replacement = keypair().pubkey;
+      live.receive([
+        roster(relay, "dm", [viewer.pubkey, replacement], 1_700_000_002),
+      ]);
+      expect(queries.list().channels[0]).not.toBe(direct);
+      expect(queries.list().channels[0]).toMatchObject({
+        preview: "hello",
+        members: [viewer.pubkey, replacement].sort(),
+        participants: [replacement],
+      });
+      expect(queries.list().channels[1]).toBe(other);
+    } finally {
+      owner.dispose();
+    }
   });
   it("pages a window by the relay cursor, prepends older rows, and fetches missing profiles once", async () => {
     const { store, queries, next, pending } = setup();

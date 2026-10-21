@@ -545,7 +545,12 @@ function gooseHost() {
     ],
     supported: ["synced-model"],
   });
-  const host = { spawn: goose.spawn, serveMcp: goose.serve } as unknown as Host;
+  const host = {
+    spawn: goose.spawn,
+    resolveDirectory: goose.resolveDirectory,
+    readFile: vi.fn(),
+    serveMcp: goose.serve,
+  } as unknown as Host;
   return { goose, host };
 }
 

@@ -1,5 +1,5 @@
-// The New agent card: the avatar, chosen from packs or an image, and the name,
-// with a details area the agent type fills in.
+// The New agent card: the avatar, chosen from packs or made custom from an
+// image or an emoji, and the name, with a details area the agent type fills in.
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
@@ -17,7 +17,7 @@ import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import { CloudUploadIcon } from "../../shared/design-system/icons";
+import { PlusIcon } from "../../shared/design-system/icons";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import styles from "./AgentCreate.module.css";
 import { useShake } from "./useNamePrompt";
@@ -104,7 +104,7 @@ export function AgentCreateHeader({
   }, [view]);
   const [gridSize, setGridSize] = useState({ width: 768, height: 432, gap: 8 });
   useLayoutEffect(() => {
-    if (view === "selected" || view === "collections" || view === "image")
+    if (view === "selected" || view === "collections" || view === "custom")
       return;
     const element = options.current;
     if (!element) return;
@@ -232,23 +232,22 @@ export function AgentCreateHeader({
                 <SurfaceButton
                   className={styles.collection}
                   disabled={disabled}
-                  onClick={() => setView("image")}
+                  onClick={() => setView("custom")}
                 >
                   <span
-                    className={`${styles.artwork} ${styles.uploadIcon}`}
+                    className={`${styles.artwork} ${styles.customIcon}`}
                     aria-hidden="true"
                   >
-                    <CloudUploadIcon size={48} />
+                    <PlusIcon size={48} />
                   </span>
-                  <span>Use image</span>
+                  <span>Use custom</span>
                 </SurfaceButton>
               </div>
-            ) : view === "image" ? (
-              <div className={styles.imageEditor}>
+            ) : view === "custom" ? (
+              <div className={styles.customEditor}>
                 <AvatarEditor
                   triggerStyle="dotted-squircle"
                   inlinePicker
-                  imageOnly
                   actionTarget={avatarActionTarget}
                   shape="squircle"
                   value={selected ? "" : (picture ?? "")}

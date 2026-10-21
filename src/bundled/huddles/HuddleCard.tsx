@@ -3,7 +3,7 @@ import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import type { Huddles } from "../../features/huddle/service";
 import { huddleLifecycle } from "../../features/huddle/lifecycle";
-import { HeadphonesIcon } from "../../shared/design-system/icons";
+import { HeadphonesIcon, PhoneEndIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRelayConnection } from "../../features/relay/react";
 import { HuddleAvatarStack } from "./HuddleAvatarStack";
@@ -113,7 +113,11 @@ export function HuddleCard({
       className={styles.card}
       aria-label={finished ? "Huddle ended" : "Huddle"}
     >
-      <div className={styles.status} aria-hidden="true">
+      <div
+        className={styles.status}
+        data-ended={finished || undefined}
+        aria-hidden="true"
+      >
         {active ? (
           <span className={styles.wave}>
             <i />
@@ -122,6 +126,8 @@ export function HuddleCard({
             <i />
             <i />
           </span>
+        ) : finished ? (
+          <PhoneEndIcon size={22} />
         ) : (
           <HeadphonesIcon size={22} />
         )}

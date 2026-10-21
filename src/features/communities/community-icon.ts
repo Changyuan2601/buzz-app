@@ -1,7 +1,7 @@
-import type { CommunityReader, Membership } from "./service";
 import { registerBrokerCommunity } from "../relay/transport";
 import { nativeIdentityEnabled } from "../identity/service";
 import { nativeRelayInfo } from "../relay/native";
+import { publishedCommunityName } from "./names";
 
 /** Keep untrusted relay metadata out of executable URL schemes and huge data URLs. */
 export function communityIcon(value: unknown): string | undefined {
@@ -48,58 +48,29 @@ export function communityIcon(value: unknown): string | undefined {
   return undefined;
 }
 
-/** NIP-11 icon comes through the existing same-origin broker, without a relay session. */
-export async function fetchCommunityIcon(id: string, signal: AbortSignal) {
+/** Existing optional NIP-11 discovery, without join policy or a relay session. */
+export async function fetchCommunityPresentation(
+  id: string,
+  signal: AbortSignal,
+) {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(12_000)]);
-  if (nativeIdentityEnabled())
-    return communityIcon((await nativeRelayInfo(id, bounded)).icon);
-  await registerBrokerCommunity(id, bounded);
-  const response = await fetch(
-    `/api/relay/${encodeURIComponent(id)}/icon-info`,
-    {
-      credentials: "same-origin",
-      signal: bounded,
-    },
-  );
-  if (!response.ok) return undefined;
-  const info: unknown = await response.json();
-  return info && typeof info === "object" && "icon" in info
-    ? communityIcon(info.icon)
-    : undefined;
-}
-
-/** Public display evidence shared within one Communities lifetime. The rail
- * still owns discovery; readers never fetch or acquire a community session. */
-const iconsByReader = new WeakMap<
-  CommunityReader,
-  ReturnType<typeof createCommunityIcons>
->();
-export function communityIcons(reader: CommunityReader) {
-  let icons = iconsByReader.get(reader);
-  if (!icons) {
-    icons = createCommunityIcons();
-    iconsByReader.set(reader, icons);
+  let info: unknown;
+  if (nativeIdentityEnabled()) info = await nativeRelayInfo(id, bounded);
+  else {
+    await registerBrokerCommunity(id, bounded);
+    const response = await fetch(
+      `/api/relay/${encodeURIComponent(id)}/icon-info`,
+      { credentials: "same-origin", signal: bounded },
+    );
+    if (!response.ok) throw new Error("Community information unavailable");
+    info = await response.json();
   }
-  return icons;
-}
-function createCommunityIcons() {
-  let snapshot: Readonly<Record<string, string>> = {};
-  const listeners = new Set<() => void>();
+  if (!info || typeof info !== "object" || Array.isArray(info))
+    throw new Error("Community information unavailable");
   return {
-    snapshot: () => snapshot,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    resolve: (membership: Membership) =>
-      snapshot[membership.id] ?? communityIcon(membership.icon),
-    remember(id: string, value: string) {
-      const icon = communityIcon(value);
-      if (!icon || snapshot[id] === icon) return;
-      snapshot = { ...snapshot, [id]: icon };
-      for (const listener of listeners) listener();
-    },
+    publishedName: publishedCommunityName(
+      "name" in info ? info.name : undefined,
+    ),
+    publishedIcon: communityIcon("icon" in info ? info.icon : undefined),
   };
 }

@@ -517,7 +517,7 @@ test.describe("signed newest-first Inbox windows", () => {
     const rows = inbox
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem");
-    const row = rows.filter({ hasText: "Inbox strict reply 0" });
+    const row = rows.filter({ hasText: "Window room" });
     await row.getByRole("button", { name: /^Open / }).click();
     const detail = inbox.getByRole("region", {
       name: "Conversation in Window room",

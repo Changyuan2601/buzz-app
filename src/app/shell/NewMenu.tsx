@@ -51,10 +51,6 @@ function ReadyNewMenu({
     session.soloPreferences.snapshot,
   );
   const preferences = useSidebarPreferences(session.sidebarPreferences);
-  const pendingChannel = useSyncExternalStore(
-    session.channelCreation.subscribe,
-    session.channelCreation.snapshot,
-  );
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -126,7 +122,6 @@ function ReadyNewMenu({
         session={session}
         agents={agents}
         finalFocus={trigger}
-        pending={pendingChannel}
         destinations={preferences.data?.sections ?? []}
         initialGroup=""
         groupsReady={preferences.writable}

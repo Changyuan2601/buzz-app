@@ -122,15 +122,21 @@ behavior on the label, so a rename touches copy only.
   require a tagged agent; existing signed-send recovery preserves its recipients.
   A blocked Enter submission shows “Tag an agent to send” inline. The workspace control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
-- Claude Code can name a Solo chat from its own generated session title after its
-  first successful turn. Only the first tagged agent on the owner’s original
+- The agent's harness can name a Solo chat with its own title for the
+  conversation. Claude Code offers its generated session title after its first
+  successful turn, adding no model request. goose names the chat's first session
+  itself, with one naming call, unless goose's config sets
+  `GOOSE_DISABLE_SESSION_NAMING`, which leaves the chat its first-message name;
+  a session reopened for the same conversation keeps a fixed title, except after
+  an app restart. Codex, whose app server names nothing, runs one ephemeral
+  read-only title turn on its small title model alongside a new conversation's
+  first turn. Only the first tagged agent on the owner’s original
   message can propose the title, even when a retry has different words or tag
   order; the chat must still have its original first-message name. A bounded
   verified read checks up to 100 owner messages through the triggering turn.
   Full, missing, unsent or ambiguous same-second history leaves the title
-  unchanged. Human names are never replaced. Codex title generation is intentionally not implemented. This reads
-  Claude Code's local history, adds no model request, and uses the owner's ordinary
-  channel-details save with revision validation. Live/native title acceptance is
+  unchanged. Human names are never replaced. The rename uses the owner's ordinary
+  channel-details save with revision validation, and logs why it skips a chat. Live/native title acceptance is
   a separate gate from unit tests.
 - Solo rows share Team's working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
@@ -228,6 +234,12 @@ Browser and native signing and publish guards enforce this syntax independently.
 The shared fresh-details owner remains edit authority.
 
 ## Optional naming
+
+Double-click an editable Solo chat’s sidebar row to rename it inline. The current
+name is selected; Enter or clicking away saves, and Escape cancels. Empty or
+unchanged names keep the confirmed title. Errors retain the draft below the field;
+uncertain saves offer **Check save status** without republishing. This uses the
+same signed details owner as Chat settings, retaining lifetime and other labels.
 
 New and saved Solo chats use the same Chat settings form. A blank new name retains
 the first-prompt automatic title (80 code points, canonicalized like relay names).

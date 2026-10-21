@@ -21,7 +21,10 @@ export function Tooltip({
   onOpenChange,
 }: {
   children: ReactElement<
-    Pick<AriaAttributes, "aria-describedby" | "aria-expanded">
+    Pick<AriaAttributes, "aria-describedby" | "aria-expanded"> & {
+      "data-accent"?: string;
+      "data-color-mode"?: string;
+    }
   >;
   content: ReactNode;
   delay?: number;
@@ -78,6 +81,8 @@ export function Tooltip({
             role="tooltip"
             id={id}
             data-buzz-ui=""
+            data-accent={children.props["data-accent"]}
+            data-color-mode={children.props["data-color-mode"]}
             className="buzz-tooltip"
             data-follow={follow}
           >

@@ -48,6 +48,7 @@ export interface ChannelLifecycleCapability {
   snapshot(): DmVisibility;
   subscribe(listener: () => void): () => void;
   refreshVisibility(): Promise<void>;
+  observeRemoval(listener: (channelId: string) => void): () => void;
 }
 
 export function createChannelLifecycle({
@@ -73,6 +74,7 @@ export function createChannelLifecycle({
   // Each in-flight operation and the channel it concerns; visibility reads have none.
   const controllers = new Map<AbortController, string | undefined>();
   const listeners = new Set<() => void>();
+  const removalListeners = new Set<(channelId: string) => void>();
   let snapshot: DmVisibility = Object.freeze({
     status: "idle",
     hidden: Object.freeze([]),
@@ -261,6 +263,12 @@ export function createChannelLifecycle({
   }
   const capability: ChannelLifecycleCapability = Object.freeze({
     available,
+    observeRemoval(listener: (channelId: string) => void) {
+      removalListeners.add(listener);
+      return () => {
+        removalListeners.delete(listener);
+      };
+    },
     snapshot: () => snapshot,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -442,6 +450,7 @@ export function createChannelLifecycle({
                 }
               } else if (!record) {
                 removed(id);
+                for (const listener of removalListeners) listener(id);
                 return;
               }
             }
@@ -478,6 +487,7 @@ export function createChannelLifecycle({
       epoch++;
       for (const controller of controllers.keys()) controller.abort();
       listeners.clear();
+      removalListeners.clear();
     },
   };
 }

@@ -18,6 +18,22 @@ export type ChannelCreationInput = Readonly<{
   system?: true | undefined;
   setup?: ChannelSetup | undefined;
 }>;
+/** Whether a request asks for anything beyond the channel itself. A template
+ * that currently resolves to nothing still names itself in `setup`. */
+export const setupWork = (setup: ChannelSetup | undefined) =>
+  !!setup &&
+  !!(setup.canvas || setup.agents.length || setup.groupId || setup.starred);
+/** What the person chose. The agents and Canvas follow live inventory and the
+ * template's contents, so they cannot make an unchanged form look new. */
+const requested = ({ setup, ...input }: ChannelCreationInput) =>
+  JSON.stringify({
+    ...input,
+    setup: setup && {
+      templateId: setup.templateId,
+      groupId: setup.groupId,
+      starred: setup.starred,
+    },
+  });
 type Progress = {
   version: 2;
   id: string;
@@ -91,16 +107,6 @@ export function createChannelSetup({
   const encoder = new TextEncoder();
   let pending: Progress | undefined;
   let admitting: ReturnType<typeof run> | undefined;
-  const admitted = new Set<string>();
-  function isAdmitted(id: string) {
-    if (admitted.has(id)) return true;
-    try {
-      const saved = JSON.parse(localStorage.getItem(prefix + id) ?? "null");
-      return saved?.version === 2 && saved.id === id && saved.created === true;
-    } catch {
-      return false;
-    }
-  }
   function write(p: Progress) {
     const raw = JSON.stringify(p);
     signal.throwIfAborted();
@@ -142,7 +148,13 @@ export function createChannelSetup({
     viewer: string,
   ): { admission: Promise<string>; completion: Promise<void> } {
     if (admitting) return admitting;
-    const checking = pending;
+    // Only an identical request rechecks the unconfirmed attempt; any other
+    // request abandons it.
+    const checking =
+      pending && requested(pending.input) === requested(input)
+        ? pending
+        : undefined;
+    if (!checking) forget();
 
     let opened!: (id: string) => void;
     let rejected!: (reason: unknown) => void;
@@ -182,12 +194,11 @@ export function createChannelSetup({
           retrying = false;
         }
         checking.created = true;
-        admitted.add(checking.id);
         pending = undefined;
         changed();
         opened(checking.id);
         await save(checking);
-        if (checking.input.setup)
+        if (setupWork(checking.input.setup))
           throw new Error(
             "Channel confirmed. Template setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
           );
@@ -273,7 +284,6 @@ export function createChannelSetup({
           await delivered(id);
           await refresh(p.id, viewer, p.input);
           p.created = true;
-          admitted.add(p.id);
           pending = undefined;
           changed();
           // The original form owns admission until this exact channel is usable.
@@ -390,20 +400,12 @@ export function createChannelSetup({
       .catch(() => {});
     return result;
   }
-  return Object.freeze({
-    run,
-    snapshot: () => pending?.input,
-    owns: (id: string) => pending?.id === id || isAdmitted(id),
-    recovered(id: string) {
-      admitted.add(id);
-      // A restarted session confirms only the saved Outbox creation. Keep any
-      // historical template receipt intact; it must never authorize new writes.
-      try {
-        return localStorage.getItem(prefix + id) !== null;
-      } catch {
-        // Storage failure cannot turn a confirmed channel into another Create.
-        return true;
-      }
-    },
-  });
+  /** Drops an unconfirmed attempt; one being checked continues. */
+  function forget() {
+    const abandoned = pending;
+    if (!abandoned || admitting) return;
+    pending = undefined;
+    void retire(abandoned).catch(() => {});
+  }
+  return Object.freeze({ run, forget });
 }

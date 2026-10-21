@@ -69,6 +69,7 @@ function ThemePickerSpecimen() {
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
+import { Select } from "../../../../src/shared/design-system/ui/Select";
 import { SwitchPreferenceRow } from "../../../../src/shared/design-system/ui/SwitchPreferenceRow";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
@@ -306,6 +307,18 @@ function AvatarStackSpecimen() {
         aria-label="Thread with Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} size="small" /> 4 replies
+      </Button>
+      <Button variant="ghost" aria-label="Seven agents to import">
+        <AvatarStack
+          items={[
+            ...items,
+            { id: "dana", name: "Dana", shape: "squircle" },
+            { id: "eli", name: "Eli", shape: "squircle" },
+            { id: "fern", name: "Fern", shape: "squircle" },
+          ]}
+          size="hero"
+          max={5}
+        />
       </Button>
     </div>
   );
@@ -1625,6 +1638,9 @@ function InlineChipSpecimen() {
   );
 }
 
+const LONG_MODEL =
+  "claude-sonnet-5-5-extended-context-thinking-preview-2026-10";
+
 function SwitchSpecimen() {
   const [checked, setChecked] = useState(false);
   const [busyChecked, setBusyChecked] = useState(true);
@@ -1679,6 +1695,18 @@ function SwitchSpecimen() {
     <PreferenceRow
       title="Channels"
       trailing={<span className="text-body-sm text-subtle">Required</span>}
+    />
+    <PreferenceRow
+      title="Model"
+      trailing={
+        <Select
+          variant="compact"
+          label="Model"
+          value="long"
+          groups={[{ label: "", options: [{ value: "long", label: LONG_MODEL }] }]}
+          onValueChange={() => {}}
+        />
+      }
     />
   </div>
   <Switch
@@ -1747,6 +1775,24 @@ function SwitchSpecimen() {
             title="Channels"
             trailing={
               <span className="text-body-sm text-subtle">Required</span>
+            }
+          />
+          {/* A long value ellipsizes before the title loses its words. */}
+          <PreferenceRow
+            title="Model"
+            trailing={
+              <Select
+                variant="compact"
+                label="Model"
+                value="long"
+                groups={[
+                  {
+                    label: "",
+                    options: [{ value: "long", label: LONG_MODEL }],
+                  },
+                ]}
+                onValueChange={() => {}}
+              />
             }
           />
         </div>

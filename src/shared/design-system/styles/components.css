@@ -67,10 +67,19 @@
     min-height: var(--space-6);
     padding: var(--space-1) var(--space-3);
   }
+  /* Activity-only message summaries share geometry in channels and threads. */
+  .buzz-button[data-size="xs"][data-activity-summary] {
+    padding-inline: var(--space-1h) var(--space-2);
+  }
   .buzz-button[data-size="xs"] .buzz-button-label > svg,
   .buzz-button[data-size="xs"] .buzz-button-spinner {
     width: var(--space-4);
     height: var(--space-4);
+  }
+  .buzz-button[data-size="caption"] {
+    @apply text-caption;
+    min-height: var(--size-control-sm);
+    padding: var(--space-2) var(--space-3);
   }
   /* A leading icon sits as close to the leading edge as to the top and bottom. */
   .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
@@ -89,6 +98,13 @@
   .buzz-button[data-size="inline"] .buzz-button-spinner {
     width: var(--space-3);
     height: var(--space-3);
+  }
+  /* Medium labelled actions with a leading icon use optical side insets. */
+  .buzz-button[data-size="md"]:not([data-icon-variant]):has(
+    > .buzz-button-label > svg:first-child
+  ) {
+    padding-inline-start: var(--space-3);
+    padding-inline-end: var(--space-4);
   }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
@@ -110,6 +126,37 @@
   }
   .buzz-button[data-variant="subtle"] {
     background: var(--interaction-fill);
+  }
+  /* Profile actions over artwork; the shared material supplies fill, rim and blur. */
+  .buzz-button[data-variant="glass"] {
+    @apply glass-secondary;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--bg-glass-secondary-hover);
+    }
+  }
+  .buzz-button[data-variant="glass"]:is(:active, [aria-expanded="true"]):not(
+    [data-disabled]
+  ) {
+    background: var(--surface-panel);
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    .buzz-button[data-variant="glass"] {
+      background: var(--surface-panel);
+      backdrop-filter: none;
+    }
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--surface-panel);
+    }
+  }
+  @supports not (backdrop-filter: blur(1px)) {
+    .buzz-button[data-variant="glass"] {
+      background: var(--surface-panel);
+    }
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--surface-panel);
+    }
   }
   .buzz-button[data-variant="inverted"] {
     background: var(--surface-panel);
@@ -147,6 +194,9 @@
   }
   .buzz-button[data-icon-variant] .buzz-button-attention rect {
     ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="inset"] {
+    border-radius: var(--control-inset-radius, var(--radius-icon-button));
   }
   .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
     ry: 50%;
@@ -299,6 +349,15 @@
     border-radius: var(--radius-pill);
   }
 
+  .buzz-button[data-color-swatch] .buzz-button-label {
+    color: var(--text-on-accent);
+  }
+
+  .buzz-button[data-color-swatch] .buzz-button-label > svg {
+    width: var(--space-6);
+    height: var(--space-6);
+  }
+
   /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
      interactive wrapper's keyboard focus indicator remains visible. */
   .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
@@ -363,11 +422,15 @@
     );
   }
 
-  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:not(
+    [data-disabled],
+    :disabled
+  ),
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--interaction-selected);
+    background: var(--surface-navigation-selected);
+    color: var(--text-navigation-selected);
   }
 
   /* Bare controls stay unfilled. Glyph-state toggles keep their larger
@@ -388,6 +451,36 @@
   .buzz-button[data-icon-variant="tint"] {
     background: var(--affordance-accent);
     color: var(--text-accent);
+  }
+  .buzz-button[data-muted]:not([data-disabled]) {
+    color: var(--text-subtle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-muted]:hover:not([data-disabled]) {
+      background: var(--affordance-subtle-pressed);
+      color: var(--text-standard);
+    }
+  }
+  .buzz-button[data-muted]:is(:active, :focus-visible):not([data-disabled]) {
+    color: var(--text-standard);
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"] {
+    background: transparent;
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="destructive-quiet"]:hover:not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-danger-hover);
+      color: var(--text-danger);
+    }
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"]:active:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-danger-pressed);
+    color: var(--text-danger);
   }
   .buzz-button[data-icon-variant="chrome"] {
     background: transparent;
@@ -803,7 +896,7 @@
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
@@ -839,12 +932,12 @@
     color: var(--text-standard);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-control-selected);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
     inset-block: 0;
     border-radius: var(--radius-pill);
-    background: var(--surface-panel);
+    background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -895,7 +988,7 @@
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-accent);
   }
 
   /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
@@ -906,7 +999,7 @@
     bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
-    background: var(--text-standard);
+    background: var(--affordance-prominent-mark);
   }
 
   .buzz-tabs-item[data-closable] .buzz-tabs-tab {
@@ -930,6 +1023,12 @@
     gap: var(--space-2);
     padding-block: 0;
     padding-inline: var(--space-1);
+  }
+
+  /* The painted band includes the outer rim above and excludes the separator
+     below. Center its controls one hairline above the layout box's center. */
+  .panel-header > * {
+    translate: 0 -1px;
   }
 
   .panel-header::after {
@@ -1154,7 +1253,7 @@
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
   .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
     background: var(--bg-chrome-selected);
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1181,6 +1280,24 @@
     --text-metadata: var(--text-standard);
     --text-subtle: var(--text-standard);
     outline-offset: -2px;
+  }
+
+  /* A text-only row action, such as a list's Show more: row text and
+     geometry with no fill. Quiet at rest, full text color on hover or focus. */
+  .navigation-item[data-variant="text"] {
+    color: var(--text-subtle);
+  }
+  .navigation-item[data-variant="text"]:focus-visible {
+    color: var(--text-standard);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .navigation-item[data-variant="text"]:hover:not(
+        [data-disabled],
+        :disabled
+      ) {
+      background: transparent;
+      color: var(--text-standard);
+    }
   }
 
   .navigation-item[data-inset] {
@@ -1218,6 +1335,9 @@
     padding: var(--space-half) calc(var(--space-1) + var(--space-half))
       var(--space-half) var(--space-2);
     border-radius: var(--radius-row);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-selected] {
+    --navigation-item-text: var(--text-row-selected);
   }
   .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-inset] {
     padding-inline-start: calc(var(--space-2) + var(--space-6));
@@ -1956,15 +2076,25 @@
   }
 
   .buzz-preference-row {
+    --preference-row-trailing: auto;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) var(--preference-row-trailing);
     align-items: center;
     gap: var(--space-4);
     min-width: 0;
     padding: var(--space-3) 0;
   }
   .buzz-preference-row[data-has-icon] {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) var(--preference-row-trailing);
+  }
+  /* A compact choice ellipsizes its value, so a long one, such as a model
+   * name, takes at most 60% of the row and the title keeps its words. Fixed
+   * controls, such as pickers and swatches, and trailings that only contain
+   * a choice beside other content keep their full width. */
+  .buzz-preference-row:has(
+    > .buzz-preference-row-trailing > .buzz-select[data-variant="compact"]
+  ) {
+    --preference-row-trailing: fit-content(60%);
   }
   .buzz-preference-row-icon {
     display: flex;

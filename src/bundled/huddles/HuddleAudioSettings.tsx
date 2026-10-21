@@ -12,11 +12,13 @@ import {
 export function HuddleAudioSettings({
   state,
   compact = false,
+  quiet = false,
   refresh,
   select,
 }: {
   state: AudioSettingsState | undefined;
   compact?: boolean;
+  quiet?: boolean;
   refresh(): void;
   select(kind: "input" | "output", id: string): void;
 }) {
@@ -30,10 +32,16 @@ export function HuddleAudioSettings({
         render={
           <IconButton
             size={compact ? "toolbar" : "large"}
-            variant={compact ? "ghost" : "subtle"}
+            shape={compact ? "control" : "round"}
+            variant={compact || quiet ? "ghost" : "subtle"}
             aria-label="Audio settings"
             title="Audio settings"
-            icon={<GearIcon size={compact ? 16 : 22} />}
+            icon={
+              <GearIcon
+                size={compact ? 16 : 22}
+                className={quiet ? "text-secondary" : undefined}
+              />
+            }
           />
         }
       />

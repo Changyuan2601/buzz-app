@@ -26,7 +26,7 @@ const closeProfile = (page) =>
   page.getByRole("button", { name: /^Close (?!Thread).* tab$/ });
 // Render a genuine pre-existing human member through signed roster/profile
 // reads; no client stores are seeded. Shared mounts after opening its access UI.
-async function showSharedAction(page, app, row) {
+async function showSharedMark(page, app, row) {
   const person = app.serveProfile(generateSecretKey(), {
     name: "Shared teammate",
   });
@@ -51,7 +51,7 @@ async function showSharedAction(page, app, row) {
     });
   });
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat", exact: true });
   await dialog.getByRole("button", { name: /^Other access/ }).click();
   await expect(
@@ -60,10 +60,8 @@ async function showSharedAction(page, app, row) {
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const outer = page.locator(`[data-solo-menu-id="${id}"]`);
-  const shared = outer.getByRole("button", {
-    name: "Shared · Manage access",
-    exact: true,
-  });
+  const shared = outer.locator("[data-solo-shared]");
+  await expect(row).toHaveAccessibleDescription("Shared");
   await expect(shared).toBeVisible();
   return shared;
 }
@@ -76,9 +74,7 @@ async function expectTrailingAlignment(row, status, touch = false) {
         const action = await row.evaluate((button) => {
           const outer = button.closest("[data-solo-menu-id]");
           const menu = outer?.querySelector("[data-solo-row-action]");
-          const shared = outer?.querySelector(
-            '[aria-label="Shared · Manage access"]',
-          );
+          const shared = outer?.querySelector("[data-solo-shared]");
           if (!menu) throw new Error("Missing Solo row action");
           const rect = (node) => {
             const { x, y, width, height } = node.getBoundingClientRect();
@@ -281,10 +277,11 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     document.documentElement.dataset.colorMode = "light";
   });
   await resize.press("Home");
-  const shared = await showSharedAction(page, app, alpha);
+  const shared = await showSharedMark(page, app, alpha);
   await page.mouse.move(0, 0);
   await expectTrailingAlignment(alpha, badge);
-  await expect(shared).toBeVisible();
+  // Pointer rows show one trailing status; working outranks Shared.
+  await expect(shared).toHaveCSS("opacity", "0");
   await alpha.press("Enter");
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await page.keyboard.press("Escape");
@@ -408,6 +405,17 @@ test.describe("reading", () => {
     const beta = sidebar.locator(`[data-solo-channel-id="${other}"]`);
     // Startup shows Alpha in Messages first, so read Beta, which only Solo shows.
     await expect(bold(beta)).toHaveCount(1);
+    // The marker must paint: weight is Solo's only unread cue.
+    const semibold = await beta.evaluate((row) => {
+      const probe = document.createElement("span");
+      probe.style.fontWeight = "var(--type-weight-semibold)";
+      row.append(probe);
+      const weight = getComputedStyle(probe).fontWeight;
+      probe.remove();
+      return weight;
+    });
+    await expect(bold(beta)).toHaveCSS("font-weight", semibold);
+    await expect(beta.locator("[data-channel-priority]")).toHaveCount(0);
     await beta.click();
     // The dwell policy reads the visible bottom without any further input,
     // because selection hands focus to the chat's composer.
@@ -663,7 +671,7 @@ test.describe("touch sidebar activity", () => {
     );
     await expect(menu).toHaveCSS("opacity", "1");
     await expectTrailingAlignment(row, badge, true);
-    const shared = await showSharedAction(page, app, row);
+    const shared = await showSharedMark(page, app, row);
     await expectTrailingAlignment(row, badge, true);
     await expect(shared).toBeVisible();
     // Touch keeps adjacent actions and status aligned at wider layouts and

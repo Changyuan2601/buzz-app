@@ -38,11 +38,14 @@ export function CommunityDialog({
   close,
   onJoined,
   invite,
+  connectionFrom,
 }: {
   communities: Communities;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
+  /** A deliberate connection edit uses the same admission flow, never rekeys existing data. */
+  connectionFrom?: string;
   invite?:
     | Readonly<{
         community: string;
@@ -67,7 +70,8 @@ export function CommunityDialog({
     }
   });
   const [url, setUrl] = useState(
-    invite?.community ??
+    connectionFrom ??
+      invite?.community ??
       (recovery.pending
         ? communityDestination(recovery.pending.community).url
         : ""),
@@ -260,9 +264,19 @@ export function CommunityDialog({
       }}
       preventClose={busy}
       description={
-        step === "destination" && !unavailable
-          ? "Use your identity across communities. Your profile and conversations stay separate in each one."
-          : undefined
+        unavailable
+          ? undefined
+          : step === "destination"
+            ? connectionFrom
+              ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
+              : "Use your identity across communities. Your profile and conversations stay separate in each one."
+            : step === "access"
+              ? `Connect to ${destination?.name} with your Buzz identity.`
+              : mode === "profile"
+                ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
+                : original?.exists
+                  ? "Your existing community profile is loaded. Keep it or update it here."
+                  : "Start with your local profile, or choose how you appear in this community."
       }
       leadingActions={
         !unavailable && (
@@ -316,7 +330,9 @@ export function CommunityDialog({
           ? "Your profile"
           : step === "profile"
             ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
-            : "Add a community"
+            : connectionFrom
+              ? "Edit connection"
+              : "Add a community"
       }
     >
       <form
@@ -345,7 +361,11 @@ export function CommunityDialog({
               <Field
                 label="Relay URL"
                 error={error || undefined}
-                description="Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                description={
+                  connectionFrom
+                    ? undefined
+                    : "Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                }
               >
                 <Input
                   type="url"
@@ -373,10 +393,6 @@ export function CommunityDialog({
             )}
             {step === "access" && (
               <>
-                <p>
-                  Connect to <strong>{destination?.name}</strong> with your Buzz
-                  identity.
-                </p>
                 <Field label="Invite code (if required)">
                   <Input
                     disabled={busy}
@@ -433,22 +449,13 @@ export function CommunityDialog({
               </>
             )}
             {step === "profile" && (
-              <>
-                <p>
-                  {mode === "profile"
-                    ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
-                    : original?.exists
-                      ? "Your existing community profile is loaded. Keep it or update it here."
-                      : "Start with your local profile, or choose how you appear in this community."}
-                </p>
-                <ProfileFields
-                  community={mode === "profile" ? undefined : id}
-                  onBusyChange={setUploading}
-                  profile={profile}
-                  onChange={setProfile}
-                  disabled={busy}
-                />
-              </>
+              <ProfileFields
+                community={mode === "profile" ? undefined : id}
+                onBusyChange={setUploading}
+                profile={profile}
+                onChange={setProfile}
+                disabled={busy}
+              />
             )}
             {error && step !== "destination" && (
               <p role="alert" className={styles.error}>

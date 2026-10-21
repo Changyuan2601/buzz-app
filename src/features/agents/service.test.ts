@@ -27,6 +27,7 @@ import {
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
+import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -84,6 +85,12 @@ async function setup({
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
+  sessionControls = undefined as
+    | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
+    | undefined,
+  resumes = false,
+  /** How `run` answers, from the first delivery on. */
+  answer = undefined as AgentType<Config>["run"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -114,7 +121,8 @@ async function setup({
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
   });
-  const run = vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>();
+  const run =
+    vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
     id: "echo",
     title: "Echo",
@@ -169,6 +177,16 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
+    ...(sessionControls
+      ? {
+          sessionControls: {
+            scope: () => "thread" as const,
+            subscribe: () => () => {},
+            ...sessionControls,
+          },
+        }
+      : {}),
+    ...(resumes ? { resumes } : {}),
   };
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -362,13 +380,20 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     picture: "https://example.test/baymax.png",
     config: { reply: "Open drafts only." },
   });
-  // Without instructions it starts from the type's defaults.
+  // Without instructions it starts from the type's defaults, or the given config.
   const { agent: plain } = await service.port({
     source: "shared",
     type: "example/echo",
     name: "Plain",
   });
   expect(plain.config).toEqual({ reply: "ok" });
+  const { agent: configured } = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Configured",
+    config: { reply: "Shared model configuration" },
+  });
+  expect(configured.config).toEqual({ reply: "Shared model configuration" });
   await expect(
     service.port({ source: "shared", type: "example/echo", name: "  " }),
   ).rejects.toThrow("Name the agent");
@@ -1235,7 +1260,8 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
   emit({
     events: [
-      asked("owner", viewer, ["effort", bot, "high"]),
+      // A legacy-looking session tag has no effect on a run.
+      asked("owner", viewer, ["effort", bot, "high"], ["session", bot, "new"]),
       asked("stranger", other, ["effort", bot, "high"], ["model", bot, "deep"]),
       asked("unlisted", viewer, ["effort", bot, "max"]),
       asked("elsewhere", viewer, ["effort", sibling, "high"]),
@@ -1245,6 +1271,7 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  expect(run.mock.calls[0]?.[0]).not.toHaveProperty("session");
   expect(
     run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
   ).toEqual([
@@ -1257,6 +1284,27 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+});
+
+it("ignores session tags even for a type with immediate session controls", async () => {
+  const { service, run, emit } = await setup({
+    sessionControls: { state: () => "idle", run: async () => {} },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const asked = (id: string, pubkey: string, ...tags: string[][]) =>
+    event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
+  emit({
+    events: [
+      asked("compact", viewer, ["session", bot, "compact"]),
+      asked("new", viewer, ["session", bot, "new"], ["effort", bot, "high"]),
+      asked("stranger", other, ["session", bot, "new"]),
+      asked("unknown", viewer, ["session", bot, "forget"]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+  for (const [delivery] of run.mock.calls)
+    expect(delivery).not.toHaveProperty("session");
+  expect(run.mock.calls[1]?.[0].effort).toBe("high");
 });
 
 it("keeps the in-flight run and the queue across edits; each job reads the agent as it starts", async () => {
@@ -1471,6 +1519,39 @@ it("drops its events while another copy of the app holds the agent, and runs onc
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 });
 
+it.each([false, new Error("Custody unavailable")])(
+  "rechecks native custody before an immediate session mutation: %s",
+  async (denied) => {
+    const session = vi.fn<
+      NonNullable<AgentType<Config>["sessionControls"]>["run"]
+    >(async () => {});
+    const { service, native } = await setup({
+      sessionControls: { state: () => "idle", run: session },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() =>
+      expect(service.sessionState(bot, { channelId: channel })).toBe("idle"),
+    );
+    await service.session(bot, { channelId: channel }, "compact");
+    expect(session).toHaveBeenCalledOnce();
+    const availability: string[] = [];
+    const unsubscribe = service.subscribe(() => {
+      availability.push(service.sessionState(bot, { channelId: channel }));
+    });
+    if (denied instanceof Error) native.claim.mockRejectedValueOnce(denied);
+    else native.claim.mockResolvedValueOnce(denied);
+    await expect(
+      service.session(bot, { channelId: channel }, "new"),
+    ).rejects.toThrow();
+    expect(session).toHaveBeenCalledOnce();
+    unsubscribe();
+    if (denied instanceof Error) {
+      expect(availability).not.toContain("unavailable");
+      expect(service.sessionState(bot, { channelId: channel })).toBe("idle");
+    } else expect(availability).toContain("unavailable");
+  },
+);
+
 it("lets another copy of the app run an agent it cannot run", async () => {
   vi.useFakeTimers();
   const { service, run, emit, native, connect } = await setup();
@@ -1585,9 +1666,23 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
 });
 
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
-  const { service, run, emit, second, select } = await setup();
+  const { service, run, emit, second, select } = await setup({
+    sessionControls: {
+      state: () => "compacting",
+      run: async () => {},
+    },
+  });
   await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(service.sessionState(bot, { channelId: channel })).toBe(
+      "compacting",
+    ),
+  );
   select(second.origin);
+  expect(service.sessionState(bot, { channelId: channel })).toBe("compacting");
+  await expect(
+    service.session(bot, { channelId: channel }, "new"),
+  ).rejects.toThrow();
   expect(service.find(bot)).toBeUndefined();
   expect(service.snapshot().running.map((agent) => agent.pubkey)).toEqual([
     bot,
@@ -4270,6 +4365,332 @@ it("catches a kind 9 watch up on what it missed, oldest first in batches, and no
   } finally {
     vi.useRealTimers();
   }
+});
+
+describe("a turn closing or reloading the app stopped", () => {
+  const working = () => new Promise<void>(() => {});
+  const mention = () =>
+    eventDto(
+      message(author, channel, "Echo, go on", nowSeconds(), [["p", bot]]),
+    );
+  const resumedOf = (run: {
+    mock: { calls: readonly (readonly unknown[])[] };
+  }) =>
+    run.mock.calls.map(([input]) => {
+      const { trigger } = input as { trigger: Trigger };
+      return trigger.type === "mention"
+        ? `${trigger.event.content}${trigger.resumed ? " (resumed)" : ""}`
+        : trigger.type;
+    });
+  /** The storage the next app start finds: the last one's as it went, which
+   * its later writes do not reach. */
+  const reopen = (from: AgentStore) => {
+    const next = memoryStorage();
+    for (const key of from.keys()) next.setItem(key, from.get(key) ?? "");
+    return next;
+  };
+  /** An app that stopped while Echo worked on `asked`, as it left storage. */
+  const stopped = async (asked: RelayEvent) => {
+    const first = await setup({ identities: [echo], resumes: true });
+    first.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    first.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+    await settle();
+    expect(readInterrupted(first.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
+    first.connect(false);
+    return reopen(first.storage);
+  };
+  const names = (agents: readonly Agent[]) => agents.map((a) => a.name);
+
+  it("waits for the owner, is given again once resumed, and is forgotten when it settles", async () => {
+    const asked = mention();
+    let finish = () => {};
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) =>
+        workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    });
+    await settle();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    expect(second.run).not.toHaveBeenCalled();
+
+    second.service.resumeInterrupted();
+    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(second.run.mock.calls[0]?.[0]).toMatchObject({ channelId: channel });
+    // Saved while it works, so stopping again first loses it to neither.
+    const again = await setup({
+      storage: reopen(second.storage),
+      identities: [echo],
+      resumes: true,
+    });
+    await settle();
+    expect(names(again.service.snapshot().interrupted)).toEqual(["Echo"]);
+    finish();
+    await vi.waitFor(() => expect(readInterrupted(second.storage)).toEqual({}));
+    second.connect(false);
+
+    const third = await setup({
+      storage: reopen(second.storage),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    expect(third.service.snapshot().interrupted).toEqual([]);
+    third.service.resumeInterrupted();
+    await settle();
+    expect(third.run).not.toHaveBeenCalled();
+  });
+
+  it("is forgotten when the owner does not resume it", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    second.service.dismissInterrupted();
+    expect(second.service.snapshot().interrupted).toEqual([]);
+    expect(readInterrupted(second.storage)).toEqual({});
+    second.service.resumeInterrupted();
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+  });
+
+  it("is given only by Resume, never by a replay or live delivery", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) => workingUntil(working()),
+    });
+    await settle();
+    second.emit({ replay: true, events: [asked], channelId: channel });
+    second.emit({ events: [asked], channelId: channel });
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+    second.service.resumeInterrupted();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+
+    const dismissed = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    dismissed.service.dismissInterrupted();
+    dismissed.emit({ replay: true, events: [asked], channelId: channel });
+    dismissed.emit({ events: [asked], channelId: channel });
+    await settle();
+    expect(dismissed.run).not.toHaveBeenCalled();
+  });
+
+  it("resumes or forgets only the agents the notice names", async () => {
+    const asked = mention();
+    const other = eventDto(
+      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+    );
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, bot, { [asked.id]: channel });
+    await writeInterrupted(storage, sibling, { [other.id]: channel });
+    const birch = {
+      ...echo,
+      pubkey: sibling,
+      relay: "wss://other.example.test",
+      name: "Birch",
+    };
+    const app = await setup({
+      storage,
+      identities: [echo, birch],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) => workingUntil(working()),
+    });
+    app.second.history.push(other);
+    app.second.connect(false);
+    await settle();
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]);
+    app.service.resumeInterrupted();
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    app.second.connect(true);
+    await settle();
+    expect(resumedOf(app.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Birch"]);
+    app.service.dismissInterrupted();
+    expect(readInterrupted(app.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
+  });
+
+  it("stays saved when it cannot be read again, and is given on the next try", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.recover();
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("is left to the copy of the app that holds the agent", async () => {
+    const asked = mention();
+    const other = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    other.native.claim.mockResolvedValue(false);
+    const claims = other.native.claim.mock.calls.length;
+    other.connect(false);
+    other.connect(true);
+    await vi.waitFor(() =>
+      expect(other.native.claim.mock.calls.length).toBeGreaterThan(claims),
+    );
+    await settle();
+    expect(other.service.snapshot().interrupted).toEqual([]);
+    other.service.dismissInterrupted();
+    other.service.resumeInterrupted();
+    await settle();
+    expect(other.run).not.toHaveBeenCalled();
+    expect(readInterrupted(other.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
+  });
+
+  it("is listed once this copy takes the agent over", async () => {
+    const asked = mention();
+    const storage = await stopped(asked);
+    vi.useFakeTimers();
+    const app = await setup({
+      storage,
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    app.native.claim.mockResolvedValue(false);
+    const claims = app.native.claim.mock.calls.length;
+    app.connect(false);
+    app.connect(true);
+    await vi.waitFor(() =>
+      expect(app.native.claim.mock.calls.length).toBeGreaterThan(claims),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    // The holder quit: the next tick claims it, and nothing else refreshes.
+    app.native.claim.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]);
+  });
+
+  it("saves each agent's turns apart, so another program's agents keep theirs", async () => {
+    const storage = memoryStorage() as AgentStore;
+    const birch = { ...echo, pubkey: sibling, name: "Birch" };
+    const ours = await setup({ storage, identities: [echo], resumes: true });
+    const theirs = await setup({ storage, identities: [birch], resumes: true });
+    theirs.run.mockImplementation(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    const asked = eventDto(
+      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+    );
+    theirs.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(theirs.run).toHaveBeenCalledOnce());
+    let finish = () => {};
+    ours.run.mockImplementation(({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    );
+    ours.emit({ events: [mention()], channelId: channel });
+    await vi.waitFor(() => expect(ours.run).toHaveBeenCalledOnce());
+    finish();
+    await settle();
+    expect(readInterrupted(storage)).toEqual({
+      [sibling]: { [asked.id]: channel },
+    });
+  });
+
+  it("resumes an agent's saved mentions oldest first", async () => {
+    const older = eventDto(
+      message(author, channel, "Echo, do X", nowSeconds() - 1, [["p", bot]]),
+    );
+    const newer = eventDto(
+      message(author, channel, "Echo, do Y instead", nowSeconds(), [
+        ["p", bot],
+      ]),
+    );
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, bot, {
+      [newer.id]: channel,
+      [older.id]: channel,
+    });
+    // The relay answers newest first.
+    const app = await setup({
+      storage,
+      identities: [echo],
+      resumes: true,
+      history: [newer, older],
+    });
+    await settle();
+    app.service.resumeInterrupted();
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    expect(resumedOf(app.run)).toEqual([
+      "Echo, do X (resumed)",
+      "Echo, do Y instead (resumed)",
+    ]);
+  });
+
+  it("is not saved for a type that does not resume", async () => {
+    const { service, run, emit, storage } = await setup({ resumes: false });
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(({ workingUntil }) => workingUntil(working()));
+    emit({ events: [mention()], channelId: channel });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await settle();
+    expect(readInterrupted(storage)).toEqual({});
+  });
 });
 
 it("bounds a catch-up turn by its messages' size, and sends a larger one alone", async () => {

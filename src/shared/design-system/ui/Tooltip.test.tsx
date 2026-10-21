@@ -68,3 +68,20 @@ it.each(["trigger", "pointer"] as const)(
     expect(action).toHaveAccessibleDescription("Original description");
   },
 );
+
+it("preserves an explicit trigger palette across the tooltip portal", async () => {
+  const user = userEvent.setup();
+  render(
+    <div data-accent="bee" data-color-mode="light">
+      <Tooltip content="Iris">
+        <button type="button" data-accent="iris" data-color-mode="dark">
+          Iris swatch
+        </button>
+      </Tooltip>
+    </div>,
+  );
+  await user.hover(screen.getByRole("button", { name: "Iris swatch" }));
+  const hint = await screen.findByRole("tooltip");
+  expect(hint).toHaveAttribute("data-accent", "iris");
+  expect(hint).toHaveAttribute("data-color-mode", "dark");
+});

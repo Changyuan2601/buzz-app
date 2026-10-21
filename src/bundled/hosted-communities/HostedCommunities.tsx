@@ -1013,6 +1013,7 @@ function DeleteCommunityDialog({
     <Dialog
       open
       onOpenChange={(open) => !open && close()}
+      size="compact"
       title={`Permanently delete ${name}?`}
       description="This starts an irreversible deletion."
       preventClose={pending}

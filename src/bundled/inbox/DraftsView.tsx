@@ -133,6 +133,7 @@ export function DraftsView({
     if (selected) closeControl.current?.focus({ preventScroll: true });
   }, [selected]);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const deleteAction = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
   // Selection owns editor lifetime, not the bounded list summary's eligibility.
   const coordinates = selected && draftCoordinates(selected);
@@ -475,6 +476,7 @@ export function DraftsView({
             {confirmDelete && (
               <AlertDialog
                 title="Delete draft?"
+                initialFocus={deleteAction}
                 description="Delete this saved draft and its attachments on this device? This cannot be undone."
                 onClose={() => setConfirmDelete(false)}
                 // On deletion, retirement restores the surviving list control.
@@ -484,7 +486,12 @@ export function DraftsView({
                 }
                 actions={
                   <>
-                    <Button size="sm" variant="destructive" onClick={remove}>
+                    <Button
+                      ref={deleteAction}
+                      size="sm"
+                      variant="destructive"
+                      onClick={remove}
+                    >
                       Delete draft
                     </Button>
                     <Button

@@ -64,6 +64,10 @@ pub struct HostGrants {
     /// runs, answering their messages itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mcp: bool,
+    /// The plugin may read files and resolve directories with the user's own
+    /// access, without starting a program for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub files: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

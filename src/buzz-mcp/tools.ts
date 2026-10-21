@@ -1,7 +1,7 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
-import { decode } from "nostr-tools/nip19";
+import { decode, npubEncode } from "nostr-tools/nip19";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -23,6 +23,7 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -177,6 +178,24 @@ export const TOOLS: readonly Tool[] = [
   tool("mem_set", "Write memory.", { slug: str, text: str, path: str }, [
     "slug",
   ]),
+  tool(
+    "notes_get",
+    "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
+    {
+      name: str,
+      author: str,
+      latest: { type: "boolean" },
+      tag: str,
+      limit: { type: "integer" },
+    },
+  ),
+  tool(
+    "notes_set",
+    "Publish your note under name, replacing your earlier one. title is needed the first time; title, summary and tags carry over when left out.",
+    { name: str, title: str, summary: str, tags: strs, text: str, path: str },
+    ["name"],
+  ),
+  tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
   tool("canvas", "Read a channel's canvas, or replace it.", {
     channel: str,
     text: str,
@@ -187,6 +206,15 @@ export const TOOLS: readonly Tool[] = [
     "Get a file of any type from a Buzz media URL: saves it locally and gives its path; an image is also shown.",
     { url: str },
     ["url"],
+  ),
+  tool(
+    "repo",
+    "A channel's Git repository (default: current): its URL and a header that lets git clone, fetch and push it as you for 60 seconds. create starts one for the channel.",
+    {
+      channel: str,
+      create: { type: "string", description: "The new repository's name." },
+      repo: { type: "string", description: "owner/name, when it has several." },
+    },
   ),
   tool(
     "tabs",
@@ -204,6 +232,15 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** A NIP-23 long-form note, as `buzz notes` writes it. */
+const NOTE = 30023;
+/** A repository name the community accepts. */
+const REPO = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$/;
+/** Pages of a channel's repository announcements read before giving up. */
+const REPO_PAGES = 5;
+/** Each agent's repository creation in progress, so its turns start one at a
+ * time: a second could otherwise pass the same checks and rebind the first. */
+const creating = new Map<string, Promise<unknown>>();
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -795,6 +832,173 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "saved";
   },
 
+  async notes_get(tools, args) {
+    const { client } = tools;
+    const name = args.name === undefined ? undefined : noteSlug(args.name);
+    const author = optional(args, "author");
+    if (name === undefined) {
+      if (args.latest !== undefined)
+        throw new Error("latest is for reading a note by name.");
+      const who = author || "me";
+      const topic = optional(args, "tag");
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      const notes = latestNotes(
+        await client.query([
+          {
+            kinds: [NOTE],
+            ...(who === "all" ? {} : { authors: [await tools.author(who)] }),
+            ...(topic ? { "#t": [topic] } : {}),
+            limit: bound(limit, 50, 200),
+          },
+        ]),
+      );
+      if (!notes.length) return "No notes.";
+      const names = await tools.names(notes.map((note) => note.pubkey));
+      return notes
+        .map(
+          (note) =>
+            `${tag(note, "d")} ${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+        )
+        .join("\n");
+    }
+    if (args.tag !== undefined || args.limit !== undefined)
+      throw new Error("tag and limit are for listing notes, without name.");
+    if (author === "all")
+      throw new Error("author all is for listing; leave author out instead.");
+    if (author && args.latest === true)
+      throw new Error("Give author or latest, not both.");
+    const notes = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          "#d": [name],
+          ...(author ? { authors: [await tools.author(author)] } : {}),
+          limit: 50,
+        },
+      ]),
+    );
+    const names = await tools.names(notes.map((note) => note.pubkey));
+    if (!notes.length) return `No note ${name}.`;
+    if (notes.length > 1 && args.latest !== true)
+      throw new Error(
+        `${notes.length} authors have a note ${name}; give author or latest.\n${notes
+          .map(
+            (note) =>
+              `${note.pubkey} ${names.get(note.pubkey) ?? ""} ${time(note.created_at)} ${tag(note, "title") || "(untitled)"}`,
+          )
+          .join("\n")}`,
+      );
+    const note = notes[0] as BuzzEvent;
+    const topics = note.tags.filter((t) => t[0] === "t" && t[1]);
+    return [
+      `${NOTE}:${note.pubkey}:${name} by ${names.get(note.pubkey) ?? note.pubkey}, ${time(note.created_at)}`,
+      `title: ${tag(note, "title") ?? ""}`,
+      ...(has(note, "summary") ? [`summary: ${tag(note, "summary")}`] : []),
+      ...(topics.length ? [`tags: ${topics.map((t) => t[1]).join(", ")}`] : []),
+      "",
+      note.content,
+    ].join("\n");
+  },
+
+  async notes_set(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    const body = (await tools.body(args, true)) as string;
+    if (!body.trim()) throw new Error("A note needs text.");
+    const given = (key: string) => {
+      const value = args[key];
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${key} must be text.`);
+      return value;
+    };
+    const title = given("title");
+    const summary = given("summary");
+    if (
+      args.tags !== undefined &&
+      (!Array.isArray(args.tags) ||
+        !args.tags.every((item) => typeof item === "string" && item.trim()))
+    )
+      throw new Error("tags must be a list of words.");
+    // Read from the writer, so a lagging replica cannot hide the version
+    // this write replaces or the one it saved.
+    const own = {
+      kinds: [NOTE],
+      authors: [client.pubkey],
+      "#d": [name],
+      limit: 1,
+      consistency: "strong",
+    };
+    const [prior] = latestNotes(await client.query([own]));
+    if (title === undefined && !prior)
+      throw new Error("title is required for a new note.");
+    const kept = (key: string) =>
+      prior?.tags.filter((t) => t[0] === key && t[1]).map((t) => t[1]) ?? [];
+    const topics =
+      args.tags === undefined
+        ? kept("t")
+        : (args.tags as string[]).map((t) => t.trim());
+    const about = summary ?? (prior && tag(prior, "summary"));
+    // The newest version wins, so a write must be dated after the one it
+    // replaces.
+    const after = prior ? (prior.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const saved = await client.publish({
+      kind: NOTE,
+      content: body,
+      tags: [
+        ["d", name],
+        ["title", title ?? tag(prior as BuzzEvent, "title") ?? ""],
+        ...(about === undefined ? [] : [["summary", about]]),
+        ...topics.map((topic) => ["t", topic as string]),
+        [
+          "published_at",
+          kept("published_at")[0] ?? String(Math.floor(Date.now() / 1000)),
+        ],
+      ],
+    });
+    // The community accepts a write that loses to another version of the
+    // same second, so only a read shows whether this one is the note now.
+    const [current] = latestNotes(await client.query([own]));
+    if (!current)
+      throw new Error(
+        `conflict: note ${name} was not found after this write. Read it with notes_get, then write again.`,
+      );
+    if (current.id !== saved.id)
+      throw new Error(
+        `conflict: note ${name} now holds another version (${current.id}, ${time(current.created_at)}), not this text. Read it with notes_get, then write again.`,
+      );
+    return `saved ${NOTE}:${client.pubkey}:${name}`;
+  },
+
+  async notes_rm(tools, args) {
+    const { client } = tools;
+    const name = noteSlug(args.name);
+    // Read from the writer, so a lagging replica cannot hide a new note.
+    const [mine] = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          authors: [client.pubkey],
+          "#d": [name],
+          limit: 1,
+          consistency: "strong",
+        },
+      ]),
+    );
+    if (!mine) throw new Error(`You have no note ${name}.`);
+    // A deletion removes only versions dated at or before it, so it must be
+    // dated after the note, even one from a writer whose clock runs ahead.
+    const after = (mine.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
+    const coordinate = `${NOTE}:${client.pubkey}:${name}`;
+    await client.publish({ kind: 5, content: "", tags: [["a", coordinate]] });
+    return `deleted ${coordinate}`;
+  },
+
   async canvas(tools, args) {
     const { client, context } = tools;
     const channel = text(args.channel) ?? context.channel;
@@ -806,11 +1010,63 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!head && !(await tools.metadata(channel))) throw unseen(channel);
     if (content === undefined) return head?.content || "No canvas.";
     // The newest canvas wins, so a write must be dated after the current one.
-    const wait = head ? (head.created_at + 1) * 1000 - Date.now() : 0;
-    if (wait > 5000) throw new Error("The canvas was just changed; try again.");
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    const after = head ? (head.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The canvas was just changed; try again.");
+    await waitUntil(after);
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
+  },
+
+  async repo(tools, args) {
+    const { client } = tools;
+    const { gitAuth } = client;
+    if (!gitAuth) throw new Error("Git access needs Buzz Desktop.");
+    const channel = target(tools, args);
+    const create = optional(args, "create");
+    if (create !== undefined) {
+      if (!REPO.test(create) || create.includes(".."))
+        throw new Error(
+          "create must be 1 to 64 letters, digits, '.', '_' or '-', not starting with '.'.",
+        );
+      const previous = creating.get(client.pubkey) ?? Promise.resolve();
+      const started = previous
+        .catch(() => {})
+        .then(async () => {
+          const created = await start(tools, channel, create);
+          try {
+            return await access(gitAuth, created);
+          } catch (error) {
+            throw new Error(
+              `Started ${create}, but its Git header failed: ${reason(error)} Call repo again without create.`,
+            );
+          }
+        });
+      creating.set(client.pubkey, started);
+      try {
+        return await started;
+      } finally {
+        if (creating.get(client.pubkey) === started)
+          creating.delete(client.pubkey);
+      }
+    }
+    const { found, complete } = await repos(tools, channel, false);
+    const name = optional(args, "repo");
+    const chosen = found.filter(
+      (event) => !name || `${event.pubkey}/${tag(event, "d")}` === name,
+    );
+    if (chosen.length === 1 && (complete || name))
+      return access(gitAuth, chosen[0] as BuzzEvent);
+    const listed = found.map((event) => `${event.pubkey}/${tag(event, "d")}`);
+    if (!complete)
+      throw new Error(
+        `This channel's repositories could not all be read; try again${listed.length ? `, or choose repo: ${listed.join(", ")}` : ""}.`,
+      );
+    if (!found.length)
+      throw new Error(
+        "This channel has no repository from its owners or admins.",
+      );
+    throw new Error(`Choose repo: ${listed.join(", ")}`);
   },
 
   async media_get(tools, args) {
@@ -1163,6 +1419,33 @@ class Tools {
     };
   }
 
+  /** The author `value` names: me, a pubkey or npub, or one display name. */
+  async author(value: string) {
+    if (value === "me") return this.client.pubkey;
+    try {
+      return pubkey(value);
+    } catch {}
+    const q = value.toLowerCase();
+    const named =
+      [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await this.client.query([{ kinds: [0], search: q, limit: 100 }]));
+    const found = newest(profiles).filter(
+      (event) => profileName(parse(event.content))?.toLowerCase() === q,
+    );
+    if (found.length > 1)
+      throw new Error(
+        `${found.length} people are named ${value}; give their npub.\n${found
+          .map((event) => npubEncode(event.pubkey))
+          .join("\n")}`,
+      );
+    if (!found[0]) throw new Error(`No one is named ${value}.`);
+    return found[0].pubkey;
+  }
+
   /** Display names of `pubkeys` that have a profile. */
   async names(pubkeys: readonly string[]) {
     const wanted = [...new Set(pubkeys)];
@@ -1179,7 +1462,10 @@ class Tools {
   }
 
   /** Messages oldest first with their latest edits, a line each: its ID,
-   * author, channel and thread, leaving out those `scope` already names. */
+   * author and its claimed (unverified) agent owner, channel and thread,
+   * omitting what `scope` names. Other agent read surfaces trim the same
+   * fields, so change them together, including the `buzz` CLI's agent format
+   * (block/buzz `crates/buzz-cli/src/commands/event_output.rs`). */
   async messages(
     events: readonly BuzzEvent[],
     scope: Readonly<{ channel?: string; root?: string }>,
@@ -1194,13 +1480,19 @@ class Tools {
     return messages.map((event) => {
       const name = names.get(event.pubkey);
       const channel = tag(event, "h");
-      const thread = threadReference(event)?.rootId;
+      const owner = tag(event, "auth");
+      const reference = threadReference(event);
+      const thread = reference?.rootId;
       return [
         event.id,
         `from ${event.pubkey}`,
         name && JSON.stringify(name),
+        owner && `claimed owner ${owner}`,
         channel && channel !== scope.channel && `in ${channel}`,
         thread && thread !== scope.root && `re ${thread}`,
+        reference &&
+          reference.parentId !== thread &&
+          `reply_to ${reference.parentId}`,
         `at ${time(event.created_at)}: ${event.content}`,
       ]
         .filter(Boolean)
@@ -1364,6 +1656,41 @@ function memorySlug(slug: string) {
   return key;
 }
 
+/** A note's name, as the CLI allows it. */
+function noteSlug(value: unknown) {
+  if (typeof value !== "string" || !/^[a-z0-9._-]{1,80}$/.test(value))
+    throw new Error(
+      `Bad note name ${String(value)}: use up to 80 of a-z, 0-9, - _ and .`,
+    );
+  return value;
+}
+
+/** Waits until `at`. A timer can fire a moment early, which would date the
+ * write in the second it must follow. */
+async function waitUntil(at: number) {
+  while (Date.now() < at)
+    await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+}
+
+/** Each author's newest version of each note, newest first. */
+function latestNotes(events: readonly BuzzEvent[]) {
+  const latest = new Map<string, BuzzEvent>();
+  for (const event of events) {
+    const name = tag(event, "d");
+    if (event.kind !== NOTE || name === undefined) continue;
+    const key = `${event.pubkey}:${name}`;
+    const seen = latest.get(key);
+    // Of two versions from the same second, the lower id is kept.
+    if (
+      !seen ||
+      seen.created_at < event.created_at ||
+      (seen.created_at === event.created_at && event.id < seen.id)
+    )
+      latest.set(key, event);
+  }
+  return [...latest.values()].sort((a, b) => b.created_at - a.created_at);
+}
+
 function pubkey(value: string) {
   if (HEX.test(value.toLowerCase())) return value.toLowerCase();
   try {
@@ -1409,6 +1736,116 @@ const unseen = (channel: string) =>
   new Error(
     `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
   );
+
+/** The repositories bound to `channel` by its owners and admins or their
+ * agents, and whether every announcement naming it was read. Git access
+ * follows a repository's first `buzz-channel` tag, which anyone may set, so
+ * only those that name it first and that it trusts. `strong` reads from the
+ * relay's writer, never a replica that may lag a just-accepted write. */
+async function repos(tools: Tools, channel: string, strong: boolean) {
+  const bound: BuzzEvent[] = [];
+  let cursor = {};
+  let complete = false;
+  for (let page = 0; page < REPO_PAGES && !complete; page++) {
+    const events = await tools.client.query([
+      {
+        kinds: [30617],
+        "#buzz-channel": [channel],
+        limit: 100,
+        ...(strong ? { consistency: "strong" } : {}),
+        ...cursor,
+      },
+    ]);
+    bound.push(
+      ...events.filter((event) => tag(event, "buzz-channel") === channel),
+    );
+    complete = events.length < 100;
+    // The relay's cursor: at or before `until`, after `before_id` at a tie.
+    const last = events.at(-1);
+    if (last) cursor = { until: last.created_at, before_id: last.id };
+  }
+  const trusted = await Promise.all(
+    bound.map(async (event) =>
+      leads(tools, channel, event.pubkey, await attestedOwner(event)),
+    ),
+  );
+  return { found: bound.filter((_, index) => trusted[index]), complete };
+}
+
+/** Announces repository `name` for `channel`, protected, once every check
+ * passes, and confirms the relay now binds it there. */
+async function start(tools: Tools, channel: string, name: string) {
+  const { client } = tools;
+  const { found, complete } = await repos(tools, channel, true);
+  if (found.length) throw new Error("This channel already has a repository.");
+  if (!complete)
+    throw new Error(
+      "This channel's repositories could not all be read, so none was started; try again.",
+    );
+  if (!(await tools.metadata(channel))) throw unseen(channel);
+  // Announcing it again would move it, history and all, to this channel.
+  const coordinate = {
+    kinds: [30617],
+    authors: [client.pubkey],
+    "#d": [name],
+    limit: 1,
+    consistency: "strong",
+  };
+  const [mine] = await client.query([coordinate]);
+  if (mine) throw new Error(`You already have a repository named ${name}.`);
+  if (!(await leads(tools, channel, client.pubkey, client.owner)))
+    throw new Error(
+      "Only a channel's owner or an admin, or their agent, can start its repository.",
+    );
+  // Members may push; no one may rewrite or delete a branch, nested or not.
+  const created = await client.publish({
+    kind: 30617,
+    content: "",
+    tags: [
+      ["d", name],
+      ["name", name],
+      ["buzz-channel", channel],
+      ["buzz-protect", "refs/heads/**", "no-force-push", "no-delete"],
+    ],
+  });
+  let current: BuzzEvent | undefined;
+  try {
+    [current] = await client.query([coordinate]);
+  } catch (error) {
+    throw new Error(`${name} was announced, but ${unread(error).message}`);
+  }
+  if (current?.id !== created.id || tag(current, "buzz-channel") !== channel)
+    throw new Error(`${name} was announced, but the relay binds it elsewhere.`);
+  return created;
+}
+
+/** The repository's URL and a Git command with its header. */
+async function access(
+  gitAuth: NonNullable<BuzzClient["gitAuth"]>,
+  event: BuzzEvent,
+) {
+  const { url, header } = await gitAuth(event.pubkey, tag(event, "d") ?? "");
+  return [
+    `${tag(event, "name") ?? tag(event, "d")}: ${url}`,
+    "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
+    `git -c http.${url}.extraHeader='${header}' clone ${url}`,
+  ].join("\n");
+}
+
+/** Whether `author`, or the `owner` it acts for, is an owner or admin of
+ * `channel`. */
+async function leads(
+  tools: Tools,
+  channel: string,
+  author: string,
+  owner: string | undefined,
+) {
+  return (await tools.members(channel)).some(
+    (member) =>
+      (member.role === "owner" || member.role === "admin") &&
+      (member.pubkey === author || member.pubkey === owner),
+  );
+}
 
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>

@@ -173,15 +173,18 @@ test("zoom keys scale text, icons and spacing together and persist/reset", async
   await page.keyboard.press("Enter");
   await scale(page, 1);
   await expect(button(page, "Increase interface size")).toBeFocused();
+  const colorMode = page.getByRole("combobox", { name: "Mode", exact: true });
+  const modeHeight = await colorMode.evaluate(
+    (el) => el.getBoundingClientRect().height,
+  );
   // At 200%, the handoff target is disabled until the reset commit finishes.
   for (const reset of ["keyboard", "external", "external-unfocused"]) {
     for (let i = 0; i < 10; i++)
       await button(page, "Increase interface size").click();
     await scale(page, 2);
-    const colorMode = page.getByRole("radio", { name: "Light", exact: true });
-    await expect(
-      page.locator('.buzz-theme-thumbnail[data-mode="light"]'),
-    ).toHaveCSS("width", "160px");
+    await expect
+      .poll(() => colorMode.evaluate((el) => el.getBoundingClientRect().height))
+      .toBeCloseTo(modeHeight * 2, 1);
     await expect(button(page, "Increase interface size")).toBeDisabled();
     await (reset === "external-unfocused"
       ? colorMode

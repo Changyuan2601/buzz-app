@@ -282,7 +282,6 @@ it.skipIf(!oldRelayUrl)(
       s.channelDetails.save(details, { ...details, labels: ["e2e-old"] }),
     ).rejects.toThrow(unsupported);
     expect(sent()).toBe(queued);
-    expect(s.channelCreation.snapshot()).toBeUndefined();
 
     // The refusals left nothing stuck: the next ordinary create works.
     const after = await s.channelCreation.create({

@@ -58,6 +58,7 @@ afterEach(() => {
 });
 function fixture({
   signedIn = true,
+  requiresOpenaiAuth = true,
   installed = true,
   saved = {},
   turns = () => ({ result: { data: [] } }),
@@ -68,6 +69,8 @@ function fixture({
   /** Agent storage, which keeps the provider defaults. */
   storage?: AgentStore;
   signedIn?: boolean;
+  /** Whether the configured model provider needs an OpenAI sign-in. */
+  requiresOpenaiAuth?: boolean;
   installed?: boolean;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
@@ -132,6 +135,7 @@ function fixture({
             account: disk.signedIn
               ? { type: "chatgpt", email: "test@example.com" }
               : null,
+            requiresOpenaiAuth,
           };
         if (wire.method === "model/list")
           result = {
@@ -1104,9 +1108,16 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
-  expect(await screen.findAllByRole("button", { name: "Cancel" })).toHaveLength(
-    2,
-  );
+  // One dialog: the other card waits rather than opening a competing one.
+  const [dialog, ...others] = screen.getAllByRole("dialog", {
+    name: "Sign in to Codex",
+  });
+  if (!dialog) throw new Error("Missing sign-in dialog");
+  expect(others).toHaveLength(0);
+  expect(buttons[1]).toHaveAttribute("aria-disabled", "true");
+  expect(
+    await within(dialog).findByRole("button", { name: "Cancel" }),
+  ).toBeVisible();
   f.disk.signedIn = true;
   f.logins[0]?.resolve(0);
   await waitFor(() => {
@@ -1117,7 +1128,9 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   expect(
     screen.queryByRole("button", { name: "Sign in" }),
   ).not.toBeInTheDocument();
-  expect(f.processes).toHaveLength(1);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  // The first check asked whether sign-in is needed; both cards then shared one discovery.
+  expect(f.processes).toHaveLength(2);
 });
 
 it("keeps sign-in available after a failed Codex login without showing models", async () => {
@@ -1130,13 +1143,38 @@ it("keeps sign-in available after a failed Codex login without showing models", 
     />,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
-  await screen.findByRole("button", { name: "Cancel" });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Sign in to Codex",
+  });
+  await within(dialog).findByRole("button", { name: "Cancel" });
   f.logins[0]?.resolve(1);
-  expect(await screen.findByRole("log")).toHaveTextContent("Sign-in ended (1)");
-  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+  // The failure stays in the open dialog, under its setup details.
+  fireEvent.click(
+    await within(dialog).findByRole("button", { name: "Setup details" }),
+  );
+  expect(await within(dialog).findByRole("log")).toHaveTextContent(
+    "Sign-in ended (1)",
+  );
+  expect(within(dialog).getByRole("button", { name: "Sign in" })).toBeEnabled();
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
+});
+
+it("lists models without a sign-in when the model provider needs no OpenAI account", async () => {
+  const f = fixture({ signedIn: false, requiresOpenaiAuth: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(f.provider.snapshot().readiness).toBe("ready");
 });
 
 it("offers to install Codex from its card when Buzz has no copy", async () => {
@@ -1149,20 +1187,26 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
     />,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
+  const dialog = await screen.findByRole("dialog", { name: "Set up Codex" });
+  expect(within(dialog).getByText(/about 130 MB/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   // A failed download leaves the offer in place, with what went wrong.
+  fireEvent.click(
+    await within(dialog).findByRole("button", { name: "Setup details" }),
+  );
   expect(
-    await screen.findByRole("log", { name: "Setup output" }),
+    await within(dialog).findByRole("log", { name: "Setup output" }),
   ).toHaveTextContent("Codex downloads need the desktop app");
   expect(
-    await screen.findByRole("button", { name: "Install Codex" }),
+    await within(dialog).findByRole("button", { name: "Install Codex" }),
   ).toBeEnabled();
 
   f.disk.installed = true;
-  await f.provider.check();
+  await act(() => f.provider.check());
   expect(
     await screen.findByRole("combobox", { name: "Model" }),
   ).toHaveTextContent("Model A");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("moves the card from Install Codex to Sign in once the install succeeds", async () => {
@@ -1183,22 +1227,56 @@ it("moves the card from Install Codex to Sign in once the install succeeds", asy
       onChange={vi.fn()}
     />,
   );
-  const install = await screen.findByRole("button", { name: "Install Codex" });
+  fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
+  const dialog = await screen.findByRole("dialog", { name: "Set up Codex" });
+  const install = within(dialog).getByRole("button", { name: "Install Codex" });
   install.focus();
-  fireEvent.click(install);
-  expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
+  expect(
+    await within(dialog).findByRole("button", { name: "Cancel" }),
+  ).toBeVisible();
+  // Holds the provider's check that follows the install.
+  const held = deferred<void>();
+  const check = f.setup.check.bind(f.setup);
+  vi.spyOn(f.setup, "check").mockImplementationOnce(async () => {
+    await held.promise;
+    return check();
+  });
   download.resolve();
-  // The same button, so keyboard focus stays on it.
-  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  // The same dialog and button, so keyboard focus stays on it.
+  await screen.findByRole("dialog", { name: "Sign in to Codex" });
+  const signIn = await within(dialog).findByRole("button", { name: "Sign in" });
   expect(signIn).toBe(install);
+  expect(signIn).toHaveFocus();
+  // Until the check answers, Sign in starts nothing.
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  fireEvent.click(signIn);
+  expect(f.logins).toHaveLength(0);
+  held.resolve();
+  await waitFor(() => expect(signIn).not.toHaveAttribute("aria-busy"));
   expect(signIn).toHaveFocus();
   fireEvent.click(signIn);
   await waitFor(() => expect(f.logins).toHaveLength(1));
+  // Holds the provider's check after sign-in, so Codex reads as ready while
+  // its models still load, as in the app.
+  const loading = deferred<void>();
+  vi.spyOn(f.setup, "check").mockImplementationOnce(async () => {
+    await loading.promise;
+    return check();
+  });
   f.disk.signedIn = true;
   f.logins[0]?.resolve(0);
-  expect(
-    await screen.findByRole("combobox", { name: "Model" }),
-  ).toHaveTextContent("Model A");
+  const model = await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  // A browser cannot focus the field while it is disabled.
+  expect(model).toBeDisabled();
+  expect(model).not.toHaveFocus();
+  loading.resolve();
+  await waitFor(() => expect(model).toHaveTextContent("Model A"));
+  // The dialog left with setup; its focus moves to the model field once it
+  // can take it.
+  await waitFor(() => expect(model).toHaveFocus());
 });
 
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {
@@ -1288,6 +1366,31 @@ it("cancels a Codex login from its card and kills the process", async () => {
   const process = await f.spawn.mock.results[index]?.value;
   fireEvent.click(cancel);
   await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
+});
+
+it("cancels a Codex login when its setup dialog closes", async () => {
+  const f = fixture({ signedIn: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Sign in to Codex",
+  });
+  const index = f.spawn.mock.calls.findIndex(
+    ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
+  );
+  const process = await f.spawn.mock.results[index]?.value;
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
   expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
 });
 

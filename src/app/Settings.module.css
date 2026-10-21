@@ -297,13 +297,14 @@
   }
 }
 
-/* Shared category gradients preserve their original cross-color transitions. */
+/* Category tiles use shared palette pairs. Neutral glyphs on the teal, ember
+   and yellow/green tiles avoid tints inherited from the former gradients. */
 .pluginIcon[data-branded][data-category="communication"] {
   --plugin-icon-gradient: var(--art-plugin-communication-gradient);
 }
 
 .pluginIcon[data-branded][data-category="communication"] img {
-  filter: hue-rotate(-12deg) saturate(0.8);
+  filter: grayscale(1);
 }
 
 .pluginIcon[data-branded][data-category="agents"] {
@@ -330,7 +331,7 @@
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"]
   img {
-  filter: hue-rotate(126deg) saturate(0.8);
+  filter: grayscale(1);
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] {
@@ -346,7 +347,7 @@
 }
 
 .pluginIcon[data-branded][data-category="productivity"] img {
-  filter: hue-rotate(-169deg) saturate(0.8);
+  filter: grayscale(1);
 }
 
 :root[data-color-mode="dark"] .pluginIcon[data-branded] {

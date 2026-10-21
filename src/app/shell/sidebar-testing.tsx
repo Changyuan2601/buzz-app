@@ -28,6 +28,8 @@ export function fixture(
   canCreate = false,
   agents?: Agents,
   counts = { observedCount: 2, attentionCount: 1 },
+  /** Newer, read Solo chats ahead of Planning and Other; only Planning is unread. */
+  newer = 0,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -57,6 +59,10 @@ export function fixture(
     coverage: "observed",
     freshness: "observed",
   };
+  const read = new Map<
+    string,
+    ReturnType<RelaySession["unread"]["snapshot"]>
+  >();
   const markThrough = vi.fn(async () => ({
     operationId: "read",
     durability: "saved" as const,
@@ -77,6 +83,13 @@ export function fixture(
         channelType: "solo" as const,
         creator: viewer,
       },
+      ...Array.from({ length: newer }, (_, index) => ({
+        id: `newer-${index}`,
+        name: `Newer ${index}`,
+        channelType: "solo" as const,
+        creator: viewer,
+        lastActivityAt: 1_000 - index,
+      })),
     ],
   };
   const preferences = {
@@ -120,7 +133,21 @@ export function fixture(
     profiles: { ...base.profiles, snapshot: () => profiles },
     unread: {
       ...base.unread,
-      snapshot: () => unread,
+      snapshot: (target) => {
+        if (!newer || target.kind !== "channel" || target.channelId === id)
+          return unread;
+        // Stable per channel, as external-store snapshots must be.
+        const known = read.get(target.channelId);
+        if (known) return known;
+        const quiet = {
+          ...unread,
+          target,
+          observedCount: 0,
+          attentionCount: 0,
+        };
+        read.set(target.channelId, quiet);
+        return quiet;
+      },
       subscribe: (_target, listener) => subscribe(listener),
       activity: () => threads,
       subscribeActivity: (_id, listener) => subscribe(listener),

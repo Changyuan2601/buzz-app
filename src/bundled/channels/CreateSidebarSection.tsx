@@ -29,6 +29,7 @@ export function CreateSidebarSection({
   const [blocked, setBlocked] = useState(false);
   return (
     <Dialog
+      size="compact"
       dismissOnOutsideClick
       open
       onOpenChange={(open) => {

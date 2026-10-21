@@ -887,7 +887,7 @@ unfinished finite roster/head failures still show a warning and recovery action.
 This presentation policy does not increase quotas or guarantee that another
 client sharing the account cannot cause a refusal.
 
-## Receive-only typing
+## Typing indicators
 
 Typing indicators show recent activity from another participant in the current
 channel or thread. They identify the signer, including agents; they do not imply
@@ -905,5 +905,8 @@ activate it, never fetched history. Losing access, disconnecting, clearing the
 cache or replacing the session clears it too, so stale activity cannot carry into
 another conversation or account.
 
-Typing stays out of message history, unread counts and persistent storage. This
-is receive-only: opening or using a composer does not publish typing activity.
+Typing stays out of message history, unread counts and persistent storage. User
+edits in a writable conversation publish an empty, scoped kind-20002 pulse at
+most once every three seconds through the existing authenticated live socket.
+Opening a composer or restoring a draft does not publish. Pulses expire rather
+than retry; they never enter the durable outbox or trigger a reconnect.
