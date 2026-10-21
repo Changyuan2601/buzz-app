@@ -1,15 +1,9 @@
 import type { CSSProperties } from "react";
+import { ACCENTS } from "../design-system/tokens/brand";
 
 // One device-local accent for actions, links and selection.
 // App surfaces stay neutral; contrast controls messages and selected navigation.
-export const ACCENTS = [
-  "bee",
-  "magenta",
-  "iris",
-  "cobalt",
-  "citrus",
-  "mono",
-] as const;
+export { ACCENTS };
 export type Accent = (typeof ACCENTS)[number];
 export const DEFAULT_ACCENT: Accent = "citrus";
 export const ACCENT_KEY = "buzz-accent.v1";

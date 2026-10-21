@@ -84,6 +84,8 @@ export type AgentMedia = Readonly<{
   size: number;
   data?: string;
 }>;
+/** A repository's URL and the `Authorization` header Git sends there. */
+export type GitAuth = Readonly<{ url: string; header: string }>;
 export type AgentsNative = {
   list(): Promise<readonly AgentIdentity[]>;
   /** Generates a key, has the signed-in owner attest it, and saves both. */
@@ -142,6 +144,9 @@ export type AgentsNative = {
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
   /** Saves one of its community's media blobs, of any type, as the agent. */
   media(pubkey: string, url: string): Promise<AgentMedia>;
+  /** A repository's URL in the agent's community and the Git header that
+   * authorizes it there as the agent for a minute. */
+  gitAuth(pubkey: string, owner: string, repo: string): Promise<GitAuth>;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
   remember(
     pubkey: string,
@@ -209,6 +214,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),
+        gitAuth: (pubkey, owner, repo) =>
+          invoke("app_agent_git_auth", { pubkey, owner, repo }),
         remember: (pubkey, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, slug, body, after }),
         publishProfile: (pubkey) =>

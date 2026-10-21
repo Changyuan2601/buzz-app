@@ -488,6 +488,17 @@ export async function connectBrokerTransport(
     // Matched development frontend/host: publication requires the existing owner.
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
   });
+  const publish = async (event: RelayEvent, signal: AbortSignal) => {
+    const result = await fetch(`${endpoint}/publish`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: publicationHeaders(),
+      body: JSON.stringify(event),
+      signal,
+    });
+    recordServerTiming(result, profiling, event.id);
+    return acceptPublish(result, event.id);
+  };
   /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
   const routeWriter = (route: string): RelayWriter => ({
     async sign(template: EventTemplate, signal: AbortSignal) {
@@ -571,7 +582,7 @@ export async function connectBrokerTransport(
               }),
             );
             presence.attach(traffic);
-            return traffic;
+            return { ...traffic, publishTyping: publish };
           },
         }
       : {}),
@@ -1118,17 +1129,7 @@ export async function connectBrokerTransport(
               recordServerTiming(result, profiling, event.id);
               return event;
             },
-            async publish(event: RelayEvent, signal: AbortSignal) {
-              const result = await fetch(`${endpoint}/publish`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: publicationHeaders(),
-                body: JSON.stringify(event),
-                signal,
-              });
-              recordServerTiming(result, profiling, event.id);
-              return acceptPublish(result, event.id);
-            },
+            publish,
           },
         }
       : {}),

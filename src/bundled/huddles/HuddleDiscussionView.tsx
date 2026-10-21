@@ -6,6 +6,9 @@ import { MessageRow } from "../../features/messages/MessageRow";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { ChatCircleIcon, FileTextIcon } from "../../shared/design-system/icons";
+
 import styles from "./HuddleDiscussion.module.css";
 
 export function HuddleDiscussionView({
@@ -49,31 +52,30 @@ export function HuddleDiscussionView({
   }, [newest, tab]);
   return (
     <div className={styles.discussion}>
-      <Tabs
-        label="Huddle conversation"
-        variant="panel"
-        value={tab}
-        onValueChange={setTab}
-        items={[
-          { value: "thread", label: "Thread", panelId: `${panelId}-thread` },
-          {
-            value: "transcript",
-            label: "Live transcript",
-            panelId: `${panelId}-transcript`,
-          },
-        ]}
-      />
+      <div className={styles.tabs}>
+        <Tabs
+          label="Huddle conversation"
+          variant="panel"
+          value={tab}
+          onValueChange={setTab}
+          items={[
+            { value: "thread", label: "Thread", panelId: `${panelId}-thread` },
+            {
+              value: "transcript",
+              label: "Live transcript",
+              panelId: `${panelId}-transcript`,
+            },
+          ]}
+        />
+      </div>
       <div
         role="tabpanel"
         id={`${panelId}-transcript`}
         aria-labelledby={`${panelId}-transcript-tab`}
         hidden={tab !== "transcript"}
-        className={styles.empty}
+        className={styles.messages}
       >
-        <p>Live transcript</p>
-        <p className="text-secondary">
-          Speech transcription isn’t connected in this version yet.
-        </p>
+        <EmptyState icon={<FileTextIcon />} title="No live transcript" />
       </div>
       <div
         role="tabpanel"
@@ -102,13 +104,14 @@ export function HuddleDiscussionView({
               Load earlier messages
             </Button>
           )}
-          {!discussion.rows.length && (
-            <p className={styles.empty}>
-              {discussion.status === "loading"
-                ? "Loading conversation…"
-                : "Start the conversation."}
-            </p>
-          )}
+          {!discussion.rows.length &&
+            (discussion.status === "loading" ? (
+              <p className={styles.empty} role="status">
+                Loading conversation…
+              </p>
+            ) : discussion.status === "ready" && !discussion.error ? (
+              <EmptyState icon={<ChatCircleIcon />} title="No messages yet" />
+            ) : null)}
           {discussion.rows.map((row) => (
             <div key={row.id}>
               <MessageRow

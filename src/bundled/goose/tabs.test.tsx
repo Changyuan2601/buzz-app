@@ -364,8 +364,11 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
     <SettingsTab agent={agent} save={save} settingsSection="identity" />,
   );
   expect(
-    await screen.findByText("Set up Anthropic in Settings."),
+    await screen.findByText("Set up Anthropic on the Settings tab."),
   ).toBeVisible();
+  // The Model row stays, unavailable, and says why.
+  expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
+  expect(screen.getByText("Available once Anthropic is set up.")).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
   expect(screen.getByLabelText("Instructions")).toBeVisible();
   expect(screen.queryByLabelText("Workspace")).toBeNull();
@@ -879,13 +882,16 @@ it("refreshes the Settings model and thinking after saving provider credentials"
   });
   await waitFor(() => expect(efforts).toHaveBeenCalled());
   const reads = efforts.mock.calls.length;
-  expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
+  expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
   await userEvent.setup().type(key, "test-key");
   fireEvent.click(screen.getByRole("button", { name: "Save to goose" }));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
       "claude-sonnet-5-5 · Default",
     ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
   );
   await waitFor(() => expect(efforts.mock.calls.length).toBeGreaterThan(reads));
 });

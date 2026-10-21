@@ -22,6 +22,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import {
   MenuIcon,
   MenuItem,
+  MenuSeparator,
   MenuSubmenu,
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
@@ -31,6 +32,9 @@ import {
   CopyIcon,
   FolderSimpleIcon,
   GearIcon,
+  HashIcon,
+  PencilSimpleIcon,
+  ShareIcon,
 } from "../../shared/design-system/icons";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
@@ -46,6 +50,7 @@ export function SoloChatMenuItems({
   onNewWorkspace,
   onCopy,
   onSettings,
+  onRename,
   onLifecycle,
   onReadResult,
 }: {
@@ -57,6 +62,7 @@ export function SoloChatMenuItems({
   onNewWorkspace(): void;
   onCopy(value: string, label: string): void;
   onSettings(): void;
+  onRename(): void;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
   /** The menu closes at once; its host reports a failed read change. */
@@ -75,9 +81,11 @@ export function SoloChatMenuItems({
   const grouped = groups.some((group) => group.id === assigned);
   // Archived chats keep only what still applies, including Unarchive.
   const active = !channel.archived;
+  const readable = session.unread.sync().capability === "frontier-sync";
+  const renameable = canEditLifetime(session, channel);
   return (
     <>
-      {session.unread.sync().capability === "frontier-sync" && (
+      {readable && (
         <ChannelReadMenuItem
           unread={session.unread}
           channelId={channel.id}
@@ -101,7 +109,18 @@ export function SoloChatMenuItems({
           disabled={!canShareConversation(session, channel)}
           onClick={onShare}
         >
-          Share…
+          <MenuIcon>
+            <ShareIcon size={16} />
+          </MenuIcon>
+          Share
+        </MenuItem>
+      )}
+      {renameable && (
+        <MenuItem onClick={onRename}>
+          <MenuIcon>
+            <PencilSimpleIcon size={16} />
+          </MenuIcon>
+          Rename
         </MenuItem>
       )}
       {active && canConvertToChannel(session, channel) && (
@@ -111,9 +130,13 @@ export function SoloChatMenuItems({
             if (!soloShareAttempt(session, channel.id)) onConvert();
           }}
         >
+          <MenuIcon>
+            <HashIcon size={16} />
+          </MenuIcon>
           {conversionLabel(session, channel.id)}
         </MenuItem>
       )}
+      {(readable || active || renameable) && <MenuSeparator />}
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>
@@ -159,6 +182,17 @@ export function SoloChatMenuItems({
           </MenuItem>
         </MenuSubmenuPopup>
       </MenuSubmenu>
+      {onLifecycle && !channel.readOnly && !channel.cached && (
+        <ChannelLifecycleMenu
+          channelId={channel.id}
+          lifecycle={session.channelLifecycle}
+          disabled={!!handoff?.lifecycleDialog}
+          separator
+          noun="chat"
+          archiveLabel="Archive"
+          choose={onLifecycle}
+        />
+      )}
       <MenuItem
         disabled={
           !!channel.readOnly ||
@@ -171,16 +205,6 @@ export function SoloChatMenuItems({
         </MenuIcon>
         Chat settings…
       </MenuItem>
-      {onLifecycle && !channel.readOnly && !channel.cached && (
-        <ChannelLifecycleMenu
-          channelId={channel.id}
-          lifecycle={session.channelLifecycle}
-          disabled={!!handoff?.lifecycleDialog}
-          separator
-          noun="chat"
-          choose={onLifecycle}
-        />
-      )}
     </>
   );
 }
@@ -235,6 +259,7 @@ export function NewWorkspaceDialog({
   const input = useRef<HTMLInputElement>(null);
   return (
     <Dialog
+      size="compact"
       open
       onOpenChange={(open) => {
         if (!open) close();

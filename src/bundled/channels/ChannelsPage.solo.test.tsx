@@ -530,7 +530,7 @@ it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
 });
 
 it.each([
-  ["archive", "Archive chat", "Archive chat: Planning"],
+  ["archive", "Archive", "Archive chat: Planning"],
   ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
@@ -543,7 +543,11 @@ it.each([
     );
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", { name: title });
-    await user.click(within(dialog).getByRole("button", { name: label }));
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: action === "archive" ? "Archive chat" : label,
+      }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,
@@ -568,9 +572,7 @@ it.each([
     await user.click(
       await screen.findByRole("button", { name: "Actions for Planning" }),
     );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Archive chat" }),
-    );
+    await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Archive chat: Planning",
     });
@@ -606,13 +608,14 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Share…",
+    "Share",
+    "Rename",
     "Convert to channel",
     "Move to",
     "Copy",
-    "Chat settings…",
-    "Archive chat",
+    "Archive",
     "Delete chat",
+    "Chat settings…",
   ]);
   expect(await items("Actions for Planning")).toEqual(header);
 });
@@ -702,9 +705,7 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const user = userEvent.setup();
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Archive chat" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
@@ -725,4 +726,15 @@ it("opens Chat settings from the heading and restores keyboard focus without nav
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("opens the existing chat name editor from Rename", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Chat settings" }),
+  ).toBeVisible();
 });

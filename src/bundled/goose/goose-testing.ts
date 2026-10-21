@@ -106,6 +106,8 @@ export function fakeSpawn(
     history?: readonly FakeSession[];
     /** How many sessions a `session/list` page holds; all by default. */
     page?: number;
+    /** Whether goose's config turns session naming off. */
+    namingDisabled?: boolean;
     /** Requests each process never answers. */
     silent?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
@@ -354,7 +356,9 @@ export function fakeSpawn(
                 ? Object.fromEntries(
                     [...providerModels].map(([id, model]) => [id, { model }]),
                   )
-                : null,
+                : params.key === "GOOSE_DISABLE_SESSION_NAMING"
+                  ? (options.namingDisabled ?? null)
+                  : null,
           });
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});

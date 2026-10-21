@@ -64,6 +64,7 @@ test("settings share a centered, bounded column and keep controls contained acro
       await page.setViewportSize({ width, height: 900 });
       for (const name of [
         "Profile",
+        "Local settings",
         "Identity",
         "Appearance",
         "Notifications",
@@ -167,7 +168,7 @@ test("settings share a centered, bounded column and keep controls contained acro
   await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
     "200%",
   );
-  for (const name of ["Appearance", "Agent setup"]) {
+  for (const name of ["Appearance", "Agent setup", "Local settings"]) {
     await selectSettingsSection(page, name);
     const agents = page.getByRole("region", {
       name,

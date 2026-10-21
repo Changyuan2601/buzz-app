@@ -83,6 +83,44 @@ fn leave_requests_sign_only_the_protected_empty_shape() {
 }
 
 #[test]
+fn typing_signs_only_empty_channel_or_thread_scope() {
+    let channel = vec!["h".into(), "private-dm".into()];
+    let reply = vec!["e".into(), "a".repeat(64), "".into(), "reply".into()];
+    let root = vec!["e".into(), "b".repeat(64), "".into(), "root".into()];
+    let pulse = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 20002,
+        created_at: 1,
+        content: content.into(),
+        tags,
+    };
+    for tags in [
+        vec![channel.clone()],
+        vec![channel.clone(), reply.clone()],
+        vec![channel.clone(), root.clone(), reply.clone()],
+    ] {
+        assert!(validate_event("https://relay.test", &pulse("", tags)).is_ok());
+    }
+    for rejected in [
+        pulse("draft text", vec![channel.clone()]),
+        pulse("", vec![]),
+        pulse("", vec![channel.clone(), channel.clone()]),
+        pulse("", vec![vec!["h".into(), "".into()]]),
+        pulse("", vec![channel.clone(), root.clone()]),
+        pulse("", vec![channel.clone(), reply.clone(), root]),
+        pulse("", vec![channel.clone(), vec!["p".into(), "a".repeat(64)]]),
+        pulse(
+            "",
+            vec![
+                channel,
+                vec!["e".into(), "bad".into(), "".into(), "reply".into()],
+            ],
+        ),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+}
+
+#[test]
 fn agent_presence_signs_only_a_status_and_agent_keys() {
     let presence = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
         kind: 20003,
@@ -3706,4 +3744,26 @@ async fn artifact_signing_through_ipc_admits_a_maximum_config_event_and_bounds_t
         sign(&event(45010, &tags)).unwrap_err(),
         serde_json::json!("Relay event is too large")
     );
+}
+
+#[test]
+fn media_cors_allows_only_the_window_origin() {
+    for (page, origin) in [
+        ("tauri://localhost/index.html", Some("tauri://localhost")),
+        ("http://tauri.localhost/", Some("http://tauri.localhost")),
+        (
+            "http://localhost:41884/#/channel",
+            Some("http://localhost:41884"),
+        ),
+        ("data:text/html,hi", None),
+    ] {
+        let url = Url::parse(page).unwrap();
+        assert_eq!(
+            window_origin(&url)
+                .as_ref()
+                .map(|value| value.to_str().unwrap()),
+            origin,
+            "{page}"
+        );
+    }
 }

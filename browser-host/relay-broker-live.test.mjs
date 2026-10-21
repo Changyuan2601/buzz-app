@@ -920,6 +920,55 @@ async function outgoing(transport, content = "socket message") {
   );
 }
 
+test("typing signing admits only empty conversation scope and stays outside durable write kinds", async () => {
+  const h = await harness();
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(20002);
+    const live = transport.subscribe(callbacks);
+    expect(live.publish).toBeUndefined(); // Agent presence remains unsupported.
+    expect(live.publishTyping).toBeTypeOf("function");
+    live.dispose();
+    const pulse = {
+      kind: 20002,
+      content: "",
+      tags: [["h", "dm"]],
+      created_at: Math.floor(Date.now() / 1000),
+    };
+    expect(
+      await transport.writer.sign(pulse, new AbortController().signal),
+    ).toMatchObject(pulse);
+    for (const change of [
+      { content: "draft" },
+      { tags: [] },
+      {
+        tags: [
+          ["h", "dm"],
+          ["p", getPublicKey(h.key)],
+        ],
+      },
+      {
+        tags: [
+          ["h", "dm"],
+          ["h", "other"],
+        ],
+      },
+    ]) {
+      await expect(
+        transport.writer.sign(
+          { ...pulse, ...change },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Signing failed (400)");
+    }
+    expect(h.publications).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
 test("session outbox publishes and reconciles on its authenticated live socket", async () => {
   const h = await harness(0, undefined, { roster: true });
   let owner;

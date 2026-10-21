@@ -29,44 +29,7 @@ export function useSidebarFilters(
         : [],
     ),
   );
-  const targets = useMemo(
-    () =>
-      (JSON.parse(ids) as string[]).map((channelId) => ({
-        kind: "channel" as const,
-        channelId,
-      })),
-    [ids],
-  );
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      const stops = targets.flatMap((target) => [
-        unread.subscribe(target, listener),
-        unread.subscribeActivity(target.channelId, listener),
-      ]);
-      return () => {
-        for (const stop of stops) stop();
-      };
-    },
-    [targets, unread],
-  );
-  const snapshot = useCallback(
-    () =>
-      JSON.stringify(
-        targets
-          .filter((target) => {
-            const state = unread.snapshot(target);
-            return (
-              state.manual !== "none" ||
-              (state.observedCount ?? 0) > 0 ||
-              (unread.activity(target.channelId).items?.length ?? 0) > 0
-            );
-          })
-          .map((target) => target.channelId),
-      ),
-    [targets, unread],
-  );
-  const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
-  const unreadSet = new Set<string>(JSON.parse(unreadIds));
+  const unreadSet = useUnreadChannelIds(unread, ids);
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
@@ -109,4 +72,46 @@ export function useSidebarFilters(
     return () => window.clearTimeout(timer);
   }, [nextExpiry, clock]);
   return visible;
+}
+
+/** Channels among `ids` (a JSON id array) with unread messages or threads. */
+export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
+  const targets = useMemo(
+    () =>
+      (JSON.parse(ids) as string[]).map((channelId) => ({
+        kind: "channel" as const,
+        channelId,
+      })),
+    [ids],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = targets.flatMap((target) => [
+        unread.subscribe(target, listener),
+        unread.subscribeActivity(target.channelId, listener),
+      ]);
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
+    [targets, unread],
+  );
+  const snapshot = useCallback(
+    () =>
+      JSON.stringify(
+        targets
+          .filter((target) => {
+            const state = unread.snapshot(target);
+            return (
+              state.manual !== "none" ||
+              (state.observedCount ?? 0) > 0 ||
+              (unread.activity(target.channelId).items?.length ?? 0) > 0
+            );
+          })
+          .map((target) => target.channelId),
+      ),
+    [targets, unread],
+  );
+  const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);
 }

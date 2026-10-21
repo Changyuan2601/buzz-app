@@ -41,6 +41,9 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
+import { Header } from "../../shared/design-system/ui/Header";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -490,6 +493,8 @@ function WorkflowCard({
           ? "Saving is unavailable from this host."
           : undefined;
   const reasonId = useId();
+  const descriptionId = useId();
+  const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
   const runDisabled =
@@ -629,19 +634,6 @@ function WorkflowCard({
       {new Date(definition.createdAt * 1000).toLocaleDateString()}
     </time>
   );
-  const open = (
-    <Button
-      ref={openRef}
-      aria-label={`Open ${name}`}
-      aria-pressed={selected}
-      data-workflow-card-open=""
-      disabled={!!deletion}
-      onClick={onSelect}
-      variant="ghost"
-    >
-      Open {name}
-    </Button>
-  );
   const detail = (
     <section className="workflow-detail" aria-label={name}>
       <div className="workflow-detail-hero">
@@ -740,40 +732,60 @@ function WorkflowCard({
     <>
       {selected && detailTarget && createPortal(detail, detailTarget)}
       <article className="workflow-card" data-selected={selected || undefined}>
-        {open}
-        <div className="workflow-card-content">
-          <div className="workflow-card-topline">
-            <div className="workflow-card-flow" aria-hidden="true">
-              <span className="workflow-card-icon">{triggerArt}</span>
-              {presentation.actionIcons.length > 0 && (
-                <>
-                  <ArrowRightIcon
-                    className="workflow-card-arrow"
-                    size="0.875rem"
-                    aria-hidden="true"
-                  />
-                  {presentation.actionIcons.slice(0, 3).map((action) => (
-                    <span className="workflow-card-icon" key={action.key}>
-                      <WorkflowIcon kind={action.icon} />
-                    </span>
-                  ))}
-                </>
-              )}
-            </div>
-            {controls}
-          </div>
-          <h2 className="workflow-card-name text-label">{name}</h2>
-          <p className="workflow-card-description text-body-sm text-secondary">
-            {presentation.description}
-          </p>
-          <div className="workflow-card-meta text-caption text-subtle">
-            <span className="workflow-card-identity">
-              #{channel.name}
-              {status}
-            </span>
-            {updated}
-          </div>
+        <div className="workflow-card-row">
+          <NavigationItem
+            ref={openRef}
+            aria-label={`Open ${name}: ${presentation.description}`}
+            aria-describedby={`${descriptionId} ${statusId}`}
+            aria-current={false}
+            aria-pressed={selected}
+            selected={selected}
+            disabled={!!deletion}
+            onClick={onSelect}
+            icon={
+              <span className="workflow-card-flow" aria-hidden="true">
+                <span className="workflow-card-icon">{triggerArt}</span>
+                {presentation.actionIcons.length > 0 && (
+                  <>
+                    <ArrowRightIcon
+                      className="workflow-card-arrow"
+                      size="0.875rem"
+                    />
+                    {presentation.actionIcons.slice(0, 1).map((action) => (
+                      <span className="workflow-card-icon" key={action.key}>
+                        <WorkflowIcon kind={action.icon} />
+                      </span>
+                    ))}
+                  </>
+                )}
+              </span>
+            }
+            label={
+              <span className="workflow-row-copy" id={descriptionId}>
+                <span
+                  className="workflow-card-description text-body-sm text-standard"
+                  title={presentation.description}
+                >
+                  {presentation.description}
+                </span>
+                <span className="workflow-card-meta text-caption text-subtle">
+                  <span className="workflow-card-name" title={name}>
+                    {name}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  {updated}
+                </span>
+              </span>
+            }
+          />
+          {controls}
         </div>
+        <span
+          id={statusId}
+          className="workflow-card-status text-caption text-subtle"
+        >
+          {status}
+        </span>
       </article>
       {confirmDelete && (
         <ConfirmAction
@@ -836,39 +848,45 @@ function WorkflowChannelCards({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  const headingId = useId();
   if (!snapshot) return null;
   if (snapshot.status === "idle" || snapshot.status === "unavailable")
     return null;
 
+  if (!snapshot.data.items.length && !snapshot.data.partial) return null;
+
   return (
-    <>
-      {snapshot.data.items.map((definition) => {
-        const key = workflowKey(definition);
-        return (
-          <WorkflowCard
-            capability={capability}
-            channel={channel}
-            definition={definition}
-            detailTarget={detailTarget}
-            key={key}
-            locked={workflowOperationLocked(operations, definition)}
-            onError={onError}
-            onRun={onRun}
-            onOpen={onOpen}
-            onDelete={onDelete}
-            onSelect={() => onSelect(selected === key ? undefined : key)}
-            operations={operations}
-            selected={selected === key}
-            viewer={viewer}
-          />
-        );
-      })}
-      {snapshot.data.partial && (
-        <div className="workflow-state-card text-body-sm text-secondary">
-          #{channel.name} returned a partial workflow list.
-        </div>
-      )}
-    </>
+    <section className="workflow-channel-group" aria-labelledby={headingId}>
+      <Header id={headingId} level={2} title={`#${channel.name}`} />
+      <SettingsGroup>
+        {snapshot.data.items.map((definition) => {
+          const key = workflowKey(definition);
+          return (
+            <WorkflowCard
+              capability={capability}
+              channel={channel}
+              definition={definition}
+              detailTarget={detailTarget}
+              key={key}
+              locked={workflowOperationLocked(operations, definition)}
+              onError={onError}
+              onRun={onRun}
+              onOpen={onOpen}
+              onDelete={onDelete}
+              onSelect={() => onSelect(selected === key ? undefined : key)}
+              operations={operations}
+              selected={selected === key}
+              viewer={viewer}
+            />
+          );
+        })}
+        {snapshot.data.partial && (
+          <div className="workflow-state-card text-body-sm text-secondary">
+            #{channel.name} returned a partial workflow list.
+          </div>
+        )}
+      </SettingsGroup>
+    </section>
   );
 }
 
@@ -878,7 +896,8 @@ const workflowKey = (definition: WorkflowDefinition) =>
 export function WorkflowLanding({
   capability,
   channels,
-  filter = "",
+  filter,
+  onFilterChange,
   refreshRequest,
   saveReadback,
   viewer,
@@ -897,7 +916,8 @@ export function WorkflowLanding({
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
   /** Channel ID to show; every channel is still read. Empty shows all. */
-  filter?: string;
+  filter: string;
+  onFilterChange: (channelId: string) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
@@ -953,9 +973,21 @@ export function WorkflowLanding({
     operationRefreshKey,
     saveReadback,
   );
-  const visible = filter
-    ? channels.filter((channel) => channel.id === filter)
-    : channels;
+  const ordered = [...channels].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
+  const populated = ordered.filter(
+    (channel) => snapshots[channel.id]?.data.items.length,
+  );
+  const shown = !populated.some((channel) => channel.id === filter)
+    ? ""
+    : filter;
+  useEffect(() => {
+    if (filter !== shown) onFilterChange(shown);
+  }, [filter, shown, onFilterChange]);
+  const visible = shown
+    ? ordered.filter((channel) => channel.id === shown)
+    : ordered;
   const reading = visible.some(
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
@@ -991,6 +1023,25 @@ export function WorkflowLanding({
     );
   return (
     <>
+      <div className="workflow-page-filter">
+        <Select
+          label="Channel"
+          value={shown}
+          groups={[
+            {
+              label: "Channels with workflows",
+              options: [
+                { value: "", label: "All workflows" },
+                ...populated.map((channel) => ({
+                  value: channel.id,
+                  label: channel.name,
+                })),
+              ],
+            },
+          ]}
+          onValueChange={onFilterChange}
+        />
+      </div>
       <WorkflowDeletionNotices
         operations={operations}
         snapshots={snapshots}
@@ -1002,7 +1053,7 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title={filter ? "No workflows in this channel yet." : "Workflows"}
+          title="Workflows"
           description="Automations that keep your community moving."
           action={
             capability.availability.save && (

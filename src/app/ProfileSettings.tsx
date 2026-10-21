@@ -26,6 +26,7 @@ import {
 } from "../features/communities/ProfileFields";
 import * as communityApi from "../features/communities/api";
 import type { Membership } from "../features/communities/service";
+import { communityName } from "../features/communities/names";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
@@ -244,14 +245,14 @@ export function ProfileSettings({
             label={
               client.status === "loading"
                 ? "Opening your local identity…"
-                : `Loading your profile in ${community?.name ?? "this community"}…`
+                : `Loading your profile in ${community ? communityName(community) : "this community"}…`
             }
             feedback={
               loadStatus === "error" && community ? (
                 <div>
                   <p role="alert" className="error">
-                    Your profile in {community.name} couldn’t be loaded.{" "}
-                    {loadError}
+                    Your profile in {communityName(community)} couldn’t be
+                    loaded. {loadError}
                   </p>
                   <Button
                     type="button"

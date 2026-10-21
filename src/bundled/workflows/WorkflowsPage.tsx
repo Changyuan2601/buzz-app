@@ -24,7 +24,6 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { Select } from "../../shared/design-system/ui/Select";
 import { WorkflowChannelPicker } from "./WorkflowChannelPicker";
 import { WorkflowChannel } from "./WorkflowChannel";
 import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
@@ -124,8 +123,6 @@ export function WorkflowCommunity({
     return () => narrow.removeEventListener("change", handoff);
   }, [open, detailTarget]);
   const channel = eligible.find((item) => item.id === selected);
-  // A filtered channel that leaves the list shows every workflow again.
-  const shown = eligible.some((item) => item.id === filter) ? filter : "";
   useEffect(() => {
     if (
       !selected ||
@@ -241,27 +238,6 @@ export function WorkflowCommunity({
                   </Button>
                 </div>
               )}
-              {eligible.length > 0 && (
-                <div className="workflow-page-filter">
-                  <Select
-                    label="Channel"
-                    value={shown}
-                    groups={[
-                      {
-                        label: "Community channels",
-                        options: [
-                          { value: "", label: "All workflows" },
-                          ...eligible.map((item) => ({
-                            value: item.id,
-                            label: item.name,
-                          })),
-                        ],
-                      },
-                    ]}
-                    onValueChange={setFilter}
-                  />
-                </div>
-              )}
               {channels.status === "ready" && !eligible.length && (
                 <div className="workflow-page-state">
                   <p>No channels are available in this community.</p>
@@ -274,7 +250,8 @@ export function WorkflowCommunity({
                 <WorkflowLanding
                   capability={capability}
                   channels={eligible}
-                  filter={shown}
+                  filter={filter}
+                  onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}

@@ -43,6 +43,7 @@ export function appClient(
   const authorityCommunity = options.audienceAuthorityCommunity;
   return {
     pubkey: agent.pubkey,
+    owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
     ...(agent.saveInstructions
@@ -96,6 +97,10 @@ export function appClient(
     media: (url) => {
       check();
       return agent.media(url);
+    },
+    gitAuth: (owner, repo) => {
+      check();
+      return agent.gitAuth(owner, repo);
     },
     read: (path) => {
       check();

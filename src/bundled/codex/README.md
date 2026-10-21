@@ -64,7 +64,10 @@ still ends its turn with one more model call. Interrupting the turn instead woul
 leave a `<turn_aborted>` note in the session after every reply.
 By default, Buzz tools reply to the latest accepted steering message. The agent can also choose another thread or channel with tool arguments.
 
-There are no special chat commands. Asking the agent to stop is a steering request
+There are no special chat commands. The composer's gauge popover offers
+immediate Compact session, Start a new session, and Interrupt controls.
+Compact and New require an idle session; Interrupt stops active work.
+Asking the agent to stop is a steering request
 that Codex interprets. Disabling the plugin ends its processes. For settings,
 change instructions to require a marker, save, and send another mention after the
 current turn finishes. Expect the marker.

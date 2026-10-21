@@ -6,6 +6,7 @@ import { describe, afterEach, expect, it, vi } from "vitest";
 import { WELCOME_PROMPT } from "../../features/agents/conversation-start";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -25,7 +26,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
-const scope = "https://relay.test:owner";
+const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -47,7 +48,12 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
-  configured: { model?: string; model_reasoning_effort?: string } = {},
+  configured: {
+    model?: string;
+    model_reasoning_effort?: string;
+    model_reasoning_summary?: string;
+  } = {},
+  repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -312,6 +318,7 @@ function fixture(
     store,
     config,
     () => added,
+    repositories,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -1002,6 +1009,70 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const f = fixture();
+  const fresh = f.delivery("@Codex fix the build");
+  await f.runtime.run({
+    ...fresh,
+    trigger: { ...fresh.trigger, resumed: true } as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toContain("fix the build");
+  expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
+});
+it.each([
+  [undefined, "auto"],
+  ["detailed", undefined],
+  ["none", undefined],
+])(
+  "asks for reasoning summaries unless the user set %s",
+  async (setting, expected) => {
+    const f = fixture([], undefined, false, {
+      ...(setting ? { model_reasoning_summary: setting } : {}),
+    });
+    await f.runtime.run(f.delivery("@Codex think"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const [start] = f.starts();
+    const params = start?.params as { summary?: string } | undefined;
+    expect(params?.summary).toBe(expected);
+  },
+);
+it("asks for reasoning summaries on a resumed turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("@Codex second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(true);
+  expect(f.starts()[1]?.params).toMatchObject({ summary: "auto" });
+});
+it("asks for reasoning summaries on a standalone watch turn", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  f.objects.set("interest/ops", { type: "interest", instructions: "Watch" });
+  const watch = {
+    type: "event",
+    enabled: true,
+    interest_id: "ops",
+    since: 0,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  f.objects.set("watch/deploys", watch);
+  const base = f.delivery("someone else's message");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  const event = { ...base.trigger.event, pubkey: "f".repeat(64) };
+  f.wake({
+    ...base,
+    trigger: { type: "watch", event, slug: "watch/deploys", watch },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.starts()[0]?.params).toMatchObject({ summary: "auto" });
+  await f.complete(0, "");
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -3397,6 +3468,77 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
   ]);
 });
 
+it("titles a new Solo chat once, from its first message on an ephemeral read-only thread", async () => {
+  const f = fixture();
+  asSoloChat(f);
+  const named = vi.fn();
+  const titling = () =>
+    f.sent.filter(
+      (wire) =>
+        wire.method === "thread/start" &&
+        (wire.params as { ephemeral?: boolean }).ephemeral,
+    );
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Without Codex's title model in the catalog, the chat's own model titles it.
+  expect(titling()[0]?.params).toMatchObject({
+    model: "test-model",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    threadId: "thread-2",
+    model: "test-model",
+    effort: "low",
+    outputSchema: { required: ["title"] },
+  });
+  expect(inputText(f.starts()[1])).toContain("fix the login bug");
+  f.emit({
+    method: "item/completed",
+    params: {
+      threadId: "thread-2",
+      item: { type: "agentMessage", text: '{"title":" Fix login bug "}' },
+    },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-2",
+      turn: { id: "turn-2", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Fix login bug"));
+  await vi.waitFor(() =>
+    expect(
+      f.sent.find((wire) => wire.method === "thread/unsubscribe")?.params,
+    ).toEqual({ threadId: "thread-2" }),
+  );
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A resumed conversation is not new, so it is not titled again.
+  await f.runtime.run({ ...f.delivery("@Codex later"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(titling()).toHaveLength(1);
+  expect(named).toHaveBeenCalledOnce();
+});
+
+it("does not title a conversation outside a Solo chat", async () => {
+  const f = fixture();
+  const named = vi.fn();
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  expect(named).not.toHaveBeenCalled();
+});
+
 it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
   const soloChannels = asSoloChat(f);
@@ -3665,4 +3807,175 @@ it("interrupts Codex Welcome on cancellation without publishing a failure as its
   expect(await started).toMatchObject({ ok: false });
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
   expect(f.publish).not.toHaveBeenCalled();
+});
+it.each(["completed", "failed"])(
+  "accepts a mention during compaction without blocking another conversation or expiring its handover (%s)",
+  async (outcome) => {
+    const f = fixture();
+    const first = f.delivery("first");
+    const agent = { ...first.agent, config: first.config } as unknown as Agent;
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.sessionState(agent, { channelId: "channel", root }),
+      ).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, { channelId: "channel", root }, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+        true,
+      ),
+    );
+    const handover = new AbortController();
+    let returned = false;
+    const accepted = f.runtime
+      .run({ ...f.delivery("queued after compact"), signal: handover.signal })
+      .then(() => {
+        returned = true;
+      });
+    try {
+      await vi.waitFor(() => expect(returned).toBe(true));
+      handover.abort(new Error("Handover expired"));
+      await f.runtime.run(f.delivery("another conversation", "d".repeat(64)));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain("another conversation");
+      await f.complete(1);
+    } finally {
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "compact" } },
+      });
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: {
+            id: "compact",
+            status: outcome,
+            ...(outcome === "failed"
+              ? { error: { message: "Compaction failed" } }
+              : {}),
+          },
+        },
+      });
+      const result = await compacted;
+      if (outcome === "failed") expect(result).toBeInstanceOf(Error);
+      else expect(result).toBeUndefined();
+      await accepted;
+    }
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(inputText(f.starts()[2])).toContain("queued after compact");
+    await f.complete(2);
+  },
+);
+
+describe("session actions", () => {
+  const methods = (f: ReturnType<typeof fixture>) =>
+    f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
+
+  it("compacts immediately, and keeps the session active until an early interrupt ends its turn", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(methods(f)).toContain("thread/compact/start"),
+    );
+    expect(f.starts()).toHaveLength(1);
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    await f.runtime.session(agent, place, "interrupt");
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    const later = f.runtime.run(f.delivery("after interrupt"));
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    expect(await compacted).toBeInstanceOf(Error);
+    await later;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.find((wire) => wire.method === "turn/interrupt")?.params,
+    ).toEqual({ threadId: "thread-1", turnId: "compact" });
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+  });
+
+  it("resets durably without a message, and preserves the binding if the write fails", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    vi.spyOn(f.storage, "set").mockImplementationOnce(() => {
+      throw new Error("Disk full");
+    });
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "Disk full",
+    );
+    await f.runtime.run(f.delivery("still the old session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    await f.runtime.session(agent, place, "new");
+    expect(f.starts()).toHaveLength(2);
+    expect(
+      [...f.storage.values()].some((value) =>
+        value.includes('"threadId":"thread-1"'),
+      ),
+    ).toBe(false);
+    await f.runtime.run(f.delivery("new session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
+    await f.complete();
+  });
+});
+
+it("updates Codex repository context from the agent’s captured community, including default restoration", async () => {
+  let folder = "/code/codex";
+  const repositories = vi.fn(
+    () => `<community-repositories>${folder}</community-repositories>`,
+  );
+  const f = fixture([], undefined, false, {}, repositories);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(repositories).toHaveBeenCalledWith(scope);
+  expect(
+    JSON.stringify(f.sent.filter((wire) => wire.method === "turn/start")),
+  ).toContain("/code/codex");
+  folder = "REPOS in your own workspace";
+  await f.runtime.run(f.delivery("second", "d".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const turns = f.sent.filter((wire) => wire.method === "turn/start");
+  expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
+  expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });

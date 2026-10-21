@@ -356,7 +356,9 @@ export function createTabs({
               : listing.status === "loading" && !providers
                 ? { description: "Loading goose's providers…" }
                 : rows && provider && !provider.configured
-                  ? { description: `Set up ${provider.name} in Settings.` }
+                  ? {
+                      description: `Set up ${provider.name} on the Settings tab.`,
+                    }
                   : {})}
             groups={[
               {
@@ -432,7 +434,8 @@ export function createTabs({
             }}
           />
         )}
-        {!hideModel && provider?.configured && (
+        {/* The profile keeps the row, so an unready provider says why. */}
+        {!hideModel && provider && (provider.configured || rows) && (
           <ModelPicker
             key={`models:${id}`}
             groupByFamily
@@ -447,10 +450,12 @@ export function createTabs({
             loading={models.status === "loading"}
             value={value.model}
             defaultLabel={modelLabel(id, modelDefault) || "Provider model"}
-            {...(models.status === "error"
-              ? { description: `Could not list models: ${models.error}` }
-              : {})}
-            disabled={disabled}
+            {...(!provider.configured
+              ? { description: `Available once ${provider.name} is set up.` }
+              : models.status === "error"
+                ? { description: `Could not list models: ${models.error}` }
+                : {})}
+            disabled={disabled || !provider.configured}
             onChange={(model) => onChange({ ...value, model })}
           />
         )}

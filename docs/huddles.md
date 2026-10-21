@@ -49,23 +49,33 @@ The proposed `text-call-leave` role preserves the requested Red 10 in both theme
 It is a documented contrast exception for these controls: the light-mode Leave
 label measures 3.09–4.37:1 across its opaque fills; dark-mode APCA is Lc 35.2–40.4.
 Glass depends on its backdrop and is not certified by those opaque measurements.
-The separate window uses matching neutral gray controls for microphone and Leave,
-with a Red 10 Leave icon.
+The separate window uses shared round glass controls for microphone, chat, and Leave,
+with a Red 10 Leave icon. Incoming requests use a large centered portrait over
+blurred profile artwork, with a red decline icon on the left, a green join icon
+on the right, and the caller label between them. Initials scale with the portrait
+and render at 50% opacity.
 New arrivals slide
 and scale into the front of the stack; reduced motion removes that movement. The
 latest four avatars remain visible, with a matching avatar showing the count for other participants. Click the
 waveform or avatars once connected to open the
-separate Huddle window. The window borrows mobile’s avatar-cloud layout: you are centered alone, then
-move left as other participants gather on the right. Up to ten peers use the
-mobile-inspired cluster’s varied avatar sizes, with an overflow count for larger calls.
-Names appear on hover or keyboard focus. Nearby portraits shift aside for the
-active name capsule, then settle back when it closes. Only one name is shown
+separate Huddle window. You are centered alone; in two- and three-person calls,
+you move left as peers gather on the right in a mobile-inspired cluster. With
+four or more participants, you anchor the center of a surrounding peer ring.
+Up to ten peers appear, with an overflow count for larger calls.
+Names appear on hover or keyboard focus. In small calls, nearby portraits shift
+aside for the active name capsule, then settle back when it closes. In the ring,
+names sit inside portraits without moving neighbors. Only one name is shown
 at a time; reduced motion makes the layout change immediate.
-A soft halo around each speaker eases between audio levels with a restrained expansion,
-responding to their own microphone or received audio,
-then fades after speech stops. The window uses these halos instead of a footer
-waveform; the compact player keeps its waveform. Muting clears only your halo.
-Arrivals fade and scale in; reduced motion removes those transitions. Closing that window or navigating to another conversation
+A four-pixel ring appears around each speaker at 50% opacity, responding to
+their own microphone or received audio, then fades after speech stops. The ring
+uses blurred avatar artwork inside a crisp stroke; initials use the neutral
+fallback tint. The compact player keeps its waveform. Muting clears only your
+ring. Portrait scale and rotation respond subtly to speech with softened motion.
+Window portraits fill the stage: solo artwork can reach 320px; duets use roughly
+42% of the stage width per portrait, and groups retain a tightly packed cloud of
+varied sizes. Portraits gently grow with their audio level.
+Arrivals fade in with a slight rotation and a spring that overshoots before settling.
+Reduced motion removes the rotation, scale, and speaker growth. Closing that window or navigating to another conversation
 keeps audio connected. Leave releases the microphone and closes the companion.
 Native call completion also retires it after a renderer reload/crash. The companion
 has no identity, signing or microphone permissions. Failed companion updates also report their error in the main app toast stack,
@@ -86,8 +96,8 @@ conversation/community changes. Microphone capture still requires an explicit cl
 
 ## Audio settings
 
-The gear beside the compact microphone (before the Leave divider) and the matching
-button opposite minimize in the companion open the same Audio settings popover.
+The gear beside the compact microphone (before the Leave divider) and the
+ghost button at the companion’s bottom left open the same Audio settings popover.
 Choose a microphone or speakers, or follow the system default. Choices apply to the
 current call and update both views; changing the microphone preserves mute. Device
 lists refresh when hardware changes and whenever the popover opens. If switching
@@ -103,14 +113,15 @@ or gain controls are included. Physical device switching still needs a native tr
 
 A new Huddle started by another member of a DM appears in both the glass capsule
 and the focused Huddle window, even while viewing another conversation. Both show
-the caller's avatar and equal-width Join/Decline controls. These use opaque Green 10
-and Red 10 fills with inverse labels in both themes; hover uses step 9. They remain
-opaque over glass without changing the active-call Leave treatment. The requested
-bright-fill/inverse-label pairing has a scoped contrast exception for these incoming
-controls; it does not meet every normal text contrast target. The compact label is
-“[Name] calling”, with equal padding above, below, and before the avatar. The window's single title
-puts “[Name]” on its own line above “is calling”; long names wrap within the window. Channel Huddles keep their existing header and
-card join controls without opening an incoming request.
+the caller's avatar and equal-width Join/Decline controls. The compact capsule uses
+opaque Green 10 and Red 10 fills with inverse labels in both themes; hover uses
+step 9. This bright-fill/inverse-label pairing retains its scoped contrast
+exception and does not meet every normal text contrast target. The compact label
+is “[Name] calling”, with equal padding above, below, and before the avatar.
+The window uses round glass icon buttons: decline on the left and join on the
+right, with accessible names and red/green icons. Its single-line “[Name] is
+calling” label sits between the controls; long names truncate. Channel Huddles
+keep their existing header and card join controls without opening an incoming request.
 
 Accepting keeps the caller visible in both surfaces while the connection is prepared,
 with Cancel available. Once connected, Motion moves and scales that same avatar
@@ -143,7 +154,10 @@ to send and Shift+Enter for a new line. The detached window sends typed requests
 through a per-room capability to the main app, which retains upload preparation,
 membership checks, signing, and outbox admission. GIF discovery and search also
 run through this owner, using its community and the enabled emoji contribution;
-the companion has no direct relay HTTP permission. The tabs stay above the scrolling content. Thread uses
+the companion has no direct relay HTTP permission. The tabs stay above the scrolling content. Discussion opening uses the shared
+PanelDock curve; closing finishes before requesting the native window resize.
+Reopening interrupts the exit. Keyboard and reduced-motion toggles are immediate.
+The regular composer owns its inset without extra huddle-wrapper padding. Thread uses
 the existing relay session for message history, sending, and failed-message
 Retry/Discard. Closing this panel or minimizing the window does not end audio or
 cancel an accepted message delivery. Text drafts survive tab changes and reopening. Attachment drafts survive tab changes,
@@ -164,12 +178,14 @@ opens the saved Huddle conversation in a side panel. Archived rooms remain
 read-only. The display is bounded to the latest 200 visible messages (excluding membership and Huddle notices) and says when history
 is limited; it does not delete earlier messages.
 
-New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay
+New rooms carry a parent marker in their signed creation record. Verified rooms stay
 out of ordinary sidebar destinations; destinations without metadata are withheld
 until they can be classified, preventing temporary unnamed room rows. The discussion reader verifies that
-marker before reading or sending. Older trial rooms named `Huddle` or
+marker before reading or sending. Older trial rooms named exactly
 `huddle-<first eight room-ID characters>` are also hidden when relay-signed metadata
 identifies them as private, expiring streams. Names alone never hide a channel.
+This legacy presentation rule does not establish a parent relationship; an ordinary
+channel configured with that same name, visibility and lifetime is also hidden.
 This only changes presentation: membership and messages remain intact. Unmarked
 rooms can open when one of the latest 500 relay-signed join/leave/end events in
 the parent identifies that exact room. User-authored cards and room names do not
@@ -252,9 +268,9 @@ still rechecks current room access on the relay.
 ## Room classification
 
 Only a signed kind-9007 creation receipt with the exact room ID, matching the
-creator recorded in relay-signed metadata, establishes a Huddle. The receipt
+creator recorded in relay-signed metadata, establishes a verified Huddle parent relationship. The receipt
 must declare a private stream with the Huddle parent marker. Later edits to the
-name, description or lifetime cannot turn an ordinary channel into a Huddle or
+name, description or lifetime cannot establish that relationship or
 change an established Huddle's parent. Receipts are retained with signed discovery
 metadata in the local cache. Strong exact-channel resolution awaits creation
 proof from the writer, even after an earlier replica lookup found no receipt.
@@ -262,6 +278,36 @@ Proof-read failures reject that resolution so invitation recovery can use its
 existing bounded retries; newer accepted metadata remains the proof source.
 
 Rooms without that evidence, including legacy Huddles whose creation events did
-not include their room ID, remain accessible as ordinary channels. A missing or
-failed receipt lookup never removes channel access. Relays without creator
-identity metadata also use this fallback.
+not include their room ID, retain ordinary channel access. For presentation only,
+relay-signed metadata identifying a private, expiring stream named exactly
+`huddle-<first eight room-ID characters>` hides that room from ordinary navigation.
+This legacy exception assigns no parent relationship; parent verification still
+requires independent signed evidence. Other unproven rooms remain ordinary
+navigation destinations. A missing or failed receipt lookup never removes channel
+access. Relays without creator identity metadata also use this fallback.
+
+## Portrait interactions and controls
+
+Window portraits support temporary drag-and-toss play: direct pointer tracking,
+release momentum, damped wall bounces inside the participant stage, and a spring
+back to their current layout positions, with a firm return and restrained rebounds. Re-grabbing interrupts the throw;
+resizing clears displacement. Reduced motion keeps dragging but returns portraits
+immediately on release. None of this changes participant order or call state.
+
+The connected window's bottom bar keeps mute, chat, and leave centered. Audio
+settings sits at the left padded edge and minimize at the right, vertically
+aligned with the main controls. Both are large ghost buttons with matching 22px
+icons in the secondary text color. When the call area cannot fit all five
+controls, the main controls stay centered on the first row and settings/minimize
+occupy opposite edges of a second row.
+
+Window artwork has a stable per-person tilt within ±10°. Speech gently nudges
+that angle; reduced motion keeps the resting tilt without speech-driven rotation.
+
+With four or more participants, the local portrait anchors the center and peers
+form a surrounding ring. The whole composition fits the participant stage’s
+width and height, with space reserved for speech emphasis and names. Dense calls
+reduce peer diameters to preserve separation; the existing overflow indicator
+remains. Solo, duet, and three-person calls retain their small-call arrangement.
+Names in the centered layout reveal inside the portrait’s lower edge without
+moving the group or covering neighboring portraits.

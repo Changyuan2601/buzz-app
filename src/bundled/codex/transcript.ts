@@ -9,6 +9,8 @@ import {
 } from "../../features/agents/activity-transcript";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, type Spawn } from "./rpc";
+import { readFile } from "../../buzz-mcp/app-client";
+import { restoreRecordedTools } from "./recorded-tools";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
 export const TURN_LIMIT = 20;
@@ -117,13 +119,18 @@ function item(
         ? { id, at, type: "message", text: str(value.text) }
         : undefined;
     case "reasoning": {
-      const text = (Array.isArray(value.summary) ? value.summary : []).join(
-        "\n\n",
-      );
+      const texts = (part: unknown) =>
+        Array.isArray(part) ? part.map(str).filter(Boolean) : [];
+      const summary = texts(value.summary);
+      // Raw content can repeat the summary; show that text once.
+      const content = texts(value.content).filter((t) => !summary.includes(t));
+      const text = [...summary, ...content].join("\n\n");
       return text ? { id, at, type: "thought", text } : undefined;
     }
     case "plan":
       return { id, at, type: "status", text: str(value.text) };
+    case "contextCompaction":
+      return { id, at, type: "status", text: "Context compaction" };
     case "commandExecution":
       return tool({
         title: shellCommand(str(value.command)),
@@ -155,7 +162,13 @@ function item(
         value.success === true &&
         str(args.text).trim()
       )
-        return { id, at, type: "message", text: str(args.text), posted: true };
+        return {
+          id,
+          at,
+          type: "message",
+          text: str(args.text),
+          posted: true,
+        };
       return tool({
         title: [value.namespace, value.tool].filter(Boolean).join("."),
         input: display(value.arguments),
@@ -366,7 +379,7 @@ export async function readTranscript(
     );
     for (const thread of await findThreads(rpc, lookup))
       if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
-    const all: Turn[] = [];
+    const all: TranscriptTurn[] = [];
     let found = false;
     let more = false;
     let working = false;
@@ -377,12 +390,36 @@ export async function readTranscript(
       more ||= read.more;
       if (threadId === lookup.threadId)
         working = read.data[0]?.status === "inProgress";
-      all.push(...[...read.data].reverse());
+      const mapped = codexTurns([...read.data].reverse(), lookup, name);
+      try {
+        const { thread } = await rpc.request<{
+          thread?: { path: string | null };
+        }>("thread/read", { threadId, includeTurns: false });
+        if (!thread?.path)
+          throw new Error("The local session file is unavailable.");
+        // Codex supplies the rollout in Buzz's own home. Use its directory:
+        // the desktop host rejects a relative process cwd, including ".".
+        const directory = thread.path.slice(0, thread.path.lastIndexOf("/"));
+        const file = new TextDecoder().decode(
+          await readFile(spawn, directory, thread.path, signal),
+        );
+        restoreRecordedTools(mapped, file);
+      } catch (error) {
+        signal.throwIfAborted();
+        const latest = mapped.at(-1);
+        latest?.items.unshift({
+          id: `${threadId}:recorded-tools-unavailable`,
+          at: latest.startedAt,
+          type: "status",
+          text: `CodeMode scripts could not be loaded. Showing app-server history only. ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+      all.push(...mapped);
     }
     if (!found) return undefined;
-    all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    all.sort((a, b) => a.startedAt - b.startedAt);
     return {
-      turns: codexTurns(all.slice(-TURN_LIMIT), lookup, name),
+      turns: all.slice(-TURN_LIMIT),
       unknownThread: 0,
       more: more || all.length > TURN_LIMIT,
       working,

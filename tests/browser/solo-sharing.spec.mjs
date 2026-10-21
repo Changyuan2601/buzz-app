@@ -538,7 +538,10 @@ test("People search holds loading, scrolls portalled results and restores keyboa
       .getByRole("button", { name: "Remove Morgan person 1", exact: true })
       .click();
     await expect(selected).toHaveCount(0);
-    await search.fill("Morgan");
+    await expect(search).toHaveValue("");
+    await expect(search).toBeFocused();
+    // Removing a focused row must leave typing in the surviving search field.
+    await search.pressSequentially("Morgan");
     await expect(list.getByRole("option")).toHaveCount(12);
     await list.getByRole("option", { name: /Morgan person 2\b/ }).click();
     await expect(

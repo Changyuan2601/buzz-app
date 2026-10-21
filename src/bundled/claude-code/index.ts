@@ -1,3 +1,4 @@
+import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
@@ -33,6 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     agents.storage,
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
+    repositoriesContext,
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

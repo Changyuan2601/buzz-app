@@ -19,6 +19,11 @@ import {
   threadPlacementPreference,
 } from "../features/messages/thread-preferences";
 
+import {
+  followUpBehaviorPreference,
+  setFollowUpBehaviorPreference,
+} from "../features/messages/follow-up-preference";
+
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
   const appearance = createAppearance();
@@ -32,6 +37,7 @@ afterEach(() => {
   for (const appearance of preferenceAppearances.splice(0))
     appearance.dispose();
   setThreadPlacementPreference("side");
+  setFollowUpBehaviorPreference("immediate");
   localStorage.clear();
 });
 
@@ -351,6 +357,48 @@ it("keeps unsaved thread placement and recovery through remount, then retries th
   );
   expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("preserves follow-up choice and save recovery when Appearance is hidden", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const content = (active: boolean) => (
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} active={active} />
+    </ToastProvider>
+  );
+  const view = render(content(true));
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Follow-up behavior" });
+  expect(choice()).toHaveTextContent("Send immediately");
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Queue" }));
+  expect(followUpBehaviorPreference()).toBe("queue");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Follow-up preference wasn’t saved",
+  );
+  view.rerender(content(false));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  view.rerender(content(true));
+  expect(choice()).toHaveTextContent("Queue");
+  write.mockRestore();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Retry saving follow-up behavior",
+    }),
+  );
+  expect(localStorage.getItem("buzz-follow-up-behavior.v1")).toBe("queue");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("switches contrast through the shared select and restores it", async () => {

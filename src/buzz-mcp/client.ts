@@ -1,6 +1,7 @@
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
+import type { GitAuth } from "../features/agents/native";
 import type { AgentAttention } from "../features/agents/service";
 
 export type BuzzEvent = Readonly<{
@@ -75,6 +76,8 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** The agent's owner, as its host records it. */
+  readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
   readonly signingAuthority?: string | undefined;
@@ -99,6 +102,10 @@ export interface BuzzClient {
   /** Saves a community media blob of any type, by its URL or
    * `sha256[.ext]`, to a local file. */
   media(url: string): Promise<Media>;
+  /** Repository `repo` of `owner` in the community: its URL, and the Git
+   * header that authorizes it there as the agent for a minute. Only where
+   * the host holds the key. */
+  gitAuth?(owner: string, repo: string): Promise<GitAuth>;
   /** A local file's bytes, for tools that take a `path`. */
   read(path: string): Promise<Uint8Array>;
   /** The agent's memory entries, decrypted; only entry `slug` when given. */

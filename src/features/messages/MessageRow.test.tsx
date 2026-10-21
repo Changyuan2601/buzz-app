@@ -3036,6 +3036,8 @@ it.each([0, 23])(
           : "View thread: Brain working. Pinky failed",
       });
       expect(summary).toHaveTextContent("1 failed");
+      expect(summary).not.toHaveTextContent("View thread");
+      if (replyCount) expect(summary).toHaveTextContent("23 replies");
       expect(
         summary.querySelector('[data-thread-working] [data-state="working"]'),
       ).not.toBeNull();

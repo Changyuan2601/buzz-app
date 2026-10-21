@@ -12,7 +12,6 @@ import type { OpenTarget } from "../navigation/targets";
 import type { UnreadCapability } from "../relay/unread";
 import {
   ChecksIcon,
-  GearIcon,
   LinkIcon,
   SignOutIcon,
   TicketIcon,
@@ -30,6 +29,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { communityDestination } from "./destination";
+import { communityName } from "./names";
 import type { Membership } from "./service";
 import styles from "./Communities.module.css";
 
@@ -103,7 +103,7 @@ export function CommunityPickerItem({
         : null;
   };
   const notify = useToastNotification();
-  const { name } = membership;
+  const name = communityName(membership);
   const origin = communityDestination(membership.id).url;
   const scope = viewer ? { viewer, communityOrigin: origin } : undefined;
   /** Both entry points open here, so the roster refresh runs for each. */
@@ -151,6 +151,7 @@ export function CommunityPickerItem({
             button.current = node;
           }}
           label={name}
+          title={`${name} — ${origin}`}
           aria-label={`Switch to ${name}`}
           aria-current={selected ? "true" : undefined}
           selected={selected}
@@ -217,18 +218,6 @@ export function CommunityPickerItem({
               <TicketIcon size={14} />
             </MenuIcon>
             Invite to community
-          </MenuItem>
-        )}
-        {scope && onOpenTarget && (
-          <MenuItem
-            onClick={() =>
-              open({ version: 1, kind: "settings", section: "profile", scope })
-            }
-          >
-            <MenuIcon>
-              <GearIcon size={14} />
-            </MenuIcon>
-            Community settings
           </MenuItem>
         )}
         <MenuSeparator />

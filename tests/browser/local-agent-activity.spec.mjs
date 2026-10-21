@@ -118,10 +118,10 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       const box = await popup.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      // The full reason wraps rather than truncating; Dismiss stays inside.
+      // Errors stay on one line; the full reason remains in the accessible name.
       await expect(popup.getByText("Fixture provider unavailable")).toHaveCSS(
         "white-space",
-        "normal",
+        "nowrap",
       );
       const dismiss = await popup
         .getByRole("button", { name: /^Dismiss error from / })
@@ -204,12 +204,25 @@ test("Stop in a message's activity ends its local work quietly", async ({
   });
   await expect(stop).toBeVisible();
   await expect(stop).toHaveText("Stop");
-  // Its leading icon sits as close to the edge as to the top.
-  const padding = await stop.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return [style.paddingInlineStart, style.paddingTop];
-  });
-  expect(padding[0]).toBe(padding[1]);
+  // The small action sits inside a padded slot; its hit area stays unobscured.
+  await expect
+    .poll(() =>
+      stop.evaluate((element) => {
+        const button = element.getBoundingClientRect();
+        const slot = element.parentElement.getBoundingClientRect();
+        return (
+          slot.height > button.height &&
+          slot.width > button.width &&
+          element.contains(
+            document.elementFromPoint(
+              button.x + button.width / 2,
+              button.y + button.height / 2,
+            ),
+          )
+        );
+      }),
+    )
+    .toBe(true);
   await expect(popup).not.toHaveAttribute("data-starting-style", "");
   const preview = popup.getByText(/^Reading /);
   await expect(preview).toBeVisible();

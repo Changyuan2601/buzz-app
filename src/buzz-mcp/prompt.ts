@@ -10,3 +10,8 @@ export const BUZZ_PROMPT = buzzPrompt.trim();
  * channel's top level; the tools refuse a reply into a thread there. */
 export const TOP_LEVEL_PROMPT =
   "This is a continuous personal chat in the current channel. Continue this channel's conversation. Post progress, results and failures at the channel top level: use the current channel and omit `reply`; do not start or continue a thread here. Destinations you are explicitly asked to use elsewhere keep their own routing.";
+
+/** The note on a turn given again after closing or reloading the app stopped
+ * it partway. */
+export const RESUMED_PROMPT =
+  "Note: The app closed or reloaded while you were working on this message and stopped your turn partway. Carry on where you left off: check what this session and the conversation show you already did, and do not redo finished work or repeat messages you already sent.";

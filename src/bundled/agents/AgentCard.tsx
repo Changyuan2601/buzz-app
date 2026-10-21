@@ -4,6 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import styles from "./AgentCard.module.css";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
@@ -37,6 +38,30 @@ export function AgentPortrait({
   );
 }
 
+/** Cards share the profile header's decorative artwork and media access. */
+export function AgentCardBackdrop({
+  agent,
+  community,
+}: {
+  agent: Portrayed;
+  community?: string | undefined;
+}) {
+  const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
+  const src = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    community,
+    "small",
+  );
+  const backdrop = pack?.preview ?? src;
+  if (!backdrop) return null;
+  return (
+    <>
+      <ProfileBackdrop src={backdrop} />
+      <span className={styles.grain} aria-hidden="true" />
+    </>
+  );
+}
+
 export function AgentCard({
   agent,
   community,
@@ -59,20 +84,23 @@ export function AgentCard({
   menu?: ReactNode;
 }) {
   return (
-    <div {...props} className={styles.card}>
+    <div {...props} className={`${styles.card} ${styles.agentCard}`}>
+      <AgentCardBackdrop agent={agent} community={community} />
       {menu && <div className={styles.menu}>{menu}</div>}
       <span className={styles.portrait} aria-hidden="true">
         <AgentPortrait agent={agent} community={community} />
       </span>
-      <span className={`${styles.name} text-label`}>{agent.name}</span>
       {tag && <span className={styles.tag}>{tag}</span>}
-      {detail && (
-        <span className={styles.detail}>
-          {icon}
-          <span className={styles.detailText}>{detail}</span>
-        </span>
-      )}
-      {children && <span className={styles.actions}>{children}</span>}
+      <span className={styles.identity}>
+        <span className={`${styles.name} text-label`}>{agent.name}</span>
+        {detail && (
+          <span className={styles.detail}>
+            {icon}
+            <span className={styles.detailText}>{detail}</span>
+          </span>
+        )}
+        {children && <span className={styles.actions}>{children}</span>}
+      </span>
     </div>
   );
 }

@@ -580,6 +580,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer[data-editing] {
   overflow: hidden;
 }
+.composerStatus {
+  margin: 0;
+  padding-inline: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
 .composerEditHeader {
   display: flex;
   align-items: center;
@@ -744,6 +753,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
   margin-top: var(--space-1);
+}
+.messageBody [data-thread-summary]:not([data-activity-summary]) {
   padding: var(--space-1);
   padding-right: var(--space-1h);
 }

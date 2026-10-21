@@ -5,6 +5,7 @@ import {
   ArrowRightIcon,
   CaretDownIcon,
   PlusIcon,
+  TrashIcon,
   DotsThreeIcon,
   GearIcon,
   NotificationIcon,
@@ -24,7 +25,9 @@ import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 const variants = [
   "prominent",
   "subtle",
+  "subtle-muted",
   "ghost",
+  "glass",
   "inverted",
   "destructive",
   "outline",
@@ -35,7 +38,9 @@ const sizes = ["sm", "md", "lg"] as const;
 const descriptions = {
   prominent: "The main action in a group.",
   subtle: "A supporting action with a quiet fill.",
+  "subtle-muted": "A quiet fill with muted text until interaction.",
   ghost: "A low-emphasis action without a resting fill.",
+  glass: "A translucent action over artwork.",
   inverted: "An action on an inverse surface.",
   destructive: "An action that removes or destroys something.",
   outline: "A supporting action with a visible boundary.",
@@ -57,7 +62,7 @@ function ButtonMatrix({ kind }: { kind: "text" | "icon" }) {
       <div className="flex flex-col gap-6">
         <SectionHeading
           title="Emphasis and sizes"
-          description="Small · 32px, medium · 40px, large · 52px. Hover, press, or Tab through the controls to inspect their states."
+          description="Small · 32px, medium · 40px, large · 52px. Medium icon + label uses 12px leading / 16px trailing padding. Hover, press, or Tab through the controls to inspect their states."
         />
         <fieldset className="flex flex-wrap gap-2" aria-label="Preview state">
           {(["enabled", "disabled", "loading"] as const).map((value) => (
@@ -146,6 +151,9 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <Button size="caption" variant="subtle-muted">
+        Send
+      </Button>
       <ExamplePreview code='<Button size="sm" shape={labelled ? "capsule" : "icon"} aria-label="Toggle label">…</Button>'>
         <Button
           size="sm"
@@ -393,6 +401,12 @@ export function IconButtonSpecimen() {
         />
       </ExamplePreview>
       <ButtonMatrix kind="icon" />
+      <IconButton
+        variant="destructive-quiet"
+        shape="inset"
+        aria-label="Remove queued message"
+        icon={<TrashIcon />}
+      />
       <ExamplePreview
         label="Row-end action"
         code={`<div className="flex min-h-12 items-center rounded-row bg-affordance-subtle">

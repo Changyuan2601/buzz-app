@@ -21,6 +21,7 @@ import {
 import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferences";
 import type { AppServices } from "../services";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
+import { conversationComposerFocusTarget } from "../focus-navigation";
 import {
   orderPages,
   pagePresentation,
@@ -73,6 +74,7 @@ export function PageSearch({
   );
   const input = useRef<HTMLElement>(null);
   const returnFocus = useRef<HTMLElement>(null);
+  const composerChannel = useRef<string | undefined>(undefined);
   const trigger = useRef<HTMLElement>(null);
   const openRef = useRef(false);
   const setSearchOpen = useCallback((next: boolean) => {
@@ -81,6 +83,7 @@ export function PageSearch({
     setOpen(next);
   }, []);
   const begin = useCallback(() => {
+    composerChannel.current = undefined;
     returnFocus.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -91,6 +94,7 @@ export function PageSearch({
   }, [setSearchOpen]);
   const beginScoped = useCallback(() => {
     if (currentTarget?.kind !== "conversation") return;
+    composerChannel.current = undefined;
     returnFocus.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -184,7 +188,9 @@ export function PageSearch({
         initialFocus={input}
         finalFocus={() =>
           returnFocus.current?.id === "main-content"
-            ? false
+            ? (composerChannel.current &&
+                conversationComposerFocusTarget(composerChannel.current)) ||
+              false
             : returnFocus.current
         }
         onOpenChangeComplete={(open) => {
@@ -202,7 +208,11 @@ export function PageSearch({
             !main.contains(document.activeElement) &&
             !(destination && !destination.contains(input.current))
           )
-            main.focus({ preventScroll: true });
+            (
+              (composerChannel.current &&
+                conversationComposerFocusTarget(composerChannel.current)) ||
+              main
+            ).focus({ preventScroll: true });
         }}
       >
         {contentPresent &&
@@ -226,7 +236,8 @@ export function PageSearch({
                 setScopedChannelId(channelId);
                 input.current?.focus();
               }}
-              close={() => {
+              close={(channelId) => {
+                composerChannel.current = channelId;
                 returnFocus.current = document.getElementById("main-content");
                 setSearchOpen(false);
               }}
@@ -262,7 +273,7 @@ function CommunitySearch({
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
   onScopeChange: (channelId?: string) => void;
-  close: () => void;
+  close: (channelId?: string) => void;
 } & SearchInputProps) {
   const inlineSettings = useSearchSettings({
     query: scopedChannelId ? "" : query,
@@ -373,7 +384,7 @@ function CommunitySearch({
           !connection.session.channels.get?.(channelId)
         )
           return;
-        close();
+        close(messageId ? undefined : channelId);
         void services.navigation.open({
           version: 1,
           kind: "conversation",

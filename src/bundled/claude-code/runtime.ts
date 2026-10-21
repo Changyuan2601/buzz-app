@@ -11,6 +11,7 @@ import {
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -41,6 +42,12 @@ import {
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { readProject } from "../../features/agent-harness/project";
+import { SessionControls } from "../../features/agent-harness/session-control";
+import type {
+  SessionPlace,
+  SessionControlAction,
+  SessionState,
+} from "../../features/agents/service";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -121,7 +128,12 @@ type Entry = {
    * over, and when all of them settled. */
   policies: Map<
     string,
-    { topLevel: boolean; handed: Promise<unknown>; settled: Promise<unknown> }
+    {
+      topLevel: boolean;
+      handed: Promise<unknown>;
+      settled: Promise<unknown>;
+      cancel(): void;
+    }
   >;
 };
 
@@ -174,6 +186,9 @@ export class ClaudeRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
 
   private get spawn(): Spawn {
@@ -338,6 +353,48 @@ export class ClaudeRuntime {
     this.views.clear();
     for (const listener of this.listeners) listener();
   }
+  private readonly controls = new SessionControls(() => this.notify());
+  private controlKey(agent: Agent, place: SessionPlace) {
+    return config(agent.config).scope === "channel" || !place.root
+      ? place.channelId
+      : `${place.channelId}/${place.root}`;
+  }
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = this.controlKey(agent, place);
+    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
+    const entry = this.agents.get(agent.pubkey);
+    return this.controls.active(`${agent.pubkey}/${key}`) ||
+      entry?.policies.has(key) ||
+      entry?.sessions.active(key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const key = this.controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    const entry = this.entry(agent.pubkey, config(agent.config));
+    if (action === "interrupt") {
+      this.controls.interrupt(control);
+      entry.policies.get(key)?.cancel();
+      await entry.sessions.interrupt(key);
+      return;
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (signal) => {
+      signal.throwIfAborted();
+      if (action === "new") await entry.sessions.forget(key);
+      else {
+        const result = await entry.sessions.compact(key);
+        if (!result.ok) throw new Error(result.error);
+      }
+      signal.throwIfAborted();
+    });
+  }
 
   dispose() {
     this.spare.dispose();
@@ -394,86 +451,127 @@ export class ClaudeRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
-    // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) =>
-      this.review(
-        entry,
-        withWelcomeGuidance(
-          turnPrompt({
-            ...(await this.turn(
-              entry,
-              agent.pubkey,
-              event,
-              channel,
-              key,
-              topLevel,
-              fresh,
-            )),
-            agent: agent.pubkey,
-            label: "@mention",
-          }),
-          guidance,
-        ),
-      );
-    // A turn keeps the posting policy it was admitted with: a request under
-    // the other policy waits for the conversation's turns to settle rather
-    // than steering into them and changing their tools' context.
-    const prior = entry.policies.get(key);
-    const same = prior?.topLevel === topLevel;
-    const wait = prior && (same ? prior.handed : prior.settled);
-    let delivered!: Promise<Settled>;
-    const handed = (async () => {
-      await wait;
-      const text = await prompt(false);
-      // A conversation's tools default to its thread; a session shared by
-      // several threads is told which to reply in instead.
-      entry.contexts.set(
-        key,
-        topLevel
-          ? { channel, topLevel }
-          : key === channel
-            ? { channel }
-            : { channel, root: threadReference(event)?.rootId ?? event.id },
-      );
-      delivered = entry.sessions.deliver(key, text, event.created_at, {
-        steer: steerPrompt(text),
-        fresh: () => prompt(true),
-        activityScope: topLevel
-          ? channel
-          : (threadReference(event)?.rootId ?? event.id),
-        ...(step ? { step } : {}),
-        ...(acknowledged ? { acknowledged } : {}),
-        ...(superseded ? { superseded } : {}),
-        pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-      });
-    })();
-    const done = handed.then(
-      () => delivered,
-      (error: unknown): Settled => ({ ok: false, error: String(error) }),
+    signal.throwIfAborted();
+    const handoff = this.controls.deliver(
+      `${agent.pubkey}/${key}`,
+      async (deferred) => {
+        // Accepted deferred work belongs to the captured agent lifetime, not
+        // the short deadline for handing a message to the harness.
+        if (this.agents.get(agent.pubkey) !== entry) return;
+        if (!deferred) signal.throwIfAborted();
+        // `fresh` is for a session that has been shown nothing yet.
+        const prompt = async (fresh: boolean) => {
+          const text = withWelcomeGuidance(
+            turnPrompt({
+              ...(await this.turn(
+                entry,
+                agent.pubkey,
+                event,
+                channel,
+                key,
+                topLevel,
+                fresh,
+              )),
+              agent: agent.pubkey,
+              label: "@mention",
+            }),
+            guidance,
+          );
+          return this.review(
+            entry,
+            trigger.resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
+          );
+        };
+        // A turn keeps the posting policy it was admitted with: a request under
+        // the other policy waits for the conversation's turns to settle rather
+        // than steering into them and changing their tools' context.
+        const prior = entry.policies.get(key);
+        const same = prior?.topLevel === topLevel;
+        const wait = prior && (same ? prior.handed : prior.settled);
+        let delivered!: Promise<Settled>;
+        let interrupted = false;
+        const handed = (async () => {
+          await wait;
+          if (interrupted) {
+            delivered = Promise.resolve({ ok: true });
+            return;
+          }
+          const text = await prompt(false);
+          if (interrupted) {
+            delivered = Promise.resolve({ ok: true });
+            return;
+          }
+          // A conversation's tools default to its thread; a session shared by
+          // several threads is told which to reply in instead.
+          entry.contexts.set(
+            key,
+            topLevel
+              ? { channel, topLevel }
+              : key === channel
+                ? { channel }
+                : { channel, root: threadReference(event)?.rootId ?? event.id },
+          );
+          delivered = entry.sessions.deliver(key, text, event.created_at, {
+            steer: steerPrompt(text),
+            fresh: () => prompt(true),
+            activityScope: topLevel
+              ? channel
+              : (threadReference(event)?.rootId ?? event.id),
+            ...(step ? { step } : {}),
+            ...(acknowledged ? { acknowledged } : {}),
+            ...(superseded ? { superseded } : {}),
+            pick: {
+              ...(model ? { model } : {}),
+              ...(effort ? { effort } : {}),
+            },
+          });
+        })();
+        const done = handed.then(
+          () => delivered,
+          (error: unknown): Settled => ({ ok: false, error: String(error) }),
+        );
+        const policy = {
+          topLevel,
+          cancel() {
+            interrupted = true;
+            prior?.cancel();
+          },
+          handed: handed.catch(() => undefined),
+          settled: Promise.all([same ? prior.settled : undefined, done]).then(
+            () => undefined,
+          ),
+        };
+        entry.policies.set(key, policy);
+        void policy.settled.then(() => {
+          if (entry.policies.get(key) === policy) entry.policies.delete(key);
+        });
+        // Deliveries keep their order: a later one waits on this handover, and
+        // one with nothing to wait for is handed over before `run` returns.
+        if (!wait) await handed;
+        // The turn outlives `run`, which the host is told so it shows it as working.
+        workingUntil(done);
+        interruptible?.(() => entry.sessions.interrupt(key));
+        this.notify();
+        this.watch(done, async (error) => {
+          if (error) await this.report(agent, channel, event, error, topLevel);
+        });
+        if (topLevel && named)
+          void this.offerTitle(
+            done,
+            agent.pubkey,
+            key,
+            settings.workspace,
+            named,
+          );
+      },
     );
-    const policy = {
-      topLevel,
-      handed: handed.catch(() => undefined),
-      settled: Promise.all([same ? prior.settled : undefined, done]).then(
-        () => undefined,
-      ),
-    };
-    entry.policies.set(key, policy);
-    void policy.settled.then(() => {
-      if (entry.policies.get(key) === policy) entry.policies.delete(key);
-    });
-    // Deliveries keep their order: a later one waits on this handover, and
-    // one with nothing to wait for is handed over before `run` returns.
-    if (!wait) await handed;
-    // The turn outlives `run`, which the host is told so it shows it as working.
-    workingUntil(done);
-    interruptible?.(() => entry.sessions.interrupt(key));
-    this.notify();
-    this.watch(done, async (error) => {
-      if (error) await this.report(agent, channel, event, error, topLevel);
-    });
-    if (topLevel && named)
-      void this.offerTitle(done, agent.pubkey, key, settings.workspace, named);
+    if (!handoff.deferred) return handoff.done;
+    workingUntil(handoff.done);
+    void handoff.done
+      .catch((error) =>
+        this.report(agent, channel, event, String(error), topLevel),
+      )
+      .catch((error) => console.warn("Claude handover failed", error));
   }
 
   /** After a Solo chat's turn, offers the host the title Claude Code generated
@@ -790,6 +888,7 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            repositories: this.repositories(this.reads(pubkey)?.scope),
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,

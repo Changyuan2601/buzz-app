@@ -19,7 +19,14 @@ import type {
 import type { EventData } from "../../features/relay/events";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
+import { SessionControls } from "../../features/agent-harness/session-control";
+import type {
+  SessionPlace,
+  SessionControlAction,
+  SessionState,
+} from "../../features/agents/service";
 import type { Context } from "../../buzz-mcp/client";
 import {
   type AddedTool,
@@ -78,7 +85,11 @@ type Request = {
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
+  /** Takes a title for a new Solo chat; see `Delivery.named`. */
+  named?: (title: string) => void;
   failActivity(reason: string): void;
+  /** Given again after a reload stopped its turn partway. */
+  resumed?: true;
 } & (
   | { event: EventData; startup?: never }
   | { event?: never; startup: ConversationStart }
@@ -168,8 +179,26 @@ export type SavedConversation = {
 const STOP_LINGER_MS = 1_000;
 const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
+/** Codex's own small model for titles, and its title rules. */
+const TITLE_MODEL = "gpt-5.6-luna";
+const TITLE_SCHEMA = {
+  type: "object",
+  properties: { title: { type: "string", minLength: 1, maxLength: 36 } },
+  required: ["title"],
+  additionalProperties: false,
+};
+const titlePrompt = (text: string) =>
+  `Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.\n\nUser prompt:\n${[...text].slice(0, 800).join("")}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** The note at the end of a request's turn input, if any. */
+function noteOf(request: Request) {
+  const notes = [
+    request.resumed ? RESUMED_PROMPT : undefined,
+    turnNote(request.agent),
+  ].filter(Boolean);
+  return notes.length ? notes.join("\n\n") : undefined;
+}
 function textOf(event: EventData, name: string) {
   let text = event.content.trim().replace(/^🤖\s+/, "");
   if (text.startsWith(`@${name}`)) text = text.slice(name.length + 1).trim();
@@ -199,6 +228,9 @@ export class CodexRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -208,6 +240,99 @@ export class CodexRuntime {
   };
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
+  private readonly controls = new SessionControls(() => {
+    for (const listener of this.listeners) listener();
+  });
+  private controlKey(agent: Agent, place: SessionPlace) {
+    return JSON.stringify([
+      place.channelId,
+      this.resolveConfig(agent.config).scope === "channel"
+        ? "channel"
+        : (place.root ?? "channel"),
+    ]);
+  }
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = this.controlKey(agent, place);
+    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
+    return this.controls.active(`${agent.pubkey}/${key}`) ||
+      this.entries.get(agent.pubkey)?.lanes.has(key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const reads = this.reads(agent.pubkey);
+    if (!reads) throw new Error("Connect to the agent's community first.");
+    const key = this.controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    const entry = this.entry(agent.pubkey, reads.scope);
+    if (action === "interrupt") {
+      if (this.controls.interrupt(control)) return;
+      const active = entry.lanes.get(key)?.active;
+      if (active) await this.interrupt(entry, key, active.reply);
+      return;
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (cancel) => {
+      const signal = AbortSignal.any([entry.abort.signal, cancel]);
+      signal.throwIfAborted();
+      const saved = entry.saved[key];
+      if (action === "new") {
+        if (!saved) return;
+        delete entry.saved[key];
+        try {
+          await this.storage.set(entry.storageKey, JSON.stringify(entry.saved));
+        } catch (error) {
+          entry.saved[key] = saved;
+          throw error;
+        }
+        return;
+      }
+      if (!saved) throw new Error("There is no session here to compact yet.");
+      const server = this.open();
+      const rpc = await server.opening;
+      const settings = this.resolveConfig(agent.config);
+      const workspace = await this.workspace(settings.workspace);
+      if (workspace !== saved.workspace)
+        throw new Error(
+          "The workspace changed. Send a message to start its session first.",
+        );
+      const { params } = await this.prepare(
+        rpc,
+        agent,
+        settings,
+        workspace,
+        {},
+      );
+      signal.throwIfAborted();
+      try {
+        await rpc.request("thread/resume", {
+          ...params,
+          threadId: saved.threadId,
+          excludeTurns: true,
+        });
+        signal.throwIfAborted();
+        await this.compact(rpc, signal, saved.threadId, agent.pubkey, key);
+        this.status(agent.pubkey, key, "Idle");
+      } catch (error) {
+        this.status(
+          agent.pubkey,
+          key,
+          signal.aborted ? "Interrupted" : "Needs attention",
+          message(error),
+        );
+        throw error;
+      } finally {
+        await rpc
+          .request("thread/unsubscribe", { threadId: saved.threadId })
+          .catch(() => undefined);
+      }
+    });
+  }
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([settings.model, settings.effort]);
@@ -537,6 +662,7 @@ export class CodexRuntime {
     const toolRoot =
       channel?.dm || topLevel ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
+    delivery.signal.throwIfAborted();
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
       finishActivity = resolve;
@@ -569,6 +695,8 @@ export class CodexRuntime {
       ...(delivery.step ? { step: delivery.step } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
+      ...(trigger.resumed ? { resumed: true } : {}),
+      ...(topLevel && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -581,97 +709,119 @@ export class CodexRuntime {
       return;
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
-    const text = textOf(trigger.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
-    delivery.interruptible?.(() => this.interrupt(entry, key, request));
     entry.waiting.add(request);
-    let lane = entry.lanes.get(key);
-    if (!lane) {
-      lane = { tail: entry.after, queued: 0 };
-      entry.lanes.set(key, lane);
-    }
-    if (lane.active) {
-      const active = lane.active;
-      let queued = false;
-      const queue = () => {
-        queued = true;
-        this.start(request, text, key, lane, entry);
-      };
-      // Startup and history reads stay ordered without holding Agents delivery.
-      const accepted = active.steering.then(async () => {
-        try {
-          await active.ready;
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
-          }
-          // Steering cannot carry a model or effort, so a differing pick
-          // waits for this turn and runs as the next one. Everything after
-          // it queues too until the lane drains: steering would run later
-          // messages first. A turn keeps the posting policy it was admitted
-          // with, so a request under the other policy waits for it too. A
-          // turn the owner stopped takes nothing more.
-          if (
-            active.finished ||
-            active.stopped ||
-            lane.queued ||
-            request.conversation.topLevel !==
-              active.reply.conversation.topLevel ||
-            (request.model && request.model !== active.model) ||
-            (request.effort && request.effort !== active.effort)
-          ) {
-            queue();
-            return;
-          }
-          const context = await this.history(request, entry.abort.signal);
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
-          }
-          if (active.finished || active.stopped) {
-            queue();
-            return;
-          }
-          await active.rpc.request("turn/steer", {
-            threadId: active.threadId,
-            expectedTurnId: active.turnId,
-            input: input(
-              `${context}${request.project ?? ""}${withWelcomeGuidance(turnInput(trigger.event, request.conversation, text, true, turnNote(request.agent)), request.guidance)}`,
-            ),
-          });
-          active.reply = request;
-          active.requests.push(request);
-          entry.waiting.delete(request);
-          this.touch(request, entry, key);
-          this.acknowledgeActivity(active, request);
-        } catch (error) {
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
-          }
-          // A completion racing the request means this is the next ordinary turn.
-          if (message(error) === "no active turn to steer") {
-            queue();
-            return;
-          }
-          request.failActivity(`Steering was not accepted: ${message(error)}`);
-          await this.publish(
-            request,
-            `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
-          );
-          // The running turn never took this request in, so nothing else
-          // answers it: let go of its working hold now, not at that turn's end.
-          request.answered();
-        } finally {
-          if (!queued) entry.waiting.delete(request);
+    delivery.interruptible?.(() => this.interrupt(entry, key, request));
+    const handoff = this.controls.deliver(
+      `${agent.pubkey}/${key}`,
+      async (deferred) => {
+        if (deferred) entry.abort.signal.throwIfAborted();
+        else delivery.signal.throwIfAborted();
+        const text = textOf(trigger.event, agent.name);
+        let lane = entry.lanes.get(key);
+        if (!lane) {
+          lane = { tail: entry.after, queued: 0 };
+          entry.lanes.set(key, lane);
         }
-      });
-      active.steering = accepted.catch((error) =>
-        console.error("Codex steering failed", error),
-      );
-      return;
-    }
-    this.start(request, text, key, lane, entry);
+        if (lane.active) {
+          const active = lane.active;
+          let queued = false;
+          const queue = () => {
+            queued = true;
+            this.start(request, text, key, lane, entry);
+          };
+          // Startup and history reads stay ordered without holding Agents delivery.
+          const accepted = active.steering.then(async () => {
+            try {
+              await active.ready;
+              if (entry.abort.signal.aborted) {
+                request.failActivity("Codex was stopped");
+                return;
+              }
+              // Steering cannot carry a model or effort pick, so a
+              // differing pick waits for this turn and runs as the next one.
+              // Everything after it queues too until the lane drains: steering
+              // would run later messages first. A turn keeps the posting policy
+              // it was admitted with, so a request under the other policy waits
+              // for it too. A turn the owner stopped takes nothing more.
+              if (
+                active.finished ||
+                active.stopped ||
+                lane.queued ||
+                request.conversation.topLevel !==
+                  active.reply.conversation.topLevel ||
+                (request.model && request.model !== active.model) ||
+                (request.effort && request.effort !== active.effort)
+              ) {
+                queue();
+                return;
+              }
+              const context = await this.history(request, entry.abort.signal);
+              if (entry.abort.signal.aborted) {
+                request.failActivity("Codex was stopped");
+                return;
+              }
+              if (active.finished || active.stopped) {
+                queue();
+                return;
+              }
+              await active.rpc.request("turn/steer", {
+                threadId: active.threadId,
+                expectedTurnId: active.turnId,
+                input: input(
+                  `${context}${request.project ?? ""}${withWelcomeGuidance(turnInput(trigger.event, request.conversation, text, true, noteOf(request)), request.guidance)}`,
+                ),
+              });
+              active.reply = request;
+              active.requests.push(request);
+              entry.waiting.delete(request);
+              this.touch(request, entry, key);
+              this.acknowledgeActivity(active, request);
+            } catch (error) {
+              if (entry.abort.signal.aborted) {
+                request.failActivity("Codex was stopped");
+                return;
+              }
+              // A completion racing the request means this is the next ordinary turn.
+              if (message(error) === "no active turn to steer") {
+                queue();
+                return;
+              }
+              request.failActivity(
+                `Steering was not accepted: ${message(error)}`,
+              );
+              await this.publish(
+                request,
+                `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
+              );
+              // The running turn never took this request in, so nothing else
+              // answers it: let go of its working hold now, not at that turn's end.
+              request.answered();
+            } finally {
+              if (!queued) entry.waiting.delete(request);
+            }
+          });
+          active.steering = accepted.catch((error) =>
+            console.error("Codex steering failed", error),
+          );
+          return;
+        }
+        this.start(request, text, key, lane, entry);
+      },
+    );
+    const handed = handoff.done.catch((error) => {
+      entry.waiting.delete(request);
+      request.failActivity(message(error));
+      throw error;
+    });
+    if (!handoff.deferred) return handed;
+    delivery.workingUntil(handed);
+    void handed
+      .catch(async (error) => {
+        if (!entry.abort.signal.aborted)
+          await this.publish(request, message(error));
+      })
+      .catch((error) => console.warn("Codex handover failed", error));
   }
 
   /** A real saved channel thread, with app input instead of a viewer event. */
@@ -785,7 +935,7 @@ export class CodexRuntime {
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       once.workspace = workspace;
-      const { params, model, effort } = await this.prepare(
+      const { params, model, effort, summary } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -814,7 +964,14 @@ export class CodexRuntime {
           input: input(text),
           model,
           effort,
-          additionalContext: turnContext(agent, settings, team, memory),
+          ...summary,
+          additionalContext: turnContext(
+            agent,
+            settings,
+            team,
+            memory,
+            this.repositories(scope),
+          ),
         },
       );
       once.turnId ??= turnStarted.turn.id;
@@ -902,6 +1059,50 @@ export class CodexRuntime {
     request.acknowledged?.();
   }
 
+  /** Compacts thread `threadId`, which runs as a turn of its own on it. */
+  private async compact(
+    rpc: AppServer,
+    signal: AbortSignal,
+    threadId: string,
+    pubkey: string,
+    key: string,
+  ) {
+    const turn: { threadId: string; turnId?: string; finished: boolean } = {
+      threadId,
+      finished: false,
+    };
+    // Keep following until the provider ends the turn, even if Interrupt is
+    // clicked before its turn/started notification arrives.
+    const followed = follow(rpc, new AbortController().signal, turn);
+    let stopping: Promise<unknown> | undefined;
+    const interrupt = () => {
+      if (!signal.aborted || !turn.turnId || turn.finished) return;
+      if (stopping) return;
+      stopping = rpc
+        .request("turn/interrupt", { threadId, turnId: turn.turnId })
+        .catch(() => rpc.close());
+    };
+    const off = rpc.onMessage(interrupt);
+    signal.addEventListener("abort", interrupt);
+    try {
+      signal.throwIfAborted();
+      this.status(pubkey, key, "Compacting");
+      await rpc.request("thread/compact/start", { threadId });
+      const status = await followed.completed;
+      signal.throwIfAborted();
+      if (status !== "completed") throw new Error("Compaction was interrupted");
+    } catch (error) {
+      await rpc
+        .request("thread/unsubscribe", { threadId })
+        .catch(() => rpc.close());
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", interrupt);
+      off();
+      followed.stop();
+    }
+  }
+
   private start(
     request: Request,
     text: string,
@@ -928,7 +1129,10 @@ export class CodexRuntime {
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {
-        if (current.tail === job && !current.active) entry.lanes.delete(key);
+        if (current.tail === job && !current.active) {
+          entry.lanes.delete(key);
+          for (const listener of this.listeners) listener();
+        }
       });
     return job;
   }
@@ -1115,11 +1319,80 @@ export class CodexRuntime {
       throw error;
     }
   }
+  /** Titles a chat from its first message as Codex's own app does: one
+   * structured turn on an ephemeral read-only thread, on its small title
+   * model when the account has it. The host decides whether the chat takes it. */
+  private async offerTitle(
+    rpc: AppServer,
+    named: (title: string) => void,
+    text: string,
+    stopped: AbortSignal,
+    // The conversation's thread settings: its workspace, model, and Codex
+    // config with MCP servers, plugins, apps and web search off.
+    {
+      cwd,
+      model,
+      config,
+    }: Readonly<{
+      cwd: string;
+      model: string;
+      config: Record<string, unknown>;
+    }>,
+  ) {
+    const models = await listModels(rpc);
+    const selected =
+      models.find((row) => row.model === TITLE_MODEL) ??
+      models.find((row) => row.model === model);
+    if (!selected) return;
+    const low = selected.supportedReasoningEfforts.some(
+      (level) => level.reasoningEffort === "low",
+    );
+    const signal = AbortSignal.any([stopped, AbortSignal.timeout(60_000)]);
+    const turn: { threadId?: string; turnId?: string; finished: boolean } = {
+      finished: false,
+    };
+    let reply = "";
+    const followed = follow(rpc, signal, turn, (method, item) => {
+      if (method === "item/completed" && item.type === "agentMessage")
+        reply = item.text ?? "";
+    });
+    try {
+      const started = await rpc.request<{ thread: { id: string } }>(
+        "thread/start",
+        {
+          model: selected.model,
+          cwd,
+          approvalPolicy: "never",
+          sandbox: "read-only",
+          ephemeral: true,
+          config,
+        },
+      );
+      turn.threadId = started.thread.id;
+      await rpc.request("turn/start", {
+        threadId: turn.threadId,
+        input: input(titlePrompt(text)),
+        model: selected.model,
+        ...(low ? { effort: "low" } : {}),
+        outputSchema: TITLE_SCHEMA,
+      });
+      if ((await followed.completed) !== "completed" || stopped.aborted) return;
+      const title = (JSON.parse(reply) as { title?: unknown }).title;
+      if (typeof title === "string" && title.trim()) named(title.trim());
+    } finally {
+      followed.stop();
+      if (turn.threadId)
+        await rpc
+          .request("thread/unsubscribe", { threadId: turn.threadId })
+          .catch(() => undefined);
+    }
+  }
+
   /** What a thread for `agent` starts or resumes with in `workspace`, and the
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: AgentHandle,
+    agent: Pick<AgentHandle, "name" | "pubkey">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -1127,6 +1400,7 @@ export class CodexRuntime {
     const normalized = await rpc.request<{
       config: {
         mcp_servers?: Record<string, Record<string, unknown>>;
+        model_reasoning_summary?: string | null;
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
@@ -1176,7 +1450,11 @@ export class CodexRuntime {
         "features.apps": false,
       },
     };
-    return { params, model, effort };
+    // Ask for reasoning summaries unless the user chose a summary mode.
+    const summary = normalized.config.model_reasoning_summary
+      ? {}
+      : { summary: "auto" };
+    return { params, model, effort, summary };
   }
   private async execute(
     request: Request,
@@ -1237,7 +1515,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const { params, model, effort } = await this.prepare(
+      const { params, model, effort, summary } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -1307,15 +1585,34 @@ export class CodexRuntime {
                 request.conversation.channelId,
                 text,
               )
-            : `${context}${request.project ?? ""}${withWelcomeGuidance(turnInput(request.event, request.conversation, text, false, turnNote(request.agent)), request.guidance)}`,
+            : `${context}${request.project ?? ""}${withWelcomeGuidance(turnInput(request.event, request.conversation, text, false, noteOf(request)), request.guidance)}`,
         ),
         model,
         effort,
+        ...summary,
         // Application context is a developer message that updates on each turn.
-        additionalContext: turnContext(agent, settings, request.team, memory),
+        additionalContext: turnContext(
+          agent,
+          settings,
+          request.team,
+          memory,
+          this.repositories(request.scope),
+        ),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
+      // A conversation new to this agent: name its Solo chat meanwhile.
+      if (request.named && !existing)
+        void this.offerTitle(
+          rpc,
+          request.named,
+          text,
+          entry.abort.signal,
+          params,
+        ).catch((error) => {
+          if (!entry.abort.signal.aborted)
+            console.warn("Codex could not title the chat", error);
+        });
       // Empty threads have no resumable rollout until a user turn is accepted.
       this.save(request, entry, key, {
         threadId: started.thread.id,

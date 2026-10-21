@@ -22,21 +22,27 @@ export async function nameSoloChat(
   event: RelayEvent,
   title: string,
 ) {
-  const snapshot = relay?.snapshot();
-  if (snapshot?.status !== "ready" || snapshot.viewer !== owner) return;
-  const { session } = snapshot;
+  // Every reason to leave a chat's name is quiet by design; log which one, or
+  // a title that never lands can't be traced.
   const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+  const skip = (reason: string) =>
+    console.info(`Solo chat not named (${reason})`, { channel, title });
+  const snapshot = relay?.snapshot();
+  if (snapshot?.status !== "ready" || snapshot.viewer !== owner)
+    return skip("owner not connected");
+  const { session } = snapshot;
   const solo = () =>
     ownSolo(
       session.channels.list().channels.find((item) => item.id === channel),
       owner,
     );
-  if (!channel || !solo()) return;
+  if (!channel || !solo()) return skip("not the owner's Solo chat");
   const name = [...canonicalDetailsName(title.replace(/\s+/g, " "))]
     .slice(0, 120)
     .join("");
   const details = session.channelDetails;
-  if (!name || !details.available) return;
+  if (!name) return skip("empty title");
+  if (!details.available) return skip("channel editing unavailable");
   const current = () => {
     const latest = relay?.snapshot();
     return (
@@ -61,11 +67,11 @@ export async function nameSoloChat(
       consistency: "strong",
     },
   ]);
+  if (!current()) return skip("connection changed");
+  if (history.length >= limit) return skip("too much history");
+  // session.read also merges the local outbox; an unsent event cannot be
+  // evidence of the chat's original published message.
   if (
-    !current() ||
-    history.length >= limit ||
-    // session.read also merges the local outbox; an unsent event cannot be
-    // evidence of the chat's original published message.
     history.some(
       (message) =>
         message.delivery !== undefined &&
@@ -73,7 +79,7 @@ export async function nameSoloChat(
         message.delivery !== "seen",
     )
   )
-    return;
+    return skip("unsent message");
   const messages = history
     .filter(
       (message) =>
@@ -85,13 +91,12 @@ export async function nameSoloChat(
     )
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
   const original = messages[0];
+  if (!original) return skip("first message not found");
   // Same-second messages do not prove authoring order. Do not choose a winner.
-  if (
-    !original ||
-    messages[1]?.created_at === original.created_at ||
-    original.tags.find(([tag]) => tag === "p")?.[1] !== agent
-  )
-    return;
+  if (messages[1]?.created_at === original.created_at)
+    return skip("first message unclear");
+  if (original.tags.find(([tag]) => tag === "p")?.[1] !== agent)
+    return skip("another agent was tagged first");
   const recipients: DraftRecipient[] = [];
   let offset = 0;
   for (const part of profileMentionParts(
@@ -116,13 +121,13 @@ export async function nameSoloChat(
   }
   const initial = startingChatTitle({ text: original.content, recipients });
   const base = await details.load(channel);
+  if (!current()) return skip("connection changed");
+  if (!base.canEdit) return skip("owner can't edit the chat");
   if (
-    !current() ||
-    !base.canEdit ||
     base.labels?.includes(SOLO_NAMED_LABEL) ||
     base.name === name ||
     canonicalDetailsName(base.name) !== initial
   )
-    return;
+    return skip("chat already renamed");
   await details.save(base, { ...base, name });
 }

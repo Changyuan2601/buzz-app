@@ -58,6 +58,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     messages: { ...owner.session.messages, send },
     outbox: {
       subscribe: () => () => {},
+      observeDismiss: () => () => {},
       observeSend: () => () => {},
       supports: () => true,
       ready: async () => {},

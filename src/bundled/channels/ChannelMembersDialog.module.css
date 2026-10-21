@@ -113,6 +113,10 @@
   min-width: 0;
 }
 .profileHitTarget {
+  /* The member row owns hover, focus-within and menu-open paint. */
+  --interaction-row-hover: transparent;
+  --interaction-selected: transparent;
+  --interaction-pressed: transparent;
   position: absolute;
   inset: 0;
   display: flex;

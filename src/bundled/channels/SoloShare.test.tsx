@@ -34,7 +34,12 @@ import {
   saveShareHistory,
   shareHistoryKey,
 } from "../../features/solo/share-history";
-import { ChatAccessIndicator, SoloShare } from "./SoloShare";
+import {
+  ChatAccessIndicator,
+  ChatSharedMark,
+  SoloShare,
+  soloSharedMarkId,
+} from "./SoloShare";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
@@ -1129,7 +1134,7 @@ it("row Share conversion retains its captured visit when the sidebar survives na
   );
   const mounted = render(view(visit.signal));
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Share…" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Share" }));
   await user.click(
     within(screen.getByRole("dialog", { name: "Share chat" })).getByRole(
       "button",
@@ -1553,6 +1558,18 @@ it("shows Shared on cold render from verified members and cached human evidence 
   expect(
     screen.getByRole("button", { name: "Shared · Manage access" }),
   ).toBeEnabled();
+  cleanup();
+  // The sidebar's status mark reads the same evidence but is not an action.
+  render(
+    <>
+      <button type="button" aria-describedby={soloSharedMarkId(source)}>
+        Row
+      </button>
+      <ChatSharedMark session={t.session} channel={channel} />
+    </>,
+  );
+  expect(screen.getByRole("button")).toHaveAccessibleDescription("Shared");
+  expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
     "ready",
   );

@@ -108,6 +108,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
     }),
     expect.objectContaining({ type: "message", text: "Done", posted: true }),
     expect.objectContaining({ type: "message", text: "Fixed." }),
+    expect.objectContaining({ type: "status", text: "Context compaction" }),
   ]);
   const [channelTurn] = codexTurns(
     [turn({ status: "interrupted", completedAt: null, items: [] })],
@@ -123,6 +124,25 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
 const agent = { pubkey: "a".repeat(64), name: "Sol" };
 const lookup = { agent, channelId: "channel", name: "dev", root };
 
+it.each([
+  ["summary only", { summary: ["Plan"] }, "Plan"],
+  ["content only", { content: ["Raw"] }, "Raw"],
+  ["both", { summary: ["Plan"], content: ["Raw"] }, "Plan\n\nRaw"],
+  ["both, repeated", { summary: ["Same"], content: ["Same"] }, "Same"],
+  [
+    "summary with its own repeat",
+    { summary: ["check", "retry", "check"], content: ["retry", "Raw"] },
+    "check\n\nretry\n\ncheck\n\nRaw",
+  ],
+])("shows Codex reasoning from its %s", (_, reasoning, text) => {
+  const [mapped] = codexTurns(
+    [turn({ items: [{ type: "reasoning", id: "r1", ...reasoning }] })],
+    conversation,
+  );
+  expect(mapped?.items).toEqual([
+    expect.objectContaining({ type: "thought", text }),
+  ]);
+});
 it("shows the command the model wrote, not the login shell running it", () => {
   expect(shellCommand("/bin/zsh -lc 'git diff --stat'")).toBe(
     "git diff --stat",
@@ -182,9 +202,23 @@ it("keeps a send that failed or has not finished as a tool call", () => {
 function server(
   list: (params: Record<string, unknown>) => Wire,
   threads: { id: string; name: string; updatedAt: number }[] = [],
+  rollout?: string,
 ) {
   const sent: Wire[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    if (_id === "read") {
+      // Match the desktop host's process-directory contract.
+      if (options?.cwd && !options.cwd.startsWith("/"))
+        throw new Error("The process directory must be absolute");
+      if (rollout === undefined) options?.onStderr?.("file unavailable");
+      else options?.onStdout?.(btoa(rollout));
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(rollout === undefined ? 1 : 0),
+      };
+    }
     let exit!: (code: number) => void;
     const exited = new Promise<number>((resolve) => {
       exit = resolve;
@@ -198,15 +232,17 @@ function server(
         const reply =
           wire.method === "thread/turns/list"
             ? list(params)
-            : wire.method === "thread/list"
-              ? {
-                  result: {
-                    data: threads.filter((thread) =>
-                      thread.name.includes(String(params.searchTerm)),
-                    ),
-                  },
-                }
-              : { result: {} };
+            : wire.method === "thread/read"
+              ? { result: { thread: { path: "/sessions/rollout.jsonl" } } }
+              : wire.method === "thread/list"
+                ? {
+                    result: {
+                      data: threads.filter((thread) =>
+                        thread.name.includes(String(params.searchTerm)),
+                      ),
+                    },
+                  }
+                : { result: {} };
         options?.onStdout?.(`${JSON.stringify({ id: wire.id, ...reply })}\n`);
       },
       end: async () => exit(0),
@@ -230,6 +266,57 @@ const paged =
       },
     };
   };
+
+it("loads the recorded script through the declared file reader, and reports unavailable details", async () => {
+  const rollout = [
+    { type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } },
+    {
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call",
+        call_id: "script",
+        name: "exec",
+        input: "text(42)",
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "script",
+        output: "42",
+      },
+    },
+  ]
+    .map((record) => JSON.stringify(record))
+    .join("\n");
+  const { spawn } = server(paged([turn({ items: [] })]), [], rollout);
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "thread-1" },
+    new AbortController().signal,
+  );
+  expect(spawn).toHaveBeenCalledWith(
+    "read",
+    expect.objectContaining({ args: ["/sessions/rollout.jsonl"] }),
+  );
+  expect(read?.turns[0]?.items).toMatchObject([
+    { title: "exec", input: "text(42)", output: "42" },
+  ]);
+  const unavailable = server(paged([turn()]));
+  const fallback = await readTranscript(
+    unavailable.spawn,
+    { ...lookup, threadId: "thread-1" },
+    new AbortController().signal,
+  );
+  expect(fallback?.turns[0]?.items[0]).toMatchObject({
+    type: "status",
+    text: expect.stringContaining("CodeMode scripts could not be loaded"),
+  });
+  expect(fallback?.turns[0]?.items).toContainEqual(
+    expect.objectContaining({ title: "pnpm test" }),
+  );
+});
 
 it("reads the latest turns oldest first, a turn per request, and closes its app-server", async () => {
   const { spawn, sent } = server(

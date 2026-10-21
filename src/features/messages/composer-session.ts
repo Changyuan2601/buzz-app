@@ -39,7 +39,8 @@ export type ComposerSession = Pick<
     RelaySession["archives"],
     "snapshot" | "subscribe" | "ensure" | "state" | "refresh"
   >;
-  typing: Pick<RelaySession["typing"], "snapshot" | "subscribe">;
+  typing: Pick<RelaySession["typing"], "snapshot" | "subscribe"> &
+    Partial<Pick<RelaySession["typing"], "send">>;
   presence?: Pick<NonNullable<RelaySession["presence"]>, "status"> | undefined;
   directMessages: Pick<RelaySession["directMessages"], "people">;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;

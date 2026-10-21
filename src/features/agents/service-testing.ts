@@ -112,6 +112,10 @@ export function fakeRelay(origin = "https://relay.example.test") {
     read: vi.fn(async (filters: readonly ReadFilter[]) =>
       filters[0]?.kinds?.includes(9) ? page(history, filters[0]) : [...listed],
     ),
+    readRemote: vi.fn(async (filters: readonly ReadFilter[]) => {
+      const ids = filters[0]?.ids ?? [];
+      return history.filter((event) => ids.includes(event.id));
+    }),
     channelWrites: {
       starting: (_id: string): Promise<void> | undefined => undefined,
     },
@@ -371,6 +375,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
     searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ({ path: "", type: "", size: 0 })),
+    gitAuth: vi.fn(async () => ({ url: "", header: "" })),
     remember: vi.fn(async (pubkey: string) =>
       event(`m${++published}`, { pubkey }),
     ),

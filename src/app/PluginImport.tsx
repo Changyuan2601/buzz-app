@@ -430,9 +430,9 @@ export function PluginImport({
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
-              : "Choose a built plugin to load."
+              : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error ? "default" : "wide"}
+        size={error ? "compact" : "wide"}
         leadingActions={
           reviewing &&
           candidate &&
@@ -539,10 +539,6 @@ export function PluginImport({
         )}
         <div hidden={!!error}>
           <div hidden={!!preview}>
-            <p className="mb-4 mt-0 text-body-sm text-muted">
-              Load built plugins containing manifest.json and plugin.js. Buzz
-              doesn’t build source code or run install scripts.
-            </p>
             <div className={styles.columns}>
               <section
                 aria-label="Add from folder"

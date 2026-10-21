@@ -21,8 +21,10 @@ export type DialogProps = {
   title: ReactNode;
   /** Search palettes keep an accessible title without visible header chrome. */
   presentation?: "default" | "search";
+  /** Introductory copy belongs in the title lockup, not a body paragraph. */
   description?: ReactNode;
-  children: ReactNode;
+  /** Omit for a header-only message; no empty body spacing is rendered. */
+  children?: ReactNode;
   /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
   navigation?: { label: string; content: ReactNode };
   /** Fill a positioned host frame; null waits for its callback ref on cold opens. */
@@ -47,8 +49,8 @@ export type DialogProps = {
   height?: "content" | "stable" | "stable-tall";
   /** Let bounded content own its scrolling instead of the shared body. */
   bodyLayout?: "flow" | "flex";
-  /** Wide catalogs and expanded reading surfaces retain the same modal/focus behavior. */
-  size?: "default" | "wide" | "expanded";
+  /** Compact dialogs; standard, wide, and expanded task modals. */
+  size?: "compact" | "default" | "wide" | "expanded";
   /** Keep frequent surfaces such as search palettes immediate. */
   motion?: "default" | "none";
   /** A pending operation can prevent all user dismissal paths. */
@@ -139,6 +141,7 @@ export function Dialog({
               render={
                 <IconButton
                   aria-label={closeLabel}
+                  variant="subtle"
                   disabled={preventClose}
                   size="compact"
                   icon={<XIcon size={16} aria-hidden="true" />}
@@ -148,47 +151,49 @@ export function Dialog({
           </div>
         </header>
       )}
-      <div
-        className="buzz-dialog-body buzz-dialog-content"
-        data-chrome-spacing={chromeSpacing}
-        data-header-gap={headerGap}
-        data-footer-gap={footerGap}
-      >
-        {navigation ? (
-          <div className="buzz-dialog-navigation-layout">
-            {/* biome-ignore lint/a11y/useKeyWithClickEvents: Delegated buttons emit click for both keyboard and pointer activation. */}
-            <nav
-              aria-label={navigation.label}
-              className="buzz-dialog-navigation"
-              onClick={() => {
-                const content = detail.current;
-                if (!content) return;
-                const nav = content.previousElementSibling;
-                if (
-                  nav &&
-                  nav.getBoundingClientRect().width > 0 &&
-                  nav.getBoundingClientRect().bottom <=
-                    content.getBoundingClientRect().top
-                ) {
-                  content.focus();
-                  content.scrollIntoView({ block: "start" });
-                }
-              }}
-            >
-              {navigation.content}
-            </nav>
-            <div
-              className="buzz-dialog-navigation-detail"
-              ref={detail}
-              tabIndex={-1}
-            >
-              {children}
+      {((children != null && children !== false) || navigation) && (
+        <div
+          className="buzz-dialog-body buzz-dialog-content"
+          data-chrome-spacing={chromeSpacing}
+          data-header-gap={headerGap}
+          data-footer-gap={footerGap}
+        >
+          {navigation ? (
+            <div className="buzz-dialog-navigation-layout">
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: Delegated buttons emit click for both keyboard and pointer activation. */}
+              <nav
+                aria-label={navigation.label}
+                className="buzz-dialog-navigation"
+                onClick={() => {
+                  const content = detail.current;
+                  if (!content) return;
+                  const nav = content.previousElementSibling;
+                  if (
+                    nav &&
+                    nav.getBoundingClientRect().width > 0 &&
+                    nav.getBoundingClientRect().bottom <=
+                      content.getBoundingClientRect().top
+                  ) {
+                    content.focus();
+                    content.scrollIntoView({ block: "start" });
+                  }
+                }}
+              >
+                {navigation.content}
+              </nav>
+              <div
+                className="buzz-dialog-navigation-detail"
+                ref={detail}
+                tabIndex={-1}
+              >
+                {children}
+              </div>
             </div>
-          </div>
-        ) : (
-          children
-        )}
-      </div>
+          ) : (
+            children
+          )}
+        </div>
+      )}
       {(actions || leadingActions) && (
         <footer
           className="buzz-dialog-actions"

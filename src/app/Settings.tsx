@@ -56,6 +56,7 @@ import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 import { IdentitySettings } from "./IdentitySettings";
+import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -275,6 +276,7 @@ function PluginDetails({
     : null;
   const toggle = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -520,10 +522,12 @@ function PluginDetails({
           description="Removes this plugin and its rollback history from Buzz. You can install it again later."
           pending={busy || deleting}
           finalFocus={deleteTrigger}
+          initialFocus={cancelDelete}
           onClose={() => setConfirmDelete(false)}
           actions={
             <>
               <Button
+                ref={cancelDelete}
                 disabled={busy || deleting}
                 onClick={() => setConfirmDelete(false)}
               >
@@ -616,6 +620,7 @@ export function Settings({
     plugin.manifest.id === "buzz.moderation"
       ? membershipAccess
       : moderationAccess;
+  useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -1156,6 +1161,16 @@ export function Settings({
             onUnsavedChange={onUnsavedChange}
           />
         </div>
+        {selectedCommunity && (
+          <div hidden={selected !== "local-settings"}>
+            <CommunityLocalSettings
+              key={`${client.viewer}:${selectedCommunity.id}`}
+              communities={communities}
+              community={selectedCommunity}
+              viewer={client.viewer}
+            />
+          </div>
+        )}
         {selected === "identity" && (
           <IdentitySettings
             key={client.viewer}

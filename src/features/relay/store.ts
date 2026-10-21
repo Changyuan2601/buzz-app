@@ -974,7 +974,7 @@ export function createChannelStore(
         event.pubkey !== transport.relayAuthor ||
         !id ||
         discovery.metadataVersion(id)?.id !== event.id ||
-        discovery.get(id)?.huddle ||
+        discovery.get(id)?.parentChannelId ||
         !identity.creator ||
         (settings?.consistency !== "strong" &&
           creationReads.get(id) === event.id)
@@ -1070,12 +1070,11 @@ export function createChannelStore(
         !discovery.get(channel.id)?.cached &&
         discovery.canAccess(channel.id),
     );
-    const channels = Object.freeze(discovery.channels());
+    const readable = discovery.readable();
+    const channels = Object.freeze(discovery.channels(readable));
     // A system channel never lists but stays readable: its saved history is
     // kept and restored like any other channel's.
-    const nextAllowed = new Set(
-      discovery.readable().map((channel) => channel.id),
-    );
+    const nextAllowed = new Set(readable.map((channel) => channel.id));
     const known = new Set([
       ...(allowed ?? []),
       ...windows.keys(),
@@ -1536,7 +1535,8 @@ export function createChannelStore(
         discovery.get(id)?.cached ||
         !discovery.metadataVersion(id) ||
         (unnamed && !discovery.named(id)) ||
-        (settings?.consistency === "strong" && !discovery.get(id)?.huddle),
+        (settings?.consistency === "strong" &&
+          !discovery.get(id)?.parentChannelId),
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");

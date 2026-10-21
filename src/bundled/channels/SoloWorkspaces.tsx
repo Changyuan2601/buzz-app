@@ -1,6 +1,8 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { SoloShare, ChatAccessIndicator } from "./SoloShare";
+import { SoloShare, ChatSharedMark } from "./SoloShare";
+import { SoloChatName } from "./SoloChatName";
+import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -13,6 +15,7 @@ import {
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -49,7 +52,16 @@ import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 
 /** Presentation only. The caller supplies authorized, saved chats. */
-export type ChatListItem = Readonly<{ id: string; title: string }>;
+export type ChatListItem = Readonly<{
+  id: string;
+  title: string;
+  /** Stays listed past a workspace's cap, like the open or an unread chat. */
+  pinned?: boolean;
+}>;
+
+/** Each workspace lists its most recent chats; Show more adds a step. */
+export const SOLO_CHAT_CAP = 7;
+export const SOLO_CHAT_STEP = 10;
 
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SoloWorkspaces({
@@ -68,7 +80,10 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
-  renderChat: (item: ChatListItem) => ReactNode;
+  renderChat: (
+    item: ChatListItem,
+    rename: (() => boolean) | undefined,
+  ) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
   useChatConversions(session);
@@ -76,6 +91,7 @@ export function SoloWorkspaces({
   const [copy, copyNotice] = useChatCopy();
   const preferences = session.soloPreferences;
   const collapsedKey = "solo:collapsed-projects";
+  const expandedKey = "solo:expanded-projects";
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
@@ -94,6 +110,28 @@ export function SoloWorkspaces({
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
   });
+  // Extra chats each workspace shows past the cap, remembered like collapse.
+  const [expanded, setExpanded] = useState<Record<string, number>>(() => {
+    const saved = readView<unknown>(scope, expandedKey, {});
+    return saved && typeof saved === "object" && !Array.isArray(saved)
+      ? Object.fromEntries(
+          Object.entries(saved).filter(
+            (entry): entry is [string, number] =>
+              typeof entry[1] === "number" && entry[1] > 0,
+          ),
+        )
+      : {};
+  });
+  // Chats listed past the cap (pinned, or just moved in) stay listed until the
+  // workspace folds, so a row never disappears while someone is using it.
+  const [held, setHeld] = useState<ReadonlySet<string>>(() => new Set());
+  const hold = useCallback((ids: readonly string[]) => {
+    setHeld((current) =>
+      ids.every((id) => current.has(id))
+        ? current
+        : new Set([...current, ...ids]),
+    );
+  }, []);
   const [sharing, setSharing] = useState<{
     id: string;
     visit: AbortSignal | undefined;
@@ -108,9 +146,13 @@ export function SoloWorkspaces({
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
   const [chatSettings, setChatSettings] = useState<{
+    rename?: boolean;
     item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
+  const [renaming, setRenaming] = useState<string>();
+  if (renaming && !chats.some((chat) => chat.id === renaming))
+    setRenaming(undefined);
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
   const [readError, setReadError] = useState<{ id: string; message: string }>();
@@ -118,11 +160,39 @@ export function SoloWorkspaces({
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
     if (!rowFocus) return;
+    const project =
+      snapshot.data?.sections.find(
+        (section) => section.id === snapshot.data?.assignments[rowFocus],
+      )?.id ?? "";
+    // Resolve against current visibility when focus is restored, including when
+    // collapse was requested after the asynchronous save began.
+    const target = collapsed.includes(project)
+      ? `project-${project}`
+      : rowFocus;
     document
-      .querySelector<HTMLElement>(`[data-solo-menu-id="${rowFocus}"] button`)
+      .querySelector<HTMLElement>(`[data-solo-menu-id="${target}"] button`)
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus]);
+  }, [rowFocus, collapsed, snapshot.data]);
+  // Show more and Show less each unmount once spent; focus stays on the row,
+  // or moves to the workspace's last chat when nothing is left to show or fold.
+  const [stepFocus, setStepFocus] = useState<string>();
+  useLayoutEffect(() => {
+    if (stepFocus === undefined) return;
+    setStepFocus(undefined);
+    const row = document.querySelector<HTMLElement>(
+      `[data-solo-show-more="${CSS.escape(stepFocus)}"]`,
+    );
+    if (row?.contains(document.activeElement)) return;
+    const panel = document.querySelector(
+      `[data-solo-project="${CSS.escape(stepFocus)}"]`,
+    );
+    const chats = panel?.querySelectorAll("[data-solo-menu-id]") ?? [];
+    const target =
+      row?.querySelector<HTMLElement>("button") ??
+      [...chats].at(-1)?.querySelector<HTMLElement>("button");
+    target?.focus({ preventScroll: true });
+  }, [stepFocus]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
@@ -142,9 +212,15 @@ export function SoloWorkspaces({
       rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
+  // A collapse request takes effect after the editor closes. Keep its draft and
+  // save owner mounted and reachable, including when a save needs recovery.
+  const renamingProject = projects.find((project) =>
+    project.rows.some((item) => item.id === renaming),
+  )?.id;
   const move = (id: string, projectId?: string) => {
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
+    hold([id]);
     setRowFocus(id);
     void saving.catch(() => {
       // A rollback remounts the original row. Do not steal focus if the user moved on.
@@ -185,12 +261,65 @@ export function SoloWorkspaces({
     );
   };
   const toggle = (id: string, open: boolean) => {
-    const next = open
-      ? collapsed.filter((key) => key !== id)
-      : [...collapsed, id];
+    const next = collapsed.filter((key) => key !== id);
+    if (!open) next.push(id);
     setCollapsed(next);
     writeView(scope, collapsedKey, next);
   };
+  const expand = (id: string, extra: number) => {
+    const rest = Object.fromEntries(
+      Object.entries(expanded).filter(([key]) => key !== id),
+    );
+    const next = extra > 0 ? { ...rest, [id]: extra } : rest;
+    setExpanded(next);
+    writeView(scope, expandedKey, next);
+    if (extra === 0) {
+      // Folding releases retained chats; ones still pinned stay held.
+      const rows = new Set(
+        projects
+          .find((project) => project.id === id)
+          ?.rows.filter((item) => !item.pinned)
+          .map((item) => item.id),
+      );
+      setHeld(
+        (current) => new Set([...current].filter((key) => !rows.has(key))),
+      );
+    }
+    setStepFocus(id);
+  };
+  const visible = projects
+    .filter((project) => project.id || project.rows.length)
+    .map((project) => {
+      // A list that shrank back under the cap has nothing to fold.
+      const extra =
+        project.rows.length > SOLO_CHAT_CAP ? (expanded[project.id] ?? 0) : 0;
+      const limit = SOLO_CHAT_CAP + extra;
+      // Rows arrive newest first; chats kept past the cap keep that order.
+      const listed = project.rows.filter(
+        (item, index) =>
+          index < limit ||
+          item.pinned ||
+          item.id === renaming ||
+          held.has(item.id),
+      );
+      return {
+        ...project,
+        listed,
+        extra,
+        overflow: listed.slice(limit).map((item) => item.id),
+        // Retained chats that are no longer pinned can fold even when unexpanded.
+        foldable:
+          extra > 0 ||
+          listed
+            .slice(limit)
+            .some((item) => !item.pinned && item.id !== renaming),
+        hidden: project.rows.length - listed.length,
+      };
+    });
+  const overflow = visible.flatMap((project) => project.overflow).join(" ");
+  useEffect(() => {
+    if (overflow) hold(overflow.split(" "));
+  }, [overflow, hold]);
   const moves =
     snapshot.moves?.filter((move) =>
       chats.some((item) => item.id === move.channelId),
@@ -236,165 +365,243 @@ export function SoloWorkspaces({
           );
         }}
       >
-        {projects
-          .filter((project) => project.id || project.rows.length)
-          .map((project) => (
-            <DropProject
-              projectKey={DROP + project.id}
-              key={project.id}
-              className={`${styles.project} ${channelStyles.channelSection}`}
-              data-project={project.id ? "" : undefined}
-              open={!collapsed.includes(project.id)}
-              onOpenChange={(open) => toggle(project.id, open)}
-              data-animate={animate || undefined}
-            >
-              <ChatActionsMenu
-                id={`project-${project.id}`}
-                title={project.name}
-                className={`${channelStyles.sectionHeader} ${styles.projectHeader}`}
-                enabled={!!project.id}
-                trailing={
-                  <div className={channelStyles.sectionActions}>
-                    {onNew && (
-                      <IconButton
-                        size="compact"
-                        aria-label={`New chat in ${project.name}`}
-                        title="New chat"
-                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                        onClick={() => onNew(project.id || undefined)}
-                      />
-                    )}
-                  </div>
-                }
-                content={
-                  <>
-                    <MenuItem onClick={() => setSettingsFor(project)}>
-                      Workspace settings…
-                    </MenuItem>
-                    <MenuItem
-                      tone="danger"
-                      data-delete-solo-project=""
-                      disabled={
-                        !preferences.sectionRemovalWritable || !!deleting
-                      }
-                      onClick={() => {
-                        setDeleting(project.id);
-                        setProjectError("");
-                        void preferences
-                          .removeSection(project.id)
-                          .catch((error: unknown) => {
-                            setProjectError(
-                              error instanceof Error
-                                ? error.message
-                                : "Workspace could not be deleted. Try again.",
-                            );
-                          })
-                          .finally(() => setDeleting(undefined));
-                      }}
-                    >
-                      Delete workspace
-                    </MenuItem>
-                  </>
-                }
-              >
-                <Collapsible.Trigger
-                  type="button"
-                  className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
-                  aria-expanded={!collapsed.includes(project.id)}
-                  onClick={(event) => setAnimate(event.detail > 0)}
-                >
-                  <span className={channelStyles.sectionTitle}>
-                    {project.name}
-                  </span>
-                  <span
-                    className={channelStyles.sectionChevron}
-                    aria-hidden="true"
+        {visible.map((project) => (
+          <DropProject
+            projectKey={DROP + project.id}
+            key={project.id}
+            className={`${styles.project} ${channelStyles.channelSection}`}
+            data-project={project.id ? "" : undefined}
+            open={
+              !collapsed.includes(project.id) || renamingProject === project.id
+            }
+            onOpenChange={(open) =>
+              toggle(
+                project.id,
+                renamingProject === project.id
+                  ? collapsed.includes(project.id)
+                  : open,
+              )
+            }
+            data-animate={animate || undefined}
+          >
+            <ChatActionsMenu
+              id={`project-${project.id}`}
+              title={project.name}
+              className={`${channelStyles.sectionHeader} ${styles.projectHeader}`}
+              enabled={!!project.id}
+              trailing={
+                <div className={channelStyles.sectionActions}>
+                  {onNew && (
+                    <IconButton
+                      size="compact"
+                      aria-label={`New chat in ${project.name}`}
+                      title="New chat"
+                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                      onClick={() => onNew(project.id || undefined)}
+                    />
+                  )}
+                </div>
+              }
+              content={
+                <>
+                  <MenuItem onClick={() => setSettingsFor(project)}>
+                    Workspace settings…
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    data-delete-solo-project=""
+                    disabled={
+                      !preferences.sectionRemovalWritable ||
+                      !!deleting ||
+                      renamingProject === project.id
+                    }
+                    onClick={() => {
+                      setDeleting(project.id);
+                      setProjectError("");
+                      void preferences
+                        .removeSection(project.id)
+                        .catch((error: unknown) => {
+                          setProjectError(
+                            error instanceof Error
+                              ? error.message
+                              : "Workspace could not be deleted. Try again.",
+                          );
+                        })
+                        .finally(() => setDeleting(undefined));
+                    }}
                   >
-                    <CaretDownIcon size={15} strokeWidth={2.5} />
-                  </span>
-                </Collapsible.Trigger>
-              </ChatActionsMenu>
-              <Collapsible.Panel className={styles.projectPanel}>
-                {project.rows.map((item) => {
-                  const channel = channels.channels.find(
-                    (channel) => channel.id === item.id,
-                  );
+                    Delete workspace
+                  </MenuItem>
+                </>
+              }
+            >
+              <Collapsible.Trigger
+                type="button"
+                className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
+                aria-expanded={
+                  !collapsed.includes(project.id) ||
+                  renamingProject === project.id
+                }
+                onClick={(event) => setAnimate(event.detail > 0)}
+              >
+                <span className={channelStyles.sectionTitle}>
+                  {project.name}
+                </span>
+                <span
+                  className={channelStyles.sectionChevron}
+                  aria-hidden="true"
+                >
+                  <CaretDownIcon size={15} strokeWidth={2.5} />
+                </span>
+              </Collapsible.Trigger>
+            </ChatActionsMenu>
+            <Collapsible.Panel
+              className={styles.projectPanel}
+              data-solo-project={project.id}
+            >
+              {project.listed.map((item) => {
+                const channel = channels.channels.find(
+                  (channel) => channel.id === item.id,
+                );
+                if (renaming === item.id)
                   return (
-                    <ChatActionsMenu
+                    <SoloChatName
                       key={item.id}
+                      session={session}
                       id={item.id}
                       title={item.title}
-                      indicator={
-                        <ChatAccessIndicator
+                      close={(focus) => {
+                        setRenaming(undefined);
+                        if (focus) setRowFocus(item.id);
+                      }}
+                    />
+                  );
+                return (
+                  <ChatActionsMenu
+                    key={item.id}
+                    id={item.id}
+                    title={item.title}
+                    indicator={
+                      <ChatSharedMark session={session} channel={channel} />
+                    }
+                    className={styles.organizedRow}
+                    content={
+                      channel && (
+                        <SoloChatMenuItems
                           session={session}
                           channel={channel}
-                          onClick={() => setSharing({ id: item.id, visit })}
+                          onShare={() => setSharing({ id: item.id, visit })}
+                          onConvert={() =>
+                            setConverting({ id: item.id, visit })
+                          }
+                          onMove={(projectId) => move(item.id, projectId)}
+                          onNewWorkspace={() => setCreatingFor(item)}
+                          onCopy={copy}
+                          onRename={() =>
+                            setChatSettings({ item, visit, rename: true })
+                          }
+                          onSettings={() => setChatSettings({ item, visit })}
+                          onLifecycle={
+                            handoff &&
+                            ((action) => chooseLifecycle(channel, action))
+                          }
+                          onReadResult={(error) =>
+                            setReadError((current) =>
+                              error
+                                ? { id: item.id, message: error }
+                                : current?.id === item.id
+                                  ? undefined
+                                  : current,
+                            )
+                          }
                         />
-                      }
-                      className={styles.organizedRow}
-                      content={
-                        channel && (
-                          <SoloChatMenuItems
-                            session={session}
-                            channel={channel}
-                            onShare={() => setSharing({ id: item.id, visit })}
-                            onConvert={() =>
-                              setConverting({ id: item.id, visit })
-                            }
-                            onMove={(projectId) => move(item.id, projectId)}
-                            onNewWorkspace={() => setCreatingFor(item)}
-                            onCopy={copy}
-                            onSettings={() => setChatSettings({ item, visit })}
-                            onLifecycle={
-                              handoff &&
-                              ((action) => chooseLifecycle(channel, action))
-                            }
-                            onReadResult={(error) =>
-                              setReadError((current) =>
-                                error
-                                  ? { id: item.id, message: error }
-                                  : current?.id === item.id
-                                    ? undefined
-                                    : current,
-                              )
-                            }
-                          />
-                        )
-                      }
+                      )
+                    }
+                  >
+                    <DraggableChannel
+                      channelId={item.id}
+                      sectionKey={DROP + project.id}
                     >
-                      <DraggableChannel
-                        channelId={item.id}
-                        sectionKey={DROP + project.id}
-                      >
-                        {renderChat(item)}
-                      </DraggableChannel>
-                    </ChatActionsMenu>
-                  );
-                })}
-                {!project.rows.length &&
-                  project.id &&
-                  (onNew ? (
-                    // An empty project offers its way out instead of an empty state.
+                      {renderChat(
+                        item,
+                        !renaming &&
+                          deleting !== project.id &&
+                          canEditLifetime(session, channel)
+                          ? () => {
+                              if (
+                                renaming ||
+                                deleting === project.id ||
+                                !canEditLifetime(session, channel)
+                              )
+                                return false;
+                              setRenaming(item.id);
+                              return true;
+                            }
+                          : undefined,
+                      )}
+                    </DraggableChannel>
+                  </ChatActionsMenu>
+                );
+              })}
+              {(project.hidden > 0 || project.foldable) && (
+                <div
+                  className={styles.showMore}
+                  data-solo-show-more={project.id}
+                >
+                  {project.hidden > 0 && (
                     <NavigationItem
-                      variant="row"
-                      label="New chat"
-                      aria-label={`New chat in ${project.name}`}
-                      title={`New chat in ${project.name}`}
+                      variant="text"
+                      data-solo-show-more-expand=""
+                      label="Show more"
+                      aria-label={`Show more chats in ${project.name}`}
                       icon={
-                        <span className="shell-page-icon">
-                          <PlusIcon size={16} strokeWidth={2.5} />
+                        <span
+                          className={styles.conversationIcon}
+                          aria-hidden="true"
+                        >
+                          <CaretDownIcon size={16} />
                         </span>
                       }
-                      onClick={() => onNew(project.id)}
+                      onClick={() =>
+                        expand(project.id, project.extra + SOLO_CHAT_STEP)
+                      }
                     />
-                  ) : (
-                    <p className={styles.listMessage}>
-                      No chats in this workspace.
-                    </p>
-                  ))}
-              </Collapsible.Panel>
-            </DropProject>
-          ))}
+                  )}
+                  {project.foldable && (
+                    <NavigationItem
+                      variant="text"
+                      data-solo-show-more-fold=""
+                      label="Show less"
+                      aria-label={`Show fewer chats in ${project.name}`}
+                      onClick={() => expand(project.id, 0)}
+                    />
+                  )}
+                </div>
+              )}
+              {!project.rows.length &&
+                project.id &&
+                (onNew ? (
+                  // An empty project offers its way out instead of an empty state.
+                  <NavigationItem
+                    variant="row"
+                    label="New chat"
+                    aria-label={`New chat in ${project.name}`}
+                    title={`New chat in ${project.name}`}
+                    icon={
+                      <span className={styles.conversationIcon}>
+                        <PlusIcon size={16} strokeWidth={2.5} />
+                      </span>
+                    }
+                    onClick={() => onNew(project.id)}
+                  />
+                ) : (
+                  <p className={styles.listMessage}>
+                    No chats in this workspace.
+                  </p>
+                ))}
+            </Collapsible.Panel>
+          </DropProject>
+        ))}
       </ChannelSidebarDnd>
       {converting && (
         <ConvertToChannel
@@ -431,6 +638,7 @@ export function SoloWorkspaces({
       )}
       {chatSettings && (
         <WorkspaceSettings
+          focusName={chatSettings.rename}
           key={chatSettings.item.id}
           signal={chatSettings.visit}
           finalFocus={() =>
@@ -551,7 +759,7 @@ function ChatActionsMenu({
     false;
   if (!enabled)
     return (
-      <div className={className}>
+      <div className={className} data-solo-menu-id={id}>
         {children}
         {trailing}
       </div>

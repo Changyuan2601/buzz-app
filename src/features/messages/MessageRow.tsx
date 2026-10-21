@@ -672,6 +672,7 @@ function MessageRowContent({
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
+    const activityOnly = !!activity && row.replyCount === 0;
     return (
       ((row.replyCount > 0 ||
         (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
@@ -679,9 +680,10 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant="ghost"
-            size="sm"
+            variant={activityOnly ? "subtle" : "ghost"}
+            size={activityOnly ? "xs" : "sm"}
             data-thread-summary=""
+            data-activity-summary={activityOnly ? "" : undefined}
             data-reply-connector={row.replyCount > 0 || undefined}
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
@@ -700,6 +702,7 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
+              hideEmptyLabel={activityOnly}
               count={row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}
@@ -766,7 +769,10 @@ function MessageRowContent({
             ? ""
             : undefined
         }
-        data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
+        data-own={
+          (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
+          undefined
+        }
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -775,7 +781,8 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !cardsOnly && !shownRow) || undefined
+              (!attachmentOnly && !cardsOnly && !row.huddle && !shownRow) ||
+              undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
@@ -883,7 +890,9 @@ function MessageRowContent({
               )}
               {!attachmentOnly && !cardsOnly && (
                 <div
-                  className={shownRow ? undefined : styles.messageBubble}
+                  className={
+                    shownRow || row.huddle ? undefined : styles.messageBubble
+                  }
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}

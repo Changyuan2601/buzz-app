@@ -168,6 +168,34 @@ const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   return handled;
 };
 
+it("solo composer retains side-tab cycling and close focus", async () => {
+  const h = await page("solo");
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "b".repeat(64);
+  act(() =>
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side"),
+  );
+  await h.open();
+  const thread = screen.getByRole("tab", { name: "Thread · Alpha" });
+  const notes = screen.getByRole("tab", { name: "Notes" });
+  for (const [eventName, selected] of [
+    ["buzz:next-tab", thread],
+    ["buzz:previous-tab", notes],
+  ] as const) {
+    h.composer.focus();
+    const event = new Event(eventName, { cancelable: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(selected).toHaveAttribute("aria-selected", "true");
+  }
+  h.composer.focus();
+  expect(closeTabs("buzz:close-active-tab")).toBe(true);
+  expect(notes).not.toBeInTheDocument();
+  expect(thread).toHaveFocus();
+});
+
 it.each(["stream", "solo"] as const)(
   "the real %s page closes its side tabs by shortcut, preserves typing, and handles an empty repeat",
   async (type) => {

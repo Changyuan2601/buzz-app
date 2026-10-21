@@ -146,6 +146,7 @@ export function ChannelLifecycleDialog({
         />
       )}
       <Dialog
+        size="compact"
         open={!busy && !error}
         dismissOnOutsideClick
         initialFocus={confirms ? confirm : cancel}

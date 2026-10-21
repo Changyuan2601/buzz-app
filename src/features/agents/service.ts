@@ -98,6 +98,7 @@ import {
   type AgentsNative,
   type AgentMedia,
   type AgentUpload,
+  type GitAuth,
   type OldTeam,
   type PortableAgents,
   type PortSource,
@@ -129,6 +130,7 @@ import {
   writeCheckpoints,
   type Checkpoints,
 } from "./catch-up";
+import { readInterrupted, writeInterrupted } from "./interrupted";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import { ownSolo } from "../solo/labels";
@@ -320,6 +322,9 @@ export type AgentHandle = Readonly<{
   /** Saves one of its community's media blobs, of any type, by URL or
    * `sha256[.ext]`, to a local file for the agent. */
   media(url: string): Promise<AgentMedia>;
+  /** Repository `repo` of `owner` in its community: its URL, and the Git
+   * header that authorizes it there as the agent for a minute. */
+  gitAuth(owner: string, repo: string): Promise<GitAuth>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
@@ -367,8 +372,10 @@ export type CaughtUp = Readonly<{
   classifier?: ClassifierOutcome;
 }>;
 export type Trigger =
-  /** Directly addressed: a chat message that mentions the agent. */
-  | Readonly<{ type: "mention"; event: RelayEvent }>
+  /** Directly addressed: a chat message that mentions the agent. `resumed`
+   * when its turn was working as the app closed or reloaded, which stopped it
+   * partway, and the owner chose to resume it (see `AgentType.resumes`). */
+  | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -474,6 +481,13 @@ export type Delivery<Config = unknown> = Readonly<{
   current(): boolean;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
+/** An immediate session action: `compact` summarizes its history to free
+ * context, and `new` starts a new session. */
+export type SessionAction = "compact" | "new";
+/** Immediate controls for an existing conversation; separate from run picks. */
+export type SessionControlAction = SessionAction | "interrupt";
+export type SessionPlace = Readonly<{ channelId: string; root?: string }>;
+export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
   id: string;
   label: string;
@@ -536,6 +550,13 @@ export type AgentType<Config = unknown> = {
   /** A brought-over agent's config: `config` from `defaults` with whatever of
    * `carry` the type has a place for. Without it, all of `carry` stays behind. */
   adopt?(carry: Carry, config: Config): Config;
+  /** Recognize a published catalog runtime and seed this type's import draft.
+   * Return undefined when its runtime/provider cannot be preserved by this type. */
+  importShared?(source: {
+    runtime?: string;
+    provider?: string;
+    model: string;
+  }): Config | undefined;
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
@@ -564,6 +585,20 @@ export type AgentType<Config = unknown> = {
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** Offers immediate controls for the agent's session scope: under `channel`
+   * a channel's top-level message joins the channel's one session, and under
+   * `thread` it starts a thread of its own, with no session to act on. A DM or
+   * Solo chat is one session either way. */
+  sessionControls?: {
+    scope(agent: Agent<Config>): "thread" | "channel";
+    state(agent: Agent<Config>, place: SessionPlace): SessionState;
+    run(
+      agent: Agent<Config>,
+      place: SessionPlace,
+      action: SessionControlAction,
+    ): Promise<void>;
+    subscribe(listener: () => void): () => void;
+  };
   /** Read-only: snapshots of the sessions the agent ran from Buzz on this
    * device with activity since `since` (milliseconds). `since` only bounds
    * activity time; it is no checkpoint, and a session last active before it
@@ -592,6 +627,11 @@ export type AgentType<Config = unknown> = {
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
+  /** Its turns run in this page, so closing or reloading the app stops them.
+   * With this, a mention turn still working then is kept, and given to `run`
+   * again marked `resumed` if the owner chooses to resume it, to carry on in
+   * the conversation's saved session. */
+  resumes?: boolean;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
@@ -666,6 +706,9 @@ export type AgentsSnapshot = Readonly<{
   /** Every agent kept running here, whichever community is selected: the
    * viewer's agents in each joined community not disconnected. */
   running: readonly Agent[];
+  /** Running agents that were working when the app last closed or reloaded,
+   * until the owner resumes or forgets those turns. */
+  interrupted: readonly Agent[];
   /** The owner's teams on this device, in any community. */
   teams: readonly Team[];
   error?: string;
@@ -683,6 +726,7 @@ export type PortInput = Readonly<
       /** An HTTPS image URL. */
       picture?: string;
       instructions?: string;
+      config?: unknown;
     }
 >;
 /** Whether the binding's owner owns the agent, by the partition Yours uses. */
@@ -741,6 +785,11 @@ export type Agents = {
   tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Gives each `interrupted` agent again the turns it was working on, each
+   * once its community connects. */
+  resumeInterrupted(): void;
+  /** Forgets the turns `interrupted` agents were working on. */
+  dismissInterrupted(): void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The agent as `run` holds it, outside any run: for one of the calling
@@ -818,6 +867,13 @@ export type Agents = {
   remove(pubkey: string): Promise<void>;
   /** Whether the owner can stop a hosted agent's turns through its provider. */
   interruptible(pubkey: string): boolean;
+  /** Session controls are available only in the copy holding this agent. */
+  sessionState(pubkey: string, place: SessionPlace): SessionState;
+  session(
+    pubkey: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ): Promise<void>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -1148,6 +1204,7 @@ export class AgentsService extends Service implements Agents {
       classifierKey: "checking",
       agents: [],
       running: [],
+      interrupted: [],
       teams: this.teamList,
     });
     this.configStore = new AgentConfigStore(storage);
@@ -1157,6 +1214,7 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      ownershipChanged: () => this.notify(),
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
       member: (agent, event) => this.member(agent, event),
@@ -1178,6 +1236,15 @@ export class AgentsService extends Service implements Agents {
           );
           savedProgress = checkpoints;
         },
+      },
+      interrupted: {
+        read: () => readInterrupted(this.storage),
+        write: (pubkey, turns) => {
+          void writeInterrupted(this.storage, pubkey, turns).catch((error) =>
+            console.warn("Agent turns in progress were not saved", error),
+          );
+        },
+        changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
@@ -1330,6 +1397,7 @@ export class AgentsService extends Service implements Agents {
           ...this.state,
           agents: Object.freeze([]),
           running: Object.freeze([]),
+          interrupted: Object.freeze([]),
         });
         this.notify();
       };
@@ -1400,6 +1468,18 @@ export class AgentsService extends Service implements Agents {
       this.listeners.delete(listener);
     };
   };
+  resumeInterrupted = () => {
+    this.runners.resumeInterrupted(this.interruptedKeys());
+    this.update();
+  };
+  dismissInterrupted = () => {
+    this.runners.dismissInterrupted(this.interruptedKeys());
+    this.update();
+  };
+  /** The agents the notice names, and only they, are resumed or forgotten. */
+  private interruptedKeys() {
+    return this.state.interrupted.map((agent) => agent.pubkey);
+  }
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
   handle(pubkey: string) {
@@ -1876,7 +1956,10 @@ export class AgentsService extends Service implements Agents {
         agent: await native.create(destination, owner, type, name),
         ...(instructions?.trim() ? { carry: { instructions } } : {}),
       }),
-      { picture },
+      {
+        picture,
+        ...(input.config !== undefined ? { config: input.config } : {}),
+      },
     );
     return { agent, notes: [] };
   }
@@ -2158,6 +2241,40 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  sessionState(pubkey: string, place: SessionPlace): SessionState {
+    const agent = this.agent(pubkey);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    if (
+      !agent ||
+      !this.runners.runs(pubkey) ||
+      this.runners.transitioning(pubkey)
+    )
+      return "unavailable";
+    return type?.sessionControls?.state(agent, place) ?? "unavailable";
+  }
+  async session(
+    pubkey: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const agent = this.find(pubkey);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    if (
+      !agent ||
+      !type?.sessionControls ||
+      this.sessionState(pubkey, place) === "unavailable"
+    )
+      throw new Error(
+        "Use session controls in the Buzz app that runs this agent.",
+      );
+    await this.runners.control(pubkey, async () => {
+      const current = this.find(pubkey);
+      if (current?.type !== agent.type || !this.types().includes(type))
+        throw new Error("The agent's harness changed. Try again.");
+      await type.sessionControls?.run(current, place, action);
+    });
+  }
+
   /** Whether the owner can stop a hosted agent's turn: its provider can. */
   interruptible(pubkey: string) {
     const agent = this.state.agents.find(
@@ -3207,17 +3324,24 @@ export class AgentsService extends Service implements Agents {
       identities.filter((identity) => !identity.deleting),
       new Map(this.types().map((type) => [type.key, type])),
     );
+    const left = this.runners.interrupted();
+    // Only the copy that holds an agent may resume or forget its turns.
+    const interrupted = running.filter(
+      (agent) => left.has(agent.pubkey) && this.runners.runs(agent.pubkey),
+    );
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
       next.every((agent, index) => agent === prior[index]);
     if (
       !same(agents, this.state.agents) ||
-      !same(running, this.state.running)
+      !same(running, this.state.running) ||
+      !same(interrupted, this.state.interrupted)
     ) {
       this.state = Object.freeze({
         ...this.state,
         agents: Object.freeze(agents),
         running: Object.freeze(running),
+        interrupted: Object.freeze(interrupted),
       });
       this.notify();
     }

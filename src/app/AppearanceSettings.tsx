@@ -25,6 +25,11 @@ import {
   useThreadPlacementPreference,
 } from "../features/messages/thread-preferences";
 
+import {
+  useFollowUpBehaviorPreference,
+  setFollowUpBehaviorPreference,
+} from "../features/messages/follow-up-preference";
+
 export function AppearanceSettings({
   appearance,
   active = true,
@@ -32,6 +37,7 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
+  const followUp = useFollowUpBehaviorPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
@@ -224,6 +230,31 @@ export function AppearanceSettings({
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
+            title="Follow-up behavior"
+            subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
+            trailing={
+              <Select
+                variant="compact"
+                label="Follow-up behavior"
+                value={followUp.behavior}
+                groups={[
+                  {
+                    label: "Behavior",
+                    options: [
+                      { value: "immediate", label: "Send immediately" },
+                      { value: "queue", label: "Queue" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "immediate" || value === "queue")
+                    setFollowUpBehaviorPreference(value);
+                }}
+              />
+            }
+          />
+
+          <PreferenceRow
             title="Open threads in"
             subtitle="New threads open here. Already-open threads stay where you placed them."
             trailing={
@@ -248,6 +279,19 @@ export function AppearanceSettings({
             }
           />
         </SettingsGroup>
+        {active && followUp.unsaved && (
+          <ToastNotice
+            title="Follow-up preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device."
+          >
+            <Button
+              size="sm"
+              onClick={() => setFollowUpBehaviorPreference(followUp.behavior)}
+            >
+              Retry saving follow-up behavior
+            </Button>
+          </ToastNotice>
+        )}
         {active && unsaved && (
           <ToastNotice
             title="Thread preference wasn’t saved"

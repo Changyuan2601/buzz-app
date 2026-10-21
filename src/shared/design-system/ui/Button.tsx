@@ -6,16 +6,26 @@ import { Tooltip } from "./Tooltip";
 type ButtonVariant =
   | "prominent"
   | "subtle"
+  | "subtle-muted"
   | "ghost"
   | "destructive"
   | "outline"
   | "attention"
+  | "glass"
   | "inverted"
   | "link"
   | "plain"
   | "primary"
   | "quiet";
-type ButtonSize = "inline" | "xs" | "sm" | "md" | "lg" | "compact" | "default";
+type ButtonSize =
+  | "caption"
+  | "inline"
+  | "xs"
+  | "sm"
+  | "md"
+  | "lg"
+  | "compact"
+  | "default";
 
 export type ButtonProps = Omit<
   ComponentProps<typeof BaseButton>,
@@ -72,10 +82,11 @@ export function Button({
       data-variant={
         variant === "primary"
           ? "prominent"
-          : variant === "quiet"
+          : variant === "quiet" || variant === "subtle-muted"
             ? "subtle"
             : variant
       }
+      data-muted={variant === "subtle-muted" || undefined}
       data-size={size === "compact" ? "sm" : size === "default" ? "md" : size}
       data-button-shape={shape}
       data-loading={loading || undefined}

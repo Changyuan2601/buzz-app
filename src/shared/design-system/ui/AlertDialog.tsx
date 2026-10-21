@@ -1,6 +1,8 @@
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
+import { XIcon } from "../icons";
+import { IconButton } from "./IconButton";
 import { useModalWindowDrag } from "./ModalWindowDrag";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
 /** Confirmations keep alert-dialog semantics and focus behavior owned by Base UI. */
 export function AlertDialog({
@@ -11,6 +13,7 @@ export function AlertDialog({
   onClose,
   pending = false,
   finalFocus,
+  initialFocus,
 }: {
   title: ReactNode;
   description: ReactNode;
@@ -18,9 +21,12 @@ export function AlertDialog({
   actions: ReactNode;
   onClose(): void;
   pending?: boolean;
+  initialFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["initialFocus"];
   finalFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["finalFocus"];
 }) {
   const windowDrag = useModalWindowDrag();
+  // Preserve Base UI’s body/action default; Close joins the tab order afterward.
+  const [focusEntered, setFocusEntered] = useState(false);
   return (
     <BaseAlertDialog.Root
       open
@@ -39,20 +45,49 @@ export function AlertDialog({
           onLostPointerCapture={windowDrag.onLostPointerCapture}
           data-buzz-ui=""
           className="buzz-dialog-backdrop"
+          data-motion="default"
         />
         <BaseAlertDialog.Popup
           data-buzz-ui=""
-          className="buzz-dialog"
+          className="buzz-dialog gap-0"
+          data-size="compact"
+          data-height="content"
+          data-motion="default"
           aria-modal="true"
           finalFocus={finalFocus}
+          initialFocus={initialFocus}
+          onFocusCapture={() => setFocusEntered(true)}
         >
-          <BaseAlertDialog.Title className="text-heading">
-            {title}
-          </BaseAlertDialog.Title>
-          <BaseAlertDialog.Description className="buzz-dialog-description">
-            {description}
-          </BaseAlertDialog.Description>
-          {children}
+          <header className="buzz-dialog-header">
+            <div className="buzz-dialog-heading">
+              <BaseAlertDialog.Title className="text-label">
+                {title}
+              </BaseAlertDialog.Title>
+              <BaseAlertDialog.Description className="buzz-dialog-description">
+                {description}
+              </BaseAlertDialog.Description>
+            </div>
+            <BaseAlertDialog.Close
+              render={
+                <IconButton
+                  aria-label="Close"
+                  tabIndex={
+                    initialFocus === undefined && !focusEntered ? -1 : undefined
+                  }
+                  variant="subtle"
+                  size="compact"
+                  disabled={pending}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              }
+              disabled={pending}
+            />
+          </header>
+          {children && (
+            <div className="buzz-dialog-body buzz-dialog-content flex flex-col gap-4">
+              {children}
+            </div>
+          )}
           <div className="buzz-dialog-actions">{actions}</div>
         </BaseAlertDialog.Popup>
       </BaseAlertDialog.Portal>

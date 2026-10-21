@@ -3,7 +3,7 @@ import { AgentDetails } from "./AgentDetails";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
-// Agents and teams, with creation, import and marketplace entry from New agent.
+// Agents, teams, and marketplace, with creation and import from their menus.
 import {
   useEffect,
   useRef,
@@ -12,9 +12,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
-import { AgentBrowse } from "./AgentBrowse";
+import {
+  AgentBrowse,
+  SharedAgentPanel,
+  type SharedAgentSelection,
+} from "./AgentBrowse";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
@@ -49,7 +54,6 @@ import {
   CheckIcon,
   DotsThreeIcon,
   DownloadIcon,
-  StorefrontIcon,
   PlusIcon,
   RobotIcon,
   XIcon,
@@ -110,10 +114,11 @@ const MARKETPLACE_ART = [
   "fuzzies-15",
 ];
 
-type Tab = "yours" | "teams";
+type Tab = "yours" | "teams" | "marketplace";
 const TABS = [
   { value: "yours", label: "Your agents", panelId: "agents-yours" },
   { value: "teams", label: "Your teams", panelId: "agents-teams" },
+  { value: "marketplace", label: "Marketplace", panelId: "agents-marketplace" },
 ] as const;
 
 export function AgentsPage({
@@ -134,10 +139,23 @@ export function AgentsPage({
     connection.status === "ready" ? connection.session.channels : undefined,
   );
   const [tab, setTab] = useState<Tab>("yours");
+  const [sharedSelection, setSharedSelection] =
+    useState<SharedAgentSelection>();
+  const sharedTrigger = useRef<HTMLButtonElement | null>(null);
+  const shared =
+    connection.status === "ready" &&
+    sharedSelection?.session === connection.session
+      ? sharedSelection
+      : undefined;
+  // Commit first: a narrow layout hides the list, and its tile, while open.
+  const closeShared = () => {
+    flushSync(() => setSharedSelection(undefined));
+    sharedTrigger.current?.focus();
+  };
   const [selectedKey, setSelectedKey] = useState<string>();
   const [creating, setCreating] = useState(false);
   // Which import the dialog shows follows the menu it was opened from.
-  const [flow, setFlow] = useState<"import" | "import-team" | "browse">();
+  const [flow, setFlow] = useState<"import" | "import-team">();
   // A team being edited by its id, or "new" for one being made.
   const [editingTeam, setEditingTeam] = useState<string>();
   const newAgentButton = useRef<HTMLButtonElement>(null);
@@ -202,6 +220,7 @@ export function AgentsPage({
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
   const changeTab = (next: Tab) => {
     if (next !== "teams") setEditingTeam(undefined);
+    if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
   };
   const returnTo = (next: Tab) => () => {
@@ -222,7 +241,7 @@ export function AgentsPage({
   };
   const openMarketplace = () => {
     browse();
-    setFlow("browse");
+    changeTab("marketplace");
   };
   // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
@@ -239,9 +258,6 @@ export function AgentsPage({
         </MenuItem>
         <MenuItem onClick={openImport}>
           <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-        </MenuItem>
-        <MenuItem onClick={openMarketplace}>
-          <StorefrontIcon size={16} aria-hidden="true" /> Browse the marketplace
         </MenuItem>
       </MenuPopup>
     </MenuRoot>
@@ -395,7 +411,8 @@ export function AgentsPage({
             onValueChange={changeTab}
             items={TABS}
           />
-          {toolbarAction &&
+          {tab !== "marketplace" &&
+            toolbarAction &&
             !(tab === "teams" && editing) &&
             (tab === "teams" ? newTeamMenu : newAgentMenu)}
         </div>
@@ -406,6 +423,15 @@ export function AgentsPage({
         >
           {tab === "yours" ? (
             yours
+          ) : tab === "marketplace" ? (
+            <AgentBrowse
+              relay={relay}
+              selectedId={shared?.agent.id}
+              onSelect={(selection, trigger) => {
+                sharedTrigger.current = trigger;
+                setSharedSelection(selection);
+              }}
+            />
           ) : (
             <Teams
               agents={agents}
@@ -427,7 +453,11 @@ export function AgentsPage({
         ref={split.ref}
         style={split.style}
         className={styles.browse}
-        data-side={panel && tab === "yours" ? "" : undefined}
+        data-side={
+          (panel && tab === "yours") || (shared && tab === "marketplace")
+            ? ""
+            : undefined
+        }
       >
         <div className={styles.main}>
           <Panel aria-label="Agents">
@@ -454,6 +484,41 @@ export function AgentsPage({
             </div>
           </Panel>
         </div>
+        {shared && tab === "marketplace" && (
+          <aside className={styles.side}>
+            {split.handle}
+            <Panel aria-label="Shared agent profile">
+              <PanelWorkspace
+                value={shared.agent.id}
+                select={() => {}}
+                items={[
+                  {
+                    id: shared.agent.id,
+                    label: shared.agent.name,
+                    close: closeShared,
+                    content: (
+                      <SharedAgentPanel
+                        key={shared.agent.id}
+                        selection={shared}
+                        agents={agents}
+                        types={runnable}
+                        // The panel and its trigger go with it, so focus
+                        // follows to the tab now shown.
+                        onImported={() => {
+                          flushSync(() => {
+                            setSharedSelection(undefined);
+                            returnToAgents();
+                          });
+                          document.getElementById("agents-yours-tab")?.focus();
+                        }}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </Panel>
+          </aside>
+        )}
         {panel && selected && (
           <aside className={styles.side} hidden={tab !== "yours"}>
             {split.handle}
@@ -479,13 +544,7 @@ export function AgentsPage({
       {flow && (
         <Dialog
           open
-          title={
-            flow === "import"
-              ? "Import an agent"
-              : flow === "import-team"
-                ? "Import a team"
-                : "Marketplace"
-          }
+          title={flow === "import" ? "Import an agent" : "Import a team"}
           size="wide"
           height="stable"
           preventClose={importing}
@@ -494,24 +553,15 @@ export function AgentsPage({
             if (!open) setFlow(undefined);
           }}
         >
-          {flow === "browse" ? (
-            <AgentBrowse
-              relay={relay}
-              agents={agents}
-              types={runnable}
-              onImported={returnToAgents}
-            />
-          ) : (
-            <ImportAgents
-              agents={agents}
-              types={runnable}
-              only={flow === "import" ? "agents" : "teams"}
-              onImported={
-                flow === "import" ? () => changeTab("yours") : returnTo("teams")
-              }
-              onPendingChange={setImporting}
-            />
-          )}
+          <ImportAgents
+            agents={agents}
+            types={runnable}
+            only={flow === "import" ? "agents" : "teams"}
+            onImported={
+              flow === "import" ? () => changeTab("yours") : returnTo("teams")
+            }
+            onPendingChange={setImporting}
+          />
         </Dialog>
       )}
       {creating && (
@@ -853,24 +903,26 @@ function InventoryCard({
         )
       }
     >
-      <div
-        data-card-control=""
-        className="flex min-w-0 max-w-full flex-col items-center gap-2"
-      >
-        {Model && (
-          <Model
-            config={agent.config}
-            modelAppearance="subtle"
-            disabled={saving}
-            onChange={(config) => void save(config)}
-          />
-        )}
-        {error && (
-          <span role="alert" className="text-body-sm text-danger">
-            {error}
-          </span>
-        )}
-      </div>
+      {(Model || error) && (
+        <div
+          data-card-control=""
+          className="flex min-w-0 max-w-full flex-col items-center gap-2"
+        >
+          {Model && (
+            <Model
+              config={agent.config}
+              modelAppearance="subtle"
+              disabled={saving}
+              onChange={(config) => void save(config)}
+            />
+          )}
+          {error && (
+            <span role="alert" className="text-body-sm text-danger">
+              {error}
+            </span>
+          )}
+        </div>
+      )}
     </AgentCard>
   );
 }
@@ -1171,8 +1223,8 @@ function ImportAgents({
     <div className="flex flex-col gap-4">
       <p className="m-0 text-body-sm text-secondary">
         {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
-          : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
+          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
         An archived agent is unarchived here. Stop it where it runs now first,
         or both will answer.
       </p>
@@ -1354,10 +1406,6 @@ function Teams({
   const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
     <div className="grid gap-4">
-      <p className="m-0 text-body-sm text-secondary">
-        Each member is told who its teammates are, and follows the team's
-        instructions after its own.
-      </p>
       <div className={cardStyles.grid}>
         {newTeam}
         {teams.length > 0 && (

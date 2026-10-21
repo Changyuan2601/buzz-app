@@ -243,6 +243,20 @@ describe("AgentSessions", () => {
     expect(goose?.turns.at(-1)?.text).toBe("everything so far");
   });
 
+  it("leaves only a conversation's first session for goose to name", async () => {
+    const { fake, sessions, change } = setup();
+    const named = vi.fn();
+    await sessions.deliver("a", "one", 1, { title: "Buzz", named });
+    change({ systemPrompt: "newer" }, false);
+    await sessions.deliver("a", "two", 2, { title: "Buzz", named });
+    // A reopened session would cost another naming call for a named chat.
+    expect(
+      fake.geese[0]?.opened.map(
+        (session) => (session._meta as { sessionTitle?: string }).sessionTitle,
+      ),
+    ).toEqual([undefined, "Buzz"]);
+  });
+
   it("switches the live session's provider and model between turns", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);
@@ -381,6 +395,45 @@ describe("AgentSessions", () => {
       "/home/test/other",
     ]);
     expect(goose?.killed).toBe(false);
+  });
+
+  it("reports a failed immediate compaction", async () => {
+    const { fake, sessions } = setup();
+    // Without a session there is nothing to compact.
+    await expect(sessions.reset("a", "compact")).resolves.toEqual({ ok: true });
+    await sessions.deliver("a", "one", 1);
+    const goose = fake.geese[0];
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one"]);
+    if (goose) goose.hold = true;
+    const compacted = sessions.reset("a", "compact");
+    await flush(30);
+    // goose ends a failed compaction like any turn, saying why in its text.
+    goose?.update("session-1", {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "Request failed: Resource not found (404)",
+      },
+    });
+    await flush(30);
+    goose?.turns[1]?.finish();
+    await expect(compacted).resolves.toEqual({
+      ok: false,
+      error: "Request failed: Resource not found (404)",
+    });
+    expect(goose?.turns).toHaveLength(2);
+  });
+
+  it("answers in a new session when asked to", async () => {
+    const { fake, sessions } = setup();
+    await sessions.deliver("a", "one", 1);
+    await sessions.reset("a", "new");
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-2",
+    ]);
   });
 
   it("closes a quiet conversation's session", async () => {
@@ -741,6 +794,7 @@ describe("AgentSessions", () => {
       pool,
       // Another conversation needs a server the moment this session opens.
       onChange: () => {
+        if (fake.geese[0]?.turns.length) return;
         evicted ??= pool.evict() ?? null;
       },
     });

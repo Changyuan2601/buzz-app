@@ -34,6 +34,12 @@ import {
   type TurnResult,
 } from "../../features/agents/service";
 import { soloChat } from "../../features/agents/solo-chat";
+import { SessionControls } from "../../features/agent-harness/session-control";
+import type {
+  SessionPlace,
+  SessionControlAction,
+  SessionState,
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -92,7 +98,8 @@ export function standalonePrompt(agent: string, text: string) {
 }
 
 /** A session's title in goose, as harness agents name theirs:
- * `Agent · #channel`, and the thread's root when each thread is a session. */
+ * `Agent · #channel`, and the thread's root when each thread is a session.
+ * A Solo chat's first session keeps it only if goose names no sessions. */
 export function sessionTitle(
   agent: string | undefined,
   place: string,
@@ -147,6 +154,9 @@ export class GooseRuntime {
     private readonly storage: Storage = globalThis.localStorage,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
 
   /** The desktop host's methods goose agents run with. */
@@ -228,6 +238,42 @@ export class GooseRuntime {
     this.views.clear();
     for (const listener of this.listeners) listener();
   }
+  private readonly controls = new SessionControls(() => this.notify());
+  private controlKey(agent: Agent, place: SessionPlace) {
+    return config(agent.config).scope === "channel" || !place.root
+      ? place.channelId
+      : `${place.channelId}/${place.root}`;
+  }
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = this.controlKey(agent, place);
+    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
+    return this.controls.active(`${agent.pubkey}/${key}`) ||
+      this.agents.get(agent.pubkey)?.sessions.active(key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const key = this.controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    const entry = this.entry(agent.pubkey, config(agent.config));
+    if (action === "interrupt") {
+      this.controls.interrupt(control);
+      await entry.sessions.interrupt(key);
+      return;
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (signal) => {
+      signal.throwIfAborted();
+      const result = await entry.sessions.reset(key, action);
+      signal.throwIfAborted();
+      if (!result.ok) throw new Error(result.error);
+    });
+  }
 
   dispose() {
     for (const entry of this.agents.values()) entry.sessions.dispose();
@@ -250,6 +296,7 @@ export class GooseRuntime {
     superseded,
     interruptible,
     guidance,
+    named,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -317,42 +364,61 @@ export class GooseRuntime {
       };
     };
     const { key, text, place } = await prompt(false);
-    entry.contexts.set(
-      key,
-      topLevel
-        ? { channel, topLevel }
-        : key === channel
-          ? { channel }
-          : { channel, root: threadReference(event)?.rootId ?? event.id },
+    signal.throwIfAborted();
+    const handoff = this.controls.deliver(
+      `${agent.pubkey}/${key}`,
+      async (deferred) => {
+        // Accepted deferred work belongs to the captured agent lifetime, not
+        // the short deadline for handing a message to the harness.
+        if (this.agents.get(agent.pubkey) !== entry) return;
+        if (!deferred) signal.throwIfAborted();
+        entry.contexts.set(
+          key,
+          topLevel
+            ? { channel, topLevel }
+            : key === channel
+              ? { channel }
+              : { channel, root: threadReference(event)?.rootId ?? event.id },
+        );
+        const done = entry.sessions.deliver(key, text, event.created_at, {
+          steer: steerPrompt(text),
+          fresh: async () => (await prompt(true)).text,
+          title: sessionTitle(entry.name, place, key.split("/")[1]),
+          // A Solo chat takes the name goose gives its first session.
+          ...(topLevel && named ? { named } : {}),
+          ...(!deferred ? { signal } : {}),
+          ...(model ? { model } : {}),
+          activityScope: topLevel
+            ? channel
+            : (threadReference(event)?.rootId ?? event.id),
+          ...(step ? { step } : {}),
+          ...(acknowledged ? { acknowledged } : {}),
+          ...(superseded ? { superseded } : {}),
+        });
+        workingUntil(done);
+        interruptible?.(() => entry.sessions.interrupt(key));
+        this.notify();
+        void done
+          .then((result) => {
+            // Of the messages one turn answered, only one has its error or text.
+            if (result.error !== undefined)
+              return this.report(agent, channel, event, result.error, topLevel);
+            // An answer goose wrote without `send` is posted for it, so the
+            // thread is not left waiting.
+            if (result.text)
+              return this.post(agent, channel, event, result.text, topLevel);
+          })
+          .catch((error) => console.warn("goose turn failed", error))
+          .finally(() => this.notify());
+      },
     );
-    const done = entry.sessions.deliver(key, text, event.created_at, {
-      steer: steerPrompt(text),
-      fresh: async () => (await prompt(true)).text,
-      title: sessionTitle(entry.name, place, key.split("/")[1]),
-      signal,
-      ...(model ? { model } : {}),
-      activityScope: topLevel
-        ? channel
-        : (threadReference(event)?.rootId ?? event.id),
-      ...(step ? { step } : {}),
-      ...(acknowledged ? { acknowledged } : {}),
-      ...(superseded ? { superseded } : {}),
-    });
-    workingUntil(done);
-    interruptible?.(() => entry.sessions.interrupt(key));
-    this.notify();
-    void done
-      .then((result) => {
-        // Of the messages one turn answered, only one has its error or text.
-        if (result.error !== undefined)
-          return this.report(agent, channel, event, result.error, topLevel);
-        // An answer goose wrote without `send` is posted for it, so the
-        // thread is not left waiting.
-        if (result.text)
-          return this.post(agent, channel, event, result.text, topLevel);
-      })
-      .catch((error) => console.warn("goose turn failed", error))
-      .finally(() => this.notify());
+    if (!handoff.deferred) return handoff.done;
+    workingUntil(handoff.done);
+    void handoff.done
+      .catch((error) =>
+        this.report(agent, channel, event, String(error), topLevel),
+      )
+      .catch((error) => console.warn("goose handover failed", error));
   }
 
   /** App input continues in the same channel session as subsequent Solo messages. */
@@ -662,6 +728,9 @@ export class GooseRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            repositories: this.repositories(
+              this.relay(pubkey)?.snapshot().scope,
+            ),
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,

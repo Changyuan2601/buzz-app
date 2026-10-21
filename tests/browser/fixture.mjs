@@ -20,6 +20,7 @@ import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { validTypingTemplate } from "../../src/features/relay/typing-protocol.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 // Public nonmember channel for search/preview/join journeys. Real channel ids
@@ -49,6 +50,7 @@ export const test = base.extend({
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
   soloChannels: [[], { option: true }],
+  sessionMembers: [{}, { option: true }],
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -112,6 +114,7 @@ export const test = base.extend({
       openSearch,
       searchAuthor,
       soloChannels,
+      sessionMembers,
       channelWriteKinds,
       sidebarUnread,
       savedSidebar,
@@ -857,6 +860,7 @@ export const test = base.extend({
       queries: [],
       profileSearches: [],
       publications: [],
+      typingPublications: [],
       readPublications: [],
       sessions: [],
       streamConnections: [],
@@ -1059,6 +1063,12 @@ export const test = base.extend({
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
                 : []),
+              ...(sessionMembers[id] ?? []).map((pubkey) => [
+                "p",
+                pubkey,
+                "",
+                "member",
+              ]),
               ...(dmMembers[id]
                 ? dmMembers[id].map((index) => [
                     "p",
@@ -1672,6 +1682,13 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (event.kind === 20002) {
+        expect(validTypingTemplate(event)).toBe(true);
+        expect(rosterIds).toContain(event.tags[0]?.[1]);
+        report.typingPublications.push({ community, event });
+        relay?.publish(community, event, { requireSubscriber: false });
+        return;
+      }
       if (openSearch && event.kind === 9021) {
         // NIP-29 join: the relay adds an open channel's requester to its roster.
         expect(event.tags).toEqual([["h", OPEN_CHANNEL]]);
@@ -1868,7 +1885,7 @@ export const test = base.extend({
                     [9002, 9008, 9022, 41012].includes(event.kind)
                   )
                     return acceptReadPublication(community, event);
-                  if (event.kind === 30078)
+                  if (event.kind === 30078 || event.kind === 20002)
                     return acceptReadPublication(community, event);
                   expect([9, 7]).toContain(event.kind);
                   const channel = event.tags.find(([k]) => k === "h")?.[1];
@@ -1949,6 +1966,15 @@ export const test = base.extend({
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
+        }
+        if (route === "sign" && body.kind === 20002) {
+          expect(validTypingTemplate(body)).toBe(true);
+          expect(rosterIds).toContain(body.tags[0]?.[1]);
+          return send(response, finalizeEvent(body, userKey));
+        }
+        if (route === "publish" && body.kind === 20002) {
+          acceptReadPublication(community, body);
+          return send(response, { accepted: true, event_id: body.id });
         }
         if (soloChannels.length && route === "sign") {
           expect(body.kind).toBe(9);
@@ -2463,6 +2489,8 @@ export const test = base.extend({
           author = 0,
           kind = 20002,
           age = 0,
+          participant,
+          self = false,
         } = {}) {
           if (!relay)
             throw new Error("Typing fixture requires production broker");
@@ -2470,7 +2498,11 @@ export const test = base.extend({
             kind,
             [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
             kind === 20002 ? "" : "Fixture completion",
-            typingKeys[author],
+            self
+              ? userKey
+              : participant === undefined
+                ? typingKeys[author]
+                : peerKeys[participant],
             Math.floor(Date.now() / 1000) - age,
           );
           relay.publish("primary", event);

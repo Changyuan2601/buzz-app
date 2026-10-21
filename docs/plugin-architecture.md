@@ -255,7 +255,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos and Usage are off by default. Feedback, Diff viewer, Identity
+Todos and Usage & costs are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
