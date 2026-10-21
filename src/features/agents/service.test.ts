@@ -89,6 +89,7 @@ async function setup({
     | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
     | undefined,
   resumes = false,
+  models = undefined as AgentType<Config>["models"],
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
 } = {}) {
@@ -123,6 +124,7 @@ async function setup({
   });
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
+  const modelQueries: (string | undefined)[] = [];
   const type: AgentType<Config> = {
     id: "echo",
     title: "Echo",
@@ -161,20 +163,29 @@ async function setup({
         },
       },
     }),
-    models: async () => ({
-      current: "fast",
-      models: [
-        {
-          id: "fast",
-          label: "Fast",
-          efforts: [
-            { id: "low", label: "Low" },
-            { id: "high", label: "High" },
+    models:
+      models ??
+      (async (_agent, selectedModel) => {
+        modelQueries.push(selectedModel);
+        return {
+          current: "fast",
+          models: [
+            {
+              id: "fast",
+              label: "Fast",
+              efforts: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+            {
+              id: "deep",
+              label: "Deep",
+              efforts: [{ id: "max", label: "Max" }],
+            },
           ],
-        },
-        { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
-      ],
-    }),
+        };
+      }),
     run,
     ...(runOnce ? { runOnce } : {}),
     ...(sessionControls
@@ -194,6 +205,7 @@ async function setup({
     activity,
     service,
     type,
+    modelQueries,
     native,
     storage,
     run,
@@ -1380,7 +1392,7 @@ it("runs at most eight Interests at once, and the oldest waiting one next", asyn
 });
 
 it("passes the model and effort its owner asked for, and no other", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, modelQueries } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const asked = (id: string, pubkey: string, ...tags: string[][]) =>
     event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
@@ -1410,6 +1422,67 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+  expect(modelQueries).toEqual(["", "", "deep", "deep", "gone"]);
+});
+
+it("fails an explicit effort when its model's capabilities cannot be verified", async () => {
+  const models: NonNullable<AgentType<Config>["models"]> = async () => {
+    throw new Error("probe timed out");
+  };
+  const { service, run, emit, activity } = await setup({ models });
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({
+    events: [
+      event("probe-failed", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "deep"],
+          ["effort", bot, "max"],
+        ],
+      }),
+    ],
+  });
+
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]?.state).toBe("error"),
+  );
+  expect(activity.reader.work()[0]?.error).toContain(
+    "Could not verify the requested effort: probe timed out",
+  );
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("keeps a model-only pick when effort discovery is unnecessary", async () => {
+  const models: NonNullable<AgentType<Config>["models"]> = async (
+    _agent,
+    _selectedModel,
+    includeEfforts,
+  ) => {
+    if (includeEfforts !== false) throw new Error("probe timed out");
+    return {
+      current: "fast",
+      models: [{ id: "deep", label: "Deep", efforts: [] }],
+    };
+  };
+  const { service, run, emit } = await setup({ models });
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({
+    events: [
+      event("model-only", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "deep"],
+        ],
+      }),
+    ],
+  });
+
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].model).toBe("deep");
 });
 
 it("ignores session tags even for a type with immediate session controls", async () => {

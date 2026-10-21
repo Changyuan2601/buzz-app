@@ -143,7 +143,7 @@ async function pickFor(
   const effort = asked(EFFORT_TAG);
   if (!model && !effort) return {};
   try {
-    const offered = await type.models?.(agent);
+    const offered = await type.models?.(agent, model ?? "", Boolean(effort));
     const picked = offered?.models.find((item) => item.id === model);
     const runs =
       picked ?? offered?.models.find((item) => item.id === offered.current);
@@ -155,6 +155,10 @@ async function pickFor(
     };
   } catch (error) {
     console.warn(`Agent type ${type.key} could not list its models`, error);
+    if (effort)
+      throw new Error(
+        `Could not verify the requested effort: ${message(error)}`,
+      );
     return {};
   }
 }

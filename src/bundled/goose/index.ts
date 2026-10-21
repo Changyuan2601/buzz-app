@@ -156,7 +156,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
         component: ActivityTab,
       },
     ],
-    models: (agent) => setup.picks(config(agent.config)),
+    models: (agent, selectedModel, includeEfforts) =>
+      setup.picks(config(agent.config), selectedModel, includeEfforts),
     ...gooseRun(runtime),
   });
 };

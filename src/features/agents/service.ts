@@ -592,8 +592,14 @@ export type AgentType<Config = unknown> = {
   sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.
-   * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
-  models?(agent: Agent<Config>): Models | Promise<Models>;
+   * A selected model limits effort discovery to it, or current if unavailable;
+   * pass an empty string for current, or omit it for the full catalog. A
+   * model-only run sets `includeEfforts` to false. */
+  models?(
+    agent: Agent<Config>,
+    selectedModel?: string,
+    includeEfforts?: boolean,
+  ): Models | Promise<Models>;
   /** Offers immediate controls for the agent's session scope: under `channel`
    * a channel's top-level message joins the channel's one session, and under
    * `thread` it starts a thread of its own, with no session to act on. A DM or
