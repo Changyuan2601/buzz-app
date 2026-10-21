@@ -2,6 +2,7 @@ import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
+import type { DeliveryState } from "./managed-delivery";
 
 export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
 
@@ -104,6 +105,7 @@ export type ChannelMessage = Readonly<{
   channelId: string;
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
+  managedDelivery?: DeliveryState | undefined;
   authorId: string;
   /** Actual signing key when relay attribution makes authorId a different identity. */
   signerId?: string | undefined;

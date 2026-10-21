@@ -258,7 +258,11 @@ test("real HTTP accepts the 1022-channel body and rejects invalid/oversized/orig
     large.abort();
     await until(() => h.sockets.every((s) => s.readyState === 3));
     const count = h.sockets.length;
-    for (const invalid of [[""], Array(1025).fill("a"), ["x".repeat(150001)]]) {
+    for (const invalid of [
+      [""],
+      Array(100001).fill("a"),
+      ["x".repeat(150001)],
+    ]) {
       const { response } = await h.post(invalid);
       expect([400, 413]).toContain(response.status);
       await response.text();

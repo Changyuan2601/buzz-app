@@ -3,6 +3,7 @@ import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
   liveChannels,
+  LIVE_INTEREST_CAPACITY,
   subscribeRelayTraffic,
   type LiveCallbacks,
 } from "./live";
@@ -10,6 +11,7 @@ import { keypair, message, roster, signed, scriptedTransport } from "./testing";
 import { createRelaySession } from "./session";
 import { liveRecoveryStatus } from "./live-recovery";
 import { createPresence } from "../presence/presence";
+import { matchesEvent } from "./projection";
 type WireFilter = {
   kinds: number[];
   "#h"?: string[];
@@ -138,6 +140,79 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+it.each([false, true])(
+  "delivers artifact changes to session consumers through a batched route (%s)",
+  async (batched) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    const relay = keypair();
+    const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        h.callbacks.receive.mockImplementation(callbacks.receive);
+        h.callbacks.state.mockImplementation(callbacks.state);
+        return {
+          ...h.owner,
+          update: (ids, joined) => h.owner.update(ids, batched ? joined : []),
+        };
+      },
+    });
+    try {
+      h.callbacks.receive(
+        ["notes", "other"].map((id) => roster(relay, id, [h.key.pubkey])),
+      );
+      const receive = vi.fn();
+      owner.session.subscribeLive(receive);
+      await h.first.auth();
+      const route = h.first
+        .requests()
+        .find((r) => scopeOf(r).includes("notes"));
+      assert.exists(route);
+      expect(scopeOf(route)).toHaveLength(batched ? 2 : 1);
+      await h.first.receive(["EOSE", route[1]]);
+      const author = keypair();
+      const event = signed(author, {
+        kind: 45010,
+        created_at: Math.floor(Date.now() / 1000),
+        content: '{"text":"Shared note"}',
+        tags: [
+          ["ar", "1"],
+          ["h", "notes"],
+          ["d", crypto.randomUUID()],
+          ["type", "example.note"],
+          ["title", "Note"],
+          ["op", "create"],
+        ],
+      });
+      expect(
+        filtersOf(route).some((filter) => matchesEvent(event, filter)),
+      ).toBe(true);
+      await h.first.receive(["EVENT", route[1], event]);
+      expect(receive).toHaveBeenCalledWith({
+        events: [event],
+        channelId: "notes",
+      });
+      h.callbacks.receive([roster(relay, "notes", [], event.created_at + 1)]);
+      receive.mockClear();
+      const afterRemoval = signed(author, {
+        kind: event.kind,
+        created_at: event.created_at + 2,
+        content: '{"text":"After removal"}',
+        tags: [
+          ...event.tags.map((tag) =>
+            tag[0] === "op" ? ["op", "update"] : tag,
+          ),
+          ["prev", event.id],
+        ],
+      });
+      await h.first.receive(["EVENT", route[1], afterRemoval]);
+      expect(receive).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 it("batches joined background interests without rebalance and fences retired batch wires", async () => {
   vi.useFakeTimers();
   const h = setup([]);
@@ -993,7 +1068,9 @@ it("bounds interests and exposes every omitted ID without exceeding 1024 subscri
       .filter((r) => r.status === "limited")
       .map((r) => r.channelId),
   ).toEqual(ids.slice(1022));
-  expect(() => liveChannels([...ids, "excess"])).toThrow();
+  expect(() =>
+    liveChannels(Array(LIVE_INTEREST_CAPACITY + 1).fill("excess")),
+  ).toThrow();
   for (const invalid of [[""], ["a b"], ["x".repeat(129)], [9], {}])
     expect(() => liveChannels(invalid)).toThrow();
   h.owner.dispose();
@@ -2417,4 +2494,128 @@ it("carries verified workflow attribution from live admission to notification ca
     owner.dispose();
     h.owner.dispose();
   }
+});
+
+it("keeps 60000 joined homes live while four bounded replay reads recover each channel", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 60_000 },
+    (_, i) => `task-${String(i).padStart(6, "0")}`,
+  );
+  const h = setup([]);
+  h.callbacks.state.mockImplementation(() => {});
+  h.owner.update([...ids, "normal-chat"], [...ids, "normal-chat"]);
+  h.owner.prioritize?.(["normal-chat", ids.at(-1) as string]);
+  await h.first.auth();
+  const established = new Set<string>();
+  const replayed = new Set<string>();
+  const openWires = new Set<string>();
+  let maximum = 0;
+  let cursor = 0;
+  let replayRequests = 0;
+  let tailRequests = 0;
+  // Each EOSE synchronously admits the next bounded request.
+  while (cursor < h.first.sent.length) {
+    const frame = h.first.sent[cursor++];
+    if (frame?.[0] === "CLOSE") {
+      openWires.delete(frame[1] as string);
+      continue;
+    }
+    if (frame?.[0] !== "REQ") continue;
+    const request = frame as WireRequest;
+    openWires.add(request[1]);
+    maximum = Math.max(maximum, openWires.size);
+    const filters = filtersOf(request);
+    const scope = scopeOf(request);
+    expect(filters.length).toBeLessThanOrEqual(10);
+    expect(
+      new TextEncoder().encode(JSON.stringify(request)).length,
+    ).toBeLessThan(524288);
+    if (scope.length) {
+      if (filters[0]?.limit === 0) {
+        tailRequests++;
+        expect(scope.length).toBeLessThanOrEqual(1000);
+        await h.first.receive(["EOSE", request[1]]);
+        for (const id of scope) established.add(id);
+      } else {
+        replayRequests++;
+        expect(scope.length).toBeLessThanOrEqual(10);
+        for (const id of scope) {
+          expect(established.has(id)).toBe(true);
+          expect(replayed.has(id)).toBe(false);
+          replayed.add(id);
+        }
+        await h.first.receive(["EOSE", request[1]]);
+      }
+    } else await h.first.receive(["EOSE", request[1]]);
+  }
+  expect(established.size).toBe(60_001);
+  expect(replayed.size).toBe(60_001);
+  expect(tailRequests).toBe(61);
+  expect(replayRequests).toBe(6001);
+  expect(maximum).toBeLessThanOrEqual(67);
+  expect(
+    h.callbacks.state.mock.lastCall?.[0].routes.every(
+      (route) => route.status === "live",
+    ),
+  ).toBe(true);
+  expect(
+    new TextEncoder().encode(
+      JSON.stringify(h.callbacks.state.mock.lastCall?.[0]),
+    ).length,
+  ).toBeLessThan(32 * 1024 * 1024);
+  h.owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps large tails active during replay and fences removed channel lifetimes", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 1200 },
+    (_, i) => `task-${String(i).padStart(4, "0")}`,
+  );
+  const h = setup([]);
+  h.owner.update(ids, ids);
+  await h.first.auth();
+  const tail = h.first
+    .requests()
+    .find((request) => scopeOf(request).includes(ids[0] as string));
+  assert.exists(tail);
+  const incoming = message(
+    h.key,
+    ids[0] as string,
+    "At the setup boundary",
+    1700000000,
+  );
+  await h.first.receive(["EVENT", tail[1], incoming]);
+  expect(h.callbacks.receive).toHaveBeenLastCalledWith(
+    incoming ? [incoming] : [],
+    { phase: "live", channelId: ids[0] },
+  );
+  await h.first.receive(["EOSE", tail[1]]);
+  const replay = h.first
+    .requests()
+    .find(
+      (request) =>
+        request[1] !== tail[1] && scopeOf(request).includes(ids[0] as string),
+    );
+  assert.exists(replay);
+  expect(
+    h.first.sent.some((frame) => frame[0] === "CLOSE" && frame[1] === tail[1]),
+  ).toBe(false);
+  await h.first.receive(["EVENT", replay[1], incoming]);
+  expect(h.callbacks.receive).toHaveBeenLastCalledWith([incoming], {
+    phase: "replay",
+    channelId: ids[0],
+  });
+  h.owner.update(ids.slice(1), ids.slice(1));
+  const before = h.callbacks.receive.mock.calls.length;
+  await h.first.receive(["EVENT", replay[1], incoming]);
+  await h.first.receive(["EVENT", tail[1], incoming]);
+  expect(h.callbacks.receive).toHaveBeenCalledTimes(before);
+  h.first.onclose?.();
+  await h.first.receive(["EVENT", tail[1], incoming]);
+  expect(h.callbacks.receive).toHaveBeenCalledTimes(before);
+  h.owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
 });

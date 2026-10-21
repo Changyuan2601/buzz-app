@@ -1,4 +1,14 @@
+import { ARTIFACT_MAX_EVENT_BYTES } from "../agents/agent-config-artifacts";
 import { isWorkflowOperation } from "../workflows/protocol";
+import {
+  managedDelivery,
+  mergeManagedDelivery,
+  deliveryState,
+  MANAGED_MAX_ATTEMPTS,
+  MANAGED_RECEIPT_MS,
+  type ManagedDelivery,
+  type ManagedRecipient,
+} from "./managed-delivery";
 import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
@@ -38,6 +48,7 @@ export type OutgoingEvent = Readonly<{
   acknowledged?: true;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
   guarded?: boolean;
+  managed?: ManagedDelivery;
   delivery: Delivery;
   error?: string | undefined;
   /** The relay refused the last attempt, rather than it failing on this
@@ -60,6 +71,7 @@ export interface Outbox {
     },
     recovery?: OutboxRecovery,
     active?: () => boolean,
+    managed?: Readonly<{ recipient?: ManagedRecipient }>,
   ): string;
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
@@ -75,8 +87,11 @@ type SendObserver = (
 ) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
+  subscribe?(listener: () => void): () => void;
   close?(): void;
-  load(): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
+  load(options?: {
+    refresh: true;
+  }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   save(operations: readonly OutgoingEvent[]): void | Promise<void>;
 }
 export class PublishRejected extends Error {
@@ -166,6 +181,7 @@ export function createOutbox(
     held?: true;
   };
   const attempts = new Map<string, Attempt>();
+  const deliveries = new Map<Promise<void>, string>();
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
@@ -229,6 +245,8 @@ export function createOutbox(
   let confirmedKeep: ((event: EventData) => boolean) | undefined;
   let storageError: string | undefined;
   let hydrated = false;
+  let managedOwner = false;
+  let managedTimer: ReturnType<typeof setTimeout> | undefined;
   let durable = Promise.resolve();
   const notify = () => {
     pendingBytes = snapshot.reduce(
@@ -249,7 +267,10 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
-  const persist = (id: string, action?: "acknowledge" | "dismiss") => {
+  const persist = (
+    id: string,
+    action?: "acknowledge" | "dismiss" | "receipt",
+  ) => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
       .catch(() => {})
@@ -265,17 +286,30 @@ export function createOutbox(
         const records =
           action === "dismiss"
             ? visible.filter((item) => item.event.id !== id)
-            : action === "acknowledge"
+            : action === "receipt"
               ? visible.map((item) =>
-                  item.event.id === id
+                  item.event.id === id && item.managed
                     ? {
                         ...item,
-                        recovery: undefined,
-                        acknowledged: true as const,
+                        managed: {
+                          ...item.managed,
+                          agentReceived: true,
+                          error: undefined,
+                        },
                       }
                     : item,
                 )
-              : visible;
+              : action === "acknowledge"
+                ? visible.map((item) =>
+                    item.event.id === id
+                      ? {
+                          ...item,
+                          recovery: undefined,
+                          acknowledged: true as const,
+                        }
+                      : item,
+                  )
+                : visible;
         const bytes =
           action === "dismiss"
             ? byteSize(snapshot.filter((item) => item.event.id !== id))
@@ -284,6 +318,18 @@ export function createOutbox(
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
           await storage.save(records);
+          if (action === "receipt") {
+            const current = find(id);
+            if (current?.managed)
+              replace({
+                ...current,
+                managed: {
+                  ...current.managed,
+                  agentReceived: true,
+                  error: undefined,
+                },
+              });
+          }
           if (action === "dismiss") {
             // Commit removal inside the serialized write, before a later save
             // can capture state. Failed storage never exposes a temporary absence.
@@ -339,6 +385,101 @@ export function createOutbox(
     void persist(item.event.id).catch(() => {
       /* Durable intent restores as unknown. */
     });
+    if (item.managed) wakeManaged();
+  }
+  const managedDone = (state: ManagedDelivery) =>
+    state.relayAccepted && (!state.recipient || state.agentReceived);
+  function refreshManaged() {
+    const work = durable
+      .catch(() => {})
+      .then(() => ready)
+      .then(async () => {
+        if (closed) return;
+        const records = await storage.load({ refresh: true });
+        validateSaved(records);
+        const incoming = new Map(
+          records
+            .filter((item) => item.managed)
+            .map((item) => [item.event.id, decode(item)]),
+        );
+        const next = new Map(snapshot.map((item) => [item.event.id, item]));
+        const before = JSON.stringify(visible);
+        for (const [id, item] of incoming) {
+          const prior = next.get(id) ?? completed.peek(id);
+          const managed =
+            prior?.managed && item.managed
+              ? mergeManagedDelivery(prior.managed, item.managed)
+              : item.managed;
+          const merged = {
+            ...item,
+            ...(attempts.has(id) && prior
+              ? { delivery: prior.delivery, error: prior.error }
+              : {}),
+            ...(managed ? { managed } : {}),
+          };
+          if (managed && managedDone(managed) && !attempts.has(id)) {
+            completed.set(id, merged);
+            next.delete(id);
+          } else {
+            next.set(id, merged);
+            completed.delete(id);
+          }
+        }
+        for (const [id, item] of next)
+          if (item.managed && !incoming.has(id) && !attempts.has(id))
+            next.delete(id);
+        snapshot = Object.freeze([...next.values()]);
+        if (
+          before !==
+          JSON.stringify([
+            ...completed.entries().map(([, item]) => item),
+            ...snapshot,
+          ])
+        )
+          notify();
+      });
+    durable = work;
+    return work;
+  }
+  function wakeManaged(delay = 0) {
+    if (closed || !managedOwner) return;
+    clearTimeout(managedTimer);
+    managedTimer = setTimeout(() => {
+      managedTimer = undefined;
+      void pumpManaged().catch(() => {});
+    }, delay);
+  }
+  async function pumpManaged() {
+    if (closed || !managedOwner) return;
+    await refreshManaged();
+    if (closed || !managedOwner) return;
+    let delay = Infinity;
+    for (const item of [...snapshot]) {
+      const state = item.managed;
+      const id = item.event.id;
+      if (!state || attempts.has(id)) continue;
+      if (managedDone(state)) {
+        completed.set(id, item);
+        snapshot = Object.freeze(snapshot.filter((row) => row.event.id !== id));
+        notify();
+        await persist(id);
+        continue;
+      }
+      if (state.error) continue;
+      if (state.relayAccepted) {
+        if (state.receiptDeadline <= Date.now())
+          saveStatus({ ...item, managed: { ...state, error: "receipt" } });
+        else delay = Math.min(delay, state.receiptDeadline - Date.now());
+      } else if (item.refused || state.attempts >= MANAGED_MAX_ATTEMPTS) {
+        saveStatus({ ...item, managed: { ...state, error: "send" } });
+      } else if (state.nextAttemptAt > Date.now())
+        delay = Math.min(delay, state.nextAttemptAt - Date.now());
+      else {
+        replace({ ...item, delivery: "sending", error: undefined });
+        schedule(id, undefined, item.delivery);
+      }
+    }
+    if (Number.isFinite(delay)) wakeManaged(delay);
   }
   function validateSaved(loaded: readonly OutgoingEvent[]) {
     if (
@@ -366,8 +507,11 @@ export function createOutbox(
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
-      delivery:
-        item.delivery === "seen" && signed
+      ...(item.managed ? { managed: managedDelivery(item.managed) } : {}),
+      ...(item.managed && item.refused ? { refused: true as const } : {}),
+      delivery: item.managed?.relayAccepted
+        ? "accepted"
+        : item.delivery === "seen" && signed
           ? "seen"
           : item.delivery === "failed"
             ? "failed"
@@ -378,17 +522,22 @@ export function createOutbox(
   function restore(restored: readonly OutgoingEvent[]) {
     const pending = restored.filter(
       (item) =>
-        (!(item.event.kind === 9000 && item.acknowledged) &&
-          item.delivery !== "seen") ||
-        !!item.recovery,
+        (item.managed
+          ? !managedDone(item.managed)
+          : !(item.event.kind === 9000 && item.acknowledged) &&
+            item.delivery !== "seen") ||
+        !!item.recovery ||
+        (!!item.managed && !managedDone(item.managed)),
     );
     if (pending.length > MAX_PENDING)
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
       if (
-        ((item.event.kind === 9000 && item.acknowledged) ||
+        ((!!item.managed && managedDone(item.managed)) ||
+          (item.event.kind === 9000 && item.acknowledged) ||
           item.delivery === "seen") &&
         !item.recovery &&
+        (!item.managed || managedDone(item.managed)) &&
         (!confirmedInvalidated ||
           (item.event.kind === 9007 && confirmedKeep?.(item.event)))
       )
@@ -461,6 +610,24 @@ export function createOutbox(
     previousDelivery: Delivery = "failed",
   ) {
     if (closed || attempts.has(id)) return;
+    const item = find(id);
+    if (item?.managed) {
+      if (
+        !managedOwner ||
+        item.managed.relayAccepted ||
+        item.managed.attempts >= MANAGED_MAX_ATTEMPTS ||
+        item.managed.error
+      )
+        return;
+      replace({
+        ...item,
+        managed: {
+          ...item.managed,
+          attempts: item.managed.attempts + 1,
+          nextAttemptAt: Date.now() + 1000 * 2 ** item.managed.attempts,
+        },
+      });
+    }
     attempts.set(id, {
       expiresAt: Date.now() + timeoutMs,
       previousDelivery,
@@ -469,7 +636,13 @@ export function createOutbox(
     });
     void deliver(id);
   }
-  async function deliver(id: string) {
+  function deliver(id: string) {
+    const work = deliverAttempt(id);
+    deliveries.set(work, id);
+    void work.finally(() => deliveries.delete(work));
+    return work;
+  }
+  async function deliverAttempt(id: string) {
     const attempt = attempts.get(id);
     if (closed || !attempt || attempt.controller || inflight() >= 3) return;
     if (!find(id)) return;
@@ -552,6 +725,18 @@ export function createOutbox(
       if (latest)
         saveStatus({
           ...latest,
+          ...(latest.managed
+            ? {
+                managed: {
+                  ...latest.managed,
+                  relayAccepted: true,
+                  receiptDeadline:
+                    latest.managed.receiptDeadline ||
+                    Date.now() + MANAGED_RECEIPT_MS,
+                  error: undefined,
+                },
+              }
+            : {}),
           delivery:
             latest.delivery === "seen" || attempt.previousDelivery === "seen"
               ? "seen"
@@ -581,7 +766,7 @@ export function createOutbox(
           ...latest,
           delivery,
           refused:
-            delivery === "failed" &&
+            (delivery === "failed" || !!latest.managed) &&
             error instanceof PublishRejected &&
             !(error instanceof PublishNotSent)
               ? true
@@ -619,7 +804,8 @@ export function createOutbox(
         observed &&
         ((observed.event.kind === 9000 && observed.acknowledged) ||
           observed.delivery === "seen") &&
-        !observed.recovery
+        !observed.recovery &&
+        (!observed.managed || managedDone(observed.managed))
       ) {
         completed.set(id, observed);
         snapshot = Object.freeze(
@@ -629,6 +815,7 @@ export function createOutbox(
         void persist(id).catch(() => {});
       }
       pumpDeliveries();
+      wakeManaged();
     }
   }
   const subscribe = (set: Set<() => void>, listener: () => void) => {
@@ -690,6 +877,10 @@ export function createOutbox(
     async acknowledge(id: string) {
       await outbox.ready();
       const item = visible.find((item) => item.event.id === id);
+      if (item?.managed && !managedDone(item.managed))
+        return Promise.reject(
+          new Error("Resolve managed delivery before removing this message"),
+        );
       if (!item?.recovery) return;
       // Member callers verify a fresh signed roster even when the receipt was lost.
       if (
@@ -712,12 +903,26 @@ export function createOutbox(
       },
       recovery?: OutboxRecovery,
       active?: () => boolean,
+      managed?: Readonly<{ recipient?: ManagedRecipient }>,
     ) {
       if (active && !active())
         throw new DOMException("Channel addition cancelled", "AbortError");
       if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
       const savedRecovery = recoveryValue(recovery);
+      if (managed && savedRecovery)
+        throw new Error(
+          "Managed delivery cannot replace another recovery intent",
+        );
+      if (
+        managed?.recipient &&
+        (input.kind !== 9 ||
+          !input.tags.some(
+            ([name, value]) =>
+              name === "h" && value === managed.recipient?.channelId,
+          ))
+      )
+        throw new Error("Managed recipient does not match the message");
       if (
         savedRecovery &&
         (!hydrated ||
@@ -738,7 +943,10 @@ export function createOutbox(
         (catalog
           ? bytes(input.content) > MAX_CONTENT_BYTES ||
             byteSize(input) > MAX_EVENT_BYTES
-          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
+          : byteSize(input) >
+            (input.kind === 45010
+              ? ARTIFACT_MAX_EVENT_BYTES - 512
+              : OUTBOX_INPUT_MAX_BYTES))
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)
@@ -821,6 +1029,20 @@ export function createOutbox(
             delivery: "sending" as const,
             ...(savedRecovery ? { recovery: savedRecovery } : {}),
             ...(active ? { guarded: true } : {}),
+            ...(managed
+              ? {
+                  managed: managedDelivery({
+                    version: 1,
+                    ...managed,
+                    round: 0,
+                    attempts: 0,
+                    relayAccepted: false,
+                    agentReceived: false,
+                    nextAttemptAt: 0,
+                    receiptDeadline: 0,
+                  }),
+                }
+              : {}),
           }),
         ]);
         notify();
@@ -831,10 +1053,28 @@ export function createOutbox(
       });
       void intent.catch(() => {}); // Delivery reports persistence errors; disposal still saves queued intent.
       schedule(event.id, intent);
+      wakeManaged();
       return event.id;
     },
     retry(id: string, active?: () => boolean) {
       const item = find(id);
+      if (item?.managed) {
+        replace({
+          ...item,
+          managed: {
+            ...item.managed,
+            round: item.managed.round + 1,
+            attempts: 0,
+            nextAttemptAt: 0,
+            receiptDeadline: Date.now() + MANAGED_RECEIPT_MS,
+            error: undefined,
+          },
+        });
+        void persist(id)
+          .then(() => wakeManaged())
+          .catch(() => {});
+        return;
+      }
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
         throw new DOMException("Channel addition cancelled", "AbortError");
       // Workflow recovery is inspect/dismiss only, including restored intents.
@@ -873,6 +1113,10 @@ export function createOutbox(
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
       const item = visible.find((item) => item.event.id === id);
+      if (item?.managed && !managedDone(item.managed))
+        return Promise.reject(
+          new Error("Resolve managed delivery before removing this message"),
+        );
       if (item?.recovery && item.delivery !== "failed")
         return Promise.reject(
           new Error(
@@ -890,6 +1134,11 @@ export function createOutbox(
       return work;
     },
   });
+  const stopStorage = storage.subscribe?.(() => {
+    void refreshManaged()
+      .then(() => wakeManaged())
+      .catch(() => {});
+  });
   return {
     outbox,
     local: Object.freeze({
@@ -897,6 +1146,80 @@ export function createOutbox(
       subscribe: (listener: () => void) => subscribe(localListeners, listener),
     }),
     ready,
+    delivery: {
+      async get(id: string) {
+        await refreshManaged();
+        const item = visible.find((item) => item.event.id === id);
+        return item?.managed ? deliveryState(id, item.managed) : undefined;
+      },
+      subscribe: (listener: () => void) => subscribe(localListeners, listener),
+      retry: async (id: string) => {
+        await refreshManaged();
+        outbox.retry(id);
+        await persist(id);
+      },
+      async submit(
+        input: Parameters<Outbox["send"]>[0],
+        recipient?: ManagedRecipient,
+      ) {
+        await outbox.ready();
+        const id = outbox.send(input, undefined, undefined, {
+          ...(recipient ? { recipient } : {}),
+        });
+        await persist(id);
+        return { operationId: id, eventId: id };
+      },
+    },
+    async managedOwner(owned: boolean) {
+      managedOwner = owned;
+      clearTimeout(managedTimer);
+      if (owned) {
+        await refreshManaged();
+        wakeManaged();
+      } else
+        for (const [id, attempt] of attempts)
+          if (find(id)?.managed) attempt.controller?.abort(abortError());
+      if (!owned) {
+        await Promise.allSettled(
+          [...deliveries]
+            .filter(([, id]) => !!find(id)?.managed)
+            .map(([work]) => work),
+        );
+        await durable.catch(() => {});
+      }
+    },
+    async receiveManaged(
+      channelId: string,
+      agentId: string,
+      messageIds: readonly string[],
+    ) {
+      if (
+        messageIds.length > 256 ||
+        messageIds.some((id) => !/^[0-9a-f]{64}$/.test(id))
+      )
+        throw new Error("Invalid message receipt IDs");
+      await refreshManaged();
+      for (const id of new Set(messageIds)) {
+        const item = find(id);
+        if (
+          !item?.managed ||
+          item.managed.recipient?.channelId !== channelId ||
+          item.managed.recipient.agentId !== agentId ||
+          item.managed.agentReceived
+        )
+          continue;
+        try {
+          await persist(id, "receipt");
+        } catch (error) {
+          replace({
+            ...item,
+            managed: { ...item.managed, error: "receipt-save" },
+          });
+          throw error;
+        }
+      }
+      wakeManaged();
+    },
     /** Fetched/confirmed evidence is disposable; pending intent is not. A revoke
      * during async hydration fences that old confirmed cache, not its writes. */
     purgeConfirmed(keep: (event: EventData) => boolean) {
@@ -924,7 +1247,8 @@ export function createOutbox(
         delivered(event);
         if (
           (awaitsReceipt(event) && attempts.has(event.id)) ||
-          find(event.id)?.recovery
+          find(event.id)?.recovery ||
+          find(event.id)?.managed
         ) {
           snapshot = Object.freeze(
             snapshot.map((item) =>
@@ -933,6 +1257,17 @@ export function createOutbox(
                     ...item,
                     signed: event,
                     delivery: "seen" as const,
+                    ...(item.managed
+                      ? {
+                          managed: {
+                            ...item.managed,
+                            relayAccepted: true,
+                            receiptDeadline:
+                              item.managed.receiptDeadline ||
+                              Date.now() + MANAGED_RECEIPT_MS,
+                          },
+                        }
+                      : {}),
                   })
                 : item,
             ),
@@ -953,7 +1288,8 @@ export function createOutbox(
           (item) =>
             !byId.has(item.event.id) ||
             (awaitsReceipt(item.event) && attempts.has(item.event.id)) ||
-            !!item.recovery,
+            !!item.recovery ||
+            (!!item.managed && !managedDone(item.managed)),
         ),
       );
       for (const event of confirmed) {
@@ -965,12 +1301,15 @@ export function createOutbox(
       }
       notify();
       void persist(first.id).catch(() => {});
+      wakeManaged();
     },
     dispose() {
       if (closed) return;
       finalSnapshot = snapshot;
       finalVisible = visible;
       closed = true;
+      stopStorage?.();
+      clearTimeout(managedTimer);
       admissionGates.clear();
       lifetime.abort();
       for (const attempt of attempts.values()) {

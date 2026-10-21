@@ -1,4 +1,5 @@
 import type { ChannelMessage } from "./contracts";
+import { deliveryState } from "./managed-delivery";
 import type { EventData } from "./events";
 import { collapseHuddleCards, foldMessages } from "./fold";
 import type { OutgoingEvent } from "./outbox";
@@ -84,7 +85,8 @@ export class MessageProjection {
       const previous = this.deliveries.get(id);
       if (
         previous?.delivery !== item.delivery ||
-        previous?.error !== item.error
+        previous?.error !== item.error ||
+        previous?.managed !== item.managed
       ) {
         if (messageKind(item.event.kind) && !affected.has(id))
           this.delivery(id, item);
@@ -157,6 +159,9 @@ export class MessageProjection {
       ...row,
       delivery: item?.delivery,
       deliveryError: item?.error,
+      managedDelivery: item?.managed
+        ? deliveryState(row.id, item.managed)
+        : undefined,
     });
   }
   private delivery(id: string, item: OutgoingEvent | undefined) {

@@ -1,4 +1,8 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import {
+  artifactSnapshotCapability,
+  createArtifactSnapshotReader,
+} from "./artifact-snapshot";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -395,6 +399,19 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
+    ...(artifactSnapshotCapability(info)
+      ? {
+          artifactSnapshots: createArtifactSnapshotReader((filter, signal) =>
+            admitSignedRequest(
+              origin,
+              transport.viewer,
+              () => nativeRelayRequest(origin, "/query", [filter]),
+              signal,
+              "background",
+            ),
+          ),
+        }
+      : {}),
     audienceAuthorityCommunity: audienceAuthorityCommunity(
       info.audience_authority,
     ),
@@ -784,7 +801,10 @@ export async function connectNativeTransport(
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.
-        if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60) {
+        if (
+          event.kind !== ARTIFACT_KIND &&
+          event.created_at < Math.floor(Date.now() / 1000) - 15 * 60
+        ) {
           const found = await transport.query(
             [
               {

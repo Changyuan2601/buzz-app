@@ -1,4 +1,5 @@
 import { createLocalAgentActivity } from "./local-activity";
+import { receiveManagedDelivery } from "../relay/managed-delivery";
 import {
   AgentConfigStore,
   type SettingsSchema,
@@ -472,6 +473,8 @@ export type Delivery<Config = unknown> = Readonly<{
   ignored?(): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
   acknowledged?(): void;
+  /** Exact prompt receipt. The caller waits for durable host confirmation. */
+  received?(messageIds: readonly string[]): Promise<void>;
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
@@ -1237,6 +1240,17 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      received: (agent, channelId, messageIds) => {
+        const binding = this.bindingOf(agent);
+        if (!binding)
+          return Promise.reject(new Error("Agent community is unavailable"));
+        return receiveManagedDelivery(
+          binding.scope,
+          channelId,
+          agent.pubkey,
+          messageIds,
+        );
+      },
       records: () => Object.values(this.records),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),

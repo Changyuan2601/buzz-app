@@ -52,7 +52,10 @@ export function liveRecoveryStatus(view: LiveRecoveryView): RecoveryStatus {
     (view.roster.state === "error" && view.roster.transient) ||
     view.heads.some((head) => head.state === "error" && head.transient) ||
     routes.some(
-      (route) => route.status === "error" && isTransientLiveError(route.error),
+      (route) =>
+        (route.status === "error" ||
+          (route.replay === "limited" && route.error !== undefined)) &&
+        isTransientLiveError(route.error),
     )
   )
     return "failed";

@@ -1,4 +1,5 @@
 import type { LocalAgentSource } from "../agents/local-activity";
+import { registerManagedDelivery } from "./managed-delivery";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
@@ -97,6 +98,7 @@ import {
   browserOutboxStorage,
   createOutbox,
   type OutboxStorage,
+  type Outbox,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
@@ -184,6 +186,7 @@ export function createRelaySession(
   const threads = new Set<ReturnType<typeof createThreadView>>();
   const writer = transport?.writer;
   const clock = new MessageClock();
+  const artifactUpdates = new Set<(events: readonly RelayEvent[]) => void>();
   const uploadAttachment = transport?.uploadAttachment;
   const writes =
     transport && writer
@@ -230,6 +233,19 @@ export function createRelaySession(
             },
             preparePublish: async (event, signal) => {
               workflows.validate(event);
+              const managed = rawLocal().find(
+                (item) => item.event.id === event.id,
+              )?.managed;
+              if (managed) {
+                const id = event.tags.find(([name]) => name === "h")?.[1];
+                if (!id) throw new Error("Managed delivery has no channel");
+                await channelWrites.refreshMembership(id);
+                signal.throwIfAborted();
+                if (!channels.canParticipate(id))
+                  throw new Error("Channel access changed");
+                if (managed.recipient)
+                  validateMentions(id, [managed.recipient.agentId]);
+              }
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
                 if (!id) throw new Error("Canvas has no channel");
@@ -251,8 +267,38 @@ export function createRelaySession(
         )
       : undefined;
   const rawLocal = () => writes?.local.snapshot() ?? [];
+  const confirmedArtifactIds = new Set<string>();
+  const confirmedArtifacts = () =>
+    rawLocal().flatMap((item) =>
+      item.event.kind === 45010 &&
+      item.signed &&
+      (item.managed?.relayAccepted ||
+        item.delivery === "accepted" ||
+        item.delivery === "seen")
+        ? [item.signed]
+        : [],
+    );
+  const stopArtifactJournal = writes?.local.subscribe(() => {
+    const events = confirmedArtifacts().filter(
+      (event) => !confirmedArtifactIds.has(event.id),
+    );
+    if (!events.length) return;
+    for (const event of events) confirmedArtifactIds.add(event.id);
+    while (confirmedArtifactIds.size > 2048)
+      confirmedArtifactIds.delete(
+        confirmedArtifactIds.values().next().value as string,
+      );
+    for (const listener of artifactUpdates) notify(() => listener(events));
+  });
   let retainedChannelEvent: (id: string) => RelayEvent | undefined = () =>
     undefined;
+  const stopManaged =
+    transport && writes
+      ? registerManagedDelivery(transportPartition(transport), {
+          owner: writes.managedOwner,
+          receive: writes.receiveManaged,
+        })
+      : undefined;
   function retainedThreadEvent(id: string) {
     for (const thread of threads) {
       if (!canAccess(thread.channelId)) continue;
@@ -1764,7 +1810,77 @@ export function createRelaySession(
     if (connected && !liveWasConnected) recovery?.retryNow(liveRecovery);
     liveWasConnected = connected;
   });
+  function messageCommands(managedRecipient?: string) {
+    return createMessages(
+      writes?.outbox,
+      transport?.viewer,
+      (id) =>
+        local().find((item) => item.event.id === id)?.event ??
+        recent.peek(id)?.event ??
+        retainedEvent(id),
+      emoji.tags,
+      validateMentions,
+      (id) => !closed && channels.canParticipate(id),
+      transport?.scope,
+      writer && (!writer.kinds || writer.kinds.includes(1984))
+        ? async (template) => {
+            if (closed) throw new Error("Relay session closed");
+            const signal = AbortSignal.any([
+              lifetime.signal,
+              AbortSignal.timeout(10_000),
+            ]);
+            // Race each step so the deadline holds even if the writer ignores `signal`.
+            const aborted = new Promise<never>((_, reject) => {
+              const fail = () => reject(signal.reason);
+              if (signal.aborted) fail();
+              else signal.addEventListener("abort", fail, { once: true });
+            });
+            const signed = await Promise.race([
+              writer.sign(template, signal),
+              aborted,
+            ]);
+            signal.throwIfAborted();
+            await Promise.race([writer.publish(signed, signal), aborted]);
+          }
+        : undefined,
+      transport?.archiveAuthority,
+      managedRecipient,
+    );
+  }
   const session = Object.freeze({
+    artifactSnapshots: transport?.artifactSnapshots,
+    subscribeArtifactUpdates(
+      listener: (events: readonly RelayEvent[]) => void,
+    ) {
+      artifactUpdates.add(listener);
+      const events = confirmedArtifacts();
+      if (events.length) notify(() => listener(events));
+      return () => {
+        artifactUpdates.delete(listener);
+      };
+    },
+    delivery: writes
+      ? {
+          ...writes.delivery,
+          async submit(input: Parameters<Outbox["send"]>[0]) {
+            if (input.kind !== 45010)
+              throw new Error("Use message commands for managed messages");
+            const homes = input.tags.filter(([name]) => name === "h");
+            const id = homes[0]?.[1];
+            if (
+              homes.length !== 1 ||
+              !id ||
+              closed ||
+              !channels.canParticipate(id) ||
+              (transport?.subscribe && liveSnapshot.status !== "connected")
+            )
+              throw new Error(
+                "Reconnect and confirm channel access before saving an artifact",
+              );
+            return writes.delivery.submit(input);
+          },
+        }
+      : undefined,
     memberAdditions,
     presence,
     viewer: transport?.viewer,
@@ -2002,40 +2118,8 @@ export function createRelaySession(
             },
           })
         : undefined,
-    messages: createMessages(
-      writes?.outbox,
-      transport?.viewer,
-      (id) =>
-        local().find((item) => item.event.id === id)?.event ??
-        recent.peek(id)?.event ??
-        retainedEvent(id),
-      emoji.tags,
-      validateMentions,
-      (id) => !closed && channels.canParticipate(id),
-      transport?.scope,
-      writer && (!writer.kinds || writer.kinds.includes(1984))
-        ? async (template) => {
-            if (closed) throw new Error("Relay session closed");
-            const signal = AbortSignal.any([
-              lifetime.signal,
-              AbortSignal.timeout(10_000),
-            ]);
-            // Race each step so the deadline holds even if the writer ignores `signal`.
-            const aborted = new Promise<never>((_, reject) => {
-              const fail = () => reject(signal.reason);
-              if (signal.aborted) fail();
-              else signal.addEventListener("abort", fail, { once: true });
-            });
-            const signed = await Promise.race([
-              writer.sign(template, signal),
-              aborted,
-            ]);
-            signal.throwIfAborted();
-            await Promise.race([writer.publish(signed, signal), aborted]);
-          }
-        : undefined,
-      transport?.archiveAuthority,
-    ),
+    messages: messageCommands(),
+    messagesForRecipient: messageCommands,
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
       channelId: string,
@@ -2962,6 +3046,9 @@ export function createRelaySession(
       }
     },
     dispose() {
+      stopManaged?.();
+      stopArtifactJournal?.();
+      artifactUpdates.clear();
       stopSoloGroups();
       closed = true;
       stopLiveRecovery();

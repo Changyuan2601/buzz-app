@@ -701,6 +701,24 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   margin-top: var(--space-1h);
 }
+.messageBody[data-managed-sending] {
+  animation: managed-message-pulse 2.4s ease-in-out infinite;
+}
+@keyframes managed-message-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .messageBody[data-managed-sending] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
 .dayCalendar {
   display: grid;
   flex: none;
