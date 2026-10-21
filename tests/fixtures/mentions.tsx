@@ -38,6 +38,9 @@ const viewer = keypair(),
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
+let replaceRecipients = (
+  _people: readonly { pubkey: string; name: string }[],
+): boolean => false;
 let incoming = (_events: readonly RelayEvent[]) => {};
 let releaseProfiles = () => {};
 let libraryReads = 0;
@@ -322,7 +325,18 @@ const plugins = createPluginManager(context, {
           ctx.conversation.registerTool({
             id: "probe",
             title: "Disabled command probe",
-            component: ({ disabled, insertText, insertMention }) => {
+            component: ({
+              disabled,
+              insertText,
+              insertMention,
+              replaceRecipients: replace,
+            }) => {
+              useLayoutEffect(() => {
+                replaceRecipients = replace;
+                return () => {
+                  replaceRecipients = () => false;
+                };
+              }, [replace]);
               useLayoutEffect(() => {
                 if (disabled)
                   disabledCalls.push({
@@ -373,6 +387,8 @@ Object.assign(window, {
     first: first.pubkey,
     second: second.pubkey,
     publications,
+    replaceRecipients: (people: readonly { pubkey: string; name: string }[]) =>
+      replaceRecipients(people),
     disabledCalls,
     change: (action: "enable" | "disable", id: string) =>
       plugins.change(action, id),

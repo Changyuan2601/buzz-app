@@ -57,6 +57,7 @@ function Surfaces() {
         insertText={() => false}
         insertMention={() => false}
         insertMentions={() => false}
+        replaceRecipients={() => false}
         insertResource={() => "no"}
         focus={() => {}}
       />

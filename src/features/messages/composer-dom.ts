@@ -87,6 +87,7 @@ export type ComposerInputElement = HTMLDivElement & {
     /** Automatic edits preserve focus and the current selection. */
     focus?: boolean,
   ): boolean;
+  replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;

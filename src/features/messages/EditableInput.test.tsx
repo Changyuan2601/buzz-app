@@ -3235,3 +3235,77 @@ it.each([
     }
   },
 );
+
+it.each([true, false])(
+  "preserves an explicitly %s bold typing format across recipient replacement",
+  async (enabled) => {
+    const h = mount(enabled ? "" : "bold");
+    act(() => {
+      if (!enabled) {
+        h.input.setSelectionRange(0, 4);
+        h.input.toggleFormat("bold");
+        h.input.setSelectionRange(2, 2);
+      }
+      h.input.toggleFormat("bold");
+      expect(
+        h.input.replaceRecipients([{ pubkey: "a".repeat(64), name: "Honey" }]),
+      ).toBe(true);
+      h.input.insertText("X");
+    });
+    expect(
+      h.input.querySelector("strong")?.textContent?.includes("X") ?? false,
+    ).toBe(enabled);
+  },
+);
+
+it("leaves duplicate mentions and their positions unchanged for the same recipient set", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const second = { pubkey: "b".repeat(64), name: "Mary Jane" };
+  const text = "ask @Honey about @Mary Jane and @Honey";
+  const h = mount({
+    text,
+    recipients: [
+      { ...first, start: 4, end: 10 },
+      { ...second, start: 17, end: 27 },
+      { ...first, start: 32, end: 38 },
+    ],
+  });
+  act(() => expect(h.input.replaceRecipients([second, first])).toBe(true));
+  expect(h.input).toHaveValue(text);
+  expect(h.draft().recipients).toHaveLength(3);
+});
+
+it("keeps retained recipients in place while adding and removing others", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const second = { pubkey: "b".repeat(64), name: "Mary Jane" };
+  const h = mount({
+    text: "ask @Honey about X",
+    recipients: [{ ...first, start: 4, end: 10 }],
+  });
+  act(() => expect(h.input.replaceRecipients([first, second])).toBe(true));
+  expect(h.input).toHaveValue("@Mary Jane ask @Honey about X");
+  act(() => expect(h.input.replaceRecipients([first])).toBe(true));
+  expect(h.input).toHaveValue("ask @Honey about X");
+});
+
+it("rejects adding a recipient when retained duplicate mentions fill the limit", () => {
+  const first = { pubkey: "a".repeat(64), name: "Honey" };
+  const text = "@Honey ".repeat(32);
+  const h = mount({
+    text,
+    recipients: Array.from({ length: 32 }, (_, i) => ({
+      ...first,
+      start: i * 7,
+      end: i * 7 + 6,
+    })),
+  });
+  act(() =>
+    expect(
+      h.input.replaceRecipients([
+        first,
+        { pubkey: "b".repeat(64), name: "Mary Jane" },
+      ]),
+    ).toBe(false),
+  );
+  expect(h.input).toHaveValue(text);
+});

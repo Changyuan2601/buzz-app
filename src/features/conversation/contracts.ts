@@ -40,6 +40,11 @@ export type ComposerToolProps = Readonly<{
   insertMentions(
     recipients: readonly Readonly<{ pubkey: string; name: string }>[],
   ): boolean;
+  /** Replace all selected mentions in one undoable edit, preserving prose and focus.
+   * An empty selection clears mentions. Rejected while editing a sent message. */
+  replaceRecipients(
+    recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+  ): boolean;
   /** Atomically insert a host-owned inline resource at the caret. The host validates
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */

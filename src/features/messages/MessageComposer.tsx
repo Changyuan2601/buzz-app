@@ -1103,6 +1103,42 @@ function Composer({
     setError(undefined);
     return true;
   }
+  function replaceRecipients(recipients: readonly MentionRecipient[]) {
+    if (
+      !Array.isArray(recipients) ||
+      recipients.some(
+        (person) =>
+          !person ||
+          typeof person.pubkey !== "string" ||
+          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
+          typeof person.name !== "string" ||
+          !person.name.trim(),
+      ) ||
+      !permitted.current ||
+      editingDisabled ||
+      editing.target ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected ||
+      input.current.disabled ||
+      input.current.readOnly
+    )
+      return false;
+    const unique = [
+      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+    ];
+    const admits = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+    );
+    if (unique.length > 32 || unique.some((person) => !admits(person.pubkey)))
+      return false;
+    if (!input.current.replaceRecipients(unique)) return false;
+    completion.invalidate();
+    setError(undefined);
+    return true;
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -2061,6 +2097,7 @@ function Composer({
                     insertText={(text) => insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
+                    replaceRecipients={replaceRecipients}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />

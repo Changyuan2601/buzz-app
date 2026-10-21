@@ -3,6 +3,7 @@ import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
+import { mentionHistory } from "./mention-history";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -8396,4 +8397,88 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
       screen.getByRole("button", { name: "Remove notes.txt" }),
     ).toBeVisible(),
   );
+});
+
+it("replaces recipients atomically while preserving prose, selection and undo", async () => {
+  const h = mount();
+  const replacement = { ...second, name: "Mary Jane" };
+  h.fill("Before prose after");
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.commands().insertMention(first);
+  });
+  expect(h.input()).toHaveValue("Before @Honey prose after");
+  act(() => {
+    h.input().setSelectionRange(16, 21);
+    expect(h.commands().replaceRecipients([replacement, replacement])).toBe(
+      true,
+    );
+  });
+  expect(h.input()).toHaveValue("@Mary Jane Before prose after");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
+  ]);
+  const selected = h
+    .input()
+    .value.slice(h.input().selectionStart, h.input().selectionEnd);
+  expect(selected).toBe("ose a");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("Before @Honey prose after");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
+  act(() => expect(h.commands().replaceRecipients([])).toBe(true));
+  expect(h.input()).toHaveValue("Before prose after");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+});
+
+it("rejects recipient replacement atomically for invalid and unavailable identities", () => {
+  const h = mount({ inviteAgents: true });
+  h.fill("Keep prose");
+  act(() => h.commands().insertMention(first));
+  const before = h.input().value;
+  for (const recipients of [
+    [second, { pubkey: "c".repeat(64), name: "Missing" }],
+    [{ pubkey: "bad", name: "Invalid" }],
+    [{ ...second, name: "" }],
+  ]) {
+    act(() => expect(h.commands().replaceRecipients(recipients)).toBe(false));
+    expect(h.input()).toHaveValue(before);
+  }
+});
+
+it.each(["disabled", "retarget", "unmount"])(
+  "revokes replacement commands after %s",
+  (transition) => {
+    const h = mount();
+    const replace = h.commands().replaceRecipients;
+    if (transition === "disabled") h.retarget({ disabled: true });
+    else if (transition === "retarget") h.retarget({ channelId: "other" });
+    else h.unmount();
+    act(() => expect(replace([second])).toBe(false));
+  },
+);
+
+it("rejects replacement while editing a sent message and when the draft would exceed its length limit", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const edit = h.input().value;
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(false));
+  expect(h.input()).toHaveValue(edit);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  h.fill("x".repeat(16000));
+  act(() => expect(h.commands().replaceRecipients([first])).toBe(false));
+  expect(h.input()).toHaveValue("x".repeat(16000));
+});
+
+it("keeps automatic recipient replacements out of recent mention ranking", () => {
+  const h = mount();
+  act(() => h.commands().insertMention(first));
+  const before = [...(mentionHistory(h.session, "channel") ?? [])];
+  expect(before).toEqual([[first.pubkey, 1]]);
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
+  expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });
