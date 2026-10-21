@@ -8,7 +8,7 @@ import type {
   ArtifactPage,
   ArtifactPageQuery,
   HostArtifactCollection,
-  ArtifactSnapshot,
+  ArtifactRefresh,
   SavedArtifact,
 } from "./types";
 
@@ -19,13 +19,12 @@ type Row = {
   scope: string;
   collection: string;
   id: string;
-  generation?: string;
 };
 type StoredPreference = { value: JsonValue };
 
-function sameSnapshot(
-  left: ArtifactSnapshot | undefined,
-  right: ArtifactSnapshot,
+function sameRefresh(
+  left: ArtifactRefresh | undefined,
+  right: ArtifactRefresh,
 ) {
   return left?.source === right.source && left.generation === right.generation;
 }
@@ -42,12 +41,25 @@ export function createArtifactStore(viewer: string, relay: string) {
     if (closed) throw new Error("Artifact storage closed");
     if (!opening) {
       const attempt = new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(DB, 2);
+        const request = indexedDB.open(DB, 3);
         let blocked = false;
         request.onupgradeneeded = () => {
           const db = request.result;
           if (db.objectStoreNames.contains("members"))
             db.deleteObjectStore("members");
+          if (db.objectStoreNames.contains("records")) {
+            const transaction = request.transaction;
+            if (!transaction)
+              throw new Error("Artifact database upgrade has no transaction");
+            const records = transaction.objectStore("records");
+            if (!records.indexNames.contains("channel"))
+              records.createIndex("channel", [
+                "scope",
+                "collection",
+                "record.channelId",
+                "id",
+              ]);
+          }
           for (const name of STORES) {
             if (db.objectStoreNames.contains(name)) continue;
             const store = db.createObjectStore(name, {
@@ -60,6 +72,13 @@ export function createArtifactStore(viewer: string, relay: string) {
             });
             if (name === "entries")
               store.createIndex("record", ["scope", "collection", "id"]);
+            if (name === "records")
+              store.createIndex("channel", [
+                "scope",
+                "collection",
+                "record.channelId",
+                "id",
+              ]);
           }
         };
         request.onerror = () => reject(request.error);
@@ -228,7 +247,7 @@ export function createArtifactStore(viewer: string, relay: string) {
           if (schema?.version > definition.version)
             throw new Error("Artifact collection requires a newer plugin");
           metadata.delete(key("source"));
-          metadata.delete(key("snapshot"));
+          metadata.delete(key("refresh"));
           metadata.delete(key("checkpoint"));
           const request = tx.objectStore("records").openCursor(range(prefix));
           then(request, (cursor) => {
@@ -292,16 +311,16 @@ export function createArtifactStore(viewer: string, relay: string) {
         next();
       });
     }
-    function checkSnapshot(
+    function checkRefresh(
       tx: IDBTransaction,
       then: Then,
-      snapshot: ArtifactSnapshot,
+      refresh: ArtifactRefresh,
       next: () => void,
     ) {
-      bindSource(tx, then, snapshot.source, () => {
-        then(tx.objectStore("metadata").get(key("snapshot")), (saved) => {
-          if (!sameSnapshot(saved?.value, snapshot))
-            throw new Error("Artifact snapshot changed");
+      bindSource(tx, then, refresh.source, () => {
+        then(tx.objectStore("metadata").get(key("refresh")), (saved) => {
+          if (!sameRefresh(saved?.value, refresh))
+            throw new Error("Artifact refresh changed");
           next();
         });
       });
@@ -507,12 +526,12 @@ export function createArtifactStore(viewer: string, relay: string) {
             done(row?.value ?? null),
           ),
         ),
-      async setRefreshError(snapshot, message, signal) {
+      async setRefreshError(refresh, message, signal) {
         if (!message) throw new Error("Artifact refresh error is empty");
         await run<void>(
           "readwrite",
           (tx, then, done) => {
-            checkSnapshot(tx, then, snapshot, () => {
+            checkRefresh(tx, then, refresh, () => {
               tx.objectStore("metadata").put({
                 scope,
                 collection,
@@ -526,81 +545,87 @@ export function createArtifactStore(viewer: string, relay: string) {
         );
         publish();
       },
+      knownIds(query) {
+        const limit = query.limit ?? 100;
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
+          return Promise.reject(
+            new Error("Artifact page limit must be 1 to 1000"),
+          );
+        return run<{ ids: string[]; next?: string }>(
+          "readonly",
+          (tx, then, done) => {
+            const records = tx.objectStore("records");
+            const parts =
+              query.channelId === undefined
+                ? prefix
+                : [...prefix, query.channelId];
+            const lower =
+              query.after === undefined ? parts : [...parts, query.after];
+            const request = (
+              query.channelId === undefined ? records : records.index("channel")
+            ).openKeyCursor(
+              IDBKeyRange.bound(
+                lower,
+                [...parts, []],
+                query.after !== undefined,
+              ),
+            );
+            const ids: string[] = [];
+            then(request, function visit(cursor) {
+              if (!cursor || ids.length === limit) {
+                const last = ids.at(-1);
+                done({
+                  ids,
+                  ...(cursor && last !== undefined ? { next: last } : {}),
+                });
+                return;
+              }
+              ids.push(String((cursor.primaryKey as IDBValidKey[])[2]));
+              cursor.continue();
+            });
+          },
+        );
+      },
       checkpoint: () =>
         run<string | null>("readonly", (tx, then, done) =>
           then(tx.objectStore("metadata").get(key("checkpoint")), (row) =>
             done(row?.value ?? null),
           ),
         ),
-      beginSnapshot(source) {
+      beginRefresh(source) {
         if (!source)
           return Promise.reject(new Error("Artifact source is empty"));
-        return run<ArtifactSnapshot>("readwrite", (tx, then, done) => {
+        return run<ArtifactRefresh>("readwrite", (tx, then, done) => {
           bindSource(tx, then, source, () => {
-            const snapshot = { source, generation: crypto.randomUUID() };
+            const refresh = { source, generation: crypto.randomUUID() };
             tx.objectStore("metadata").put({
               scope,
               collection,
-              key: "snapshot",
-              value: snapshot,
+              key: "refresh",
+              value: refresh,
             });
-            done(snapshot);
+            done(refresh);
           });
         });
       },
-      async completeSnapshot(snapshot, checkpoint, signal) {
+      async completeRefresh(refresh, checkpoint, signal) {
         await run<void>(
           "readwrite",
           (tx, then, done) => {
-            checkSnapshot(tx, then, snapshot, () => {
+            checkRefresh(tx, then, refresh, () => {
               const metadata = tx.objectStore("metadata");
               then(metadata.get(key("checkpoint")), (row) => {
                 if ((row?.value ?? null) !== checkpoint.expected)
                   throw new Error("Artifact checkpoint changed");
-                const request = tx
-                  .objectStore("records")
-                  .openCursor(range(prefix));
-                then(request, function visit(cursor) {
-                  if (!cursor) {
-                    metadata.put({
-                      scope,
-                      collection,
-                      key: "checkpoint",
-                      value: checkpoint.next,
-                    });
-                    metadata.delete(key("snapshot"));
-                    metadata.delete(key("refresh-error"));
-                    done();
-                    return;
-                  }
-                  const saved: Row = cursor.value;
-                  if (
-                    !saved.record.current ||
-                    saved.generation === snapshot.generation ||
-                    saved.record.availability.state === "unavailable"
-                  ) {
-                    cursor.continue();
-                    return;
-                  }
-                  mutate(
-                    tx,
-                    then,
-                    saved.id,
-                    (row) => ({
-                      row: {
-                        ...row,
-                        record: {
-                          ...row.record,
-                          availability: {
-                            state: "unavailable",
-                            reason: "Absent from completed snapshot",
-                          },
-                        },
-                      },
-                    }),
-                    () => cursor.continue(),
-                  );
+                metadata.put({
+                  scope,
+                  collection,
+                  key: "checkpoint",
+                  value: checkpoint.next,
                 });
+                metadata.delete(key("refresh"));
+                metadata.delete(key("refresh-error"));
+                done();
               });
             });
           },
@@ -614,19 +639,9 @@ export function createArtifactStore(viewer: string, relay: string) {
           (tx, then, done) => {
             const jobs: (() => void)[] = [];
             const next = series(jobs);
-            if (!batch.snapshot || batch.source !== batch.snapshot.source)
-              throw new Error("Artifact snapshot source mismatch");
-            jobs.push(() => checkSnapshot(tx, then, batch.snapshot, next));
-            jobs.push(() =>
-              then(tx.objectStore("metadata").get(key("checkpoint")), (row) => {
-                if (
-                  batch.checkpoint &&
-                  (row?.value ?? null) !== batch.checkpoint.expected
-                )
-                  throw new Error("Artifact checkpoint changed");
-                next();
-              }),
-            );
+            if (!batch.refresh || batch.source !== batch.refresh.source)
+              throw new Error("Artifact refresh source mismatch");
+            jobs.push(() => checkRefresh(tx, then, batch.refresh, next));
             for (const incoming of batch.records ?? [])
               jobs.push(() =>
                 mutate(
@@ -649,7 +664,6 @@ export function createArtifactStore(viewer: string, relay: string) {
                         scope,
                         collection,
                         id: incoming.id,
-                        generation: batch.snapshot.generation,
                         record: {
                           id: incoming.id,
                           channelId: incoming.channelId,
@@ -664,21 +678,6 @@ export function createArtifactStore(viewer: string, relay: string) {
                     };
                   },
                   next,
-                ),
-              );
-            for (const seen of batch.seen ?? [])
-              jobs.push(() =>
-                then(
-                  tx.objectStore("records").get(key(seen.id)),
-                  (row: Row | undefined) => {
-                    if (!row || row.record.current?.id !== seen.revisionId)
-                      throw new Error("Snapshot revision is not saved");
-                    tx.objectStore("records").put({
-                      ...row,
-                      generation: batch.snapshot.generation,
-                    });
-                    next();
-                  },
                 ),
               );
             for (const availability of batch.availability ?? [])
@@ -706,16 +705,7 @@ export function createArtifactStore(viewer: string, relay: string) {
                   next,
                 ),
               );
-            jobs.push(() => {
-              if (batch.checkpoint)
-                tx.objectStore("metadata").put({
-                  scope,
-                  collection,
-                  key: "checkpoint",
-                  value: batch.checkpoint.next,
-                });
-              done();
-            });
+            jobs.push(() => done());
             next();
           },
           signal,

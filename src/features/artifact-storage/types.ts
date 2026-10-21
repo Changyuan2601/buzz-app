@@ -71,7 +71,7 @@ export type ArtifactCollection = {
       change: (current: JsonValue | undefined) => JsonValue,
     ): Promise<void>;
   };
-  /** Inserts absent snapshots and preferences. Retries preserve later edits. */
+  /** Inserts absent refreshs and preferences. Retries preserve later edits. */
   importBatch(batch: ArtifactImport): Promise<void>;
   imported(marker: string): Promise<boolean>;
   close(): void;
@@ -82,37 +82,41 @@ export type ReceivedArtifact = Readonly<{
   type: string;
   revision: ArtifactRevision;
 }>;
-export type ArtifactSnapshot = Readonly<{
+export type ArtifactRefresh = Readonly<{
   source: string;
   generation: string;
 }>;
 export type ArtifactBatch = Readonly<{
   /** Exact authoritative query scope, defined by the sync owner. */
   source: string;
-  snapshot: ArtifactSnapshot;
+  refresh: ArtifactRefresh;
   records?: readonly ReceivedArtifact[];
-  /** Snapshot members whose exact current revision is already saved. */
-  seen?: readonly Readonly<{ id: string; revisionId: string }>[];
   availability?: readonly Readonly<{
     id: string;
+    /** The current ID observed locally, regardless of missed relay revisions. */
     expectedRevision: string | null;
     value: ArtifactAvailability;
   }>[];
-  checkpoint?: Readonly<{ expected: string | null; next: string }>;
 }>;
 /** Host-only writes. Plugins submit shared changes through the delivery service. */
 export type HostArtifactCollection = ArtifactCollection & {
   applyBatch(batch: ArtifactBatch, signal?: AbortSignal): Promise<void>;
   checkpoint(): Promise<string | null>;
+  knownIds(query: {
+    after?: string;
+    limit?: number;
+    channelId?: string;
+  }): Promise<{ ids: readonly string[]; next?: string }>;
+
   setRefreshError(
-    snapshot: ArtifactSnapshot,
+    refresh: ArtifactRefresh,
     message: string,
     signal?: AbortSignal,
   ): Promise<void>;
-  beginSnapshot(source: string): Promise<ArtifactSnapshot>;
-  /** The caller validates server completion before this local transaction. */
-  completeSnapshot(
-    snapshot: ArtifactSnapshot,
+  beginRefresh(source: string): Promise<ArtifactRefresh>;
+  /** Commit progress after all pages succeed. Unseen records stay unchanged. */
+  completeRefresh(
+    refresh: ArtifactRefresh,
     checkpoint: { expected: string | null; next: string },
     signal?: AbortSignal,
   ): Promise<void>;
