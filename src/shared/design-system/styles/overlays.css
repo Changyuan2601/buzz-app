@@ -236,6 +236,8 @@
   .buzz-dialog:where(:not([data-stepped])[data-height]),
   .buzz-dialog-step:where([data-height]) {
     overflow: auto;
+    /* WebKit reveals only a focused field's caret in this fallback scrollport. */
+    scroll-padding-block: var(--dialog-padding);
   }
   /* Each step retains its own sizing while it exits, including when the next
      step is content-sized. The transparent popup only owns their shared grid. */
