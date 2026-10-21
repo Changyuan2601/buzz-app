@@ -499,11 +499,6 @@ export function TodosPanel({
                   }}
                 />
               </div>
-              {item.namedAssignee && (
-                <span className="text-caption text-secondary">
-                  {item.namedAssignee.name}
-                </span>
-              )}
               <fieldset
                 id={`${prefix}-${item.offset}-assignee`}
                 className={styles.assignee}
@@ -513,6 +508,18 @@ export function TodosPanel({
                   id={`${prefix}-${item.offset}-assignee-control`}
                   label={`Assignee for ${item.label}`}
                   menuTitle="Assign to"
+                  text={
+                    (item.assignee || item.namedAssignee) && (
+                      <span className={styles.assigneeName}>
+                        {item.assignee
+                          ? resolveName(
+                              item.assignee.pubkey,
+                              item.assignee.name,
+                            ) || keyLabels.get(item.assignee.pubkey)
+                          : item.namedAssignee?.name}
+                      </span>
+                    )
+                  }
                   title={
                     item.assignee
                       ? userLabel(item.assignee.pubkey, item.assignee.name)

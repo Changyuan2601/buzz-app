@@ -122,3 +122,10 @@
 .label a {
   color: var(--text-link);
 }
+
+.assigneeName {
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

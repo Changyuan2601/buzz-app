@@ -951,6 +951,9 @@ it("renders task Markdown outside checkbox labels and shows a legacy named assig
   expect(link.closest("label")).toBeNull();
   expect(screen.getByText("Ship").tagName).toBe("STRONG");
   expect(screen.queryByText(/Assignee: John/)).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /Assignee for/ }),
+  ).toHaveTextContent("John");
   expect(screen.getByRole("button", { name: /Assignee for/ })).toHaveAttribute(
     "aria-description",
     "John (from Canvas; choose a member to link)",
