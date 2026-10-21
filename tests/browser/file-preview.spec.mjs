@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
+import { end, virtuaIdle } from "./timeline.mjs";
 import { readFile } from "node:fs/promises";
 
 const markdown =
@@ -176,14 +177,38 @@ test("sent Markdown files open in the panel host and fit enlarged narrow layouts
     await expect(search).toHaveCount(0);
     await page.mouse.move(0, 0);
     await page.setViewportSize({ width: 1440, height: 480 });
-    await onlyRow
-      .locator("xpath=ancestor::*[@data-message-scroller]")
-      .evaluate((scroller) => {
-        scroller.scrollTop = scroller.scrollHeight;
-      });
-    await onlyDownload.hover();
+    const scroller = onlyRow.locator(
+      "xpath=ancestor::*[@data-message-scroller]",
+    );
+    const bottomDistance = () =>
+      scroller.evaluate(
+        (element) =>
+          element.scrollHeight - element.scrollTop - element.clientHeight,
+      );
+    await expect
+      .poll(() =>
+        scroller.evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        ),
+      )
+      .toBeGreaterThan(0);
+    await end(page);
+    await virtuaIdle(page, scroller);
+    const bounds = await onlyDownload.boundingBox();
+    await page.mouse.move(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+    );
+    await expect
+      .poll(() => onlyDownload.evaluate((node) => node.matches(":hover")))
+      .toBe(true);
+    await expect
+      .poll(() => onlyActions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(true);
     app.edit("primary", "htian-playground", onlyEvent, "Added caption");
     await expect(onlyRow).toContainText("Added caption");
+    await virtuaIdle(page, scroller);
+    await expect.poll(bottomDistance).toBeLessThan(4);
     await expect(onlyDownload).toBeVisible();
     await expect
       .poll(() => onlyDownload.evaluate((node) => node.matches(":hover")))
@@ -198,6 +223,8 @@ test("sent Markdown files open in the panel host and fit enlarged narrow layouts
       "",
     );
     await expect(onlyRow).not.toContainText("Added caption");
+    await virtuaIdle(page, scroller);
+    await expect.poll(bottomDistance).toBeLessThan(4);
     await expect
       .poll(() => onlyDownload.evaluate((node) => node.matches(":hover")))
       .toBe(true);
