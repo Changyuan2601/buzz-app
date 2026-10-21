@@ -51,7 +51,11 @@ test("transfers ownership on window close and never republishes accepted work", 
     .poll(() =>
       second.evaluate((id) => window.deliveryTest.get(id), operation.eventId),
     )
-    .toMatchObject({ relayAccepted: true, agentReceived: false });
+    .toMatchObject({
+      phase: "sending",
+      relayAccepted: true,
+      agentReceived: false,
+    });
   const transfer = second.evaluate(
     (scope) => window.deliveryTest.own(scope),
     scope,

@@ -360,3 +360,87 @@ it("publishes a delete with only its allowed artifact envelope and coalesces ide
   });
   expect(h.publish).toHaveBeenCalledOnce();
 });
+
+it("keeps the receipt deadline when a stale journal read races relay acceptance", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  let slow = false;
+  let release: (() => void) | undefined;
+  let accept: (() => void) | undefined;
+  const h = setup(
+    {
+      ...storage,
+      load: async (options) => {
+        const records = storage.load();
+        if (options?.refresh && slow)
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        return records;
+      },
+    },
+    () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const { eventId: id } = await h.delivery.submit(input, recipient);
+  await h.managedOwner(true);
+  await ticks();
+  slow = true;
+  const stale = h.delivery.get(id);
+  await ticks();
+  accept?.();
+  await ticks();
+  expect(
+    h.local.snapshot().find((item) => item.event.id === id)?.managed
+      ?.relayAccepted,
+  ).toBe(true);
+  slow = false;
+  release?.();
+  await stale;
+  await ticks(1);
+  expect(await h.delivery.get(id)).toMatchObject({
+    phase: "sending",
+    relayAccepted: true,
+  });
+  await ticks(MANAGED_RECEIPT_MS - 2);
+  expect(await h.delivery.get(id)).toMatchObject({ phase: "sending" });
+  await ticks(2);
+  expect(await h.delivery.get(id)).toMatchObject({
+    phase: "failed",
+    error: "Could not confirm delivery",
+  });
+});
+
+it("keeps a receipt error when a stale journal record has no error", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const h = setup(storage);
+  const { eventId: id } = await h.delivery.submit(input, recipient);
+  await h.managedOwner(true);
+  await ticks(1);
+  const stale = storage.load();
+  await ticks(MANAGED_RECEIPT_MS);
+  expect(await h.delivery.get(id)).toMatchObject({ phase: "failed" });
+  storage.save(stale);
+  expect(await h.delivery.get(id)).toMatchObject({ phase: "failed" });
+});
+it("keeps retry backoff when a stale journal record has no attempt delay", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const h = setup(storage, async () => {
+    throw new Error("Confirmation lost");
+  });
+  const { eventId: id } = await h.delivery.submit(input, recipient);
+  const stale = storage.load();
+  await h.managedOwner(true);
+  await ticks(1);
+  expect(h.publish).toHaveBeenCalledOnce();
+  storage.save(stale);
+  await h.delivery.get(id);
+  await ticks(1);
+  expect(h.publish).toHaveBeenCalledOnce();
+  await ticks(1000);
+  expect(h.publish).toHaveBeenCalledTimes(2);
+});

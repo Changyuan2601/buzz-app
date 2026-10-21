@@ -138,22 +138,31 @@ export function mergeManagedDelivery(
   if (JSON.stringify(old.recipient) !== JSON.stringify(next.recipient))
     throw new Error("Managed recipient changed");
   const current = old.round > next.round ? old : next;
+  const sameRound = old.round === next.round;
+  const error = sameRound
+    ? (["receipt-save", "receipt", "send"] as const).find(
+        (error) => old.error === error || next.error === error,
+      )
+    : current.error;
   const relayAccepted = old.relayAccepted || next.relayAccepted;
   const agentReceived = old.agentReceived || next.agentReceived;
   return {
     ...current,
     relayAccepted,
     agentReceived,
-    attempts:
-      old.round === next.round
-        ? Math.max(old.attempts, next.attempts)
-        : current.attempts,
-    ...(old.round === next.round && old.error === "receipt-save"
-      ? { error: old.error }
-      : {}),
+    attempts: sameRound
+      ? Math.max(old.attempts, next.attempts)
+      : current.attempts,
+    nextAttemptAt: sameRound
+      ? Math.max(old.nextAttemptAt, next.nextAttemptAt)
+      : current.nextAttemptAt,
+    receiptDeadline: sameRound
+      ? Math.max(old.receiptDeadline, next.receiptDeadline)
+      : current.receiptDeadline,
+    error,
     ...(agentReceived || (!current.recipient && relayAccepted)
       ? { error: undefined }
-      : relayAccepted && current.error === "send"
+      : relayAccepted && error === "send"
         ? { error: undefined }
         : {}),
   };
