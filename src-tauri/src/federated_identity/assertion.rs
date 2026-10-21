@@ -297,6 +297,12 @@ impl FederatedIdentity {
             self.admit_authorization(identity, &authorization).await?;
             return Ok(authorization);
         }
+        if let Some(Err(failure)) = cached
+            .as_ref()
+            .filter(|result| matches!(result, Err(f) if refused(f)))
+        {
+            return Err(failure.code.into());
+        }
         let now = now().map_err(str::to_owned)? as u64;
         if let Some(assertion) = cached
             .as_ref()
@@ -578,6 +584,21 @@ impl FederatedIdentity {
     }
 }
 
+/// NIP-FA: the issuer refused, or its success response was rejected. These are
+/// not retried automatically; the refusal stands for its session revision,
+/// viewer and relay until one of them changes or the app restarts.
+fn refused(failure: &Failure) -> bool {
+    matches!(
+        failure.code,
+        "adapter-refused"
+            | "authorization-denied"
+            | "binding-mismatch"
+            | "invalid-proof"
+            | "invalid-response"
+            | "invalid-assertion"
+            | "response-too-large"
+    )
+}
 fn validate_jwt(
     token: &str,
     returned_key: &str,
@@ -966,6 +987,92 @@ mod tests {
         }
         let sub = format!("{}.{}.eA", URL_SAFE_NO_PAD.encode(br#"{"typ":"nip-fi+jwt"}"#),URL_SAFE_NO_PAD.encode(serde_json::json!({"sub":viewer,"aud":"https://relay.example:8443","iat":100,"exp":200}).to_string()));
         assert!(validate_jwt(&sub, &viewer, 200, &viewer, relay, 250, 101).is_err());
+    }
+    /// An issuer that refuses every request with `status` and `body`, counting requests.
+    async fn refusing_issuer(status: &'static str, body: &'static str) -> (String, Arc<AtomicU64>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/mount", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicU64::new(0));
+        let counter = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    if socket.read_exact(&mut byte).await.is_err() {
+                        break;
+                    }
+                    head.push(byte[0]);
+                }
+                counter.fetch_add(1, Ordering::SeqCst);
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        (base, requests)
+    }
+    #[tokio::test]
+    async fn a_terminal_refusal_is_not_reissued_by_later_operations() {
+        let relay = "wss://relay.example";
+        let url = Url::parse("https://relay.example").unwrap();
+        let identity = IdentityHost::fixture();
+        for (status, body, code) in [
+            (
+                "403 Forbidden",
+                r#"{"error":"authorization_denied"}"#,
+                "authorization-denied",
+            ),
+            (
+                "400 Bad Request",
+                r#"{"error":"invalid_proof"}"#,
+                "invalid-proof",
+            ),
+            ("418 I'm a teapot", "{}", "adapter-refused"),
+            ("200 OK", "{}", "invalid-response"),
+        ] {
+            let (base, requests) = refusing_issuer(status, body).await;
+            let host = super::super::testing::signed_in(base, relay, true);
+            for _ in 0..2 {
+                assert_eq!(
+                    host.assertion_for_relay(&identity, &url)
+                        .await
+                        .err()
+                        .as_deref(),
+                    Some(code)
+                );
+            }
+            assert_eq!(
+                requests.load(Ordering::SeqCst),
+                1,
+                "{status}: a later operation must keep the refusal without asking the issuer again"
+            );
+            assert!(host.snapshot().status == Status::SignedIn);
+        }
+    }
+    #[tokio::test]
+    async fn a_new_session_revision_asks_the_issuer_again_after_a_terminal_refusal() {
+        let relay = "wss://relay.example";
+        let url = Url::parse("https://relay.example").unwrap();
+        let identity = IdentityHost::fixture();
+        let (base, requests) =
+            refusing_issuer("403 Forbidden", r#"{"error":"authorization_denied"}"#).await;
+        let host = super::super::testing::signed_in(base, relay, true);
+        assert!(host.assertion_for_relay(&identity, &url).await.is_err());
+        assert!(host.assertion_for_relay(&identity, &url).await.is_err());
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        host.switch_account_for_test();
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some("authorization-denied")
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
     }
     #[tokio::test]
     async fn issuance_wire_has_separate_session_and_body_bound_same_key_nostr_proof() {
