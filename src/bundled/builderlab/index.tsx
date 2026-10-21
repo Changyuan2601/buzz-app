@@ -108,6 +108,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
     ctx.effect(() => () => stopProvider());
     ctx.decisions.registerProvider(builderlabProvider(session, loginAvailable));
+    // PLAYPEN ONLY (do not merge): one Builderlab decision from the devtools
+    // console, through the selected provider, with no agent or watch setup:
+    // `await __playpenDecide()`.
+    (globalThis as Record<string, unknown>).__playpenDecide = (
+      community = "wss://buzz.block.builderlab.xyz",
+    ) =>
+      ctx.decisions.decide({
+        state:
+          "Alice: can someone review my PR before 5pm? It blocks the release.",
+        questions: {
+          urgent: {
+            type: "yes_no",
+            instructions: "Does this message ask for something time-sensitive?",
+          },
+          kind: {
+            type: "choice",
+            instructions: "What kind of message is this?",
+            options: {
+              request: "It asks someone to do something.",
+              update: "It only shares information.",
+            },
+          },
+          importance: {
+            type: "score",
+            instructions: "How important is this message to the team?",
+            levels: ["low", "medium", "high"],
+          },
+        },
+        community,
+      });
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.

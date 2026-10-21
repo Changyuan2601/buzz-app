@@ -219,10 +219,17 @@ impl DecisionsHost {
                         .as_ref()
                         .filter(|s| !s.trim().is_empty())
                         .ok_or(Failure::MissingCredentials)?;
-                    client
+                    let post = client
                         .post(endpoint)
                         .header("x-bb-session-credential", session.as_str())
-                        .header("x-buzz-community", community.as_deref().unwrap_or_default())
+                        .header("x-buzz-community", community.as_deref().unwrap_or_default());
+                    // PLAYPEN ONLY (do not merge): route this call to a kgoose-builderbot playpen.
+                    match std::env::var("BUZZ_KGOOSE_PLAYPEN") {
+                        Ok(name) if !name.is_empty() => {
+                            post.header("baggage", format!("kgoose-builderbot-playpen={name}"))
+                        }
+                        _ => post,
+                    }
                 }
             };
             let response = post
