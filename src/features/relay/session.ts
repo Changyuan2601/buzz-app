@@ -1782,6 +1782,7 @@ export function createRelaySession(
           )) satisfies SnapshotRead)
       : undefined,
     configArtifactWriter: transport?.configArtifacts,
+    artifactAdmission: transport?.artifactAdmission,
     workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,

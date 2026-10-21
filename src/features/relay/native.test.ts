@@ -2082,3 +2082,15 @@ it("binds audience authority to the advertised community and rejects unknown ver
     (await connectNativeTransport(community)).audienceAuthorityCommunity,
   ).toBeUndefined();
 });
+
+it("exposes atomic artifact admission only with relay NIP-AR support", async () => {
+  expect(
+    (await connectNativeTransport(community)).artifactAdmission,
+  ).toBeUndefined();
+  discovery = { supported_extensions: ["nip-ar"] };
+  const transport = await connectNativeTransport(community);
+  expect(transport.artifactAdmission).toBe(true);
+  const owner = createRelaySession(transport);
+  expect(owner.session.artifactAdmission).toBe(true);
+  owner.dispose();
+});

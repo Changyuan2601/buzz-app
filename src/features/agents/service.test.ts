@@ -1,3 +1,5 @@
+import { setImmediate as realImmediate } from "node:timers";
+import { sharedRelay } from "./shared-attention-testing";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
@@ -7109,4 +7111,229 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+describe("shared attention through the claimed runner", () => {
+  const fixtures: Awaited<ReturnType<typeof setup>>[] = [];
+  afterEach(async () => {
+    for (const fixture of fixtures.splice(0)) await fixture.ctx.fiber.dispose();
+  });
+  async function sharedFixture(
+    relay: ReturnType<typeof sharedRelay>,
+    definition: RelayEvent,
+    options: Parameters<typeof setup>[0] = {},
+  ) {
+    const f = await setup(options);
+    fixtures.push(f);
+    const io = relay.client();
+    Object.assign(f.session, {
+      artifactAdmission: true,
+      snapshotRead: io.read,
+      configArtifactWriter: io.writer,
+    });
+    if (!f.service.find(bot))
+      await f.service.create({ type: "example/echo", name: "Echo" });
+    const timer = {
+      ...tick["watch/tick"],
+      shared: {
+        channel_id: channel,
+        definition_id: channel,
+        definition_revision: definition.id,
+      },
+    };
+    await f.service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/tick": timer },
+    });
+    expect(f.service.sharedAttention.capability(bot)).toEqual({
+      supported: true,
+    });
+    return { ...f, timer, io };
+  }
+  function definition(relay: ReturnType<typeof sharedRelay>, enabled = true) {
+    const value = finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1000,
+        tags: [
+          ["h", channel],
+          ["d", channel],
+          ["type", "nexus.automation"],
+          ["op", "create"],
+        ],
+        content: JSON.stringify({ id: channel, enabled }),
+      },
+      generateSecretKey(),
+    );
+    relay.heads.set(channel, value);
+    return value;
+  }
+  it("dispatches once across two clients and transfers the next occurrence", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const first = await sharedFixture(relay, def);
+    const second = await sharedFixture(relay, def);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() =>
+      expect(first.run.mock.calls.length + second.run.mock.calls.length).toBe(
+        1,
+      ),
+    );
+    const [delivered] = [...first.run.mock.calls, ...second.run.mock.calls];
+    expect(delivered?.[0].trigger).toMatchObject({
+      type: "timer",
+      occurrence: {
+        id: "timer:1060",
+        definition_revision: def.id,
+        scheduled_at: 1060,
+      },
+    });
+    await first.ctx.fiber.dispose();
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(second.run.mock.calls.length).toBeLessThanOrEqual(1);
+    const before = second.run.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() =>
+      expect(second.run).toHaveBeenCalledTimes(before + 1),
+    );
+  });
+  it("retains uncertainty after interrupted dispatch and restart", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const first = await sharedFixture(relay, def, {
+      answer: () => new Promise(() => {}),
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledTimes(1));
+    const identities = await first.native.list();
+    await first.ctx.fiber.dispose();
+    const second = await sharedFixture(relay, def, {
+      identities,
+      storage: first.storage,
+    });
+    await new Promise<void>((resolve) => realImmediate(resolve));
+    expect(second.run).not.toHaveBeenCalled();
+    expect(
+      await second.service.sharedAttention.progress(bot, "watch/tick"),
+    ).toMatchObject({ used: 1, result: "uncertain" });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(second.run).not.toHaveBeenCalled();
+  });
+  it.each(["local disable", "definition edit", "claim transfer"])(
+    "stops work after %s during model selection",
+    async (change) => {
+      vi.useFakeTimers({ now: 1_000_000 });
+      const relay = sharedRelay();
+      const def = definition(relay);
+      const f = await sharedFixture(relay, def);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(f.type, "models").mockImplementation(async () => {
+        await held;
+        return { current: "fast", models: [] };
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      if (change === "local disable")
+        await f.service.save(bot, {
+          attention: { "watch/tick": { ...f.timer, enabled: false } },
+        });
+      else if (change === "claim transfer")
+        f.native.claim.mockResolvedValue(false);
+      else definition(relay, false);
+      release();
+      await new Promise<void>((resolve) => realImmediate(resolve));
+      expect(f.run).not.toHaveBeenCalled();
+      expect(
+        await f.service.sharedAttention.progress(bot, "watch/tick"),
+      ).toBeUndefined();
+    },
+  );
+  it("fails closed when the relay capability is absent", async () => {
+    const f = await setup();
+    fixtures.push(f);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    expect(f.service.sharedAttention.capability(bot)).toMatchObject({
+      supported: false,
+    });
+    await expect(
+      f.plugin.agents.sharedAttention.runNow(bot, "watch/tick", channel),
+    ).rejects.toThrow("atomic artifact admission");
+  });
+  it("accepts UTC cron through the agent attention handle", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    const handle = f.plugin.agents.handle(bot);
+    expect(handle).toBeDefined();
+    if (!handle) throw new Error("Missing agent handle");
+    const shown = await handle.attention.show("watch/tick");
+    await handle.attention.write(
+      "watch/tick",
+      { ...f.timer, cron_utc: "*/2 * * * *" },
+      { expected: shown.expected_state },
+    );
+    expect(f.service.find(bot)?.attention["watch/tick"]?.value).toMatchObject({
+      cron_utc: "*/2 * * * *",
+    });
+  });
+  it("admits Run now through the plugin context and resets the interval", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    const requestId = "10000000-0000-4000-8000-000000000003";
+    await expect(
+      f.plugin.agents.sharedAttention.runNow(bot, "watch/tick", requestId),
+    ).resolves.toEqual({ status: "queued", requestId });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      occurrence: { id: `manual:${requestId}` },
+    });
+    await f.plugin.agents.sharedAttention.runNow(bot, "watch/tick", requestId);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(f.run).toHaveBeenCalledTimes(1);
+    expect(
+      await f.service.sharedAttention.progress(bot, "watch/tick"),
+    ).toMatchObject({ used: 1 });
+  });
+  it("keeps a timer tick that arrives during a shared progress read", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const client = relay.client;
+    let release = () => {};
+    let reading = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    let block = true;
+    relay.client = () => {
+      const io = client();
+      const read = io.read;
+      return {
+        ...io,
+        read: async (filters, options) => {
+          if (block && filters[0]?.["#d"]?.[0] !== channel) {
+            block = false;
+            reading();
+            await held;
+          }
+          return read(filters, options);
+        },
+      };
+    };
+    const f = await sharedFixture(relay, def);
+    await started;
+    await vi.advanceTimersByTimeAsync(60_000);
+    release();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  });
 });

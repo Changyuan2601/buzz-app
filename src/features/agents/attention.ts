@@ -2,6 +2,7 @@
 // event watches and timers, each one object at a slug. This module is the format
 // only (validation and event matching), so the same objects can later move from
 // local storage to the relay's encrypted addressable events.
+import { utcCron } from "./cron";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 
@@ -19,7 +20,13 @@ export type ClassifierQuestion = Readonly<{
 }>;
 /** Janet's default: a lower threshold passes more events. */
 export const CLASSIFIER_THRESHOLD = 0.2;
+export type SharedAttentionReference = Readonly<{
+  channel_id: string;
+  definition_id: string;
+  definition_revision: string;
+}>;
 export type EventWatch = Readonly<{
+  shared?: SharedAttentionReference;
   type: "event";
   interest_id: string;
   name?: string;
@@ -39,6 +46,9 @@ export type EventWatch = Readonly<{
   }>;
 }>;
 export type TimerWatch = Readonly<{
+  shared?: SharedAttentionReference;
+  /** Five numeric UTC fields. interval_secs is unused for cron. */
+  cron_utc?: string;
   type: "timer";
   interest_id: string;
   prompt: string;
@@ -129,7 +139,15 @@ function eventWatch(value: Record<string, unknown>) {
   fields(
     value,
     ["type", "interest_id", "enabled", "since", "channels", "kinds"],
-    ["name", "authors", "exclude_authors", "tags", "is_reply", "classifier"],
+    [
+      "name",
+      "authors",
+      "exclude_authors",
+      "tags",
+      "is_reply",
+      "classifier",
+      "shared",
+    ],
   );
   interestId(value.interest_id);
   if (value.name !== undefined) label(value.name, "name");
@@ -221,16 +239,28 @@ function eventWatch(value: Record<string, unknown>) {
 }
 
 function timer(value: Record<string, unknown>) {
-  fields(value, [
-    "type",
-    "interest_id",
-    "prompt",
-    "enabled",
-    "interval_secs",
-    "armed_at",
-    "max_occurrences",
-    "expires_at",
-  ]);
+  fields(
+    value,
+    [
+      "type",
+      "interest_id",
+      "prompt",
+      "enabled",
+      "interval_secs",
+      "armed_at",
+      "max_occurrences",
+      "expires_at",
+    ],
+    ["cron_utc", "shared"],
+  );
+  if (value.cron_utc !== undefined) {
+    if (typeof value.cron_utc !== "string") fail("cron_utc must be text");
+    try {
+      utcCron(value.cron_utc as string);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  }
   interestId(value.interest_id);
   filled(value.prompt, "prompt", TEXT_LIMIT);
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
@@ -258,6 +288,27 @@ export function validateObject(
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
     else fail('A watch/ value has type "event" or "timer"');
+    if (object.shared !== undefined) {
+      const shared = object.shared;
+      if (!isObject(shared)) fail("shared must be an object");
+      fields(shared as Record<string, unknown>, [
+        "channel_id",
+        "definition_id",
+        "definition_revision",
+      ]);
+      const ref = shared as Record<string, unknown>;
+      if (
+        typeof ref.channel_id !== "string" ||
+        !CHANNEL.test(ref.channel_id) ||
+        typeof ref.definition_id !== "string" ||
+        !CHANNEL.test(ref.definition_id) ||
+        typeof ref.definition_revision !== "string" ||
+        !PUBKEY.test(ref.definition_revision)
+      )
+        fail("Invalid shared definition reference");
+      if (object.type === "interest")
+        fail("Interests cannot reference shared definitions");
+    }
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
     if (bytes(body) > BODY_LIMIT)
       fail("The object is larger than 65,535 bytes");
@@ -334,6 +385,12 @@ export function timerState(
   now: number,
 ): TimerState {
   if (prior && prior.armedAt === timer.armed_at) return prior;
+  if (timer.cron_utc)
+    return {
+      armedAt: timer.armed_at,
+      nextDue: Math.floor(now / 60) * 60,
+      used: 0,
+    };
   const used =
     now < timer.armed_at
       ? 0
@@ -386,7 +443,10 @@ export function describeWatch(
   watch: Watch,
   channels: readonly ChannelChoice[] = [],
 ) {
-  if (watch.type === "timer") return every(watch.interval_secs);
+  if (watch.type === "timer")
+    return watch.cron_utc
+      ? `${watch.cron_utc} (UTC)`
+      : every(watch.interval_secs);
   if (watch.name) return watch.name;
   const what =
     watch.kinds.length === 1 && watch.kinds[0] === 9

@@ -109,6 +109,8 @@ export interface ReadTransport {
   readonly memberAdministration?: RelayWriter;
   /** NIP-AR kind-45010 config artifacts only; never supplied to the outbox. */
   readonly configArtifacts?: RelayWriter;
+  /** NIP-AR atomic create and expected-head admission. */
+  readonly artifactAdmission?: true;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */

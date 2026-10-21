@@ -776,6 +776,10 @@ export async function connectNativeTransport(
     },
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
+    ...(Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("nip-ar")
+      ? { artifactAdmission: true as const }
+      : {}),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     writer: {

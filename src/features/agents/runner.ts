@@ -1,3 +1,13 @@
+import { utcCron } from "./cron";
+import {
+  sharedAttentionIO,
+  sharedTimerCandidate,
+  sharedEventCandidate,
+  admitShared,
+  sharedDefinitionCurrent,
+  finishShared,
+  type SharedCandidate,
+} from "./shared-attention";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -160,6 +170,8 @@ async function pickFor(
 }
 
 type Job = {
+  cronMinute?: number;
+  requestId?: string;
   work?: ReturnType<LocalAgentActivity["begin"]>;
   trigger: Trigger;
   channelId?: string;
@@ -216,6 +228,7 @@ type Runner = {
    * when a run starts instead. */
   readonly queues: Record<Lane, Job[]>;
   running: boolean;
+  again: boolean;
   /** Each lane's runs in the current minute. */
   readonly rates: Record<Lane, { windowStart: number; admitted: number }>;
   /** Watches catching up now, whose live events wait in `waiting` until they
@@ -289,7 +302,13 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read" | "readRemote">;
+  readonly session: Pick<RelaySession, "read" | "readRemote"> &
+    Partial<
+      Pick<
+        RelaySession,
+        "artifactAdmission" | "snapshotRead" | "configArtifactWriter"
+      >
+    >;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -454,6 +473,30 @@ export class AgentRunners {
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  runSharedNow(pubkey: string, slug: string, requestId: string) {
+    const runner = this.runners.get(pubkey);
+    const agent = this.host.ready(pubkey);
+    const object = agent?.attention[slug];
+    if (
+      !runner ||
+      !this.runs(pubkey) ||
+      !agent?.attentionEnabled ||
+      object?.value.type !== "timer" ||
+      !object.value.enabled ||
+      !object.value.shared
+    )
+      throw new Error("No enabled shared timer");
+    if (
+      !this.enqueue(runner, {
+        trigger: { type: "timer", slug, timer: object.value, spent: false },
+        requestId,
+        matched: { object, epoch: runner.epoch },
+      })
+    )
+      throw new Error("Agent attention queue is full");
+    void this.drain(runner);
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -661,6 +704,7 @@ export class AgentRunners {
       controller: new AbortController(),
       queues: { mention: [], watch: [] },
       running: false,
+      again: false,
       rates: {
         mention: { windowStart: 0, admitted: 0 },
         watch: { windowStart: 0, admitted: 0 },
@@ -1746,7 +1790,11 @@ export class AgentRunners {
       job.matched.epoch === runner.epoch &&
       object === job.matched.object &&
       object.value.type === "timer" &&
-      object.value.enabled
+      object.value.enabled &&
+      (object.value.expires_at === null ||
+        seconds() < object.value.expires_at) &&
+      (job.cronMinute === undefined ||
+        job.cronMinute === Math.floor(seconds() / 60) * 60)
     );
   }
 
@@ -1756,11 +1804,11 @@ export class AgentRunners {
   // run starts, so no timer has more than one occurrence waiting, and one removed,
   // disabled or expired meanwhile never runs. The longest-waiting timer runs first,
   // so one whose runs outlast its interval cannot hold back the others.
-  private dueTimer(
+  private async dueTimer(
     runner: Runner,
     agent: Agent,
     idle: (interest: string) => boolean,
-  ): Job | undefined {
+  ): Promise<Job | undefined> {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
     // A pending change may rearm, restart or remove a timer: a later tick
@@ -1779,12 +1827,45 @@ export class AgentRunners {
       | undefined;
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
-      if (timer.type !== "timer" || !timer.enabled) continue;
+      if (timer.type !== "timer" || !timer.enabled || now < timer.armed_at)
+        continue;
+      if (timer.shared) {
+        if (!idle(timer.interest_id)) continue;
+        const io = sharedAttentionIO(this.host.community(agent)?.session);
+        if (!io) continue;
+        const shared = await sharedTimerCandidate(
+          io,
+          timer,
+          now,
+          AbortSignal.any([
+            runner.controller.signal,
+            AbortSignal.timeout(10_000),
+          ]),
+        );
+        if (shared)
+          return {
+            trigger: {
+              type: "timer",
+              slug: object.slug,
+              timer,
+              occurrence: shared.progress.occurrence,
+              spent:
+                timer.max_occurrences !== null &&
+                shared.progress.used >= timer.max_occurrences,
+            },
+            ...(timer.cron_utc
+              ? { cronMinute: Math.floor(now / 60) * 60 }
+              : {}),
+            matched: { object, epoch: runner.epoch },
+          };
+        continue;
+      }
       const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
       if (state !== saved)
         changed = { ...changed, [object.slug]: { seen: saved, next: state } };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
+      if (timer.cron_utc && !utcCron(timer.cron_utc)(now)) continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
       if (!next || state.nextDue < next.state.nextDue)
@@ -1793,7 +1874,9 @@ export class AgentRunners {
     const ran = next && {
       ...next.state,
       used: next.state.used + 1,
-      nextDue: now + next.timer.interval_secs,
+      nextDue: next.timer.cron_utc
+        ? Math.floor(now / 60) * 60 + 60
+        : now + next.timer.interval_secs,
     };
     if (next && ran)
       changed = {
@@ -1812,6 +1895,7 @@ export class AgentRunners {
         ...(interest?.type === "interest" ? { interest } : {}),
         spent: timerSpent(timer, ran, ran.nextDue),
       },
+      ...(timer.cron_utc ? { cronMinute: Math.floor(now / 60) * 60 } : {}),
       matched: { object, epoch: runner.epoch },
     };
   }
@@ -1892,56 +1976,74 @@ export class AgentRunners {
   // settles, so its turns never overlap, up to TIMEOUT_LIMIT_MS. Runs are not
   // otherwise fenced.
   private async drain(runner: Runner) {
-    if (runner.running || runner.transitioning) return;
+    if (runner.running) {
+      runner.again = true;
+      return;
+    }
+    if (runner.transitioning) return;
     runner.running = true;
-    while (this.runners.get(runner.pubkey) === runner) {
-      const agent = this.host.ready(runner.pubkey);
-      const type = runner.type;
-      const run = type?.run;
-      // An agent this copy cannot run is left to another copy of the app.
-      if (!agent || !type || !run) {
-        if (agent) {
+    try {
+      while (this.runners.get(runner.pubkey) === runner) {
+        runner.again = false;
+        const agent = this.host.ready(runner.pubkey);
+        const type = runner.type;
+        const run = type?.run;
+        // An agent this copy cannot run is left to another copy of the app.
+        if (!agent || !type || !run) {
+          if (agent) {
+            this.host.activity.clear(undefined, runner.pubkey);
+            this.dropMentions(runner);
+            runner.queues.watch.length = 0;
+          }
+          await this.release(runner);
+          // It may have come back into view, or gained its type, meanwhile.
+          if (this.host.ready(runner.pubkey) !== agent || runner.type !== type)
+            continue;
+          break;
+        }
+        // Every copy of the app on this machine hears the same events; only the
+        // one holding the agent runs them. Asked on every wake too, so a copy
+        // takes over within a tick of the holder quitting or letting go.
+        if (!(await this.claim(runner))) {
           this.host.activity.clear(undefined, runner.pubkey);
+          runner.activityClaimed = false;
           this.dropMentions(runner);
           runner.queues.watch.length = 0;
+          break;
         }
-        await this.release(runner);
-        // It may have come back into view, or gained its type, meanwhile.
+        // Retype may have reserved this idle runner while claim was pending.
+        if (runner.transitioning) break;
+        // The agent or its type may have changed meanwhile.
         if (this.host.ready(runner.pubkey) !== agent || runner.type !== type)
           continue;
-        break;
+        runner.activityClaimed = true;
+        for (const queued of runner.queues.mention)
+          this.showWork(runner, queued);
+        const next = await this.next(runner, agent);
+        const current = this.host.ready(runner.pubkey);
+        if (!current || runner.type !== type) continue;
+        if (!next) {
+          if (runner.again) continue;
+          break;
+        }
+        // Taking a job made room: held and backlogged work may go in now.
+        this.admit(runner);
+        if (next.job)
+          this.start(runner, current, type, run, next.lane, next.job);
       }
-      // Every copy of the app on this machine hears the same events; only the
-      // one holding the agent runs them. Asked on every wake too, so a copy
-      // takes over within a tick of the holder quitting or letting go.
-      if (!(await this.claim(runner))) {
-        this.host.activity.clear(undefined, runner.pubkey);
-        runner.activityClaimed = false;
-        this.dropMentions(runner);
-        runner.queues.watch.length = 0;
-        break;
-      }
-      // Retype may have reserved this idle runner while claim was pending.
-      if (runner.transitioning) break;
-      // The agent or its type may have changed meanwhile.
-      if (this.host.ready(runner.pubkey) !== agent || runner.type !== type)
-        continue;
-      runner.activityClaimed = true;
-      for (const queued of runner.queues.mention) this.showWork(runner, queued);
-      const next = this.next(runner, agent);
-      if (!next) break;
-      // Taking a job made room: held and backlogged work may go in now.
-      this.admit(runner);
-      if (next.job) this.start(runner, agent, type, run, next.lane, next.job);
+    } catch (error) {
+      if (!runner.controller.signal.aborted)
+        console.error("Agent queue cannot run", runner.pubkey, error);
+    } finally {
+      runner.running = false;
     }
-    runner.running = false;
   }
   /** The job a free lane starts next, taken from its queue; its `job` is
    * undefined when the one taken is no longer current. */
-  private next(
+  private async next(
     runner: Runner,
     agent: Agent,
-  ): { lane: string; job: Job | undefined } | undefined {
+  ): Promise<{ lane: string; job: Job | undefined } | undefined> {
     const { mention, watch } = runner.queues;
     if (mention.length && !runner.busy.has("mention"))
       return {
@@ -1957,7 +2059,7 @@ export class AgentRunners {
       return { lane: lane(queued), job: this.current(runner, agent, queued) };
     }
     // A due timer, of an Interest with nothing running or waiting.
-    const timer = this.dueTimer(
+    const timer = await this.dueTimer(
       runner,
       agent,
       (interest) =>
@@ -1990,6 +2092,92 @@ export class AgentRunners {
         : undefined;
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
+      const sharedTrigger = job.trigger;
+      const watch =
+        sharedTrigger.type === "timer"
+          ? sharedTrigger.timer
+          : sharedTrigger.type === "watch" || sharedTrigger.type === "catch-up"
+            ? sharedTrigger.watch
+            : undefined;
+      if (watch?.shared) {
+        const io = sharedAttentionIO(this.host.community(agent)?.session);
+        if (
+          !io ||
+          !this.stillCurrent(runner, job) ||
+          !(await this.claim(runner, true))
+        )
+          return;
+        const candidates: SharedCandidate[] = [];
+        if (sharedTrigger.type === "timer") {
+          const candidate = await sharedTimerCandidate(
+            io,
+            sharedTrigger.timer,
+            seconds(),
+            signal,
+            job.requestId,
+          );
+          if (candidate) candidates.push(candidate);
+        } else if (sharedTrigger.type === "watch") {
+          candidates.push(
+            await sharedEventCandidate(watch.shared, sharedTrigger.event),
+          );
+        } else if (sharedTrigger.type === "catch-up") {
+          for (const { event } of sharedTrigger.events)
+            candidates.push(await sharedEventCandidate(watch.shared, event));
+        }
+        const admitted: { candidate: SharedCandidate; event: RelayEvent }[] =
+          [];
+        for (const candidate of candidates) {
+          if (!this.stillCurrent(runner, job)) break;
+          const event = await admitShared(io, candidate, signal, job.requestId);
+          if (event) admitted.push({ candidate, event });
+        }
+        if (!admitted.length) return;
+        if (
+          !(await this.claim(runner, true)) ||
+          !(await sharedDefinitionCurrent(io, watch.shared, signal)) ||
+          !this.stillCurrent(runner, job)
+        ) {
+          for (const { candidate, event } of admitted)
+            await finishShared(io, candidate, event, "cancelled", signal);
+          return;
+        }
+        const occurrences = admitted.map(
+          ({ candidate }) => candidate.progress.occurrence,
+        );
+        const [first] = occurrences;
+        if (!first) throw new Error("Shared admission has no occurrence");
+        if (sharedTrigger.type === "timer" || sharedTrigger.type === "watch")
+          job.trigger = { ...sharedTrigger, occurrence: first };
+        else if (sharedTrigger.type === "catch-up")
+          job.trigger = {
+            ...sharedTrigger,
+            occurrences,
+            events: sharedTrigger.events.filter(({ event }) =>
+              occurrences.some((o) => o.id === event.id),
+            ),
+          };
+        void working.settled
+          .then(async () => {
+            if (lifetime.aborted) return;
+            for (const { candidate, event } of admitted)
+              await finishShared(
+                io,
+                candidate,
+                event,
+                working.outcome().ok ? "completed" : "failed",
+                AbortSignal.timeout(10_000),
+              );
+          })
+          .catch((error) =>
+            console.error(
+              "Shared attention result is uncertain",
+              agent.pubkey,
+              error,
+            ),
+          );
+      }
+      if (!addressed(job.trigger) && !this.stillCurrent(runner, job)) return;
       const start = this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.pubkey);
@@ -2239,6 +2427,7 @@ export class AgentRunners {
     return {
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,
+      outcome: () => outcome,
       hold(pending: PromiseLike<unknown>) {
         if (holds <= 0) return;
         holds++;
@@ -2259,13 +2448,17 @@ export class AgentRunners {
     if (before !== this.runs(runner.pubkey)) this.host.ownershipChanged?.();
     return held;
   }
-  private async claim(runner: Runner) {
+  private async claim(runner: Runner, strict = false) {
     try {
       return this.claimed(
         runner,
         (await this.host.custody?.claim(runner.pubkey)) ?? false,
       );
     } catch (error) {
+      if (strict) {
+        this.claimed(runner, false);
+        throw error;
+      }
       this.claimed(runner, true);
       // Answering twice beats not answering at all.
       console.warn(
@@ -2318,6 +2511,16 @@ export class AgentRunners {
       ) => {
         // The token is checked against the newest saved record, in turn
         // with the other changes to it, so no change lands between.
+        if (
+          value &&
+          value.type !== "interest" &&
+          value.enabled &&
+          value.shared
+        ) {
+          const agent = this.host.agent(pubkey);
+          if (!agent || !sharedAttentionIO(this.host.community(agent)?.session))
+            throw new Error("Shared attention is unavailable");
+        }
         const after = await this.host.change(pubkey, (before) =>
           checkedWrite(before, slug, value, options, seconds()),
         );

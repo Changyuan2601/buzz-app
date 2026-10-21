@@ -365,6 +365,11 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    sharedAttention: {
+      capability: () => ({ supported: false }),
+      progress: async () => undefined,
+      runNow: vi.fn(),
+    },
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

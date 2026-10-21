@@ -265,7 +265,9 @@ export function setAttention(
       ? {
           ...timers,
           [slug]:
-            state && prior?.type === "timer"
+            state &&
+            prior?.type === "timer" &&
+            prior.cron_utc === value.cron_utc
               ? rearmed(value, state, schedule)
               : timerState(value, undefined, now),
         }
@@ -427,7 +429,9 @@ function rearmed(
   if (!schedule && state.armedAt === timer.armed_at) return state;
   return {
     armedAt: timer.armed_at,
-    nextDue: timer.armed_at + timer.interval_secs,
+    nextDue: timer.cron_utc
+      ? Math.floor(timer.armed_at / 60) * 60
+      : timer.armed_at + timer.interval_secs,
     used: schedule === "restart" ? 0 : state.used,
   };
 }

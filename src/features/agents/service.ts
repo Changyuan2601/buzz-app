@@ -1,3 +1,10 @@
+import {
+  sharedAttentionIO,
+  readSharedProgress,
+  isRequestId,
+  type SharedAttention,
+  type SharedOccurrence,
+} from "./shared-attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -391,6 +398,7 @@ export type Trigger =
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
+      occurrence?: SharedOccurrence;
       event: RelayEvent;
       slug: string;
       watch: EventWatch;
@@ -405,6 +413,7 @@ export type Trigger =
    * once it is back: oldest first, from one channel unless it watches "all". */
   | Readonly<{
       type: "catch-up";
+      occurrences?: readonly SharedOccurrence[];
       slug: string;
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
@@ -417,6 +426,7 @@ export type Trigger =
     }>
   | Readonly<{
       type: "timer";
+      occurrence?: SharedOccurrence;
       slug: string;
       timer: TimerWatch;
       /** Absent when the timer names an Interest that does not exist. */
@@ -780,6 +790,7 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  readonly sharedAttention: SharedAttention;
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1505,6 +1516,46 @@ export class AgentsService extends Service implements Agents {
       at: Date.now(),
     });
   }
+  get sharedAttention(): SharedAttention {
+    return {
+      capability: (pubkey) => {
+        const agent = this.agent(pubkey);
+        const io = agent && sharedAttentionIO(this.bindingOf(agent)?.session);
+        return io &&
+          this.native &&
+          this.types().some((type) => type.key === agent?.type && type.run)
+          ? { supported: true }
+          : {
+              supported: false,
+              reason:
+                "Shared attention needs a local agent and a live relay with atomic artifact admission",
+            };
+      },
+      progress: async (pubkey, slug, occurrenceId) => {
+        const agent = this.agent(pubkey);
+        const value = agent?.attention[slug]?.value;
+        const io = agent && sharedAttentionIO(this.bindingOf(agent)?.session);
+        if (!io || !value || value.type === "interest" || !value.shared)
+          throw new Error("Shared attention is unavailable");
+        return readSharedProgress(
+          io,
+          value.shared,
+          AbortSignal.timeout(10_000),
+          occurrenceId,
+        );
+      },
+      runNow: async (pubkey, slug, requestId) => {
+        if (!this.ctx.pluginOwner)
+          throw new Error("Only a plugin starts shared attention");
+        const capability = this.sharedAttention.capability(pubkey);
+        if (!capability.supported) throw new Error(capability.reason);
+        if (!isRequestId(requestId))
+          throw new Error("requestId must be a UUID");
+        this.runners.runSharedNow(pubkey, slug, requestId);
+        return { status: "queued", requestId };
+      },
+    };
+  }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -2066,9 +2117,28 @@ export class AgentsService extends Service implements Agents {
       change.attention ||
       change.attentionEnabled !== undefined
     )
-      await this.change(pubkey, (saved) =>
-        changed(saved ?? this.recordOf(identity), change),
-      );
+      await this.change(pubkey, (saved) => {
+        const record = changed(saved ?? this.recordOf(identity), change);
+        if (
+          record.attentionEnabled &&
+          (change.attentionEnabled === true ||
+            Object.values(change.attention ?? {}).some(
+              (value) =>
+                value &&
+                value.type !== "interest" &&
+                value.shared &&
+                value.enabled,
+            )) &&
+          Object.values(record.attention).some(
+            ({ value }) =>
+              value.type !== "interest" && value.enabled && value.shared,
+          )
+        ) {
+          const capability = this.sharedAttention.capability(pubkey);
+          if (!capability.supported) throw new Error(capability.reason);
+        }
+        return record;
+      });
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
     const renamed = name !== undefined && name !== identity.name;
