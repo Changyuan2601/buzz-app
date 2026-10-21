@@ -496,6 +496,9 @@ it("keeps accepted edits until a capture starts after acceptance and preserves l
     artifactCollectionKey,
   );
   expect(captured).toEqual([first.eventId]);
+  expect(h.artifactDelivery.targets(captured)).toEqual([
+    { operationId: first.eventId, artifactId: "task-id" },
+  ]);
   const second = await h.delivery.submit(
     { ...artifactInput, content: '{"title":"Later edit"}' },
     undefined,
@@ -711,7 +714,7 @@ it("rejects unsupported artifact writes before saving intent", async () => {
   );
   try {
     await expect(h.session.delivery?.submit(artifactInput)).rejects.toThrow(
-      "requires relay snapshot support",
+      "requires relay sync support",
     );
     expect(storage.load()).toHaveLength(0);
   } finally {

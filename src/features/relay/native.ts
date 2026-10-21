@@ -1,9 +1,9 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import {
-  artifactSnapshotCapability,
-  artifactSnapshotFailure,
-  createArtifactSnapshotReader,
-} from "./artifact-snapshot";
+  artifactSyncCapability,
+  artifactSyncFailure,
+  createArtifactSyncReader,
+} from "./artifact-reader";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -400,16 +400,16 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
-    ...(artifactSnapshotCapability(info)
+    ...(artifactSyncCapability(info)
       ? {
-          artifactSnapshots: createArtifactSnapshotReader((filter, signal) =>
+          artifactSync: createArtifactSyncReader((filter, signal) =>
             admitSignedRequest(
               origin,
               transport.viewer,
               () => nativeRelayRequest(origin, "/query", [filter]),
               signal,
               "background",
-              artifactSnapshotFailure,
+              artifactSyncFailure,
             ),
           ),
         }

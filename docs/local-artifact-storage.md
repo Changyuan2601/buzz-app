@@ -71,44 +71,65 @@ it releases the lock. The collection also aborts its pending transactions on clo
 
 The host-only contract provides:
 
-- `beginSnapshot(source)` binds the fixed query and starts a fresh local generation.
+- `beginRefresh(source)` binds the fixed query and starts a fresh local generation.
   A newer generation retires the previous one.
-- `applyBatch({source, snapshot, records, seen, availability, checkpoint}, signal)`
-  commits a validated page atomically. It requires the active generation. `seen`
-  reuses a body only when its exact current revision ID is saved. Availability
-  checks the expected revision. An optional checkpoint compares its expected value.
-- `completeSnapshot(snapshot, checkpoint, signal)` runs only after sync validates
-  server completion. In one transaction, it marks absent shared records
-  unavailable, commits the checkpoint, and clears the refresh error. Saved bodies,
-  local snapshots, and preferences remain. Device-only records stay device-only.
-- `setRefreshError(snapshot, message, signal)` saves an error for the active
+- `applyBatch({source, refresh, records, availability}, signal)` commits explicit
+  authoritative changes atomically. It requires the active generation. An
+  availability change compares `expectedRevision` with the current ID observed
+  locally. That ID need not be the relay's previous revision. A mismatch throws
+  and rolls back the page; sync resolves it before it advances progress.
+- `completeRefresh(refresh, checkpoint, signal)` commits progress after all pages
+  and their local transactions succeed. It compares the expected checkpoint and
+  clears the refresh error. It does not scan records or infer absence.
+- `knownIds({after, limit, channelId})` gives host sync bounded pages of saved IDs.
+  A host channel index supports channel removals without projector assumptions.
+  Key cursors do not load record bodies. The result includes local-only and
+  imported records; presence does not establish shared origin or current access.
+- `setRefreshError(refresh, message, signal)` saves an error for the active
   generation and publishes a notification. Plugins read `refreshError()` and show
-  a nonempty error. A new attempt retains that error until successful completion.
-- `checkpoint()` reads the saved opaque checkpoint.
+  a nonempty error. A new attempt retains that error until successful delta
+  completion.
+- `checkpoint()` reads the saved opaque progress value.
 
-No raw live event, accepted edit, or per-artifact write can change confirmed
-shared state. Live events request an automatic background refresh. Reconnect also
-starts a refresh. A failed capture may leave validated bodies for exact-ID reuse.
-Only validated completion can infer absence. Generation, query, schema, checkpoint,
-and cancellation checks run inside the transaction. An old owner cannot commit
-late pages, completion, or errors after cancellation or a generation change.
+Sync serializes each whole paged delta and each bounded current-ID read from
+request start through local commit. Raw live events request fresh authoritative
+reads; they never write raw revisions. A duplicate or delayed push therefore does
+not replace current state with its old payload. Generation, query, schema,
+checkpoint, and cancellation checks run inside the commit path. An old owner cannot
+commit late pages, completion, or errors after cancellation or a generation change.
+
+A current-ID read uses `beginRefresh` and `applyBatch`. It does not advance delta
+progress or clear an error from a failed delta. Only a whole successful delta calls
+`completeRefresh`. A failed read can leave already committed authoritative rows,
+but progress stays unchanged. Replay must be idempotent. Explicit unavailable
+results preserve saved content and preferences. An empty delta leaves all saved
+rows unchanged. An error or truncated response is not an unavailable result.
+
+The relay's incremental protocol uses a 120-second overlap. Relay and sync own the
+server timestamp, stable pagination, policy recovery, and retention-gap rules.
+The overlap is a recovery assumption; the store does not treat it as proof that
+no update can be missed. Recovery can revalidate known IDs through the relay's
+uniform current-ID response. Explicit revalidation restores availability when
+access returns. The store does not compare timestamps or construct ancestry.
 
 ## Immediate local feedback
 
 Device preferences update immediately. Shared edits use the existing delivery
-journal and appear immediately in the plugin's pending view. Relay acceptance
-starts a fresh capture. A pre-acceptance capture cannot reconcile that pending
-edit. A successful capture begun after acceptance can show the accepted edit, a
-later revision, or legitimate absence. Reconciling an older operation must preserve
-any newer pending edit. Sync and delivery own this boundary; the row store does not
-merge optimistic edits into confirmed state. Offline shared edits remain undecided.
+journal and appear immediately in the plugin's pending view. An accepted edit needs
+an authoritative current-ID read actually started after its acknowledgement. Sync
+retains that confirmation obligation until success or an explicit error. It cannot
+attach acceptance to an older in-flight response. An empty delta cannot reconcile
+the pending view. The read may report the accepted edit, a later revision, or a
+uniform unavailable result. Reconciling an older operation preserves newer pending
+edits. Sync and delivery own this boundary; the row store does not merge optimistic
+edits into confirmed state. Publication conflicts remain failed edits with the
+attempted value retained. Offline shared edits remain undecided.
 
 ## Storage costs
 
 Writes request strict durability. Transactions span all four object stores, so
 large batches can delay other collections' reads or writes. A changed row rewrites
-its indexes. Index upgrades and absence reconciliation scan the collection.
-Ancestry comparison and separate source-membership writes are absent. The database
-upgrade removes the obsolete membership store and preserves records and device
-preferences. Leaving a community purges only its saved partition. If database
+its indexes. Index upgrades scan the collection. Delta completion does not scan records.
+Ancestry comparison and separate source-membership writes are absent. The database upgrade removes the obsolete membership store, builds the host
+channel index, and preserves records and device preferences. Leaving a community purges only its saved partition. If database
 opening fails, close that handle and open another after the cause clears.

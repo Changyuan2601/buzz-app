@@ -373,14 +373,15 @@ export function createOutbox(
               const durable = priorById.get(item.event.id);
               return durable ? [durable] : [];
             });
-            saved.push(
+            saved = [
+              ...saved,
               ...prior.filter(
                 (item) =>
                   (item.event.kind === 45010 ? 1 : 0) !== domain &&
                   pendingOperation(item) &&
                   !retained.has(item.event.id),
               ),
-            );
+            ];
           }
           await storage.save(saved);
           for (const item of saved) unsavedManaged.delete(item.event.id);
@@ -1440,6 +1441,17 @@ export function createOutbox(
               ),
           )
           .map((item) => item.event.id);
+      },
+      targets(ids: readonly string[]) {
+        return ids.map((id) => {
+          const item = find(id);
+          const artifactId = item?.event.tags.find(
+            ([name]) => name === "d",
+          )?.[1];
+          if (!artifactId)
+            throw new Error("Artifact intent has no artifact ID");
+          return { operationId: id, artifactId };
+        });
       },
       async complete(ids: readonly string[], signal: AbortSignal) {
         for (const id of ids) {

@@ -1,5 +1,5 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
-import type { ArtifactSnapshotReader } from "./artifact-snapshot.ts";
+import type { ArtifactSyncReader } from "./artifact-reader.ts";
 import type { ReminderHost } from "./reminders";
 import {
   memoryResponseText,
@@ -84,7 +84,7 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
-  readonly artifactSnapshots?: ArtifactSnapshotReader;
+  readonly artifactSync?: ArtifactSyncReader;
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
   /** Session-scoped owner proof, not an arbitrary signing capability. */

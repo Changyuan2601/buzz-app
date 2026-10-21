@@ -1,7 +1,4 @@
-import {
-  ARTIFACT_SNAPSHOT_LIMITS,
-  ArtifactSnapshotError,
-} from "./artifact-snapshot";
+import { ARTIFACT_SYNC_LIMITS, ArtifactSyncError } from "./artifact-reader";
 import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
@@ -2087,20 +2084,22 @@ it("binds audience authority to the advertised community and rejects unknown ver
   ).toBeUndefined();
 });
 
-it.each([
-  "snapshot_limit",
-  "snapshot_reset",
-  "snapshot_invalid",
-  "snapshot_unsupported_scope",
-])("preserves %s through native admission", async (code) => {
-  discovery = { artifacts: { snapshot: ARTIFACT_SNAPSHOT_LIMITS } };
-  const transport = await connectNativeTransport(community);
-  respond = () => ({ status: 422, body: { error: "scope or capacity", code } });
-  assert.exists(transport.artifactSnapshots);
-  const work = transport.artifactSnapshots.start(
-    { artifact: "current", kinds: [45010], "#type": ["task"] },
-    new AbortController().signal,
-  );
-  await expect(work).rejects.toBeInstanceOf(ArtifactSnapshotError);
-  await expect(work).rejects.toMatchObject({ code });
-});
+it.each(["sync_limit", "sync_reset", "sync_invalid", "sync_unavailable"])(
+  "preserves %s through native admission",
+  async (code) => {
+    discovery = { artifacts: { sync: ARTIFACT_SYNC_LIMITS } };
+    const transport = await connectNativeTransport(community);
+    respond = () => ({
+      status: 422,
+      body: { error: "scope or capacity", code },
+    });
+    assert.exists(transport.artifactSync);
+    const work = transport.artifactSync.delta(
+      { artifact: "current", kinds: [45010], "#type": ["task"] },
+      {},
+      new AbortController().signal,
+    );
+    await expect(work).rejects.toBeInstanceOf(ArtifactSyncError);
+    await expect(work).rejects.toMatchObject({ code });
+  },
+);

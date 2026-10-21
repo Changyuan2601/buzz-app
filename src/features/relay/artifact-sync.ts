@@ -5,8 +5,11 @@ import type {
 } from "../artifact-storage/service";
 import { hasEventProof } from "./events";
 import type { RelaySession } from "./session";
-import { reconcileArtifactSnapshot } from "./artifact-reconcile";
-import { ArtifactSnapshotError } from "./artifact-snapshot";
+import {
+  reconcileArtifactDelta,
+  reconcileArtifactCurrent,
+} from "./artifact-reconcile";
+import { ArtifactSyncError, ARTIFACT_SYNC_LIMITS } from "./artifact-reader";
 import { captureArtifactDelivery } from "./artifact-delivery";
 import { transportPartition } from "./partition";
 import { RECOVERY_DELAYS_MS } from "./recovery";
@@ -100,6 +103,7 @@ export function provideArtifactSync(
     let running = false;
     let settled = Promise.resolve();
     let requested = true;
+    const dirty = new Set<string>();
     let retry = 0;
     let notBefore = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -136,44 +140,75 @@ export function provideArtifactSync(
     };
     group.request = request;
     async function pump() {
-      if (running || group.lifetime.signal.aborted || !requested || !active())
+      if (
+        running ||
+        !group.entries.size ||
+        group.lifetime.signal.aborted ||
+        !active()
+      )
         return;
       const current = session;
-      const reader = current?.artifactSnapshots;
+      const reader = current?.artifactSync;
       if (!current || !reader) return;
+      clearTimeout(timer);
+      timer = undefined;
       running = true;
       let finish!: () => void;
       settled = new Promise<void>((resolve) => {
         finish = resolve;
       });
-      requested = false;
       batch = new AbortController();
       const signal = AbortSignal.any([group.lifetime.signal, batch.signal]);
       let syncing: OpenArtifactCollection | undefined;
       try {
-        for (const entry of [...group.entries].slice(0, 1)) {
-          if (entry.signal.aborted) continue;
-          syncing = entry;
-          const operation = AbortSignal.any([signal, entry.signal]);
-          const completeDelivery = await captureArtifactDelivery(
-            current,
-            entry.definition.type,
-            JSON.stringify([entry.owner, entry.definition.name]),
-          );
-          operation.throwIfAborted();
-          await reconcileArtifactSnapshot(
+        const entry = [...group.entries][0];
+        if (!entry || entry.signal.aborted) return;
+        syncing = entry;
+        const operation = AbortSignal.any([signal, entry.signal]);
+        const accepted = await captureArtifactDelivery(
+          current,
+          entry.definition.type,
+          JSON.stringify([entry.owner, entry.definition.name]),
+        );
+        operation.throwIfAborted();
+        const ids = accepted.artifactIds.length
+          ? accepted.artifactIds.slice(0, ARTIFACT_SYNC_LIMITS.currentRows)
+          : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
+        if (ids.length) {
+          for (const id of ids) dirty.delete(id);
+          try {
+            await reconcileArtifactCurrent(
+              reader,
+              entry.collection,
+              entry.definition.type,
+              ids,
+              operation,
+              { reportFailure: retry >= 3 },
+            );
+            await accepted.complete(ids, operation);
+          } catch (error) {
+            for (const id of ids) {
+              if (dirty.size < 1000) dirty.add(id);
+              else requested = true;
+            }
+            throw error;
+          }
+        } else if (requested) {
+          requested = false;
+          await reconcileArtifactDelta(
             reader,
             entry.collection,
             entry.definition.type,
             operation,
-            {
-              reportFailure: retry >= 3,
-              onComplete: () => completeDelivery(operation),
-            },
+            { reportFailure: retry >= 3 },
           );
-        }
+        } else return;
         retry = 0;
         notBefore = 0;
+        if (ids.length)
+          queueMicrotask(() => {
+            if (!running) void pump();
+          });
       } catch (error) {
         if (
           error instanceof Error &&
@@ -190,12 +225,8 @@ export function provideArtifactSync(
         } else if (!signal.aborted) {
           retry++;
           const permanent =
-            error instanceof ArtifactSnapshotError &&
-            [
-              "snapshot_limit",
-              "snapshot_unsupported_scope",
-              "snapshot_invalid",
-            ].includes(error.code);
+            error instanceof ArtifactSyncError &&
+            ["sync_limit", "sync_invalid"].includes(error.code);
           if (retry <= 3 && !permanent) {
             requested = true;
             schedule(RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS);
@@ -208,7 +239,7 @@ export function provideArtifactSync(
         running = false;
         batch = undefined;
         if (!group.lifetime.signal.aborted) {
-          if (requested && retry === 0) void pump();
+          if (retry === 0 && (requested || dirty.size)) void pump();
           else if (!timer) schedule(REPAIR_MS);
         }
       }
@@ -265,21 +296,31 @@ export function provideArtifactSync(
           const receive = (
             events: readonly import("./events").RelayEvent[],
           ) => {
-            if (
-              events.some(
-                (event) =>
-                  hasEventProof(event) &&
-                  ([45011, 9005, 44100, 44101].includes(event.kind) ||
-                    (event.kind === 45010 &&
-                      [...group.entries].some((entry) =>
-                        event.tags.some(
-                          ([name, value]) =>
-                            name === "type" && value === entry.definition.type,
-                        ),
-                      ))),
-              )
-            )
-              request();
+            let changed = false;
+            for (const event of events) {
+              if (!hasEventProof(event)) continue;
+              if (
+                event.kind === 45010 &&
+                [...group.entries].some((entry) =>
+                  event.tags.some(
+                    ([name, value]) =>
+                      name === "type" && value === entry.definition.type,
+                  ),
+                )
+              ) {
+                const id = event.tags.find(([name]) => name === "d")?.[1];
+                if (id && dirty.size < 1000) dirty.add(id);
+                else requested = true;
+                changed = true;
+              } else if ([45011, 9005, 44100, 44101].includes(event.kind)) {
+                requested = true;
+                changed = true;
+              }
+            }
+            if (changed && !running) {
+              if (Date.now() < notBefore) schedule(notBefore - Date.now());
+              else void pump();
+            }
           };
           stopConfirmed = next.subscribeArtifactUpdates(receive);
           stopLive = next.subscribeLive(({ events }) => receive(events), {

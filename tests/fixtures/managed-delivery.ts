@@ -79,17 +79,24 @@ async function openCollection(scope: string, name: string) {
     channels: { list: () => ({ channels: [] }), subscribeList: () => () => {} },
     subscribeLive: () => () => {},
     subscribeArtifactUpdates: () => () => {},
-    artifactSnapshots: {
-      start: async () => {
+    artifactSync: {
+      delta: async () => {
         captures.push(name);
         return {
-          token: crypto.randomUUID(),
-          expiresAt: Date.now() / 1000 + 300,
-          entries: [],
-          nextToken: null,
+          startedAt: "2026-10-21T12:00:00.000001Z",
+          overlapSeconds: 120,
+          changes: [],
+          nextCursor: null,
+          checkpoint: crypto.randomUUID(),
         };
       },
-      complete: async () => {},
+      current: async (_query, artifactIds) => ({
+        startedAt: "2026-10-21T12:00:00.000002Z",
+        changes: artifactIds.map((artifactId) => ({
+          type: "remove",
+          artifactId,
+        })),
+      }),
     },
   };
   const effects = [];

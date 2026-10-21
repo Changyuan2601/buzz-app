@@ -73,8 +73,8 @@ test("commits across windows and survives offline restart with isolated scopes",
   });
   await page.evaluate(async () => {
     const c = window.artifactTest.open();
-    const snapshot = await c.beginSnapshot("all");
-    await c.setRefreshError(snapshot, "Refresh unavailable");
+    const refresh = await c.beginRefresh("all");
+    await c.setRefreshError(refresh, "Refresh unavailable");
   });
   expect(await other.evaluate(() => window.errorChange)).toBe(
     "Refresh unavailable",
@@ -131,9 +131,8 @@ test("rolls back received batches and migration failures without publishing chan
     const failure = await c
       .applyBatch({
         source: "all",
-        snapshot: await c.beginSnapshot("all"),
+        refresh: await c.beginRefresh("all"),
         records,
-        checkpoint: { expected: null, next: "bad" },
       })
       .then(
         () => "unexpected",
@@ -219,7 +218,7 @@ test("atomically indexes preference changes and preserves newer values during mi
   expect(result.row.record.local).toEqual({ archived: false });
 });
 
-test("reconciles one fixed query only after completion and preserves device data", async ({
+test("commits delta progress without inferring absence and preserves device data", async ({
   page,
   storageUrl,
 }) => {
@@ -232,10 +231,10 @@ test("reconciles one fixed query only after completion and preserves device data
       type: "test.task",
       revision: { id, content: "{}" },
     });
-    const seed = await c.beginSnapshot("all");
+    const seed = await c.beginRefresh("all");
     await c.applyBatch({
       source: "all",
-      snapshot: seed,
+      refresh: seed,
       records: [record("missing"), record("seen")],
       availability: ["missing", "seen"].map((id) => ({
         id,
@@ -243,38 +242,36 @@ test("reconciles one fixed query only after completion and preserves device data
         value: { state: "available" },
       })),
     });
-    await c.completeSnapshot(seed, { expected: null, next: "seed" });
+    await c.completeRefresh(seed, { expected: null, next: "seed" });
     await c.preferences.update("missing", () => ({ pinned: false }));
     await c.importBatch({
       records: [{ id: "device-only", local: { title: "saved" } }],
     });
-    const partial = await c.beginSnapshot("all");
+    const partial = await c.beginRefresh("all");
     await c.applyBatch({
       source: "all",
-      snapshot: partial,
-      seen: [{ id: "seen", revisionId: "seen" }],
+      refresh: partial,
     });
     await c.setRefreshError(partial, "Refresh limit reached");
     const before = await c.get("missing");
     const error = await c.refreshError();
-    const snapshot = await c.beginSnapshot("all");
+    const refresh = await c.beginRefresh("all");
     const retainedError = await c.refreshError();
     const stale = await c
-      .completeSnapshot(partial, { expected: "seed", next: "wrong" })
+      .completeRefresh(partial, { expected: "seed", next: "wrong" })
       .then(
         () => "unexpected",
         (e) => e.message,
       );
-    const wrongQuery = await c.beginSnapshot("other").then(
+    const wrongQuery = await c.beginRefresh("other").then(
       () => "unexpected",
       (e) => e.message,
     );
     await c.applyBatch({
       source: "all",
-      snapshot,
-      seen: [{ id: "seen", revisionId: "seen" }],
+      refresh,
     });
-    await c.completeSnapshot(snapshot, { expected: "seed", next: "complete" });
+    await c.completeRefresh(refresh, { expected: "seed", next: "complete" });
     const lateError = await c.setRefreshError(partial, "old error").then(
       () => "unexpected",
       (e) => e.message,
@@ -296,16 +293,122 @@ test("reconciles one fixed query only after completion and preserves device data
   expect(result.before.record.availability.state).toBe("available");
   expect(result.error).toBe("Refresh limit reached");
   expect(result.retainedError).toBe(result.error);
-  expect(result.stale).toBe("Artifact snapshot changed");
+  expect(result.stale).toBe("Artifact refresh changed");
   expect(result.wrongQuery).toBe("Artifact collection query changed");
-  expect(result.lateError).toBe("Artifact snapshot changed");
-  expect(result.missing.record.availability.state).toBe("unavailable");
+  expect(result.lateError).toBe("Artifact refresh changed");
+  expect(result.missing.record.availability.state).toBe("available");
   expect(result.missing.record.current.content).toBe("{}");
   expect(result.missing.preference).toEqual({ pinned: false });
   expect(result.seen.record.availability.state).toBe("available");
   expect(result.local.record.local).toEqual({ title: "saved" });
   expect(result.checkpoint).toBe("complete");
   expect(result.clearedError).toBeNull();
+});
+
+test("applies explicit removals after missed revisions and rejects a failed page", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const c = window.artifactTest.open();
+    const record = (id, revision) => ({
+      id,
+      channelId: "channel",
+      type: "test.task",
+      revision: { id: revision, content: "{}" },
+    });
+    const initial = await c.beginRefresh("all");
+    await c.applyBatch({
+      source: "all",
+      refresh: initial,
+      records: [record("task", "local-A")],
+      availability: [
+        {
+          id: "task",
+          expectedRevision: "local-A",
+          value: { state: "available" },
+        },
+      ],
+    });
+    await c.completeRefresh(initial, { expected: null, next: "initial" });
+    await c.preferences.update("task", () => false);
+    const refresh = await c.beginRefresh("all");
+    const failure = await c
+      .applyBatch({
+        source: "all",
+        refresh,
+        records: [record("new", "new-rev")],
+        availability: [
+          {
+            id: "task",
+            expectedRevision: "relay-B-not-saved",
+            value: { state: "unavailable" },
+          },
+        ],
+      })
+      .then(
+        () => "unexpected",
+        (e) => e.message,
+      );
+    const progressAfterFailure = await c.checkpoint();
+    const newAfterFailure = await c.get("new");
+    const before = await c.get("task");
+    await c.applyBatch({
+      source: "all",
+      refresh,
+      availability: [
+        {
+          id: "task",
+          expectedRevision: before.record.current.id,
+          value: { state: "unavailable" },
+        },
+      ],
+    });
+    const mismatch = await c
+      .completeRefresh(refresh, { expected: "wrong", next: "bad" })
+      .then(
+        () => "unexpected",
+        (e) => e.message,
+      );
+    await c.completeRefresh(refresh, { expected: "initial", next: "removed" });
+    const removed = await c.get("task");
+    const restored = await c.beginRefresh("all");
+    await c.applyBatch({
+      source: "all",
+      refresh: restored,
+      records: [record("task", "relay-C")],
+      availability: [
+        {
+          id: "task",
+          expectedRevision: "relay-C",
+          value: { state: "available" },
+        },
+      ],
+    });
+    await c.completeRefresh(restored, {
+      expected: "removed",
+      next: "restored",
+    });
+    return {
+      failure,
+      progressAfterFailure,
+      newAfterFailure,
+      mismatch,
+      removed,
+      restored: await c.get("task"),
+    };
+  });
+  expect(result.failure).toBe("Artifact revision changed");
+  expect(result.progressAfterFailure).toBe("initial");
+  expect(result.newAfterFailure).toBeUndefined();
+  expect(result.mismatch).toBe("Artifact checkpoint changed");
+  expect(result.removed.record.current.id).toBe("local-A");
+  expect(result.removed.record.availability.state).toBe("unavailable");
+  expect(result.removed.preference).toBe(false);
+  expect(result.restored.record.current.id).toBe("relay-C");
+  expect(result.restored.record.availability.state).toBe("available");
+  expect(result.restored.preference).toBe(false);
 });
 
 test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records", async ({
@@ -325,6 +428,20 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
       });
     }
     const savedMs = performance.now() - start;
+    let scans = 0;
+    const cursor = IDBObjectStore.prototype.openCursor;
+    IDBObjectStore.prototype.openCursor = function (...args) {
+      if (this.name === "records") scans++;
+      return cursor.apply(this, args);
+    };
+    try {
+      const refresh = await c.beginRefresh("all");
+      await c.completeRefresh(refresh, { expected: null, next: "complete" });
+    } finally {
+      IDBObjectStore.prototype.openCursor = cursor;
+    }
+    const ids = await c.knownIds({ limit: 75 });
+    const nextIds = await c.knownIds({ limit: 75, after: ids.next });
     let reads = 0;
     const get = IDBObjectStore.prototype.get;
     IDBObjectStore.prototype.get = function (...args) {
@@ -351,6 +468,9 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
     return {
       savedMs,
       elapsedMs,
+      scans,
+      ids,
+      nextIds,
       reads,
       first: first.entries.map((e) => e.record.id),
       second: second.entries.map((e) => e.record.id),
@@ -358,6 +478,9 @@ test("reads bounded indexed pages for 10,000 tasks and 40,000 archived records",
       last: (await reopened.get("049999")).record.local,
     };
   });
+  expect(result.scans).toBe(0);
+  expect(result.ids.ids).toHaveLength(75);
+  expect(result.nextIds.ids[0]).toBe("000075");
   expect(result.first).toHaveLength(75);
   expect(result.second[0]).toBe("000075");
   expect(result.archive[0]).toBe("010000");
@@ -386,16 +509,16 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
       type: "test.task",
       revision: { id, content: "{}" },
     });
-    const old = await c.beginSnapshot("all");
+    const old = await c.beginRefresh("all");
     await c.applyBatch({
       source: "all",
-      snapshot: old,
+      refresh: old,
       records: [record("A", "old-home")],
     });
-    const newer = await c.beginSnapshot("all");
+    const newer = await c.beginRefresh("all");
     await c.applyBatch({
       source: "all",
-      snapshot: newer,
+      refresh: newer,
       records: [record("C", "new-home")],
       availability: [
         { id: "task", expectedRevision: "C", value: { state: "available" } },
@@ -404,7 +527,7 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
     const stale = await c
       .applyBatch({
         source: "all",
-        snapshot: old,
+        refresh: old,
         records: [record("A", "old-home")],
       })
       .then(
@@ -414,7 +537,7 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
     const revision = await c
       .applyBatch({
         source: "all",
-        snapshot: newer,
+        refresh: newer,
         availability: [
           { id: "task", expectedRevision: "A", value: { state: "deleted" } },
         ],
@@ -424,7 +547,7 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
         (e) => e.message,
       );
     const mismatch = await c
-      .applyBatch({ source: "other", snapshot: newer })
+      .applyBatch({ source: "other", refresh: newer })
       .then(
         () => "unexpected",
         (e) => e.message,
@@ -435,31 +558,19 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
         () => "unexpected",
         (e) => e.message,
       );
-    const notSaved = await c
-      .applyBatch({
-        source: "all",
-        snapshot: newer,
-        seen: [{ id: "task", revisionId: "A" }],
-      })
-      .then(
-        () => "unexpected",
-        (e) => e.message,
-      );
-    await c.completeSnapshot(newer, { expected: null, next: "done" });
+    await c.completeRefresh(newer, { expected: null, next: "done" });
     return {
       stale,
       revision,
       mismatch,
       raw,
-      notSaved,
       row: await c.get("task"),
     };
   });
-  expect(result.stale).toBe("Artifact snapshot changed");
+  expect(result.stale).toBe("Artifact refresh changed");
   expect(result.revision).toBe("Artifact revision changed");
-  expect(result.mismatch).toBe("Artifact snapshot source mismatch");
-  expect(result.raw).toBe("Artifact snapshot source mismatch");
-  expect(result.notSaved).toBe("Snapshot revision is not saved");
+  expect(result.mismatch).toBe("Artifact refresh source mismatch");
+  expect(result.raw).toBe("Artifact refresh source mismatch");
   expect(result.row.record.current.id).toBe("C");
   expect(result.row.record.channelId).toBe("new-home");
   expect(result.row.record.availability.state).toBe("available");
@@ -467,26 +578,17 @@ test("accepts authoritative heads without ancestry and rejects retired captures"
   expect(result.row.record).not.toHaveProperty("conflicts");
 });
 
-test("aborts snapshot completion before and during the local transaction", async ({
+test("aborts page and progress commits when the owner closes", async ({
   page,
   storageUrl,
 }) => {
   await open(page, storageUrl);
   const result = await page.evaluate(async () => {
-    let controller;
-    let abortOnProjection = false;
-    let closeOnProjection = false;
-    const c = window.artifactTest.open("viewer", "relay", "test", {
-      project() {
-        if (abortOnProjection)
-          controller.abort(new Error("live interval lost"));
-        if (closeOnProjection) c.close();
-        return [];
-      },
-    });
+    const c = window.artifactTest.open();
+    const refresh = await c.beginRefresh("all");
     await c.applyBatch({
       source: "all",
-      snapshot: await c.beginSnapshot("all"),
+      refresh,
       records: [
         {
           id: "task",
@@ -499,77 +601,97 @@ test("aborts snapshot completion before and during the local transaction", async
         { id: "task", expectedRevision: "A", value: { state: "available" } },
       ],
     });
-    const snapshot = await c.beginSnapshot("all");
     const pre = new AbortController();
     pre.abort(new Error("owner closed"));
     const before = await c
-      .completeSnapshot(snapshot, { expected: null, next: "bad" }, pre.signal)
+      .completeRefresh(refresh, { expected: null, next: "bad" }, pre.signal)
       .then(
         () => "unexpected",
         (e) => e.message,
       );
-    controller = new AbortController();
-    abortOnProjection = true;
-    const during = await c
-      .completeSnapshot(
-        snapshot,
-        { expected: null, next: "bad" },
-        controller.signal,
+    const put = IDBObjectStore.prototype.put;
+    let controller;
+    let abortCheckpoint = false;
+    let abortRecord = false;
+    let closeCheckpoint = false;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      const request = put.call(this, value, ...args);
+      if (
+        (this.name === "metadata" &&
+          value.key === "checkpoint" &&
+          abortCheckpoint) ||
+        (this.name === "records" && abortRecord)
       )
-      .then(
-        () => "unexpected",
-        (e) => e.message,
-      );
-    controller = new AbortController();
-    const batch = await c
-      .applyBatch(
-        {
-          source: "all",
-          snapshot,
-          records: [
-            {
-              id: "task",
-              channelId: "new-home",
-              type: "test.task",
-              revision: { id: "B", content: "{}" },
-            },
-          ],
-        },
-        controller.signal,
+        controller.abort(new Error("owner retired"));
+      if (
+        this.name === "metadata" &&
+        value.key === "checkpoint" &&
+        closeCheckpoint
       )
-      .then(
-        () => "unexpected",
-        (e) => e.message,
-      );
-    abortOnProjection = false;
-    const row = await c.get("task");
-    const checkpoint = await c.checkpoint();
-    closeOnProjection = true;
-    const closed = await c
-      .completeSnapshot(snapshot, { expected: null, next: "closed" })
-      .then(
-        () => "unexpected",
-        (e) => e.message,
-      );
-    return {
-      before,
-      batch,
-      closed,
-      row,
-      checkpoint,
-      during,
+        c.close();
+      return request;
     };
+    try {
+      controller = new AbortController();
+      abortCheckpoint = true;
+      const during = await c
+        .completeRefresh(
+          refresh,
+          { expected: null, next: "bad" },
+          controller.signal,
+        )
+        .then(
+          () => "unexpected",
+          (e) => e.message,
+        );
+      abortCheckpoint = false;
+      abortRecord = true;
+      controller = new AbortController();
+      const batch = await c
+        .applyBatch(
+          {
+            source: "all",
+            refresh,
+            records: [
+              {
+                id: "task",
+                channelId: "new-home",
+                type: "test.task",
+                revision: { id: "B", content: "{}" },
+              },
+            ],
+          },
+          controller.signal,
+        )
+        .then(
+          () => "unexpected",
+          (e) => e.message,
+        );
+      abortRecord = false;
+      const row = await c.get("task");
+      const checkpoint = await c.checkpoint();
+      closeCheckpoint = true;
+      const closed = await c
+        .completeRefresh(refresh, { expected: null, next: "closed" })
+        .then(
+          () => "unexpected",
+          (e) => e.message,
+        );
+      return { before, during, batch, closed, row, checkpoint };
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
   });
   expect(result.before).toBe("owner closed");
-  expect(result.during).toBe("live interval lost");
-  expect(result.batch).toBe("live interval lost");
+  expect(result.during).toBe("owner retired");
+  expect(result.batch).toBe("owner retired");
   expect(result.closed).toBe("Artifact collection closed");
   expect(result.row.record.current.id).toBe("A");
   expect(result.row.record.availability.state).toBe("available");
   expect(result.checkpoint).toBeNull();
 });
 
-test("upgrades across windows and rejects stale writes and snapshot completion", async ({
+test("upgrades across windows and rejects stale writes and refresh completion", async ({
   page,
   context,
   storageUrl,
@@ -577,13 +699,13 @@ test("upgrades across windows and rejects stale writes and snapshot completion",
   await open(page, storageUrl);
   const other = await context.newPage();
   await open(other, storageUrl);
-  const snapshot = await other.evaluate(async () => {
+  const refresh = await other.evaluate(async () => {
     window.collection = window.artifactTest.open();
     await window.collection.importBatch({
       records: [{ id: "task", local: {} }],
       preferences: [{ id: "task", value: true }],
     });
-    return window.collection.beginSnapshot("all");
+    return window.collection.beginRefresh("all");
   });
   const result = await page.evaluate(async () => {
     const newer = window.artifactTest.open("viewer", "relay", "test", {
@@ -610,17 +732,17 @@ test("upgrades across windows and rejects stale writes and snapshot completion",
     );
     return { page, downgrade, type };
   });
-  const stale = await other.evaluate(async (snapshot) => {
+  const stale = await other.evaluate(async (refresh) => {
     const error = (e) => e.message;
     return Promise.all([
       window.collection.preferences
         .update("task", () => false)
         .then(() => "unexpected", error),
       window.collection
-        .completeSnapshot(snapshot, { expected: null, next: "stale" })
+        .completeRefresh(refresh, { expected: null, next: "stale" })
         .then(() => "unexpected", error),
     ]);
-  }, snapshot);
+  }, refresh);
   expect(result.page.entries[0].preference).toBeNull();
   expect(stale).toEqual([
     "Artifact collection version changed",
@@ -743,6 +865,9 @@ test("upgrades saved device data and removes the obsolete membership store", asy
           record: {
             id: "task",
             local: { title: "saved" },
+            current: { id: "A", content: "{}" },
+            channelId: "channel",
+            type: "test.task",
             availability: { state: "unknown" },
           },
         });
@@ -772,12 +897,68 @@ test("upgrades saved device data and removes the obsolete membership store", asy
       };
       request.onerror = () => reject(request.error);
     });
-    return { saved, rows: page.entries.length, schema };
+    return {
+      saved,
+      rows: page.entries.length,
+      schema,
+      channel: await c.knownIds({ channelId: "channel" }),
+    };
   });
   expect(result.saved.record.local).toEqual({ title: "saved" });
   expect(result.saved.preference).toEqual({ pinned: false });
   expect(result.rows).toBe(1);
-  expect(result.schema).toEqual({ version: 2, members: false });
+  expect(result.channel.ids).toEqual(["task"]);
+  expect(result.schema).toEqual({ version: 3, members: false });
+});
+
+test("pages raw known IDs by channel without plugin index assumptions", async ({
+  page,
+  storageUrl,
+}) => {
+  await open(page, storageUrl);
+  const result = await page.evaluate(async () => {
+    const c = window.artifactTest.open("viewer", "relay", "test", {
+      project: () => [],
+    });
+    const record = (id, channelId, revision = id) => ({
+      id,
+      channelId,
+      type: "test.task",
+      revision: { id: revision, content: "{}" },
+    });
+    const refresh = await c.beginRefresh("all");
+    await c.applyBatch({
+      source: "all",
+      refresh,
+      records: [record("a", "one"), record("b", "one"), record("c", "two")],
+    });
+    await c.importBatch({ records: [{ id: "local", local: {} }] });
+    const first = await c.knownIds({ channelId: "one", limit: 1 });
+    const second = await c.knownIds({
+      channelId: "one",
+      limit: 1,
+      after: first.next,
+    });
+    await c.applyBatch({
+      source: "all",
+      refresh,
+      records: [record("a", "two", "moved")],
+    });
+    return {
+      first,
+      second,
+      all: await c.knownIds({}),
+      one: await c.knownIds({ channelId: "one" }),
+      two: await c.knownIds({ channelId: "two" }),
+      projected: await c.page({ index: "none", value: "" }),
+    };
+  });
+  expect(result.first).toEqual({ ids: ["a"], next: "a" });
+  expect(result.second).toEqual({ ids: ["b"] });
+  expect(result.all.ids).toEqual(["a", "b", "c", "local"]);
+  expect(result.one.ids).toEqual(["b"]);
+  expect(result.two.ids).toEqual(["a", "c"]);
+  expect(result.projected.entries).toEqual([]);
 });
 
 test("retries database opening with a new handle after a transient failure", async ({

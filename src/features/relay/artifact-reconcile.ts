@@ -2,13 +2,14 @@ import type {
   HostArtifactCollection,
   ReceivedArtifact,
 } from "../artifact-storage/types";
-import { eventDto, type RelayEvent } from "./events";
+import type { RelayEvent } from "./events";
 import {
-  ARTIFACT_SNAPSHOT_LIMITS,
-  ArtifactSnapshotError,
-  type ArtifactManifestEntry,
-  type ArtifactSnapshotReader,
-} from "./artifact-snapshot";
+  ARTIFACT_SYNC_LIMITS,
+  ArtifactSyncError,
+  type ArtifactSyncChange,
+  type ArtifactSyncReader,
+} from "./artifact-reader";
+import type { ArtifactRefresh } from "../artifact-storage/types";
 
 export function receivedArtifact(
   event: RelayEvent,
@@ -48,146 +49,276 @@ export function receivedArtifact(
   };
 }
 
-/** Pages can commit during a failed refresh. Only validated completion admits absence. */
-export async function reconcileArtifactSnapshot(
-  reader: ArtifactSnapshotReader,
+const queryFor = (type: string) => ({
+  artifact: "current" as const,
+  kinds: [45010] as const,
+  "#type": [type],
+});
+const sourceFor = (type: string) => JSON.stringify(queryFor(type));
+function savedCheckpoint(value: string | null): string | undefined {
+  if (!value) return;
+  try {
+    const saved = JSON.parse(value);
+    if (saved?.protocol === "sync-v1" && typeof saved.checkpoint === "string")
+      return saved.checkpoint;
+  } catch {}
+}
+async function applyChanges(
+  collection: HostArtifactCollection,
+  refresh: ArtifactRefresh,
+  changes: readonly ArtifactSyncChange[],
+  type: string,
+  signal: AbortSignal,
+) {
+  let records: ReceivedArtifact[] = [];
+  let availability: NonNullable<
+    Parameters<HostArtifactCollection["applyBatch"]>[0]["availability"]
+  >[number][] = [];
+  async function flush() {
+    if (!records.length && !availability.length) return;
+    await collection.applyBatch(
+      { source: refresh.source, refresh, records, availability },
+      signal,
+    );
+    records = [];
+    availability = [];
+  }
+  async function remove(id: string, channelId?: string) {
+    const saved = await collection.get(id);
+    signal.throwIfAborted();
+    if (
+      !saved ||
+      (channelId !== undefined && saved.record.channelId !== channelId)
+    )
+      return;
+    availability.push({
+      id,
+      expectedRevision: saved.record.current?.id ?? null,
+      value: { state: "unavailable" },
+    });
+  }
+  const pending = new Set<string>();
+  for (const change of changes) {
+    signal.throwIfAborted();
+    if (change.type !== "removeChannel" && pending.has(change.artifactId)) {
+      await flush();
+      pending.clear();
+    }
+    if (change.type !== "removeChannel") pending.add(change.artifactId);
+    if (change.type === "upsert") {
+      const record = receivedArtifact(change.event, type);
+      records.push(record);
+      availability.push({
+        id: record.id,
+        expectedRevision: record.revision.id,
+        value: { state: "available" },
+      });
+    } else if (change.type === "remove") await remove(change.artifactId);
+    else {
+      await flush();
+      pending.clear();
+      let after: string | undefined;
+      do {
+        const page = await collection.knownIds({
+          channelId: change.channelId,
+          ...(after !== undefined ? { after } : {}),
+          limit: 1000,
+        });
+        signal.throwIfAborted();
+        for (const id of page.ids) await remove(id, change.channelId);
+        await flush();
+        after = page.next;
+      } while (after !== undefined);
+    }
+  }
+  await flush();
+}
+async function currentBatch(
+  reader: ArtifactSyncReader,
+  collection: HostArtifactCollection,
+  refresh: ArtifactRefresh,
+  type: string,
+  ids: readonly string[],
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    const result = await reader.current(queryFor(type), ids, signal);
+    signal.throwIfAborted();
+    await applyChanges(collection, refresh, result.changes, type, signal);
+  } catch (error) {
+    if (
+      !(error instanceof ArtifactSyncError) ||
+      error.code !== "sync_limit" ||
+      ids.length === 1
+    )
+      throw error;
+    const middle = Math.ceil(ids.length / 2);
+    await currentBatch(
+      reader,
+      collection,
+      refresh,
+      type,
+      ids.slice(0, middle),
+      signal,
+    );
+    await currentBatch(
+      reader,
+      collection,
+      refresh,
+      type,
+      ids.slice(middle),
+      signal,
+    );
+  }
+}
+async function revalidateKnown(
+  reader: ArtifactSyncReader,
+  collection: HostArtifactCollection,
+  refresh: ArtifactRefresh,
+  type: string,
+  signal: AbortSignal,
+) {
+  let after: string | undefined;
+  do {
+    const page = await collection.knownIds({
+      ...(after !== undefined ? { after } : {}),
+      limit: ARTIFACT_SYNC_LIMITS.currentRows,
+    });
+    signal.throwIfAborted();
+    if (page.ids.length)
+      await currentBatch(reader, collection, refresh, type, page.ids, signal);
+    after = page.next;
+  } while (after !== undefined);
+}
+async function reportFailure(
+  collection: HostArtifactCollection,
+  refresh: ArtifactRefresh,
+  error: unknown,
+  signal: AbortSignal,
+  requested: boolean,
+) {
+  const permanent =
+    error instanceof ArtifactSyncError &&
+    ["sync_limit", "sync_invalid"].includes(error.code);
+  if (!signal.aborted && (requested || permanent))
+    await collection.setRefreshError(
+      refresh,
+      error instanceof ArtifactSyncError && error.code === "sync_limit"
+        ? "The relay limit prevents a refresh of saved data"
+        : "Could not refresh saved data",
+      signal,
+    );
+}
+export async function reconcileArtifactCurrent(
+  reader: ArtifactSyncReader,
+  collection: HostArtifactCollection,
+  type: string,
+  ids: readonly string[],
+  signal: AbortSignal,
+  options: { reportFailure?: boolean } = {},
+) {
+  const refresh = await collection.beginRefresh(sourceFor(type));
+  try {
+    for (
+      let offset = 0;
+      offset < ids.length;
+      offset += ARTIFACT_SYNC_LIMITS.currentRows
+    )
+      await currentBatch(
+        reader,
+        collection,
+        refresh,
+        type,
+        ids.slice(offset, offset + ARTIFACT_SYNC_LIMITS.currentRows),
+        signal,
+      );
+    signal.throwIfAborted();
+  } catch (error) {
+    await reportFailure(
+      collection,
+      refresh,
+      error,
+      signal,
+      options.reportFailure === true,
+    );
+    throw error;
+  }
+}
+export async function reconcileArtifactDelta(
+  reader: ArtifactSyncReader,
   collection: HostArtifactCollection,
   type: string,
   signal: AbortSignal,
-  options: { reportFailure?: boolean; onComplete?: () => Promise<void> } = {},
+  options: { reportFailure?: boolean } = {},
 ) {
-  const source = JSON.stringify({
-    artifact: "current",
-    kinds: [45010],
-    "#type": [type],
-  });
   const expected = await collection.checkpoint();
   signal.throwIfAborted();
-  const snapshot = await collection.beginSnapshot(source);
+  const refresh = await collection.beginRefresh(sourceFor(type));
+  let checkpoint = savedCheckpoint(expected);
+  let recovery = checkpoint === undefined;
   try {
-    let page = await reader.start(
-      { artifact: "current", kinds: [45010], "#type": [type] },
-      signal,
-    );
-    const token = page.token;
-    const seen = new Set<string>();
-    const cursors = new Set<string>();
-    async function saveBodies(
-      entries: readonly ArtifactManifestEntry[],
-    ): Promise<void> {
-      if (!entries.length) return;
-      let events: readonly RelayEvent[];
+    let next: string;
+    while (true) {
       try {
-        events = await reader.bodies(token, entries, signal);
+        let cursor: string | undefined;
+        let startedAt: string | undefined;
+        const cursors = new Set<string>();
+        while (true) {
+          const page = await reader.delta(
+            queryFor(type),
+            {
+              ...(checkpoint !== undefined ? { checkpoint } : {}),
+              ...(cursor !== undefined ? { cursor } : {}),
+            },
+            signal,
+          );
+          signal.throwIfAborted();
+          if (startedAt !== undefined && page.startedAt !== startedAt)
+            throw new Error("Artifact sync capture changes between pages");
+          startedAt = page.startedAt;
+          await applyChanges(collection, refresh, page.changes, type, signal);
+          if (page.nextCursor === null) {
+            if (!page.checkpoint)
+              throw new Error("Artifact sync completion has no checkpoint");
+            next = page.checkpoint;
+            break;
+          }
+          if (cursors.has(page.nextCursor))
+            throw new Error("Artifact sync page cursor repeats");
+          cursors.add(page.nextCursor);
+          cursor = page.nextCursor;
+        }
+        break;
       } catch (error) {
         if (
-          !(error instanceof ArtifactSnapshotError) ||
-          error.code !== "snapshot_limit" ||
-          entries.length === 1
+          !(error instanceof ArtifactSyncError) ||
+          error.code !== "sync_reset" ||
+          recovery
         )
           throw error;
-        const middle = Math.ceil(entries.length / 2);
-        await saveBodies(entries.slice(0, middle));
-        await saveBodies(entries.slice(middle));
-        return;
+        checkpoint = undefined;
+        recovery = true;
       }
-      signal.throwIfAborted();
-      const records = events.map((event) => receivedArtifact(event, type));
-      await collection.applyBatch(
-        {
-          source,
-          snapshot,
-          records,
-          availability: records.map((record) => ({
-            id: record.id,
-            expectedRevision: record.revision.id,
-            value: { state: "available" as const },
-          })),
-        },
-        signal,
-      );
-      signal.throwIfAborted();
     }
-    while (true) {
-      signal.throwIfAborted();
-      const cached: { id: string; revisionId: string }[] = [];
-      const missing: ArtifactManifestEntry[] = [];
-      for (const entry of page.entries) {
-        if (
-          seen.has(entry.artifactId) ||
-          seen.size >= ARTIFACT_SNAPSHOT_LIMITS.maxRows
-        )
-          throw new Error("Artifact manifest repeats or exceeds capacity");
-        seen.add(entry.artifactId);
-        const saved = await collection.get(entry.artifactId);
-        signal.throwIfAborted();
-        const revision = saved?.record.current;
-        if (revision?.id === entry.revisionId && revision.event) {
-          const event = eventDto(revision.event);
-          const record = receivedArtifact(event, type);
-          if (
-            record.id !== entry.artifactId ||
-            record.channelId !== entry.channelId ||
-            event.content !== revision.content
-          )
-            throw new Error("Saved artifact does not match its revision");
-          cached.push({ id: entry.artifactId, revisionId: entry.revisionId });
-        } else missing.push(entry);
-      }
-      if (cached.length)
-        await collection.applyBatch(
-          {
-            source,
-            snapshot,
-            seen: cached,
-            availability: cached.map((entry) => ({
-              id: entry.id,
-              expectedRevision: entry.revisionId,
-              value: { state: "available" as const },
-            })),
-          },
-          signal,
-        );
-      for (
-        let offset = 0;
-        offset < missing.length;
-        offset += ARTIFACT_SNAPSHOT_LIMITS.bodyRows
-      )
-        await saveBodies(
-          missing.slice(offset, offset + ARTIFACT_SNAPSHOT_LIMITS.bodyRows),
-        );
-      if (page.nextToken === null) break;
-      if (cursors.has(page.nextToken))
-        throw new Error("Artifact snapshot page cursor repeats");
-      cursors.add(page.nextToken);
-      page = await reader.page(token, page.nextToken, signal);
-    }
-    await reader.complete(token, signal);
+    if (recovery)
+      await revalidateKnown(reader, collection, refresh, type, signal);
     signal.throwIfAborted();
-    await collection.completeSnapshot(
-      snapshot,
-      { expected, next: token },
+    await collection.completeRefresh(
+      refresh,
+      {
+        expected,
+        next: JSON.stringify({ protocol: "sync-v1", checkpoint: next }),
+      },
       signal,
     );
   } catch (error) {
-    const permanent =
-      error instanceof ArtifactSnapshotError &&
-      [
-        "snapshot_limit",
-        "snapshot_unsupported_scope",
-        "snapshot_invalid",
-      ].includes(error.code);
-    if (!signal.aborted && (options.reportFailure || permanent)) {
-      await collection.setRefreshError(
-        snapshot,
-        error instanceof ArtifactSnapshotError &&
-          error.code === "snapshot_limit"
-          ? "The relay limit prevents a refresh of saved data"
-          : "Could not refresh saved data",
-        signal,
-      );
-    }
+    await reportFailure(
+      collection,
+      refresh,
+      error,
+      signal,
+      options.reportFailure === true,
+    );
     throw error;
   }
-  await options.onComplete?.();
 }

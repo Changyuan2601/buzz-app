@@ -1,5 +1,8 @@
 type ArtifactDelivery = {
   capture(type: string, collection: string): Promise<readonly string[]>;
+  targets(
+    ids: readonly string[],
+  ): readonly { operationId: string; artifactId: string }[];
   complete(ids: readonly string[], signal: AbortSignal): Promise<void>;
 };
 const sessions = new WeakMap<object, ArtifactDelivery>();
@@ -15,10 +18,19 @@ export async function captureArtifactDelivery(
   collection: string,
 ) {
   const delivery = sessions.get(session);
-  // Freeze accepted IDs before starting the relay capture. Later acceptances need another capture.
   const ids = (await delivery?.capture(type, collection)) ?? [];
-  return async (signal: AbortSignal) => {
-    signal.throwIfAborted();
-    await delivery?.complete(ids, signal);
+  const targets = delivery?.targets(ids) ?? [];
+  return {
+    artifactIds: [...new Set(targets.map((target) => target.artifactId))],
+    async complete(artifactIds: readonly string[], signal: AbortSignal) {
+      signal.throwIfAborted();
+      const covered = new Set(artifactIds);
+      await delivery?.complete(
+        targets
+          .filter((target) => covered.has(target.artifactId))
+          .map((target) => target.operationId),
+        signal,
+      );
+    },
   };
 }
