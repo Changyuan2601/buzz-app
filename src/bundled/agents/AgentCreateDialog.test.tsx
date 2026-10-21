@@ -516,6 +516,82 @@ it("blocks a second create while the first is pending", async () => {
   finish(made);
 });
 
+it("cancels a pending hosted create, keeping the draft without an error", async () => {
+  const hosted = {
+    ...echo,
+    key: "test/hosted",
+    title: "Hosted",
+    Create: undefined,
+    remote: {},
+  } as unknown as RegisteredAgentType;
+  let signal: AbortSignal | undefined;
+  const { agents, onCreated, onClose, dialog, user } = setup(
+    [hosted],
+    (input) =>
+      new Promise<Agent>((_, reject) => {
+        signal = input.signal;
+        signal?.addEventListener("abort", () => reject(signal?.reason));
+      }),
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  expect(
+    within(dialog).queryByRole("button", { name: "Cancel" }),
+  ).not.toBeInTheDocument();
+  await user.click(createButton());
+  await vi.waitFor(() => expect(agents.create).toHaveBeenCalledTimes(1));
+  expect(signal?.aborted).toBe(false);
+
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(signal?.aborted).toBe(true);
+  await vi.waitFor(() => expect(createButton()).toBeEnabled());
+  expect(
+    within(dialog).queryByRole("button", { name: "Cancel" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Nova");
+  expect(onCreated).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it("still shows a hosted create's failure that is not the cancel", async () => {
+  const hosted = {
+    ...echo,
+    key: "test/hosted",
+    title: "Hosted",
+    Create: undefined,
+    remote: {},
+  } as unknown as RegisteredAgentType;
+  let fail: (error: Error) => void = () => {};
+  const { dialog, user } = setup(
+    [hosted],
+    () => new Promise<Agent>((_, reject) => (fail = reject)),
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(createButton());
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  fail(new Error("provider down"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("provider down");
+});
+
+it("offers no Cancel while a local create is pending", async () => {
+  let finish: (agent: Agent) => void = () => {};
+  const { agents, dialog, user } = setup(
+    [echo],
+    () => new Promise<Agent>((resolve) => (finish = resolve)),
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(createButton());
+  try {
+    await vi.waitFor(() => expect(agents.create).toHaveBeenCalledTimes(1));
+    expect(agents.create.mock.calls[0]?.[0]).not.toHaveProperty("signal");
+    expect(
+      within(dialog).queryByRole("button", { name: "Cancel" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    finish(made);
+  }
+});
+
 const withModels = (type: RegisteredAgentType): RegisteredAgentType => ({
   ...type,
   CreateModel: ({ config, onChange, ...props }) => {

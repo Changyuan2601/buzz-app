@@ -37,11 +37,13 @@ export function createOAuthSession(
       if (!credential) throw new Error("Sign in to Builderlab first.");
       return credential;
     },
-    /** Creation joins Settings' login without owning or canceling that attempt. */
+    /** Creation joins Settings' login without owning or canceling that
+     * attempt; aborting cancels only an attempt this creation started. */
     async ensureSignedIn(signal: AbortSignal): Promise<void> {
       signal.throwIfAborted();
       if (disposed) throw new Error("Builderlab session is closed.");
       if (credential) return;
+      const started = !attempt;
       await new Promise<void>((resolve, reject) => {
         const cleanup = () => {
           listeners.delete(changed);
@@ -49,6 +51,7 @@ export function createOAuthSession(
         };
         const abort = () => {
           cleanup();
+          if (started) reset();
           reject(signal.reason);
         };
         const changed = () => {

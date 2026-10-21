@@ -106,3 +106,31 @@ it("creation joins an existing Settings login and aborts its wait without cancel
   await session.ensureSignedIn(new AbortController().signal);
   expect(acquire).toHaveBeenCalledTimes(1);
 });
+it("an aborted creation cancels the sign-in it started, so the next one starts over", async () => {
+  const release = deferred<Credential>();
+  let attempt: AbortSignal | undefined;
+  const acquire = vi
+    .fn()
+    .mockImplementationOnce((signal: AbortSignal) => {
+      attempt = signal;
+      return release.promise;
+    })
+    .mockResolvedValueOnce(credential);
+  const session = createOAuthSession(acquire);
+  const creation = new AbortController();
+  const aborted = expect(
+    session.ensureSignedIn(creation.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  try {
+    expect(session.snapshot().status).toBe("pending");
+    creation.abort();
+    await aborted;
+    expect(attempt?.aborted).toBe(true);
+    expect(session.snapshot()).toEqual({ status: "signed-out" });
+  } finally {
+    release.resolve(credential);
+  }
+  await session.ensureSignedIn(new AbortController().signal);
+  expect(acquire).toHaveBeenCalledTimes(2);
+  expect(session.credential()).toBe(credential);
+});

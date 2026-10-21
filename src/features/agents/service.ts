@@ -778,6 +778,8 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
+  /** Cancels a hosted type's provisioning, such as its sign-in. */
+  signal?: AbortSignal;
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -1578,14 +1580,14 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name, picture, config }: NewAgent) {
+  async create({ type, name, picture, config, signal }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
       const listed = recordPicture(picture);
       if (picture && !listed)
         console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
-      return this.provision(type, remote, name.trim(), listed);
+      return this.provision(type, remote, name.trim(), listed, signal);
     }
     return this.add(
       type,
@@ -1710,13 +1712,16 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
+    signal: AbortSignal | undefined,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
       name,
       community,
-      signal: binding.controller.signal,
+      signal: signal
+        ? AbortSignal.any([binding.controller.signal, signal])
+        : binding.controller.signal,
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
       throw new Error("The provider did not return the agent's key");

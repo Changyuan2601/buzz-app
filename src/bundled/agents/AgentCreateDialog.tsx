@@ -59,6 +59,7 @@ export function AgentCreateDialog({
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
   const avatarNavigation = useRef<{ back(): void }>(null);
+  const creating = useRef<AbortController | null>(null);
   const nameField = useRef<HTMLInputElement>(null);
   const namePrompt = useNamePrompt(nameField);
   const form = useId();
@@ -81,6 +82,8 @@ export function AgentCreateDialog({
       namePrompt.prompt();
       return;
     }
+    const controller = new AbortController();
+    creating.current = controller;
     setPending(true);
     setError("");
     try {
@@ -89,11 +92,19 @@ export function AgentCreateDialog({
         name: name.trim(),
         ...(picture ? { picture } : {}),
         ...(config !== undefined ? { config } : {}),
+        ...(type.remote ? { signal: controller.signal } : {}),
       });
       onCreated(agent);
     } catch (reason) {
-      setError(message(reason));
+      // Canceled on purpose; a later setup failure still shows.
+      const canceled =
+        controller.signal.aborted &&
+        reason instanceof Error &&
+        reason.name === "AbortError";
+      if (!canceled) setError(message(reason));
       setPending(false);
+    } finally {
+      creating.current = null;
     }
   };
   const back = avatarActive
@@ -134,6 +145,9 @@ export function AgentCreateDialog({
       actions={
         <>
           <div ref={setAvatarAction} hidden={!avatarActive} />
+          {pending && type?.remote && (
+            <Button onClick={() => creating.current?.abort()}>Cancel</Button>
+          )}
           {!avatarActive && (
             <Button
               variant="primary"

@@ -5903,9 +5903,11 @@ const record = (pubkey: string, patch: Partial<RelayEvent> = {}) =>
 const hostedKey = "e".repeat(64);
 function cloud() {
   const remote = {
-    provision: vi.fn(async (_: { name: string; community: string }) => ({
-      pubkey: hostedKey,
-    })),
+    provision: vi.fn(
+      async (_: { name: string; community: string; signal: AbortSignal }) => ({
+        pubkey: hostedKey,
+      }),
+    ),
     activate: vi.fn(
       async (_: { pubkey: string; auth: readonly string[] }) => {},
     ),
@@ -6039,6 +6041,37 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
   expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
+});
+
+it("cancels a hosted agent's provisioning with the create's signal, making nothing", async () => {
+  const { service, plugin, storage } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  let provisioning: AbortSignal | undefined;
+  remote.provision.mockImplementationOnce(
+    (input) =>
+      new Promise((_, reject) => {
+        provisioning = input.signal;
+        provisioning.addEventListener("abort", () =>
+          reject(provisioning?.reason),
+        );
+      }),
+  );
+  const create = new AbortController();
+  const created = service.create({
+    type: "example/cloud",
+    name: "Sky",
+    signal: create.signal,
+  });
+  await vi.waitFor(() => expect(provisioning).toBeDefined());
+  expect(provisioning?.aborted).toBe(false);
+  create.abort();
+  await expect(created).rejects.toMatchObject({ name: "AbortError" });
+  expect(remote.activate).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toBeUndefined();
+  expect(storage.get("buzz.agents.unfinished.v1") ?? "").not.toContain(
+    hostedKey,
+  );
 });
 
 it("keeps a hosted agent whose setup failed, and finishes it without making another", async () => {
