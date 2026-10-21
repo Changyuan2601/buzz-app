@@ -1424,9 +1424,6 @@ function ChannelWorkspace({
                   : (welcomeChat?.greetingId ?? welcomeChat?.replyId)
               }
               afterMessages={welcomeControls}
-              afterMessageId={
-                welcomeControls ? welcomeChat?.greetingId : undefined
-              }
             />
           </InlineUiHost.Provider>
         ) : (
