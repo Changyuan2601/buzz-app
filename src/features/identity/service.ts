@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { createBackupStatus } from "./backup";
 
 export type BackupChoice = Readonly<{
   available: boolean;
@@ -37,6 +38,7 @@ export function createIdentity() {
   let recoveryGeneration = 0;
   let recoveryAttempt: Promise<{ attempt: string }> | undefined;
   const listeners = new Set<() => void>();
+  const backup = createBackupStatus();
   let resolveReady!: (viewer: string) => void;
   const ready = new Promise<string>((resolve) => {
     resolveReady = resolve;
@@ -224,9 +226,12 @@ export function createIdentity() {
     /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */
     signOut: (choices: { wipe: boolean; removeAgents: boolean }) =>
       invoke<void>("sign_out", choices),
+    /** The native uploader's status; registers on first read, outside the snapshot. */
+    backup,
     dispose() {
       disposed = true;
       void cancelRecovery();
+      backup.dispose();
       listeners.clear();
     },
   };

@@ -9,6 +9,8 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 const FAILED: &str = "Could not read or save your identity backup choice.";
+/// Another app copy holds the consent lock; the uploader reports it as `busy`.
+pub(crate) const BUSY: &str = "A backup is in progress. Wait for it to finish and try again.";
 
 #[derive(Serialize)]
 pub(crate) struct BackupChoice {
@@ -74,7 +76,7 @@ fn lock(path: &Path, exclusive: bool) -> Result<fs::File> {
     } else {
         fs2::FileExt::try_lock_shared(&file)
     };
-    result.map_err(|_| "A backup is in progress. Wait for it to finish and try again.")?;
+    result.map_err(|_| BUSY)?;
     Ok(file)
 }
 
