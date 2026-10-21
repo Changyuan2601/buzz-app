@@ -47,8 +47,15 @@ export function InlineUiCard({
   /** The row's layout slot for content below the message. */
   className?: string | undefined;
 }) {
-  const { saveProfile, profileSaved } = useContext(InlineUiHost);
-  if (!live || (ui.pattern === "profile" && !saveProfile)) {
+  const {
+    saveProfile,
+    profileSaved,
+    answered: handOff,
+  } = useContext(InlineUiHost);
+  // Naming the agent unlocks its chat, so a name card stays usable until it
+  // is saved, whatever comes after it.
+  const usable = ui.pattern === "profile" ? !!saveProfile : live;
+  if (!usable) {
     const answered =
       ui.pattern === "profile"
         ? profileSaved
@@ -66,6 +73,7 @@ export function InlineUiCard({
     <ChoiceForm
       ui={ui}
       className={className}
+      onAnswered={handOff}
       onSubmit={(answer, picture) =>
         ui.pattern === "profile" && saveProfile
           ? saveProfile(agent, { name: answer, picture })
@@ -80,12 +88,15 @@ function ChoiceForm({
   className,
   answered,
   onSubmit,
+  onAnswered,
 }: {
   ui: InlineUi;
   className?: string | undefined;
   /** Frozen on this answer: nothing can change or be submitted. */
   answered?: InlineUiAnswer | undefined;
   onSubmit?(answer: string, picture: string): Promise<unknown> | unknown;
+  /** Takes focus as the submitted card's controls close. */
+  onAnswered?: (() => void) | undefined;
 }) {
   const profile = ui.pattern === "profile";
   const [avatar, setAvatar] = useState(randomAgentAvatar);
@@ -162,6 +173,9 @@ function ChoiceForm({
   const own = shown && choice === OWN ? shown.text : typed;
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
+  const ownLabel = profile ? "Name" : "Answer";
+  // A failed send shows under the control that was answered.
+  const ownError = choice === OWN || !ui.options.length;
   return (
     <div className={className} data-inline-card="" data-no-timestamp-hint="">
       <form
@@ -174,6 +188,8 @@ function ChoiceForm({
           if (frozen || !answer || !onSubmit) return;
           setError("");
           setSent({ text: answer, picture: avatar.preview ?? avatar.url });
+          // Focus would otherwise go down with the closing controls.
+          if (form.current?.contains(document.activeElement)) onAnswered?.();
           try {
             await onSubmit(answer, avatar.url);
           } catch (reason) {
@@ -243,11 +259,12 @@ function ChoiceForm({
           </div>
         )}
         <div className={styles.choices}>
-          {(open || choice !== OWN) && (
+          {ui.options.length > 0 && (open || choice !== OWN) && (
             <div {...closing(frozen && choice === OWN)}>
               <Field
                 label={profile ? "Name" : "Answer"}
                 labelVisibility="hidden"
+                error={!frozen && !ownError ? error : undefined}
               >
                 <RadioGroup<string | null>
                   value={choice === OWN ? null : choice}
@@ -272,24 +289,33 @@ function ChoiceForm({
           )}
           {(open || choice === OWN) && (
             <div {...closing(frozen && choice !== OWN)}>
-              <RadioWriteIn
-                aria-label="Write your own"
-                placeholder="Write your own"
-                selected={choice === OWN}
-                value={own}
-                readOnly={frozen}
-                maxLength={profile ? 64 : 500}
-                onFocus={() => setChoice(OWN)}
-                onChange={(event) => setOwn(event.target.value)}
-              />
+              <Field
+                label={ui.options.length ? "Write your own" : ownLabel}
+                labelVisibility="hidden"
+                error={!frozen && ownError ? error : undefined}
+              >
+                {frozen ? (
+                  // A written answer shows whole, as a chosen option does.
+                  <RadioGroup<string> value={own} readOnly>
+                    <Radio value={own} label={own} variant="tile" />
+                  </RadioGroup>
+                ) : (
+                  <RadioWriteIn
+                    aria-label={ui.options.length ? "Write your own" : ownLabel}
+                    placeholder={
+                      ui.options.length ? "Write your own" : ownLabel
+                    }
+                    selected={choice === OWN}
+                    value={own}
+                    maxLength={profile ? 64 : 500}
+                    onFocus={() => setChoice(OWN)}
+                    onChange={(event) => setOwn(event.target.value)}
+                  />
+                )}
+              </Field>
             </div>
           )}
         </div>
-        {error && !frozen && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
         {open && (
           <div {...closing(frozen)}>
             <div className={styles.actions}>

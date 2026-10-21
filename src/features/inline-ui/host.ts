@@ -9,6 +9,8 @@ export type InlineUiHostValue = Readonly<{
   saveProfile?(agent: string, profile: AgentProfile): Promise<void>;
   /** The profile was saved here, so its pattern freezes on what was chosen. */
   profileSaved?: boolean;
+  /** Takes focus from a pattern that was just answered, whose controls close. */
+  answered?(): void;
 }>;
 
 export const InlineUiHost = createContext<InlineUiHostValue>({});

@@ -1,5 +1,10 @@
 import { setupGuidance } from "./onboarding";
-import { readWelcome, saveWelcome } from "../sessions/welcome";
+import {
+  BUZZ_AGENT_NAME,
+  readWelcome,
+  saveWelcome,
+  type WelcomeReceipt,
+} from "../sessions/welcome";
 import { readDefaultAgent } from "../solo/default-agent";
 import {
   savedWelcomeClientId,
@@ -340,7 +345,8 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
-  /** Only offers a reviewable draft after the owner requests guided customization. */
+  /** Saves the instructions the agent wrote during setup in its owner's Get
+   * started chat, once. */
   saveInstructions?(text: string, channelId: string): Promise<void>;
 }>;
 /** What an agent reads and writes of its attention. Every read is current,
@@ -1675,7 +1681,8 @@ export class AgentsService extends Service implements Agents {
         receipt.greeting !== "attempted" ||
         receipt.greetingId ||
         !agent.name.trim() ||
-        agent.name.trim().toLocaleLowerCase() === "welcome"
+        agent.name.trim().toLocaleLowerCase() ===
+          BUZZ_AGENT_NAME.toLocaleLowerCase()
       )
         throw new Error(
           "Save this Welcome agent before asking for its greeting.",
@@ -1747,7 +1754,14 @@ export class AgentsService extends Service implements Agents {
     )
       return;
     // Only the owner's private Solo chats reach the device's Welcome record.
-    const receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    // An unreadable record leaves every chat, Get started too, a regular one.
+    let receipt: WelcomeReceipt | undefined;
+    try {
+      receipt = readWelcome(relayPartition(binding.origin, binding.viewer));
+    } catch (error) {
+      console.warn("Welcome setup could not be read", error);
+      return;
+    }
     if (
       !receipt?.complete ||
       !receipt.greetingId ||
@@ -1785,12 +1799,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     const agent = this.ready(pubkey);
     const binding = agent && this.bindingOf(agent);
-    if (
-      !agent ||
-      !binding ||
-      this.selectedBinding() !== binding ||
-      agent.owner !== binding.viewer
-    )
+    if (!agent || !binding || agent.owner !== binding.viewer)
       throw new Error(
         "This agent's community is unavailable for customization.",
       );
@@ -1827,7 +1836,11 @@ export class AgentsService extends Service implements Agents {
     await this.save(pubkey, {
       config: { ...(agent.config as object), instructions },
     });
-    saveWelcome(scope, { ...receipt, instructions: "saved" });
+    // Re-read: the receipt may have changed while the config saved.
+    const latest = readWelcome(scope);
+    if (latest?.channelId !== receipt.channelId || latest.agent !== pubkey)
+      throw new Error("Welcome changed while the instructions saved.");
+    saveWelcome(scope, { ...latest, instructions: "saved" });
   }
 
   /** Has the provider make the agent, then sets it up. From here on it is

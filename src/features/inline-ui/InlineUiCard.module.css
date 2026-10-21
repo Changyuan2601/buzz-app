@@ -50,7 +50,7 @@
 /* Shuffle flips the avatar like a coin: it turns edge-on, the next one
    swaps in out of sight, and turns to face forward. */
 .avatar[data-turn="out"] {
-  animation: avatar-turn-out 140ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation: avatar-turn-out var(--duration-fast) var(--easing-state) forwards;
 }
 .avatar[data-turn="in"] {
   animation: avatar-turn-in var(--duration-settle) var(--easing-enter) both;

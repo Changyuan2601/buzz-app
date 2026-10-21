@@ -144,11 +144,8 @@ export type ChannelTimelineProps = {
   startsThreads?: boolean | undefined;
   /** A following composer shows conversation activity; the jump button leaves it a lane. */
   activityLane?: boolean | undefined;
-  /** Host-owned setup content around the messages, in the same scrollport. */
-  beforeMessages?: ReactNode;
+  /** Host-owned setup content after the messages, in the same scrollport. */
   afterMessages?: ReactNode;
-  /** Anchor host content after this exact loaded message, never the moving tail. */
-  afterMessageId?: string | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -208,9 +205,7 @@ function Timeline({
   chatPresentation = false,
   startsThreads = true,
   activityLane = false,
-  beforeMessages,
   afterMessages,
-  afterMessageId,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -242,9 +237,15 @@ function Timeline({
       agentPubkeys,
     ],
   );
+  // Only a personal chat's replies are its owner's answers to the agent.
   const answered = useMemo(
-    () => cardAnswers(visibleRows, viewer, agentPubkeys),
-    [visibleRows, viewer, agentPubkeys],
+    () =>
+      cardAnswers(
+        visibleRows,
+        chatPresentation ? viewer : undefined,
+        agentPubkeys,
+      ),
+    [visibleRows, chatPresentation, viewer, agentPubkeys],
   );
   const rows = useMemo(() => membershipRows(answered.rows), [answered.rows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
@@ -310,9 +311,8 @@ function Timeline({
     ),
   );
   const contentSignature = useMemo(
-    () =>
-      `${geometrySignature(answered.rows, profiles, resolveName)}:${afterMessageId ?? ""}`,
-    [answered.rows, profiles, resolveName, afterMessageId],
+    () => geometrySignature(answered.rows, profiles, resolveName),
+    [answered.rows, profiles, resolveName],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
@@ -1043,9 +1043,7 @@ function Timeline({
         );
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
-            .messageId ??
-            event.target.closest<HTMLElement>("[data-after-message-id]")
-              ?.dataset.afterMessageId,
+            .messageId,
         );
       }}
       onBlur={(event) => {
@@ -1077,10 +1075,9 @@ function Timeline({
     >
       <div
         ref={edge}
-        className={beforeMessages ? styles.introEdge : styles.edge}
+        className={styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
-        {beforeMessages}
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
@@ -1202,13 +1199,11 @@ function Timeline({
                     <MessageRow
                       stackPrevious={
                         !!previousRow &&
-                        previousRow.id !== afterMessageId &&
                         !foldedActivity.has(previousRow.id) &&
                         continuesMessageGroup(previousRow, row)
                       }
                       stackNext={
                         !!nextRow &&
-                        row.id !== afterMessageId &&
                         !foldedActivity.has(nextRow.id) &&
                         continuesMessageGroup(row, nextRow)
                       }
@@ -1230,25 +1225,13 @@ function Timeline({
                       keepMounted={keepRowMounted}
                       day={day && !disclosure}
                       latest={index === rows.length - 1}
-                      reply={
-                        answered.answers.get(row.id) ??
-                        (nextRow &&
-                        nextRow.authorId === viewer &&
-                        !nextRow.threadRootId &&
-                        !nextRow.membership
-                          ? nextRow.content
-                          : undefined)
-                      }
+                      reply={answered.answers.get(row.id)}
                     />
                   )}
                 </ActivityExpansion>
-                {afterMessageId === row.id && afterMessages && (
-                  <div data-after-message-id={row.id}>{afterMessages}</div>
+                {index === rows.length - 1 && (
+                  <div className={styles.timelineEnd} aria-hidden="true" />
                 )}
-                {index === rows.length - 1 &&
-                  (!afterMessages || afterMessageId) && (
-                    <div className={styles.timelineEnd} aria-hidden="true" />
-                  )}
               </Fragment>
             );
           })}
@@ -1268,7 +1251,7 @@ function Timeline({
             />
           </div>
         )}
-      {!afterMessageId && afterMessages}
+      {afterMessages}
     </section>
   );
 }

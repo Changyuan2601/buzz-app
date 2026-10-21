@@ -225,6 +225,10 @@ type Runner = {
   readonly queues: Record<Lane, Job[]>;
   /** App-authored first turns waiting for the mention lane. */
   readonly starts: StartJob[];
+  /** An app-authored first turn is running. It runs alone: providers that
+   * share one handle across an agent's sessions must not mix its restricted
+   * handle with another turn's. */
+  opening?: boolean;
   running: boolean;
   /** Each lane's runs in the current minute. */
   readonly rates: Record<Lane, { windowStart: number; admitted: number }>;
@@ -1984,8 +1988,9 @@ export class AgentRunners {
         continue;
       runner.activityClaimed = true;
       for (const queued of runner.queues.mention) this.showWork(runner, queued);
-      // An app-authored first turn takes the mention lane before any mention.
-      const opening = !runner.busy.has("mention") && runner.starts.shift();
+      // An app-authored first turn takes the mention lane before any mention,
+      // once nothing else runs.
+      const opening = !runner.busy.size && runner.starts.shift();
       if (opening) {
         this.open(runner, agent, opening);
         continue;
@@ -2005,6 +2010,8 @@ export class AgentRunners {
     agent: Agent,
   ): { lane: string; job: Job | undefined } | undefined {
     const { mention, watch } = runner.queues;
+    // A first turn waiting or running holds every lane.
+    if (runner.opening || runner.starts.length) return undefined;
     if (mention.length && !runner.busy.has("mention"))
       return {
         lane: "mention",
@@ -2193,10 +2200,8 @@ export class AgentRunners {
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
-      saveInstructions: (text: string, channelId: string) => {
-        signal.throwIfAborted();
-        return this.host.saveInstructions(agent.pubkey, text, channelId);
-      },
+      saveInstructions: (text: string, channelId: string) =>
+        this.host.saveInstructions(agent.pubkey, text, channelId),
       attention: this.attention(agent.pubkey),
     });
   }
@@ -2204,10 +2209,12 @@ export class AgentRunners {
   /** Runs `job` in the mention lane, holding it until the turn settles. */
   private open(runner: Runner, agent: Agent, job: StartJob) {
     runner.busy.add("mention");
+    runner.opening = true;
     job.admitted?.();
     void this.beginConversation(runner, agent, job)
       .then(job.resolve, job.reject)
       .finally(() => {
+        runner.opening = false;
         runner.busy.delete("mention");
         void this.drain(runner);
       });

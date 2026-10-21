@@ -514,10 +514,7 @@ it("reconciles an uncertain saved greeting by its exact marker without mistaking
       signal={new AbortController().signal}
     />,
   );
-  expect(f.agents.welcome).not.toHaveBeenCalled();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Check and retry greeting" }),
-  );
+  // Opening the chat finds the interrupted greeting by itself.
   await waitFor(() =>
     expect(readWelcome("scope")?.greetingId).toBe("d".repeat(64)),
   );
@@ -582,9 +579,12 @@ it("does not use an ordinary agent reply as saved-greeting evidence", async () =
       signal={new AbortController().signal}
     />,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Check and retry greeting" }),
-  );
+  // Finding no greeting by itself, it asks for none until the owner retries.
+  const retry = await screen.findByRole("button", {
+    name: "Check and retry greeting",
+  });
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+  await userEvent.click(retry);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Hosting unavailable",
   );
@@ -595,4 +595,44 @@ it("does not use an ordinary agent reply as saved-greeting evidence", async () =
     "saved",
   );
   expect(readWelcome("scope")?.greetingId).toBeUndefined();
+});
+
+it("offers the app's own name card when the agent's hello came without one", async () => {
+  const f = fixture();
+  const observed = {
+    ...receipt,
+    kickoff: "observed" as const,
+    kickoffAt: 100,
+    replyId: "b".repeat(64),
+  };
+  saveWelcome("scope", observed);
+  function Host() {
+    const host = useWelcomeProfile({
+      agents: f.agents,
+      scope: "scope",
+      receipt: observed,
+      signal: undefined,
+      onSaved: () => {},
+    });
+    return (
+      <InlineUiHost.Provider value={host}>
+        <WelcomeControls
+          {...f}
+          scope="scope"
+          signal={new AbortController().signal}
+          receipt={observed}
+        />
+      </InlineUiHost.Provider>
+    );
+  }
+  render(<Host />);
+  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "Ada");
+  await userEvent.click(screen.getByRole("button", { name: "Submit" }));
+  await waitFor(() =>
+    expect(f.agents.save).toHaveBeenCalledWith(agentKey, {
+      name: "Ada",
+      picture: expect.any(String),
+    }),
+  );
+  expect(readWelcome("scope")).toMatchObject({ complete: true });
 });

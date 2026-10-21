@@ -48,7 +48,8 @@ export function WelcomeGreeting({
     return value;
   }, [scope, receipt.agent, receipt.channelId, receipt.type]);
   const greet = useCallback(
-    async (retry = false) => {
+    /** `observe` only looks for a greeting already sent; it asks for none. */
+    async (retry = false, observe = false) => {
       if (starting.current || !receipt.agent) return;
       starting.current = true;
       setBusy(true);
@@ -76,6 +77,7 @@ export function WelcomeGreeting({
         );
         signal.throwIfAborted();
         let greetingId = observed?.id;
+        if (!greetingId && observe) return;
         if (!greetingId) {
           current();
           const reply = await agents.welcome(
@@ -102,6 +104,15 @@ export function WelcomeGreeting({
   );
   useEffect(() => {
     if (receipt.greeting === "pending" && !receipt.greetingId) void greet();
+  }, [greet, receipt.greeting, receipt.greetingId]);
+  // A greeting interrupted by a reload may already be in the chat: find it,
+  // so setup goes on, before offering a retry.
+  const looked = useRef(false);
+  useEffect(() => {
+    if (looked.current) return;
+    looked.current = true;
+    if (receipt.greeting === "attempted" && !receipt.greetingId)
+      void greet(true, true);
   }, [greet, receipt.greeting, receipt.greetingId]);
   if (
     receipt.greetingId ||

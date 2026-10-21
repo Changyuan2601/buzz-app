@@ -614,13 +614,21 @@ function ChannelWorkspace({
     personal && welcomeReceipt?.channelId === current?.id
       ? welcomeReceipt
       : undefined;
+  const focusComposer = useCallback(
+    () => setComposerFocus((value) => value + 1),
+    [],
+  );
   const welcomeProfile = useWelcomeProfile({
     agents,
     scope,
     receipt: welcomeChat,
     signal: navigation?.signal,
-    onSaved: useCallback(() => setComposerFocus((value) => value + 1), []),
+    onSaved: focusComposer,
   });
+  const inlineUiHost = useMemo(
+    () => ({ ...welcomeProfile, answered: focusComposer }),
+    [welcomeProfile, focusComposer],
+  );
   // Only until the greeting exists: after that Get started is a regular chat.
   const welcomeControls =
     welcomeChat && !welcomeChat.greetingId && agents ? (
@@ -1407,7 +1415,7 @@ function ChannelWorkspace({
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >
         {current ? (
-          <InlineUiHost.Provider value={welcomeProfile}>
+          <InlineUiHost.Provider value={inlineUiHost}>
             <ChannelBody
               onContentReady={setContentReadyChannel}
               viewer={viewer}

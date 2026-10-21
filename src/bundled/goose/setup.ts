@@ -7,7 +7,7 @@ import type {
   AgentProviderSnapshot,
   Models,
 } from "../../features/agents/service";
-import { GooseProcess, type Choice, type GooseHost, type Spawn } from "./goose";
+import { GooseProcess, type Choice, type GooseHost } from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -81,6 +81,7 @@ const PREFIXES: Readonly<Record<string, readonly string[]>> = {
 };
 
 const TEST_PROMPT = "Reply with exactly: OK";
+const TEST_TIMEOUT_MS = 60_000;
 
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
@@ -364,37 +365,41 @@ export class GooseSetup {
 
   /** Asks the provider for one short reply, without tools. goose reports a
    * failed call as its reply, so only the expected answer passes. */
-  test(choice: Choice, signal?: AbortSignal): Promise<Tested> {
+  test(choice: Choice): Promise<Tested> {
     const env = { GOOSE_MODE: "chat" };
-    return this.with(
-      async (goose, cwd) => {
-        const session = await goose.open({
-          cwd,
-          // A titled session spares the provider a naming call.
-          title: "Buzz connection test",
-          systemPrompt: "",
-          choice: () => choice,
-        });
-        try {
-          const settled = await session.send(TEST_PROMPT);
-          const reply = settled.text?.trim() ?? "";
-          if (settled.ok && /^\W*ok\W*$/i.test(reply))
-            return { ok: true, message: "Connected" };
-          return {
-            ok: false,
-            message: reply || settled.error || "The provider sent no reply",
-          };
-        } finally {
-          await goose.close(session);
-          // goose keeps every session; this one is not worth keeping.
-          await goose
-            .request("session/delete", { sessionId: session.id })
-            .catch(() => undefined);
-        }
-      },
-      env,
-      signal,
-    ).catch((error: unknown) => ({
+    return this.with(async (goose, cwd) => {
+      const session = await goose.open({
+        cwd,
+        // A titled session spares the provider a naming call.
+        title: "Buzz connection test",
+        systemPrompt: "",
+        choice: () => choice,
+      });
+      try {
+        const settled = await Promise.race([
+          session.send(TEST_PROMPT),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("The provider did not answer in time")),
+              TEST_TIMEOUT_MS,
+            ),
+          ),
+        ]);
+        const reply = settled.text?.trim() ?? "";
+        if (/^\W*ok\W*$/i.test(reply))
+          return { ok: true, message: "Connected" };
+        return {
+          ok: false,
+          message: reply || settled.error || "The provider sent no reply",
+        };
+      } finally {
+        await goose.close(session);
+        // goose keeps every session; this one is not worth keeping.
+        await goose
+          .request("session/delete", { sessionId: session.id })
+          .catch(() => undefined);
+      }
+    }, env).catch((error: unknown) => ({
       ok: false,
       message: error instanceof Error ? error.message : String(error),
     }));
@@ -403,9 +408,8 @@ export class GooseSetup {
   private with<T>(
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},
-    signal?: AbortSignal,
   ): Promise<T> {
-    return briefly(this.host, run, env, signal);
+    return briefly(this.host, run, env);
   }
 }
 
@@ -415,36 +419,15 @@ export async function briefly<T>(
   host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
-  signal?: AbortSignal,
 ): Promise<T> {
   if (!host) throw new Error("goose runs only in the desktop app");
-  const active = AbortSignal.any([
-    ...(signal ? [signal] : []),
-    AbortSignal.timeout(60_000),
-  ]);
-  const start: Spawn = async (id, options) => {
-    active.throwIfAborted();
-    const child = await host.spawn(id, options);
-    const kill = () => void child.kill();
-    active.addEventListener("abort", kill, { once: true });
-    void child.exited.finally(() => active.removeEventListener("abort", kill));
-    if (active.aborted) {
-      await child.kill();
-      active.throwIfAborted();
-    }
-    return child;
-  };
-  active.throwIfAborted();
   const cwd = await host.resolveDirectory("~");
-  const goose = await GooseProcess.start(start, {
+  const goose = await GooseProcess.start(host.spawn, {
     cwd,
     env,
   });
   try {
-    active.throwIfAborted();
-    const result = await run(goose, cwd);
-    active.throwIfAborted();
-    return result;
+    return await run(goose, cwd);
   } finally {
     await goose.kill();
   }

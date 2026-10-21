@@ -21,15 +21,10 @@ export const ChannelBody = memo(function ChannelBody({
   navigation,
   onContentReady,
   activityLane,
-  beforeMessages,
   afterMessages,
-  afterMessageId,
 }: {
-  /** Host-owned setup content around the messages, in the same scrollport. */
-  beforeMessages?: ReactNode;
+  /** Host-owned setup content after the messages, in the same scrollport. */
   afterMessages?: ReactNode;
-  /** Shows `afterMessages` under this message rather than at the end. */
-  afterMessageId?: string | undefined;
   onContentReady?(channelId: string): void;
   /** The channel composer follows this body and shows conversation activity. */
   activityLane?: boolean | undefined;
@@ -139,9 +134,7 @@ export const ChannelBody = memo(function ChannelBody({
       marksRead={marksRead}
       navigation={navigation}
       activityLane={activityLane}
-      beforeMessages={beforeMessages}
       afterMessages={afterMessages}
-      afterMessageId={afterMessageId}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}
     />

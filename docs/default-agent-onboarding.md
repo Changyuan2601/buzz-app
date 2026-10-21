@@ -1,5 +1,21 @@
 # Default-agent onboarding: real Solo development slice
 
+## Current flow
+
+Get started is an ordinary private Solo chat with the new agent. The agent
+introduces itself with a name and avatar card; the composer stays locked until
+the owner names it (a name card stays usable until saved, and the app offers its
+own if the agent's hello came without one). The agent then asks three setup
+questions as choice cards. An answered card collapses to the chosen answer, and
+the owner's matching one-line reply is not repeated as a bubble (personal chats
+only). After the third answer the agent saves its instructions with
+`save_instructions`, says so, and introduces Buzz from the bundled draft
+`features/agents/buzz-help.md`, in the style the owner chose, with no buttons or
+further questions. From then on the chat gets no special guidance.
+
+The dated sections below are development notes. Where they disagree with this
+section, this section is current.
+
 ## Status and scope
 
 This branch uses the real desktop app, Solo page/sidebar, registered provider setup,
@@ -297,11 +313,9 @@ no special guidance.
 
 ## Team-testing snapshot
 
-This push is WIP for teammate testing, not a merge/readiness declaration. Human
-feedback reported the native conversation and single historical card looking
-good. Focused automated checks cover visible action sends, continuing protocol
-sessions, instruction saving and anchored timeline composition. Full live
-Codex/Goose acceptance, packaged relaunch, browser geometry/accessibility across
-themes and sizes, and integration with newer main remain deferred. Keep other
-development copies from holding the same agent while testing; do not bypass the
-normal execution claim. Restart welcome remains temporary development UI.
+Focused automated checks cover visible action sends, continuing protocol
+sessions, instruction saving and timeline composition. Full live Codex/Goose
+acceptance, packaged relaunch and browser geometry/accessibility across themes
+and sizes remain deferred. Keep other development copies from holding the same
+agent while testing; do not bypass the normal execution claim. Restart welcome
+remains temporary development UI.

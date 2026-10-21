@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
 import { InlineUiCard } from "./InlineUiCard";
 import { InlineUiHost } from "./host";
+
+afterEach(cleanup);
 
 it("freezes a retired choice on the owner's reply, and hides one the chat moved past", () => {
   const ui = { pattern: "choice" as const, options: ["Short", "Detailed"] };
@@ -30,9 +33,9 @@ it("freezes a retired choice on the owner's reply, and hides one the chat moved 
       onReply={() => {}}
     />,
   );
-  expect(screen.getByRole("textbox", { name: "Write your own" })).toHaveValue(
-    "Something else",
-  );
+  // A written answer shows whole, as a chosen option, not in a field.
+  expect(screen.getByRole("radio", { name: "Something else" })).toBeChecked();
+  expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("radio", { name: "Detailed" })).toBeNull();
   view.rerender(
     <InlineUiCard ui={ui} agent="a" live={false} onReply={() => {}} />,
@@ -94,4 +97,31 @@ it("closes the options not chosen when a live choice is answered, keeping the ca
       }),
     ).toHaveLength(0),
   );
+});
+
+it("keeps a name card usable until it is saved, even after later messages", () => {
+  const ui = { pattern: "profile" as const, options: ["Juniper", "Atlas"] };
+  render(
+    <InlineUiHost.Provider value={{ saveProfile: async () => {} }}>
+      <InlineUiCard ui={ui} agent="a" live={false} onReply={() => {}} />
+    </InlineUiHost.Provider>,
+  );
+  expect(screen.getByRole("radio", { name: "Juniper" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Submit" })).toBeVisible();
+});
+
+it("hands focus on when a choice is submitted, so it isn't lost with the closing controls", async () => {
+  const ui = { pattern: "choice" as const, options: ["Short", "Detailed"] };
+  const answered = vi.fn();
+  const onReply = vi.fn();
+  render(
+    <InlineUiHost.Provider value={{ answered }}>
+      <InlineUiCard ui={ui} agent="a" live onReply={onReply} />
+    </InlineUiHost.Provider>,
+  );
+  await userEvent.click(screen.getByRole("radio", { name: "Short" }));
+  screen.getByRole("button", { name: "Submit" }).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onReply).toHaveBeenCalledWith("Short");
+  expect(answered).toHaveBeenCalledOnce();
 });

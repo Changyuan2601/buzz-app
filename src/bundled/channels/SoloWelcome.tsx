@@ -46,6 +46,13 @@ import { WelcomeGreeting } from "./WelcomeGreeting";
 import { WelcomeComposer } from "./WelcomeComposer";
 import { GearIcon, CircleNotchIcon } from "../../shared/design-system/icons";
 import styles from "./SoloWelcome.module.css";
+import { InlineUiCard } from "../../features/inline-ui/InlineUiCard";
+import type { InlineUi } from "../../features/inline-ui/patterns";
+
+const NAME_CARD: InlineUi = Object.freeze({
+  pattern: "profile",
+  options: Object.freeze([]),
+});
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -400,8 +407,14 @@ export function useWelcomeProfile({
                   `draft:${receipt.channelId}`,
                   followupDraft([{ pubkey: agent, name }]),
                 );
+                const latest = readWelcome(scope);
+                if (
+                  latest?.channelId !== receipt.channelId ||
+                  latest.agent !== agent
+                )
+                  throw new Error("Welcome changed. Reopen the current setup.");
                 saveWelcome(scope, {
-                  ...receipt,
+                  ...latest,
                   complete: true,
                   greeting: "pending",
                 });
@@ -474,13 +487,18 @@ export function WelcomeControls({
           kickoffAt: receipt.kickoffAt ?? Math.floor(Date.now() / 1000),
         };
         saveWelcome(scope, attempted);
+        // The owner may have named the agent meanwhile: build on the latest.
+        const observedAs = (replyId: string) => {
+          const latest = readWelcome(scope);
+          if (
+            latest?.channelId !== attempted.channelId ||
+            latest.agent !== attempted.agent
+          )
+            return;
+          saveWelcome(scope, { ...latest, kickoff: "observed", replyId });
+        };
         const observed = await observedWelcome(session, attempted, signal);
-        if (observed)
-          saveWelcome(scope, {
-            ...attempted,
-            kickoff: "observed",
-            replyId: observed.id,
-          });
+        if (observed) observedAs(observed.id);
         else {
           saveWelcome(scope, attempted);
           const reply = await agents.welcome(
@@ -489,11 +507,7 @@ export function WelcomeControls({
             signal,
           );
           signal.throwIfAborted();
-          saveWelcome(scope, {
-            ...attempted,
-            kickoff: "observed",
-            replyId: reply.id,
-          });
+          observedAs(reply.id);
         }
         session.channels.ensure(receipt.channelId);
       } catch (reason) {
@@ -526,6 +540,27 @@ export function WelcomeControls({
         signal={signal}
       />
     ) : null;
+  // The composer stays locked until the agent is named, so an introduction
+  // that arrived without its name card gets the app's own.
+  if (
+    receipt.replyId &&
+    window.status === "ready" &&
+    !window.rows.some(
+      (row) =>
+        row.authorId === receipt.agent &&
+        row.inlineUi?.ui.pattern === "profile",
+    )
+  )
+    return (
+      <div className={styles.setupControls}>
+        <InlineUiCard
+          ui={NAME_CARD}
+          agent={receipt.agent ?? ""}
+          live
+          onReply={() => {}}
+        />
+      </div>
+    );
   // The agent's typing shows the introduction is on its way; only a stalled
   // or failed one needs the owner.
   if (!error && (busy || receipt.replyId || receipt.kickoff !== "attempted"))
