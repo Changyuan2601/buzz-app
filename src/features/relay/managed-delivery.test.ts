@@ -326,3 +326,37 @@ it("cancels queued managed attempts before it releases ownership", async () => {
   await ticks(60_000);
   expect(h.publish).toHaveBeenCalledTimes(3);
 });
+
+it("publishes a delete with only its allowed artifact envelope and coalesces identical intent", async () => {
+  vi.useFakeTimers();
+  const allowed = new Set(["ar", "d", "h", "type", "op", "prev"]);
+  const h = setup(memory(), async (event) => {
+    if (event.tags.some(([key]) => !key || !allowed.has(key)))
+      throw new PublishRejected(
+        "delete allows only envelope and verified auth tags",
+      );
+  });
+  const artifact = {
+    kind: 45010,
+    content: "",
+    tags: [
+      ["ar", "1"],
+      ["d", crypto.randomUUID()],
+      ["h", recipient.channelId],
+      ["type", "test.task"],
+      ["op", "delete"],
+      ["prev", "b".repeat(64)],
+    ],
+  };
+  const first = await h.delivery.submit(artifact);
+  const second = await h.delivery.submit(artifact);
+  expect(first).toEqual(second);
+  expect(h.outbox.snapshot()).toHaveLength(1);
+  await h.managedOwner(true);
+  await ticks(1);
+  expect(await h.delivery.get(first.operationId)).toMatchObject({
+    phase: "received",
+    relayAccepted: true,
+  });
+  expect(h.publish).toHaveBeenCalledOnce();
+});

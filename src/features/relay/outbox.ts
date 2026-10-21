@@ -1019,8 +1019,12 @@ export function createOutbox(
         created_at: createdAt,
         tags: [
           ...input.tags.map((tag) => [...tag]),
-          ["client-id", crypto.randomUUID()],
-          ...(channelId ? [["ms", String(ms % 1000)]] : []),
+          ...(input.kind === 45010
+            ? []
+            : [
+                ["client-id", crypto.randomUUID()],
+                ...(channelId ? [["ms", String(ms % 1000)]] : []),
+              ]),
         ],
       };
       const event = Object.freeze({
@@ -1030,6 +1034,18 @@ export function createOutbox(
         ) as unknown as string[][],
         id: getEventHash(template),
       });
+      if (input.kind === 45010) {
+        const prior = visible.find((item) => item.event.id === event.id);
+        if (prior) {
+          if (
+            !!prior.managed !== !!managed ||
+            JSON.stringify(prior.managed?.recipient) !==
+              JSON.stringify(managed?.recipient)
+          )
+            throw new Error("Artifact delivery recipient changed");
+          return event.id;
+        }
+      }
       if (managed) unsavedManaged.add(event.id);
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
