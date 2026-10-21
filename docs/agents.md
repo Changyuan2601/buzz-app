@@ -832,3 +832,9 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
+
+## Explicit send cursors
+
+The shared Buzz `send` tool requires a `cursor`: the latest message ID the agent considered in the destination conversation, the cursor returned by an unfiltered current `read`, or the previous successful send's cursor. `0` identifies an empty conversation. Missing and stale references publish nothing and return the current cursor with recent context for reconsideration. Reads of historical pages and filtered searches do not advertise a current send cursor. Edits and deletions do not independently advance this v1 message cursor.
+
+Local sends share admission per relay authority and conversation, including across agents. The last accepted publication supplements relay reads while it is not visible there. Independent Buzz hosts and other relay clients can still race; the relay does not enforce a conditional append. This is not evidence that a model understood the supplied messages, and it does not change speech playback.

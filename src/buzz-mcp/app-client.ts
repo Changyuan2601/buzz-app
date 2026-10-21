@@ -43,6 +43,8 @@ export function appClient(
   const authorityCommunity = options.audienceAuthorityCommunity;
   return {
     pubkey: agent.pubkey,
+    sendScope:
+      options.audienceAuthorityCommunity ?? options.relayAuthor ?? agent.query,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,

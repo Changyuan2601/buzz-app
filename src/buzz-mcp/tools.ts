@@ -1,6 +1,11 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
+import {
+  CONVERSATION_MESSAGES,
+  guardedSend,
+  newestMessage,
+} from "./send-cursor";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import {
   canonicalDetailsName,
@@ -57,6 +62,11 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
+      cursor: {
+        ...str,
+        description:
+          "Conversation cursor from the context you used: latest message ID, previous successful send cursor, or 0 if empty. A stale or missing cursor rejects publication and returns newer context. Reconsider the draft before retrying.",
+      },
       audience: {
         type: "string",
         enum: ["everyone", "agents"],
@@ -68,7 +78,7 @@ export const TOOLS: readonly Tool[] = [
         description: "Your last message this turn; ends the turn.",
       },
     },
-    ["audience"],
+    ["audience", "cursor"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -228,7 +238,7 @@ export const TOOLS: readonly Tool[] = [
 ];
 
 /** Message kinds as the CLI reads them. */
-const MESSAGES = [9, 40002, 40008, 45001, 45003];
+const MESSAGES = CONVERSATION_MESSAGES;
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
@@ -395,18 +405,29 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       content,
       list(args.mentions),
     );
-    const event = await client.publish({
-      kind: 9,
-      content,
-      tags: [
-        ["h", channel],
-        ...thread,
-        ...mentions.map((pubkey) => ["p", pubkey]),
-        ...files.tags,
-        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
-      ],
-    });
-    return `sent ${event.id}`;
+    return guardedSend(
+      client,
+      channel,
+      thread[0]?.[1],
+      args.cursor,
+      () =>
+        client.publish({
+          kind: 9,
+          content,
+          tags: [
+            ["h", channel],
+            ...thread,
+            ...mentions.map((pubkey) => ["p", pubkey]),
+            ...files.tags,
+            ...(args.audience === "agents" ? [["audience", "agents"]] : []),
+          ],
+        }),
+      (events) =>
+        tools.messages(events, {
+          channel,
+          ...(thread[0]?.[1] ? { root: thread[0][1] } : {}),
+        }),
+    );
   },
 
   async edit(tools, args) {
@@ -570,11 +591,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       first ? [first, ...shown] : shown,
       scope,
     );
-    if (!lines.length) return "No messages.";
+    const head = newestMessage(first ? [first, ...shown] : shown);
+    const sendCursor =
+      args.author === undefined && before === undefined && since === undefined
+        ? `cursor ${head?.id ?? "0"}`
+        : undefined;
+    if (!lines.length)
+      return ["No messages.", sendCursor].filter(Boolean).join("\n");
     const noun = scope.root ? "replies" : "messages";
     return [
       scope.root ? `thread ${scope.root} in ${channel}` : `channel ${channel}`,
       ...lines,
+      ...(sendCursor ? [sendCursor] : []),
       last && found.length > max
         ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
         : `The relay returned no older ${noun}.`,

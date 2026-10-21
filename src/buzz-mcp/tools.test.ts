@@ -137,6 +137,7 @@ const community = [
 it("replies in the current thread and notifies the members it names", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
+    cursor: nested,
     audience: "everyone",
     text: "@Alice Smith see `@Bob`",
   });
@@ -157,6 +158,7 @@ it("tags a message for agents, and needs the audience said", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   await callTool(client, context, "send", {
+    cursor: nested,
     text: "@Bob run the suite",
     audience: "agents",
   });
@@ -181,11 +183,13 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   await expect(
     callTool(client, context, "send", {
       audience: "everyone",
+      cursor: nested,
       text: "hi @Carol",
     }),
   ).rejects.toThrow("No single channel member is @carol");
   await callTool(client, context, "send", {
     audience: "everyone",
+    cursor: nested,
     text: "hi @Carol",
     mentions: [bob],
   });
@@ -196,6 +200,7 @@ it("replies to a message inside a thread at the thread's root, and posts a file'
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
     audience: "everyone",
+    cursor: nested,
     reply: nested,
     path: "notes.md",
     files: ["shot.png", "docs/plan.pdf"],
@@ -234,6 +239,7 @@ it("posts at the channel's top level when given a channel", async () => {
   await callTool(client, { channel: "chan", root }, "send", {
     audience: "everyone",
     channel: "other",
+    cursor: "0",
     text: "hello",
   });
   expect(published[0]?.tags).toEqual([["h", "other"]]);
@@ -261,9 +267,14 @@ it("keeps a top-level chat out of threads, wherever a reply would resolve", asyn
       }),
     ).rejects.toThrow(refused);
   expect(published).toEqual([]);
-  await callTool(client, context, "send", { audience: "everyone", text: "hi" });
+  await callTool(client, context, "send", {
+    cursor: nested,
+    audience: "everyone",
+    text: "hi",
+  });
   await callTool(client, context, "send", {
     audience: "everyone",
+    cursor: elsewhere,
     text: "there",
     reply: elsewhere,
   });
@@ -299,6 +310,7 @@ it("reads the current thread with each message's latest edit", async () => {
     `thread ${root} in chan`,
     `${root} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: `,
     `${nested} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: edited`,
+    `cursor ${nested}`,
     "The relay returned no older replies.",
   ]);
 });
@@ -474,6 +486,7 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
     answer
       .split("\n")
       .slice(1, -1)
+      .filter((line) => !line.startsWith("cursor "))
       .map((line) => line.slice(0, 64));
   const pages: string[][] = [];
   let args: Record<string, unknown> | undefined = { limit: 2 };
@@ -651,6 +664,7 @@ it("replies in the channel of the message it answers", async () => {
   const { client, published } = fake([...community, elsewhere]);
   await callTool(client, { channel: "chan", root }, "send", {
     audience: "everyone",
+    cursor: elsewhere.id,
     reply: elsewhere.id,
     text: "over here",
   });
@@ -2354,4 +2368,130 @@ it("refuses Git where the host holds no key", async () => {
   await expect(
     callTool(client, { channel: "chan" }, "repo", {}),
   ).rejects.toThrow("Git access needs Buzz Desktop.");
+});
+
+it("rejects stale and missing send cursors before publication", async () => {
+  const newer = event({
+    id: "3".repeat(64),
+    created_at: 101,
+    content: "New information",
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, newer]);
+  for (const cursor of [undefined, root]) {
+    await expect(
+      callTool(client, { channel: "chan", root }, "send", {
+        audience: "everyone",
+        text: "Old draft",
+        ...(cursor ? { cursor } : {}),
+      }),
+    ).rejects.toThrow("New information");
+  }
+  expect(published).toEqual([]);
+});
+
+it("admits only one simultaneous local send against the same cursor", async () => {
+  const { client, published } = fake([event({ id: root })], { keep: true });
+  const args = { audience: "everyone", text: "Answer", cursor: root };
+  const results = await Promise.allSettled([
+    callTool(client, { channel: "chan" }, "send", args),
+    callTool({ ...client, pubkey: bob }, { channel: "chan" }, "send", args),
+  ]);
+  expect(results.map((result) => result.status)).toEqual([
+    "fulfilled",
+    "rejected",
+  ]);
+  expect(published).toHaveLength(1);
+  const cursor = String(
+    (results[0] as PromiseFulfilledResult<unknown>).value,
+  ).match(/cursor ([a-f0-9]{64})/)?.[1];
+  expect(cursor).toBeDefined();
+  await callTool(client, { channel: "chan" }, "send", {
+    ...args,
+    cursor,
+    text: "Continuation",
+  });
+  expect(published).toHaveLength(2);
+});
+
+it("returns a send cursor for the actual unfiltered read view", async () => {
+  const { client } = fake([event({ id: root })]);
+  expect(await callTool(client, { channel: "chan" }, "read", {})).toContain(
+    `cursor ${root}`,
+  );
+  expect(await callTool(client, { channel: "empty" }, "read", {})).toContain(
+    "cursor 0",
+  );
+  expect(
+    await callTool(client, { channel: "chan" }, "read", { before: 100 }),
+  ).not.toContain(`cursor ${root}`);
+});
+
+it("keeps a locally accepted cursor while relay reads lag behind publication", async () => {
+  const { client, published } = fake([event({ id: root })]);
+  const first = await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "First",
+    cursor: root,
+  });
+  await expect(
+    callTool(client, { channel: "chan" }, "send", {
+      audience: "everyone",
+      text: "Concurrent",
+      cursor: root,
+    }),
+  ).rejects.toThrow("Stale cursor");
+  const cursor = String(first).match(/cursor ([a-f0-9]{64})/)?.[1];
+  await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Continuation",
+    cursor,
+  });
+  expect(published).toHaveLength(2);
+});
+
+it("does not advance the cursor when publication fails", async () => {
+  const { client } = fake([event({ id: root })]);
+  const publish = client.publish;
+  client.publish = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockImplementation(publish);
+  const args = { audience: "everyone", text: "Answer", cursor: root };
+  await expect(
+    callTool(client, { channel: "chan" }, "send", args),
+  ).rejects.toThrow("offline");
+  await expect(
+    callTool(client, { channel: "chan" }, "send", args),
+  ).resolves.toContain("sent ");
+});
+
+it("uses sub-second message ordering and keeps other threads out of admission", async () => {
+  const head = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+      ["ms", "900"],
+    ],
+  });
+  const foreign = event({
+    id: "4".repeat(64),
+    created_at: 200,
+    tags: [
+      ["h", "chan"],
+      ["e", "5".repeat(64), "", "reply"],
+    ],
+  });
+  const { client } = fake([...community, head, foreign]);
+  await expect(
+    callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      text: "Current",
+      cursor: head.id,
+    }),
+  ).resolves.toContain("sent ");
 });

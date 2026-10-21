@@ -595,7 +595,8 @@ export class CodexRuntime {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
     // added the shared session tools; v7 added the shared note tools.
-    return `buzz.codex.sessions.v7:${scope}:${pubkey}`;
+    // v8 requires the explicit send cursor in the restored tool schema.
+    return `buzz.codex.sessions.v8:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.

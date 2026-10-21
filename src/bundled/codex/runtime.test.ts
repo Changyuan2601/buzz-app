@@ -1,3 +1,5 @@
+import { newestMessage } from "../../buzz-mcp/send-cursor";
+import { threadReference } from "../../features/relay/thread-reference";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -233,10 +235,17 @@ function fixture(
   });
   const emit = (value: Wire) =>
     options?.onStdout?.(`${JSON.stringify(value)}\n`);
-  const publish = vi.fn(async (event: unknown) => ({
-    ...(event as object),
-    id: "d".repeat(64),
-  }));
+  const publish = vi.fn(async (template: unknown) => {
+    const event = {
+      ...(template as Pick<EventData, "kind" | "content" | "tags">),
+      id: "d".repeat(64),
+      pubkey,
+      created_at: 100,
+      sig: "",
+    } as EventData;
+    events.push(event);
+    return event;
+  });
   const read = vi.fn(async () => [] as EventData[]);
   const memories: { slug: string; body: string; createdAt: number }[] = [];
   const memoryRead = vi.fn(async () => ({ entries: memories, partial: false }));
@@ -476,6 +485,57 @@ function fixture(
     const threadId = (
       starts()[index]?.params as { threadId: string } | undefined
     )?.threadId;
+    // Simulate a caller supplying the cursor from its latest conversation view.
+    if (
+      name === "send" &&
+      args &&
+      typeof args === "object" &&
+      !("cursor" in args)
+    ) {
+      const send = args as Record<string, unknown>;
+      const inputs = sent.filter(
+        (wire) =>
+          (wire.method === "turn/start" || wire.method === "turn/steer") &&
+          (wire.params as { threadId?: string })?.threadId === threadId,
+      );
+      const prompt =
+        (inputs.at(-1)?.params as { input?: { text?: string }[] })?.input
+          ?.map((item) => item.text ?? "")
+          .join("\n") ?? "";
+      const envelope = prompt.match(/<context>\s*([^<]+)<\/context>/)?.[1];
+      const routing = envelope
+        ? (JSON.parse(envelope) as {
+            channel_id: string;
+            reply_to?: string;
+            posting?: string;
+          })
+        : undefined;
+      const destination = String(
+        send.channel ?? routing?.channel_id ?? "channel",
+      );
+      const reference =
+        typeof send.reply === "string"
+          ? send.reply
+          : send.channel === undefined && routing?.posting !== "top-level"
+            ? routing?.reply_to
+            : undefined;
+      const message =
+        reference && events.find((event) => event.id === reference);
+      const thread = message
+        ? (threadReference(message)?.rootId ?? message.id)
+        : reference;
+      const head = newestMessage(
+        events.filter(
+          (event) =>
+            event.tags.some(
+              (tag) => tag[0] === "h" && tag[1] === destination,
+            ) &&
+            (!thread ||
+              (threadReference(event)?.rootId ?? event.id) === thread),
+        ),
+      );
+      args = { ...send, cursor: head?.id ?? "0" };
+    }
     const id = `tool-${++toolId}`;
     toolCalls.set(id, { threadId, turnId: `turn-${index + 1}`, callId: id });
     emit({
@@ -534,6 +594,7 @@ function fixture(
   };
   return {
     runtime,
+    events,
     added,
     wake: wakeTurn,
     tool,
@@ -661,10 +722,17 @@ function second(f: ReturnType<typeof fixture>) {
     ...base,
     pubkey: other,
     name: "Other",
-    publish: vi.fn(async (event: unknown) => ({
-      ...(event as object),
-      id: "8".repeat(64),
-    })),
+    publish: vi.fn(async (template: unknown) => {
+      const event = {
+        ...(template as Pick<EventData, "kind" | "content" | "tags">),
+        id: "8".repeat(64),
+        pubkey: other,
+        created_at: 100,
+        sig: "",
+      } as EventData;
+      f.events.push(event);
+      return event;
+    }),
   } as unknown as Delivery["agent"];
   f.runtime.sync([{ pubkey } as Agent, { pubkey: other } as Agent]);
   return {
@@ -2997,7 +3065,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v8:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3034,7 +3102,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v8:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3155,7 +3223,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v8:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -3980,4 +4048,36 @@ it("updates Codex repository context from the agent’s captured community, incl
   const turns = f.sent.filter((wire) => wire.method === "turn/start");
   expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
+});
+
+it("does not finalize a turn when its send is rejected as stale", async () => {
+  const f = fixture();
+  const initial = f.delivery("Initial question");
+  await f.runtime.run(initial);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const latest = f.delivery("New information");
+  await f.runtime.run(latest);
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+  );
+  if (initial.trigger.type !== "mention" || latest.trigger.type !== "mention")
+    throw new Error("Expected mentions");
+  const stale = await f.tool("send", {
+    audience: "everyone",
+    text: "Old draft",
+    cursor: initial.trigger.event.id,
+    final: true,
+  });
+  expect(stale?.result).toMatchObject({ success: false });
+  expect(f.publish).not.toHaveBeenCalled();
+  expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
+  const revised = await f.tool("send", {
+    audience: "everyone",
+    text: "Reconsidered answer",
+    cursor: latest.trigger.event.id,
+    final: true,
+  });
+  expect(revised?.result).toMatchObject({ success: true });
+  expect(f.publish).toHaveBeenCalledTimes(1);
+  await f.complete(0, "");
 });

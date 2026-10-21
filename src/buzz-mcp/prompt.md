@@ -28,3 +28,8 @@ perform unrelated actions. Cite sources using the returned citation, preserving
 its chosen-name/ID presentation. Reading is on demand; do not load every shared
 transcript into context.
 Put session citations on their own line after the answer, so a displayed session card does not leave a gap in the middle of a sentence.
+
+
+## Conversation cursors
+
+Every `send` requires `cursor`: use the latest message ID in the destination conversation that you considered, the cursor from a current unfiltered `read`, or your previous successful send's cursor for a continuation. Use `0` only for an empty conversation. A missing or stale cursor publishes nothing and returns recent context with its current cursor. Read that context and reconsider what remains useful to say before sending again; do not simply resubmit the old draft with a newer cursor. A filtered search or historical page does not establish the current conversation cursor.

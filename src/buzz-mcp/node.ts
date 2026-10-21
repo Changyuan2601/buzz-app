@@ -1,6 +1,7 @@
 // The Buzz tools' client for a standalone server: holds the agent's key from
 // its environment, as a harness agent's is given, and talks to the community's
 // HTTP API directly. Reads only files under `root`.
+import { MessageClock, eventMs } from "../features/relay/message-order";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
@@ -25,6 +26,7 @@ import type {
 /** Most memory events one read asks for: the most the relay returns for one
  * query. A read that fills it may be missing older entries. */
 const MEMORY_LIMIT = 1000;
+const clocks = new Map<string, MessageClock>();
 
 const sha256 = (data: Uint8Array | string) =>
   createHash("sha256").update(data).digest("hex");
@@ -59,16 +61,29 @@ export function nodeClient(
     ? (JSON.parse(options.auth) as string[])
     : undefined;
   const owner = auth?.[1];
-  const sign = (event: Template, createdAt = now()) =>
-    finalizeEvent(
+  const clock = clocks.get(base) ?? new MessageClock();
+  clocks.set(base, clock);
+  const sign = (event: Template, createdAt = now()) => {
+    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const ms = event.kind === 9 && channel ? clock.next(channel) : undefined;
+    return finalizeEvent(
       {
         kind: event.kind,
         content: event.content,
-        tags: event.tags.map((tag) => [...tag]),
-        created_at: createdAt,
+        tags:
+          ms === undefined
+            ? event.tags.map((tag) => [...tag])
+            : [
+                ...event.tags
+                  .filter((tag) => tag[0] !== "ms")
+                  .map((tag) => [...tag]),
+                ["ms", String(ms % 1000)],
+              ],
+        created_at: ms === undefined ? createdAt : Math.floor(ms / 1000),
       },
       secret,
     ) as BuzzEvent;
+  };
   // NIP-98 takes standard base64; Blossom takes it URL-safe and unpadded.
   const header = (event: BuzzEvent, encoding: "base64" | "base64url") =>
     `Nostr ${Buffer.from(JSON.stringify(event)).toString(encoding)}`;
@@ -124,8 +139,17 @@ export function nodeClient(
 
   return {
     pubkey,
-    query: async (filters) =>
-      eventsDto(await request("/query", JSON.stringify(filters))),
+    sendScope: base,
+    query: async (filters) => {
+      const events = eventsDto(
+        await request("/query", JSON.stringify(filters)),
+      );
+      for (const event of events) {
+        const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+        if (channel) clock.observe(channel, eventMs(event));
+      }
+      return events;
+    },
     async searchProfiles(query, limit) {
       const response = await send(
         "/profiles/search",

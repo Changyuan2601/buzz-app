@@ -1,5 +1,3 @@
-import type { EventData } from "./events";
-
 /** Largest lead over the local clock that other authors' timestamps may impose. */
 const MAX_LEAD_MS = 5000;
 /** Largest lead this device's own send chain may keep; beyond it (a clock
@@ -7,7 +5,9 @@ const MAX_LEAD_MS = 5000;
 const MAX_OWN_LEAD_MS = 60_000;
 
 /** Sub-second send order: `ms` is a canonical 0–999 offset within the signed second. */
-export function eventMs(event: Pick<EventData, "created_at" | "tags">) {
+export function eventMs(
+  event: Readonly<{ created_at: number; tags: readonly (readonly string[])[] }>,
+) {
   const value = event.tags.find(([name]) => name === "ms")?.[1];
   const offset = value && /^(0|[1-9]\d{0,2})$/.test(value) ? Number(value) : 0;
   return event.created_at * 1000 + offset;
