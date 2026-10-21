@@ -314,13 +314,13 @@ attended browser/adapter, restart/sign-out, HTTP/write, WSS/NIP-42, media/range,
 and repository read/import acceptance before live use. Windows/Linux need
 separate acceptance; do not substitute a profile or HOME override for OS isolation.
 
-For the shared sign-in and community recovery UI alone, run the environment-free
+For the community sign-in and recovery UI alone, run the environment-free
 fixture server documented below and open `/tests/fixtures/federated-identity.html`.
 Click **Sign in**, then **Cancel sign-in** or **Complete** in fixture controls;
-verify both consumers observe the shared status and optional-email confirmation.
+verify the prompt switches to **Cancel sign-in** and clears once signed in.
 **Binding mismatch** shows existing identity-link guidance; **Storage failure**
-shows recovery without claiming success. This fixture uses Header, SettingsGroup,
-Button, and the Settings content column. It does not exercise the running app's
+shows recovery without claiming success. This fixture uses Button and the Settings
+content column. It does not exercise the running app's
 full navigation or native credentials.
 
 ### Implementation validation, 9 October 2026
