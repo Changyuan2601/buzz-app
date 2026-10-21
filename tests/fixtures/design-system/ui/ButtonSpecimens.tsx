@@ -151,6 +151,18 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview
+        className="bg-affordance-accent"
+        code='<Button variant="glass">Message</Button>'
+      >
+        <Button variant="glass">Message</Button>
+        <Button variant="glass" loading>
+          Message
+        </Button>
+        <Button variant="glass" disabled>
+          Message
+        </Button>
+      </ExamplePreview>
       <Button size="caption" variant="subtle-muted">
         Send
       </Button>

@@ -173,6 +173,8 @@ with the current folded row. Attachment provenance selects the latest surviving
 same-author edit carrying `imeta`, otherwise the original message. A missing
 source fails before enqueueing rather than restoring obsolete attachments.
 
+Plugins may await `session.messages.editOwnedAgent(row.id, content, row.attachmentSourceId ?? row.id)` for an agent owned by the signed-in viewer. This requires the current retained, signature-verified kind 0 profile and a valid owner attestation, then publishes the existing owner-signed kind 40003 protocol event. Empty text uses the existing owner-deletion path. Missing, replaced, or invalid evidence rejects before publication. Channel and thread projections accept these edits only after verifying the same profile evidence, and refold if that evidence changes. Ordinary `edit` remains restricted to the viewer's own messages. Owner edits are a projection, not a redaction guarantee: the original signed message remains retained, and its original content can reappear when ownership evidence is missing, evicted or revoked. Sidebar, thread, Inbox and Codex history projections use the current verified ownership evidence.
+
 Message and reaction rendering uses only each event's own emoji tags, never the
 current palette. Tagged edits replace mappings; legacy tagless edits preserve the
 original message's mappings. All thumbnails use the captured session's media

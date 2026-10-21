@@ -85,21 +85,20 @@ const crew: ChannelReference = {
   joined: false,
 };
 
-it("keeps an unavailable session's document card, lock, sent name and accessible explanation", () => {
+it("keeps an unavailable chat's bubble card, lock, sent name and accessible explanation", () => {
   const t = fixture();
   render(link(t.session, "private-session", "Session: PR 45 fixes"));
   t.answer("private-session", { state: "withheld" });
   const card = screen.getByRole("link", {
-    name: "Session: PR 45 fixes, unavailable",
+    name: "Chat: PR 45 fixes, unavailable",
   });
   expect(card.getAttribute("title")).toContain(
     "You don’t have access, or it no longer exists.",
   );
-  expect(card.getAttribute("aria-description")).toContain(
-    "Session unavailable",
-  );
-  expect(card.querySelector("svg.tabler-icon-file-text")).not.toBeNull();
+  expect(card.getAttribute("aria-description")).toContain("Chat unavailable");
+  expect(card.querySelector("svg.tabler-icon-message-circle")).not.toBeNull();
   expect(card.querySelector("svg.tabler-icon-lock")).not.toBeNull();
+  expect(card.querySelector("svg.tabler-icon-chevron-right")).toBeNull();
 });
 
 it("names an open channel and shows its hover card", async () => {
@@ -211,4 +210,22 @@ it("keeps a link focused while its name resolves, then opens its card", async ()
   expect(screen.getByLabelText("Channel preview").textContent).toContain(
     "crew-open",
   );
+});
+
+it("shows an accessible private Solo chat as Chat with a navigation chevron, not a privacy lock", () => {
+  const t = fixture();
+  render(link(t.session, "shared-chat", "Chat: Work"));
+  t.answer("shared-chat", {
+    state: "found",
+    name: "Work",
+    channelType: "solo",
+    private: true,
+    hidden: false,
+    archived: false,
+    joined: true,
+  });
+  const card = screen.getByRole("link", { name: "Open Chat: Work" });
+  expect(card.querySelector("svg.tabler-icon-message-circle")).not.toBeNull();
+  expect(card.querySelector("svg.tabler-icon-chevron-right")).not.toBeNull();
+  expect(card.querySelector("svg.tabler-icon-lock")).toBeNull();
 });

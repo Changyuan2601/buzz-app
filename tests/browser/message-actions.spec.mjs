@@ -791,10 +791,21 @@ test("live grouped appends preserve avatar focus in channel and thread", async (
     const avatar = row
       .getByRole("button", { name: /^View .* profile$/ })
       .first();
+    await expect(avatar).toBeVisible();
+    await settle(page);
+    await page.keyboard.press("Tab");
     await avatar.focus();
+    const preview = page.getByRole("dialog", { name: /profile preview$/ });
+    await expect(preview).toBeVisible();
     const second = append(`Next ${mode} message`);
     await expect(row.locator("[data-stack-next]")).toBeVisible();
     await expect(avatar).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      preview.getByRole("button", { name: "View profile", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(preview).toBeHidden();
     await page.keyboard.press("Tab");
     await expect(
       row.getByRole("button", { name: "React with 👍", exact: true }),

@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
@@ -54,18 +55,20 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <ModalWindowDragProvider
-      value={isTauri() ? modalWindowDragHandlers : undefined}
-    >
-      <LaunchWindowControls />
-      {services.identity ? (
-        <IdentitySetup identity={services.identity}>
+    <AgentAvatarArtworkProvider>
+      <ModalWindowDragProvider
+        value={isTauri() ? modalWindowDragHandlers : undefined}
+      >
+        <LaunchWindowControls />
+        {services.identity ? (
+          <IdentitySetup identity={services.identity}>
+            <ConnectedApp services={services} />
+          </IdentitySetup>
+        ) : (
           <ConnectedApp services={services} />
-        </IdentitySetup>
-      ) : (
-        <ConnectedApp services={services} />
-      )}
-    </ModalWindowDragProvider>
+        )}
+      </ModalWindowDragProvider>
+    </AgentAvatarArtworkProvider>
   );
 }
 
@@ -285,6 +288,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
+                chatIcons={services.conversation.chatIcons}
                 target={workspace.target}
               >
                 {pageNavigation}
@@ -397,7 +401,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 : (document.getElementById("main-content") ?? false);
             }}
           >
-            <div id="settings-content" tabIndex={-1}>
+            <div id="settings-content" className="h-full" tabIndex={-1}>
               {(!route.state.ingress && route.failure) ||
               route.state.status === "failed" ? (
                 destinationFailure
@@ -406,6 +410,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : (
                 <Settings
                   agents={services.agents}
+                  decisions={services.decisions}
                   plugins={plugins}
                   cards={services.settingsCards}
                   adminAccess={services.adminAccess}

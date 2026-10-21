@@ -1,3 +1,4 @@
+import { StatusTicker } from "./StatusTicker";
 import { useUserStatus } from "./useUserStatus";
 import type { RelaySession } from "../relay/session";
 import type { UserStatus } from "../relay/user-status";
@@ -10,20 +11,32 @@ export function StatusDisplay({
   session,
   compact = false,
   focusable = true,
+  size = "default",
 }: {
   status: UserStatus | undefined;
   session: RelaySession;
   compact?: boolean;
   focusable?: boolean;
+  size?: "default" | "caption";
 }) {
   if (!status || (!status.emoji && !status.text)) return null;
   const label = [status.emoji, status.text].filter(Boolean).join(" ");
   if (!compact)
     return (
-      <span className={styles.status}>
-        <StatusEmoji value={status.emoji} session={session} />
-        {status.emoji && status.text && " "}
-        <span className={styles.text}>{status.text}</span>
+      <span className={styles.status} data-size={size}>
+        {size === "caption" ? (
+          <StatusTicker key={label} text={label}>
+            <StatusEmoji value={status.emoji} session={session} />
+            {status.emoji && status.text && " "}
+            {status.text}
+          </StatusTicker>
+        ) : (
+          <>
+            <StatusEmoji value={status.emoji} session={session} />
+            {status.emoji && status.text && " "}
+            <span className={styles.text}>{status.text}</span>
+          </>
+        )}
       </span>
     );
   return (
@@ -57,11 +70,13 @@ export function UserStatusDisplay({
   userId,
   compact = false,
   focusable = true,
+  size = "default",
 }: {
   session: RelaySession;
   userId: string;
   compact?: boolean;
   focusable?: boolean;
+  size?: "default" | "caption";
 }) {
   const status = useUserStatus(session.statuses, userId);
   return (
@@ -70,6 +85,7 @@ export function UserStatusDisplay({
       status={status}
       compact={compact}
       focusable={focusable}
+      size={size}
     />
   );
 }

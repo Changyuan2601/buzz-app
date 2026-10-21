@@ -62,6 +62,9 @@ membershipTest(
     await expect(
       history(page).locator(`[data-message-id="${reply.id}"]`),
     ).toHaveCount(0);
+    // Live inserts resize the virtual timeline; let its bottom anchor settle
+    // before targeting the summary with a real pointer click.
+    await settle(page);
     await summary.click();
     const row = thread(page).locator(`[data-message-id="${reply.id}"]`);
     await expect(row).toBeVisible();

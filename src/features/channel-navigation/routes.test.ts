@@ -43,6 +43,7 @@ it("rejects foreign route kinds and draft payloads", () => {
     { kind: "solo-draft", project: 1 },
     { kind: "solo-draft", agent: "not-a-key" },
     { kind: "solo-draft", text: "private draft" },
+    { kind: "solo-draft", linked: "invalid" },
   ]) {
     expect(isChannelRoute(params)).toBe(false);
     expect(soloDraft(params)).toBeUndefined();

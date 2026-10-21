@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { ActivityTranscript } from "./ActivityTranscript";
+import type { TranscriptTurn } from "./activity-transcript";
 import { codexTurns } from "../../bundled/codex/transcript";
 import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -251,7 +252,9 @@ it("shows each entry's time under it, with the full date on hover, except the pr
       state={() => "ended"}
     />,
   );
-  const stamps = [...container.querySelectorAll("time")];
+  const stamps = [
+    ...container.querySelectorAll<HTMLTimeElement>("article > div time"),
+  ];
   expect(stamps.map((stamp) => stamp.getAttribute("datetime"))).toEqual([
     new Date(at + 3000).toISOString(),
     new Date(at + 70_000).toISOString(),
@@ -320,6 +323,40 @@ it("dates the turn heading in the shared format, and omits an unknown start", ()
     />,
   );
   const expected = formatItemTimestamp(at / 1000, { withTime: true });
-  expect(screen.getByText(`Turn · ${expected} · gpt-6`)).toBeInTheDocument();
-  expect(screen.getAllByText("Turn · gpt-6")).toHaveLength(2);
+  expect(screen.getByText(expected, { selector: "time" })).toBeInTheDocument();
+  expect(
+    screen
+      .getAllByRole("article")
+      .map((article) => article.querySelector("header")?.textContent),
+  ).toEqual([
+    `${expected} · Completed · 0.0s · gpt-6`,
+    "Status unknown · gpt-6",
+    "Status unknown · gpt-6",
+  ]);
+});
+
+it("keeps different threads distinguishable when showing all conversations", () => {
+  const turns: TranscriptTurn[] = ["a".repeat(64), "b".repeat(64)].map(
+    (threadRootId, index) => ({
+      turnId: `turn-${index}`,
+      channelId: "channel",
+      threadRootId,
+      triggeringEventIds: [],
+      newSession: false,
+      config: [],
+      startedAt: Date.parse("2026-10-20T12:00:00Z"),
+      endedAt: Date.parse("2026-10-20T12:01:00Z"),
+      partial: false,
+      items: [],
+    }),
+  );
+  render(
+    <ActivityTranscript
+      transcript={{ turns, unknownThread: 0 }}
+      agentName="Agent"
+      state={() => "ended"}
+    />,
+  );
+  expect(screen.getByText("· Thread aaaaaaaa")).toBeVisible();
+  expect(screen.getByText("· Thread bbbbbbbb")).toBeVisible();
 });

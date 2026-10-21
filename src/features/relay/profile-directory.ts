@@ -1,3 +1,5 @@
+import { attestedOwner } from "../agents/owner-attestation";
+import { hasEventProof } from "./events";
 import type { Outbox } from "./outbox";
 import { ByteLru } from "./budget";
 import type { Profile } from "./contracts";
@@ -14,6 +16,8 @@ export interface ProfileQueries {
   ensure(ids: readonly string[], priority?: Priority): Promise<void>;
   /** The winning signed kind 0 retained for one identity, for provenance checks. */
   event?(pubkey: string): RelayEvent | undefined;
+  /** Cryptographically verified owner of the retained signed profile head. */
+  owner?(pubkey: string): string | undefined;
 }
 
 /** One bounded source of signed profile events. Display values are derived from it. */
@@ -23,6 +27,7 @@ export function createProfileDirectory(
   notify = (listener: () => void) => listener(),
 ) {
   const events = new ByteLru<RelayEvent>(1024, 2 * 1024 * 1024);
+  const owners = new WeakMap<RelayEvent, string>();
   const pending = new Map<string, Promise<void>>();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
@@ -36,6 +41,12 @@ export function createProfileDirectory(
       const previous = events.peek(event.pubkey);
       if (newer(previous, event) === previous) continue;
       events.set(event.pubkey, event);
+      if (hasEventProof(event))
+        void attestedOwner(event).then((owner) => {
+          if (closed || events.peek(event.pubkey) !== event || !owner) return;
+          owners.set(event, owner);
+          publish(true);
+        });
       changed = true;
     }
     if (changed) publish(true);
@@ -124,6 +135,10 @@ export function createProfileDirectory(
     },
     ensure,
     event: (pubkey: string) => events.peek(pubkey),
+    owner: (pubkey: string) => {
+      const event = events.peek(pubkey);
+      return event ? owners.get(event) : undefined;
+    },
   });
   let localProfiles = "";
   const unsubscribeLocal = local?.subscribe(() => {

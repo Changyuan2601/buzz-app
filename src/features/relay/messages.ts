@@ -1,3 +1,6 @@
+import { attestedOwner } from "../agents/owner-attestation";
+import { hasEventProof } from "./events";
+import type { ProfileQueries } from "./profile-directory";
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
@@ -46,6 +49,7 @@ export function createMessages(
   publishReport?: (template: EventTemplate) => Promise<void>,
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
+  profiles?: ProfileQueries,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -92,6 +96,104 @@ export function createMessages(
         ...(effort === undefined ? [] : [[EFFORT_TAG, key, effort]]),
       ];
     });
+  const edit = (
+    messageId: string,
+    content: string,
+    attachmentSourceId: string,
+    authorization?: AgentOwnerAuthorization,
+  ) => {
+    const original = find(messageId);
+    if (!original || ![9, 40002].includes(original.kind))
+      throw new Error("Load the message before editing it");
+    const ownerEdit =
+      !!viewer &&
+      authorization?.ownerId === viewer &&
+      authorization.agentId === messageAuthor(original, signingAuthority);
+    if (!ownedMessage(original) && !ownerEdit)
+      throw new Error("Only your own messages can be edited");
+    const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
+    if (!channelId) throw new Error("Message has no channel");
+    // The displayed fold owns edit/deletion precedence. Resolve its provenance,
+    // never silently resurrect the original attachments if evidence was evicted.
+    const attachmentSource = find(attachmentSourceId);
+    if (
+      !attachmentSource ||
+      (attachmentSource.id !== original.id &&
+        (attachmentSource.kind !== 40003 ||
+          (!ownedMessage(attachmentSource) &&
+            attachmentSource.pubkey !==
+              profiles?.owner?.(messageAuthor(original, signingAuthority)) &&
+            (!ownerEdit ||
+              messageAuthor(attachmentSource, signingAuthority) !==
+                messageAuthor(original, signingAuthority))) ||
+          !attachmentSource.tags.some(
+            ([name, id]) => name === "e" && id === messageId,
+          ) ||
+          attachmentSource.tags.some(
+            ([name, id]) => name === "h" && id !== channelId,
+          ) ||
+          !attachmentSource.tags.some(([name]) => name === "imeta")))
+    )
+      throw new Error("Reload the message before editing its attachments.");
+    return writer(40003, channelId).send({
+      kind: 40003,
+      content: text(content),
+      tags: [
+        ["h", channelId],
+        ["e", messageId],
+        ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
+        ...emojiTags(content),
+      ],
+    });
+  };
+  const remove = (
+    eventIds: readonly string[],
+    authorization?: AgentOwnerAuthorization,
+  ) => {
+    const ids = [...new Set(eventIds)];
+    if (!ids.length || ids.length > 100)
+      throw new Error("Choose between 1 and 100 events to remove");
+    const originals = ids.map((id) => {
+      const event = find(id);
+      if (!event || ![7, 9, 40002].includes(event.kind))
+        throw new Error("Load the message or reaction before removing it");
+      const agentOwnerRemoval =
+        !!viewer &&
+        event.kind !== 7 &&
+        messageAuthor(event, signingAuthority) === authorization?.agentId &&
+        authorization.ownerId === viewer;
+      if (
+        event.kind === 7
+          ? event.pubkey !== viewer
+          : !ownedMessage(event) && !agentOwnerRemoval
+      )
+        throw new Error("Only your own messages and reactions can be removed");
+      return event;
+    });
+    const channel = (event: EventData) =>
+      event.tags.find(([name]) => name === "h")?.[1] ??
+      (event.kind === 7
+        ? find(event.tags.find(([name]) => name === "e")?.[1] ?? "")?.tags.find(
+            ([name]) => name === "h",
+          )?.[1]
+        : undefined);
+    const first = originals[0];
+    const channelId = first ? channel(first) : undefined;
+    if (!channelId || originals.some((event) => channel(event) !== channelId))
+      throw new Error("Removal must belong to one loaded conversation");
+    return writer(5, channelId).send({
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", channelId],
+        ...ids.map((id) => ["e", id]),
+        ...[...new Set(originals.map((event) => event.kind))].map((kind) => [
+          "k",
+          String(kind),
+        ]),
+      ],
+    });
+  };
   return Object.freeze({
     send(
       channelId: string,
@@ -143,7 +245,9 @@ export function createMessages(
       const attachmentSource = find(row.attachmentSourceId ?? row.id);
       if (
         !attachmentSource ||
-        !ownedMessage(attachmentSource) ||
+        (!ownedMessage(attachmentSource) &&
+          attachmentSource.pubkey !==
+            profiles?.owner?.(messageAuthor(original, signingAuthority))) ||
         (attachmentSource.id !== original.id &&
           (attachmentSource.kind !== 40003 ||
             !attachmentSource.tags.some(
@@ -235,41 +339,33 @@ export function createMessages(
       });
     },
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
-    edit(messageId: string, content: string, attachmentSourceId: string) {
+    edit: (messageId: string, content: string, attachmentSourceId: string) =>
+      edit(messageId, content, attachmentSourceId),
+    /** Verified owner edit. Empty text removes the message, as in the composer. */
+    async editOwnedAgent(
+      messageId: string,
+      content: string,
+      attachmentSourceId: string,
+    ) {
       const original = find(messageId);
-      if (!original || ![9, 40002].includes(original.kind))
-        throw new Error("Load the message before editing it");
-      if (!ownedMessage(original))
-        throw new Error("Only your own messages can be edited");
-      const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
-      if (!channelId) throw new Error("Message has no channel");
-      // The displayed fold owns edit/deletion precedence. Resolve its provenance,
-      // never silently resurrect the original attachments if evidence was evicted.
-      const attachmentSource = find(attachmentSourceId);
+      if (!original || !viewer || !profiles)
+        throw new Error("Load the owned agent's message before editing it");
+      const author = messageAuthor(original, signingAuthority);
+      await profiles.ensure([author]);
+      const profile = profiles.event?.(author);
       if (
-        !attachmentSource ||
-        (attachmentSource.id !== original.id &&
-          (attachmentSource.kind !== 40003 ||
-            !ownedMessage(attachmentSource) ||
-            !attachmentSource.tags.some(
-              ([name, id]) => name === "e" && id === messageId,
-            ) ||
-            attachmentSource.tags.some(
-              ([name, id]) => name === "h" && id !== channelId,
-            ) ||
-            !attachmentSource.tags.some(([name]) => name === "imeta")))
+        !profile ||
+        profile.pubkey !== author ||
+        profile.kind !== 0 ||
+        !hasEventProof(profile) ||
+        (await attestedOwner(profile)) !== viewer ||
+        profiles.event?.(author)?.id !== profile.id
       )
-        throw new Error("Reload the message before editing its attachments.");
-      return writer(40003, channelId).send({
-        kind: 40003,
-        content: text(content),
-        tags: [
-          ["h", channelId],
-          ["e", messageId],
-          ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
-          ...emojiTags(content),
-        ],
-      });
+        throw new Error("Only an agent's verified owner can edit its messages");
+      const authorization = { agentId: author, ownerId: viewer };
+      return content.trim()
+        ? edit(messageId, content, attachmentSourceId, authorization)
+        : remove([messageId], authorization);
     },
     react(messageId: string, content: string, emoji?: CustomEmoji) {
       const original = find(messageId);
@@ -291,56 +387,7 @@ export function createMessages(
         ],
       });
     },
-    remove(
-      eventIds: readonly string[],
-      authorization?: AgentOwnerAuthorization,
-    ) {
-      const ids = [...new Set(eventIds)];
-      if (!ids.length || ids.length > 100)
-        throw new Error("Choose between 1 and 100 events to remove");
-      const originals = ids.map((id) => {
-        const event = find(id);
-        if (!event || ![7, 9, 40002].includes(event.kind))
-          throw new Error("Load the message or reaction before removing it");
-        const agentOwnerRemoval =
-          !!viewer &&
-          event.kind !== 7 &&
-          messageAuthor(event, signingAuthority) === authorization?.agentId &&
-          authorization.ownerId === viewer;
-        if (
-          event.kind === 7
-            ? event.pubkey !== viewer
-            : !ownedMessage(event) && !agentOwnerRemoval
-        )
-          throw new Error(
-            "Only your own messages and reactions can be removed",
-          );
-        return event;
-      });
-      const channel = (event: EventData) =>
-        event.tags.find(([name]) => name === "h")?.[1] ??
-        (event.kind === 7
-          ? find(
-              event.tags.find(([name]) => name === "e")?.[1] ?? "",
-            )?.tags.find(([name]) => name === "h")?.[1]
-          : undefined);
-      const first = originals[0];
-      const channelId = first ? channel(first) : undefined;
-      if (!channelId || originals.some((event) => channel(event) !== channelId))
-        throw new Error("Removal must belong to one loaded conversation");
-      return writer(5, channelId).send({
-        kind: 5,
-        content: "",
-        tags: [
-          ["h", channelId],
-          ...ids.map((id) => ["e", id]),
-          ...[...new Set(originals.map((event) => event.kind))].map((kind) => [
-            "k",
-            String(kind),
-          ]),
-        ],
-      });
-    },
+    remove,
     /** Undefined when this connection cannot publish reports. */
     report: publishReport
       ? (messageId: string, type: ReportType, note = "") => {

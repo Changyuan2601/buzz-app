@@ -529,7 +529,7 @@ test.describe("Solo chat lifecycle", () => {
       .getByRole("combobox", { name: "Search Buzz" })
       .fill("Lifecycle channel");
     const result = search
-      .getByRole("group", { name: "Channels" })
+      .getByRole("group", { name: "Chats" })
       .getByRole("option", { name: /Lifecycle channel/ });
     await expect(result).toContainText("Archived chat");
     await result.click();

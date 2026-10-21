@@ -520,7 +520,8 @@ function fixture(
    * in its Interest's lane, which the runner holds. */
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
-    if (trigger.type === "mention") throw new Error("Expected a wake");
+    if (trigger.type === "mention" || trigger.type === "plugin")
+      throw new Error("Expected a wake");
     delivery.workingUntil(
       wake(
         delivery.agent,
@@ -1009,6 +1010,45 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("ends a turn's input with the notes plugins left for it in its channel", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const notes = vi.fn((at: string) =>
+    at === "channel" ? ["(I interrupted your reply)"] : [],
+  );
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<\/buzz-event>\n\n\(I interrupted your reply\)/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith("channel", root);
+});
+it("hands a turn the notes plugins left while it was being prepared", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const pending: Record<string, string[]> = {};
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    await reading.promise;
+    return [];
+  });
+  await f.runtime.run({ ...delivery, agent: { ...delivery.agent, notes } });
+  await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+  pending.channel = ["(I interrupted your reply)"];
+  reading.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<\/buzz-event>\n\n\(I interrupted your reply\)/,
+  );
+  expect(pending.channel).toEqual([]);
+});
 it("tells a turn a reload stopped to carry on where it left off", async () => {
   const f = fixture();
   const fresh = f.delivery("@Codex fix the build");
@@ -1864,6 +1904,100 @@ it("ends a turn without a reply silently, and publishes an unexpected exit", asy
     ok: false,
     error: expect.stringContaining("Codex exited"),
   });
+});
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "8".repeat(64);
+const pluginWake = (
+  f: ReturnType<typeof fixture>,
+  threadRoot?: string,
+  ignored?: () => void,
+): Delivery => ({
+  ...f.delivery("unused"),
+  trigger: {
+    type: "plugin",
+    plugin: "github",
+    channel: "channel",
+    ...(threadRoot ? { root: threadRoot } : {}),
+    text: "CI failed: lint",
+    id: WAKE_ID,
+    at: 10_500,
+  },
+  ...(ignored ? { ignored } : {}),
+});
+it("takes a plugin's wake in its thread's conversation, as the plugin's and not a message", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex watch my PR"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const [first, next] = f
+    .starts()
+    .map((wire) => wire.params as { threadId: string });
+  expect(next?.threadId).toBe(first?.threadId);
+  const input = JSON.stringify(next);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("neither your owner nor anyone in the channel");
+  expect(input).toContain("CI failed: lint");
+  expect(input).not.toContain("<buzz-event");
+  expect(input).not.toContain(WAKE_ID);
+});
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const f = fixture();
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
+  });
+  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+});
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const f = fixture();
+  const ignored = vi.fn();
+  await f.runtime.run(pluginWake(f, undefined, ignored));
+  expect(ignored).toHaveBeenCalled();
+  expect(f.starts()).toHaveLength(0);
+  f.soloChannels.add("channel");
+  await f.runtime.run(pluginWake(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const input = JSON.stringify(f.starts()[0]?.params);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("top-level");
+  expect(input).not.toContain(WAKE_ID);
+});
+it("gives a fresh wake the thread's earlier messages of its same second, and none after", async () => {
+  const f = fixture();
+  // The wake is at 10.500s, the second the thread's messages share.
+  const message = (id: string, content: string, ms: string): EventData => ({
+    id: id.repeat(64),
+    pubkey: owner,
+    kind: 9,
+    content,
+    created_at: 10,
+    tags: [
+      ["h", "channel"],
+      ...(id === "c" ? [] : [["e", root, "", "reply"]]),
+      ["ms", ms],
+    ],
+  });
+  f.read.mockResolvedValueOnce([
+    message("c", "ORIGINAL_REQUEST", "100"),
+    message("1", "EARLIER_REPLY", "499"),
+    message("2", "LATER_REPLY", "501"),
+  ]);
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  const history = params.input[0]?.text.match(
+    /<thread-context>\n([\s\S]*?)\n<\/thread-context>/,
+  )?.[1];
+  expect(
+    JSON.parse(history ?? "{}").messages.map(
+      (message: { content: string }) => message.content,
+    ),
+  ).toEqual(["ORIGINAL_REQUEST", "EARLIER_REPLY"]);
 });
 it("sets no deadline of its own on a turn", async () => {
   // Any deadline Buzz set would already have passed.
@@ -2817,6 +2951,61 @@ it("lets go of a rejected steering mention without ending the running turn", asy
     expect.stringContaining("Steering was not accepted"),
     "FIRST ANSWER",
   ]);
+});
+
+it("keeps a rejected steering mention's notes for the next turn, ahead of newer ones", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/steer" || wire.id == null) return write(data);
+    pending.channel = [...(pending.channel ?? []), "(newer)"];
+    f.emit({ id: wire.id, error: { code: -32600, message: "model busy" } });
+  });
+  const pending: Record<string, string[]> = {
+    channel: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  const delivery = f.delivery("new request");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, restoreNotes },
+  });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(pending.channel).toEqual(["(I interrupted your reply)", "(newer)"]);
+});
+
+it("keeps the notes of a turn Codex refused to start for the next", async () => {
+  const f = fixture();
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/start" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    f.emit({ id: wire.id, error: { code: -32600, message: "model busy" } });
+  });
+  const pending: Record<string, string[]> = {
+    channel: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  const delivery = f.delivery("work");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, restoreNotes },
+  });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("model busy"),
+  });
+  expect(pending.channel).toEqual(["(I interrupted your reply)"]);
 });
 
 it("finishes final sends normally and preserves the agent's background terminals", async () => {

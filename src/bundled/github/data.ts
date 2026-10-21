@@ -1,6 +1,6 @@
 import type { GitHubReference } from "./references";
 
-type Branch = { label: string; url?: string | undefined };
+export type Branch = { label: string; url?: string | undefined };
 
 export type GitHubDetails = {
   title: string;
@@ -26,7 +26,7 @@ export type GitHubDetails = {
     ),
   ][];
 };
-type BranchData = {
+export type BranchData = {
   label: string;
   ref?: string;
   repo?: { full_name: string } | null;
@@ -59,7 +59,7 @@ type ResponseData = {
   default_branch?: string;
 };
 
-function branchLink(branch: BranchData, pullRepository: string): Branch {
+export function branchLink(branch: BranchData, pullRepository: string): Branch {
   const repository = branch.repo?.full_name;
   return {
     label:
@@ -98,7 +98,7 @@ export async function loadGitHubDetails(
   if (!response.ok) {
     if (response.status === 404)
       throw new Error(
-        "This object is private or unavailable. Open it on GitHub to use your signed-in account.",
+        "This is private or unavailable. Sign in to the gh CLI to see private repositories, or open it on GitHub.",
       );
     if (response.status === 403 || response.status === 429)
       throw new Error(

@@ -5,6 +5,10 @@ import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
+import {
+  type PluginTrigger,
+  wakeSection,
+} from "../../features/agent-harness/plugin-wake";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
 
@@ -78,6 +82,8 @@ export type TurnInput = Readonly<{
   name(pubkey: string): string | undefined;
   /** The chat's workspace Canvas section, for a Solo chat with one. */
   project?: string;
+  /** A plugin's wake, whose turn has its section in place of the event's. */
+  wake?: PluginTrigger;
 }>;
 
 const time = (seconds: number) => new Date(seconds * 1000).toISOString();
@@ -162,7 +168,9 @@ export function turnPrompt(input: TurnInput) {
       ),
     );
   parts.push(
-    section("buzz-event", eventBlock(input), ` type="${input.label}"`),
+    input.wake
+      ? wakeSection(input.wake)
+      : section("buzz-event", eventBlock(input), ` type="${input.label}"`),
   );
   return parts.join("\n\n");
 }

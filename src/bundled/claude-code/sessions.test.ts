@@ -38,6 +38,8 @@ function sessions(
     hold: boolean;
     /** Holds each launch after it reads the settings, as a memory read does. */
     launched: Promise<void>;
+    /** Holds each process's `initialize` write, as a stalled pipe would. */
+    initialized: Promise<void>;
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
@@ -52,7 +54,15 @@ function sessions(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
-    return process;
+    const { initialized } = options;
+    if (!initialized) return process;
+    return process.then((host) => ({
+      ...host,
+      write: async (data: string) => {
+        if (data.includes('"subtype":"initialize"')) await initialized;
+        return host.write(data);
+      },
+    }));
   };
   const pool = new AgentSessions({
     spawn,
@@ -564,31 +574,102 @@ it("asks a one-off turn for its prompt only once its process is ready", async ()
 });
 
 it("keeps a one-off turn's entry until its process has exited", async () => {
-  vi.useFakeTimers();
   const { pool, claudes } = sessions({ hold: true });
+  const stop = new AbortController();
   let settled = false;
   const done = pool
-    .runOnce("timer/slow", () => "work", 1_000)
+    .runOnce("timer/slow", () => "work", stop.signal)
     .then((result) => {
       settled = true;
       return result;
     });
-  await vi.advanceTimersByTimeAsync(10);
+  await flush();
   const claude = claudes().find((process) => process.prompts.includes("work"));
   // The host only signals it; it exits later, as after a grace period.
   if (claude) claude.exitOnKill = false;
-  await vi.advanceTimersByTimeAsync(1_000);
+  stop.abort(new Error("The turn ran past its deadline"));
+  await flush();
   expect(claude?.killed).toBe(true);
   expect(settled).toBe(false);
   expect(pool.snapshot().map((session) => session.key)).toContain(
     "timer/slow #1",
   );
   claude?.exit(null);
-  await vi.advanceTimersByTimeAsync(10);
-  await expect(done).resolves.toMatchObject({ ok: false });
+  await expect(done).resolves.toEqual({
+    ok: false,
+    error: "The turn ran past its deadline",
+  });
   expect(pool.snapshot().map((session) => session.key)).not.toContain(
     "timer/slow #1",
   );
+});
+
+it("gives up a one-off turn whose process is still starting", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  const stop = new AbortController();
+  const prompt = vi.fn(() => "wake");
+  const done = pool.runOnce("watch/a", prompt, stop.signal);
+  await flush();
+  expect(claudes()).toEqual([]);
+  stop.abort(new Error("The agent was removed"));
+  await expect(done).resolves.toEqual({
+    ok: false,
+    error: "The agent was removed",
+  });
+  expect(pool.snapshot()).toEqual([]);
+  // The process that starts afterwards is stopped, never asked to work.
+  release();
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  expect(claudes()[0]?.killed).toBe(true);
+  expect(prompt).not.toHaveBeenCalled();
+});
+
+it("stops a one-off turn's process given up while it initializes", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ initialized });
+  const stop = new AbortController();
+  const prompt = vi.fn(() => "wake");
+  const done = pool.runOnce("watch/a", prompt, stop.signal);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  stop.abort(new Error("The agent was removed"));
+  try {
+    await expect(done).resolves.toEqual({
+      ok: false,
+      error: "The agent was removed",
+    });
+    // Stopped while its initialize write is still held.
+    expect(claudes()[0]?.killed).toBe(true);
+  } finally {
+    release();
+  }
+  await flush();
+  expect(prompt).not.toHaveBeenCalled();
+  expect(claudes()).toHaveLength(1);
+});
+
+it("starts nothing for a one-off turn given up before it runs", async () => {
+  const { pool, claudes } = sessions();
+  const prompt = vi.fn(() => "wake");
+  await expect(
+    pool.runOnce(
+      "timer/a",
+      prompt,
+      AbortSignal.abort(new Error("The agent was removed")),
+    ),
+  ).resolves.toEqual({ ok: false, error: "The agent was removed" });
+  await flush();
+  expect(claudes()).toEqual([]);
+  expect(prompt).not.toHaveBeenCalled();
+  expect(pool.snapshot()).toEqual([]);
 });
 
 it("starts again with settings saved while a conversation's process started", async () => {
@@ -802,3 +883,41 @@ it("cancels a conversation while its process is opening without ever submitting 
     pool.dispose();
   }
 });
+
+it("marks a message whose process could not start as never delivered", async () => {
+  const launched = Promise.reject(new Error("no settings"));
+  launched.catch(() => undefined);
+  const { pool } = sessions({ launched });
+  await expect(pool.deliver("a", "one", 1)).resolves.toEqual({
+    ok: false,
+    error: "Claude could not start",
+    undelivered: true,
+  });
+});
+
+it.each(["delete", "fresh"])(
+  "marks a message never delivered when starting over from a lost session fails (%s)",
+  async (failing) => {
+    const store = memoryStore();
+    store.set("c/root", { id: "lost", seen: 4, at: 1 });
+    const { pool } = sessions({ store });
+    if (failing === "delete")
+      vi.spyOn(store, "delete").mockRejectedValueOnce(new Error("Disk full"));
+    try {
+      await expect(
+        pool.deliver("c/root", "hello", 9, {
+          fresh: async () => {
+            if (failing === "fresh") throw new Error("Disk full");
+            return "hello again";
+          },
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: "Claude could not start over: Disk full",
+        undelivered: true,
+      });
+    } finally {
+      pool.dispose();
+    }
+  },
+);

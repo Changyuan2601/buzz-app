@@ -83,7 +83,7 @@ export function stageSessionCards(
           const target = parseBuzzLink(url);
           return (
             canonicalSessionCard(
-              `[Session: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "session"}](${url})`,
+              `[Chat: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "session"}](${url})`,
             ) ?? []
           );
         }),

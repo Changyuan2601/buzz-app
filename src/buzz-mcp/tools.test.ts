@@ -28,7 +28,14 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
  * newest first and a page at a time, as the relay does. */
 function fake(
   events: readonly BuzzEvent[] = [],
-  { keep = false }: { keep?: boolean } = {},
+  {
+    keep = false,
+    hidden = () => false,
+  }: {
+    keep?: boolean;
+    /** Leaves an event out of a filter's results before its limit applies. */
+    hidden?: (filter: Filter, item: BuzzEvent) => boolean;
+  } = {},
 ) {
   // With keep, a publication joins the community as a fresh event.
   const kept: BuzzEvent[] = [];
@@ -45,6 +52,7 @@ function fake(
     if (until !== undefined && item.created_at > until) return false;
     if (item.created_at === until && before_id && item.id <= before_id)
       return false;
+    if (hidden(filter, item)) return false;
     return Object.entries(filter).every(([key, value]) => {
       if (key === "kinds") return (value as number[]).includes(item.kind);
       if (key === "ids") return (value as string[]).includes(item.id);
@@ -787,13 +795,23 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
       kind: 39002,
       tags: [
         ["d", room],
+        ["t", "stream"],
         ["p", me, "", "owner"],
         ["p", alice, "", "member"],
       ],
     }),
     profile(alice, "Alice Smith"),
   ];
-  const { client, published } = fake(state);
+  // Like the relay, this leaves system channels out of a filter that neither
+  // opts in with `#t` nor names them by `#d`, before the filter's limit.
+  const { client, published } = fake(state, {
+    hidden: (filter, item) =>
+      item.tags.some((t) => t[0] === "t" && t[1] === "system") &&
+      !(filter["#t"] as string[] | undefined)?.includes("system") &&
+      !(filter["#d"] as string[] | undefined)?.includes(
+        item.tags[0]?.[1] ?? "",
+      ),
+  });
   /** Replaces channel `id`'s state event of `kind` with one tagged anew. */
   const put = (kind: number, id: string, change: (tags: Tags) => Tags) => {
     const at = state.findIndex((e) => e.kind === kind && e.tags[0]?.[1] === id);
@@ -809,17 +827,28 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
     if (refused[target]) throw new Error(refused[target]);
     published.push(template);
     const { kind } = template;
-    if (kind === 9007)
+    if (kind === 9007) {
+      // The relay states the channel's type as the first `t` tag of both
+      // state events, and privacy as a bare `private` tag.
+      const value = (key: string) =>
+        template.tags.find((t) => t[0] === key)?.[1];
+      const type = ["t", value("channel_type") ?? "stream"];
       state.push(
-        event({ kind: 39000, tags: [["d", id], ...template.tags.slice(1)] }),
         event({
-          kind: 39002,
+          kind: 39000,
           tags: [
             ["d", id],
-            ["p", me, "", "owner"],
+            ["name", value("name") ?? ""],
+            type,
+            ...(value("visibility") === "private" ? [["private"]] : []),
           ],
         }),
+        event({
+          kind: 39002,
+          tags: [["d", id], type, ["p", me, "", "owner"]],
+        }),
       );
+    }
     if (kind === 9000 || kind === 9021) {
       const key = kind === 9021 ? me : target;
       const role = template.tags.find((t) => t[0] === "role")?.[1] ?? "member";
@@ -865,6 +894,151 @@ it("lists channels it can join as well as its own", async () => {
   await expect(callTool(client, {}, "channels", {})).resolves.toBe(
     `${room} plans`,
   );
+});
+
+it("lists only the channel types asked for", async () => {
+  const { client, state } = relay();
+  const forum = "7d9a4e3f-5c6b-4d8e-8f1a-2b3c4d5e6f70";
+  state.push(
+    event({
+      kind: 39000,
+      tags: [
+        ["d", forum],
+        ["name", "ideas"],
+        ["t", "forum"],
+      ],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", forum],
+        ["t", "forum"],
+        ["p", me, "", "member"],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [["d", "other"], ["name", "lobby"], ["t", "forum"], ["private"]],
+    }),
+  );
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans\n${forum} ideas (forum)`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"] }),
+  ).resolves.toBe(`${forum} ideas (forum)`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+  ).resolves.toBe(
+    `${forum} ideas (forum)\nother lobby (forum, private, not joined)`,
+  );
+  for (const types of [[], ["channel"], "forum", [7]])
+    await expect(callTool(client, {}, "channels", { types })).rejects.toThrow(
+      "types must list some of stream, forum, dm, workflow, system.",
+    );
+});
+
+it("keeps a roster signed before NIP-CL joined when listing by type", async () => {
+  const { client, state } = relay();
+  // NIP-CL: an older roster event can lack the type tag.
+  const roster = state.findIndex((e) => e.kind === 39002);
+  const old = state[roster] as BuzzEvent;
+  state[roster] = { ...old, tags: old.tags.filter((t) => t[0] !== "t") };
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"] }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+  ).resolves.toBe("No channels.");
+});
+
+it("lists system channels only when asked, as the relay serves them", async () => {
+  const { client, state } = relay();
+  const system = "5b7e2c1d-3a4f-4b6c-8d9e-0f1a2b3c4d5e";
+  const lobby = "6c8f3d2e-4b5a-4c7d-9e0f-1a2b3c4d5e6f";
+  state.push(
+    event({
+      kind: 39000,
+      tags: [["d", system], ["name", "config"], ["t", "system"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", system],
+        ["t", "system"],
+        ["p", me, "", "owner"],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [
+        ["d", lobby],
+        ["name", "ops"],
+        ["t", "system"],
+      ],
+    }),
+  );
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(callTool(client, {}, "channels", { all: true })).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { types: ["system"] }),
+  ).resolves.toBe(`${system} config (system, private)`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["system"], all: true }),
+  ).resolves.toBe(
+    `${system} config (system, private)\n${lobby} ops (system, not joined)`,
+  );
+});
+
+it("creates a system channel", async () => {
+  const { client, published } = relay();
+  const answer = await callTool(client, {}, "channel", {
+    action: "create",
+    name: "config",
+    visibility: "private",
+    type: "system",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(published).toEqual([
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "config"],
+        ["visibility", "private"],
+        ["channel_type", "system"],
+      ],
+    },
+  ]);
+  expect(answer).toBe(`created ${id}`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["system"] }),
+  ).resolves.toBe(`${id} config (system, private)`);
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream", "system"] }),
+  ).resolves.toBe(`${room} plans\n${id} config (system, private)`);
+  await expect(
+    callTool(client, {}, "channel", {
+      action: "create",
+      name: "config",
+      visibility: "private",
+      type: "dm",
+    }),
+  ).rejects.toThrow("type must be stream, forum or system.");
 });
 
 it("finds a channel past the relay's first page, by name and then by ID", async () => {

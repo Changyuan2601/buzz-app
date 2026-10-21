@@ -1,4 +1,9 @@
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
@@ -634,17 +639,24 @@ export function createTabs({
       return () => abort.abort();
     }, [conversation, workspace, working, attempt]);
     return (
-      <div className="grid gap-4">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Refresh
-          </Button>
-        </div>
+      <div className={activityStyles.transcript}>
+        <InlineHeader
+          title="Transcript"
+          actions={
+            <IconButton
+              aria-label="Refresh transcript"
+              title="Refresh transcript"
+              loading={loading}
+              onClick={() => setAttempt((value) => value + 1)}
+              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
+            />
+          }
+        />
+        {read && loading && (
+          <span role="status" className="sr-only">
+            Refreshing transcript…
+          </span>
+        )}
         {!read ? (
           <p role="status" className="m-0">
             Reading the Claude session…
@@ -710,7 +722,7 @@ export function createTabs({
     };
     const { open, show, back } = useOpenTranscript(conversation, label);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -722,38 +734,56 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
-          {recent.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {recent.map((item) => (
-                <li
-                  key={item.key}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(item)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[activity(item.key), new Date(item.at).toLocaleString()]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => show(item)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="m-0 text-body-sm text-subtle">
-              None. A conversation's session starts when the agent is mentioned.
-            </p>
-          )}
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent conversations" />
+          <SettingsGroup layout="form">
+            {recent.length ? (
+              <ul className={activityStyles.list}>
+                {recent.map((item) => (
+                  <li key={item.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(item)}
+                        >
+                          {item.name
+                            ? `#${item.name}`
+                            : item.channelId.slice(0, 8)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            item.root
+                              ? `Thread ${item.root.slice(0, 8)}`
+                              : "Channel",
+                            activity(item.key),
+                            formatItemTimestamp(item.at / 1000, {
+                              withTime: true,
+                            }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(item)}`}
+                        onClick={() => show(item)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="m-0 text-body-sm text-subtle">
+                No other conversations saved in this app yet.
+              </p>
+            )}
+          </SettingsGroup>
         </section>
         {open && (
           <PanelSubview

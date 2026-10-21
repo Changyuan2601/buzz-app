@@ -14,6 +14,9 @@ const nonIconDependencies = new Set([
   "@buzz/author",
   "@deepseek-ai/cordis",
   "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.
+  "@earendil-works/chord", // The Pi host's packages, which pi.sh installs.
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-durable",
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
@@ -21,6 +24,7 @@ const nonIconDependencies = new Set([
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",
+  "@pydantic/genai-prices", // LLM price data for Usage estimates.
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",
@@ -56,6 +60,7 @@ const nonIconDependencies = new Set([
   "nostr-tools",
   "pele",
   "postcss",
+  "proper-lockfile", // The Pi host's lock on each agent's storage.
   "prosemirror-commands",
   "prosemirror-history",
   "prosemirror-model",

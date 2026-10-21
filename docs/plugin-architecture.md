@@ -129,6 +129,14 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+`ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
+the app runs in one of its conversations, as a mention there would, with no
+message. `root` is the thread's root event id (64 hex); leave it out for a Solo
+chat. The agent is told
+the text comes from the plugin, not its owner, and is data, so quote what others
+wrote (comments, check output) rather than phrasing it as instructions. It
+throws when this copy does not run the agent or its queue is full.
+
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
 such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
@@ -255,7 +263,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos and Usage & costs are off by default. Feedback, Diff viewer, Identity
+Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -290,9 +298,13 @@ after destination content is presented. Git browsing uses a narrow host-owned,
 authenticated Git capability in the native host and development broker; plugins cannot choose a signer or
 remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
-pull request, issue, and commit URLs and loads public object details on demand.
-Unsupported URLs retain ordinary link behavior. Private GitHub connections and
-agent execution remain future shared capabilities.
+pull request, issue, and commit URLs and loads object details on demand. Its
+manifest declares `gh api graphql --hostname github.com --input -` as a host
+process, so on desktop it reads and changes pull requests as the user's
+signed-in `gh` account. That allows any query or mutation the account may make;
+the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
+URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
+execution, remain future shared capabilities.
 
 ### Optional channel menu panels
 
@@ -791,7 +803,14 @@ has a 30-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
 
-The import preview lists declarations and marks added or changed access on updates.
+New-install review lists declarations. Update review compares against the installed
+revision and leads with added, changed and removed declarations; changed commands and
+processes include previous and replacement details. Equivalent default limits and
+reordered declarations do not count as changes. Unchanged updates say so explicitly,
+and View unchanged declarations opens a separate view inside the same dialog. Back
+returns to the summary without acquiring or discarding the prepared update.
+Update review names the plugin, keeps the trust warning visible, and avoids nesting
+declarations inside an additional disclosure.
 The install/update action accepts that displayed version; an enabled update may run
 immediately. These declarations help review and catch mistakes. Plugins share the
 main WebView and can invoke app commands directly, so the declarations do not
@@ -863,17 +882,16 @@ HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional bran
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
-folders. Choose one and explicitly install/update; the same preview can install
-another plugin without fetching again. New plugins stay disabled. Updates match
-**manifest ID**, even across repositories, and preserve the saved enabled state:
-an enabled update may activate immediately except in safe mode. The UI warns before
-that action and shows declared host access, including changes. Installed artifacts do
+folders. Choose one and explicitly install. An already-installed plugin offers
+Open in Buzz, which discards the preview and opens its installed details. Choosing
+another source still requires deleting the plugin and adding it again. New plugins
+enable by default, with an opt-out in the review footer; successful installation closes the dialog. Updates match
+**manifest ID** and preserve the saved enabled state:
+an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Manage plugins → Reload while disabled;
-reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Reload rejects changed host declarations; use Load from folder to review and
-install that revision. Enabled plugins must be disabled before reload so memory-only
-plugin state, such as credentials, is not discarded by replacing the running module.
+path for automatic checks in Settings → Plugins → Manage plugins. Changed packages
+offer Update, which opens access review before explicit confirmation, preserving
+the saved enabled state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
 folder plugin while preserving its enabled state. The running desktop observes the
 shared profile catalog every second and disposes the previous revision before
@@ -884,7 +902,47 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
-Git installs and older installs without saved folder metadata must be imported again.
+
+Opening an installed plugin's details checks its remembered folder. A matching
+package shows Up to date in the pane. Local folders are checked every five seconds
+while the pane is open and the app is visible, and again when the app becomes active.
+Checks pause during review or pending management operations. Folder checks resolve
+the saved source by installed plugin ID and return only a revision or build diagnostic,
+without reserving the native import slot. Add can prepare its own preview while a
+folder check is pending. Choosing Update acquires a fresh immutable preview; checks
+never supply installation bytes. A changed package offers
+Update, which opens access review before explicit confirmation. A known update takes
+the prominent action position in both the pane and its list row; Enable/Disable
+moves into their ellipsis menus while Update is available. The row retains the latest
+check result for the installed revision and opens the pane’s review, checking the
+saved source again when the pane reopens. Known Git results remain visible on reopen;
+Git is checked explicitly through a read-only acquisition that never locks or replaces the shared import preview. Choosing
+Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
+The menus also offer Review access, reusing the import review’s disclosures
+for the installed manifest, and Delete with confirmation. These menus appear only for
+manual/external plugins; bundled plugins keep their Enable/Disable control.
+The list row shows no freshness status label. Failed activation shows Retry beside the error for an enabled,
+unpaused plugin. Retry activates the installed revision after its previous cleanup
+finishes; it does not acquire source files, install a package, or change saved state.
+Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
+requires deleting the plugin and adding it again. Git checks remain explicit in the
+pane, using the remembered repository and branch/tag with fresh authorization;
+credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
+and `user@host:owner/repository.git` shorthand, including organization-specific
+usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
+known hosts, with interactive prompts and SSH config disabled. If normal Git uses
+an `IdentityAgent` from SSH config, launch the app with that socket in
+`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+immutable installation preview. The source
+follows the current revision through update and rollback. Rollback requires confirmation
+in Settings and consumes the previous revision: it cannot toggle forward again. The
+enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
+plugin identities/paths leave the installation unchanged. Older Git installs and
+dropped-folder snapshots without saved source information can use Update to choose
+a folder or repository. Only candidates with the installed plugin ID are offered;
+confirmation updates in place, preserves the enabled state and retains rollback
+history under the normal update rules. The selected source is saved with the new
+revision. Git sources remain ineligible for folder Reload.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;
@@ -1042,12 +1100,16 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
-`registerMessage({ id, title, matches, component })` contributes an optional whole
+`registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the
 host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
-ownership. `MessageRenderer` is a host-matched author-preview type, not event
+ownership. `ownsAttachment(message, attachment)` lets the component claim the
+attachments it draws itself: the host leaves those out of its list, keeps the
+others, and lists every one again if the component fails. Claims count only
+while the host draws that component; attachment-only and session-card-only
+messages skip it, so their attachments stay listed. A throwing claim is false. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an
@@ -1219,7 +1281,7 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
+`insertMentions([{ pubkey, name }, …])`, `replaceRecipients`, `insertResource` and `focus` commands,
 and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
 draft order, so a tool can act for whoever the draft addresses. There is one entry
 per mention, so a person mentioned twice appears twice. Recipients the host adds
@@ -1237,6 +1299,8 @@ individual recipients in one undoable edit. It deduplicates batch keys and rejec
 ineligible, or the resulting draft exceeds its text or 32-mention limit. While
 editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
+
+`replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label
@@ -1372,6 +1436,63 @@ media response. Native microphone permissions were exercised in the staging app.
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
+## Decisions
+
+The host composes one `DecisionsService` in `app/services.ts`. Plugins, bundled
+or external, declare `inject = ["decisions"]` and call `ctx.decisions.decide`
+to ask typed questions about a piece of text. One provider answers every
+question in one call:
+
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export async function apply(ctx: Context) {
+  const result = await ctx.decisions.decide({
+    state: "The build is broken on main.",
+    questions: {
+      urgent: { type: "yes_no", instructions: "It needs attention now." },
+      topic: {
+        type: "choice",
+        instructions: "What is it about?",
+        options: { build: "CI or builds", other: "Anything else" },
+      },
+      severity: { type: "score", instructions: "How severe?", levels: ["low", "medium", "high"] },
+    },
+    timeoutMs: 5_000,
+  });
+  if (result.outcome === "answered") {
+    const urgent = result.answers.urgent; // { type: "yes_no", probability }
+  }
+}
+```
+
+A request has 1 to 32 questions, keyed by an answer name of at most 64
+characters. `choice` takes 2 to 255 options (value -> when to pick it); `score`
+takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
+a `choice` answer is the picked value with its confidence; a `score` answer is
+where it falls on the 0-based scale (it can be fractional), with a confidence.
+Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+
+`decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
+this build has no decision provider (`unavailable`), the chosen provider has no
+saved key (`missing_credentials`), the provider refused the key
+(`unauthorized`), the questions are malformed (`invalid_request`), the request
+is over 128 KiB (`input_limit`), or the call times out, fails, or returns
+answers that do not fit the questions. A failed call is not retried and never
+falls back to another provider.
+
+TypeSafe is the only provider. The user manages its key in Settings > Decisions
+API. `ctx.decisions.backend()` names the provider:
+
+| Provider | Credentials |
+|----------|-------------|
+| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+
+Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
+limits and the answer checks, so a plugin sees the same answers whichever
+provider runs. Plugins cannot choose the provider. `state` and every question go
+to the provider, so send only what the decision needs.
 
 ## In-app keyboard shortcuts
 

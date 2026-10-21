@@ -13,7 +13,7 @@ import {
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { ownSolo } from "../solo/labels";
+import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -209,8 +209,7 @@ export function ChannelInventory({
     (channel) =>
       !channel.huddle &&
       !channel.metadataPending &&
-      // Solo lists the viewer's own Solo chats.
-      !ownSolo(channel, queries.viewer) &&
+      inTeamInventory(channel) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||

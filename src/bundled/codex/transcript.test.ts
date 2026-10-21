@@ -198,7 +198,8 @@ it("keeps a send that failed or has not finished as a tool call", () => {
 });
 
 /** An app-server answering `thread/turns/list` as the test says, and
- * `thread/list` from `threads` as Codex searches names. */
+ * `thread/list` from `threads` as Codex searches names: only the default
+ * provider's threads, here none, unless asked for every provider's. */
 function server(
   list: (params: Record<string, unknown>) => Wire,
   threads: { id: string; name: string; updatedAt: number }[] = [],
@@ -237,8 +238,11 @@ function server(
               : wire.method === "thread/list"
                 ? {
                     result: {
-                      data: threads.filter((thread) =>
-                        thread.name.includes(String(params.searchTerm)),
+                      data: threads.filter(
+                        (thread) =>
+                          Array.isArray(params.modelProviders) &&
+                          !params.modelProviders.length &&
+                          thread.name.includes(String(params.searchTerm)),
                       ),
                     },
                   }
@@ -441,8 +445,8 @@ it("merges the threads other builds started, found by tag or by their earlier na
   expect(
     sent.filter((w) => w.method === "thread/list").map((w) => w.params),
   ).toEqual([
-    { searchTerm: tag, limit: 50 },
-    { searchTerm: title, limit: 50 },
+    { searchTerm: tag, modelProviders: [], limit: 50 },
+    { searchTerm: title, modelProviders: [], limit: 50 },
   ]);
   // With no saved thread, the newest one found for it is the conversation's.
   await expect(

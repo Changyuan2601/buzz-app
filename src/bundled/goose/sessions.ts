@@ -26,7 +26,11 @@ export const IDLE_MS = 15 * 60_000;
  * every plugin, so other plugins keep room. */
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
-const LATE: Settled = { ok: false, error: "goose did not start in time" };
+const LATE: Settled = {
+  ok: false,
+  error: "goose did not start in time",
+  undelivered: true,
+};
 const CANCELLED: Settled = {
   ok: false,
   error: "Conversation start was cancelled",
@@ -249,7 +253,7 @@ export class AgentSessions {
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
-      if (this.disposed) return STOPPED;
+      if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
       if (opening) {
@@ -312,15 +316,21 @@ export class AgentSessions {
       if (this.opening.get(key) === starting) this.opening.delete(key);
     };
     starting.then(opened, opened);
+    // Every failure here comes before a turn takes the message in.
+    let started: Awaited<typeof starting>;
     try {
-      const { settled } = await abortable(starting, signal);
-      return settled ? await settled : LATE;
+      started = await abortable(starting, signal);
     } catch (error) {
-      if (this.disposed) return STOPPED;
+      if (this.disposed) return { ...STOPPED, undelivered: true };
       if (signal?.aborted) return LATE;
       console.warn("goose could not start", error);
-      return { ok: false, error: `goose could not start: ${message(error)}` };
+      return {
+        ok: false,
+        error: `goose could not start: ${message(error)}`,
+        undelivered: true,
+      };
     }
+    return started.settled ?? LATE;
   }
 
   /** Stops the turn running in conversation `key`, if any, once a session

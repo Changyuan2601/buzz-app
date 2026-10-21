@@ -25,7 +25,8 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { writeView } from "../../shared/view-state";
+import { linkedDraftKey } from "../../features/solo/linked-chat";
+import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
@@ -48,7 +49,16 @@ function fixture({
   type = "solo",
   target,
   behindSettings = false,
+  people = [],
+  unloaded = false,
+  departed = false,
 }: {
+  /** Other people in the chat besides the viewer and its agent. */
+  people?: readonly string[];
+  /** The people's profiles never load, so nothing confirms they are people. */
+  unloaded?: boolean;
+  /** The people have left by the time a send refreshes the roster. */
+  departed?: boolean;
   /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "solo" | "stream";
@@ -89,7 +99,7 @@ function fixture({
     channelType: type,
     private: true as const,
     creator: placed ? viewer.pubkey : agent,
-    members: [viewer.pubkey, agent],
+    members: [viewer.pubkey, agent, ...people],
   };
   let list = { status: "ready" as const, channels: [channel] };
   const listListeners = new Set<() => void>();
@@ -135,8 +145,18 @@ function fixture({
       muted: [],
     },
   };
+  // A stable snapshot, as useSyncExternalStore requires.
+  const profiles = new Map(
+    unloaded ? [] : people.map((key) => [key, { name: "Teammate" }] as const),
+  );
   const session = {
     ...owner.session,
+    profiles: {
+      ...owner.session.profiles,
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: () => new Promise<never>(() => {}),
+    },
     agentChoices: {
       ...owner.session.agentChoices,
       retain: () => () => {},
@@ -215,7 +235,9 @@ function fixture({
       delivered: vi.fn(async () => {}),
       refresh: vi.fn(async () => {}),
       addAgents: vi.fn(async () => {}),
-      refreshMembership: vi.fn(async () => channel),
+      refreshMembership: vi.fn(async () =>
+        departed ? { ...channel, members: [viewer.pubkey, agent] } : channel,
+      ),
     },
   };
   const snapshot = {
@@ -503,30 +525,121 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
   await user.click(input);
   await user.keyboard("Untagged{Enter}");
   expect(
-    await screen.findByText("Tag an agent to send", {
+    await screen.findByText("Tag a person or agent to send", {
       selector: "[role=alert]",
     }),
   ).toBeVisible();
   expect(f.send).not.toHaveBeenCalled();
 });
 
-it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
+it("requires a tag from a guest alone with agents, who can still file the chat", async () => {
   const f = fixture({ placed: false });
   f.mount();
   const input = await screen.findByRole("textbox", {
     name: "Message your agents",
   });
-  expect(screen.queryByRole("button", { name: "Add workspace" })).toBeNull();
+  // A shared chat is the guest's to file in their own workspaces.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
+  );
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
-  // Untagged, it reaches the chat's agents like any Solo conversation.
-  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
-  expect(f.send.mock.calls[0]?.slice(0, 3)).toEqual([
-    id,
-    "Hello team",
-    [agent],
-  ]);
+  expect(
+    await screen.findByText("Tag a person or agent to send", {
+      selector: "[role=alert]",
+    }),
+  ).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["owner", true],
+  ["guest", false],
+] as const)(
+  "lets the %s talk without a tag once another person is in the chat",
+  async (_, placed) => {
+    const f = fixture({ placed, people: ["c".repeat(64)] });
+    f.mount();
+    const input = await screen.findByRole("textbox", {
+      name: "Message this conversation",
+    });
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.keyboard("Hello team{Enter}");
+    await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Tag a person or agent to send")).toBeNull();
+  },
+);
+
+it.each([
+  ["a person", false],
+  ["a person and an agent", true],
+] as const)(
+  "with queued follow-ups, the owner's send to %s goes out now",
+  async (_, withAgent) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    try {
+      const person = "c".repeat(64);
+      const f = fixture({ people: [person] });
+      const text = withAgent ? "@Teammate @Scout hi" : "@Teammate hi";
+      writeView(f.scope, `draft:${id}`, {
+        text,
+        recipients: [
+          { pubkey: person, name: "Teammate", start: 0, end: 9 },
+          ...(withAgent
+            ? [{ pubkey: agent, name: "Scout", start: 10, end: 16 }]
+            : []),
+        ],
+      });
+      f.mount();
+      const input = await screen.findByRole("textbox", {
+        name: "Message this conversation",
+      });
+      const user = userEvent.setup();
+      await user.click(input);
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+      expect(f.send.mock.calls[0]?.[2]).toEqual(
+        withAgent ? [person, agent] : [person],
+      );
+      expect(
+        screen.queryByText(/no longer available/, { selector: "[role=alert]" }),
+      ).toBeNull();
+    } finally {
+      localStorage.removeItem("buzz-follow-up-behavior.v1");
+    }
+  },
+);
+
+it("keeps the tag requirement while a member's profile has not loaded", async () => {
+  const f = fixture({ people: ["c".repeat(64)], unloaded: true });
+  f.mount();
+  const input = await screen.findByRole("textbox", {
+    name: "Message your agents",
+  });
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard("Hello team{Enter}");
+  expect(
+    await screen.findByText("Tag a person or agent to send", {
+      selector: "[role=alert]",
+    }),
+  ).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
+});
+
+it("refuses an untagged send once the fresh roster has no other person", async () => {
+  const f = fixture({ people: ["c".repeat(64)], departed: true });
+  f.mount();
+  const input = await screen.findByRole("textbox", {
+    name: "Message this conversation",
+  });
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard("Hello team{Enter}");
+  expect(await screen.findByText("Tag an agent to send.")).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -726,6 +839,39 @@ it("opens Chat settings from the heading and restores keyboard focus without nav
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("does not recreate a consumed linked draft on history navigation", () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  f.mount();
+  expect(
+    screen.getByText(
+      "This linked chat draft is unavailable. Start again from its source.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(readView(f.scope, linkedDraftKey(linked), null)).toBeNull();
+});
+
+it("finishes a linked chat across roster updates without appending source prose", async () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  const source = {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
+  };
+  writeView(f.scope, linkedDraftKey(linked), source);
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("textbox"));
+  await user.keyboard("Investigate this");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+  expect(screen.queryByText("Draft unavailable")).toBeNull();
+  expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
+  expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
+  expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
 });
 
 it("opens the existing chat name editor from Rename", async () => {

@@ -45,10 +45,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(query).toBeFocused();
   await query.fill("Beta");
-  const channels = search.locator(
-    '[aria-label="Channels"] [data-search-result]',
-  );
-  await expect(channels.filter({ hasText: /Beta/ })).toHaveAttribute(
+  // Beta is a Solo chat, so it is in the Chats group.
+  const chats = search.locator('[aria-label="Chats"] [data-search-result]');
+  await expect(chats.filter({ hasText: /Beta/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -66,6 +65,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await page.keyboard.press(`${mod}+k`);
   await expect(query).toBeFocused();
   await query.fill("Alpha");
+  const channels = search.locator(
+    '[aria-label="Channels"] [data-search-result]',
+  );
   await expect(channels.filter({ hasText: /Alpha/ })).toHaveAttribute(
     "aria-selected",
     "true",

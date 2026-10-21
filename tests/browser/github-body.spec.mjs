@@ -114,19 +114,16 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     name: "GitHub",
     exact: true,
   });
-  await panel
-    .getByRole("button", { name: "Expand Description", exact: true })
-    .click();
+  await panel.getByRole("button", { name: "Description", exact: true }).click();
   await expect(
     panel.getByRole("heading", { name: "Before", exact: true }),
   ).toBeVisible();
   const videos = panel.locator("video");
   await expect(videos).toHaveCount(2);
   await expect(panel.locator("ol")).toHaveCSS("list-style-type", "decimal");
-  await expect(panel.locator("ul:not(.contains-task-list)")).toHaveCSS(
-    "list-style-type",
-    "disc",
-  );
+  await expect(
+    panel.locator("ul:not(.contains-task-list):not([aria-label])"),
+  ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
     const video = videos.nth(index);
     await panel

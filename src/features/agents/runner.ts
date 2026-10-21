@@ -19,6 +19,7 @@ import {
   type RelayEvent,
 } from "../relay/events";
 import { wake } from "../agent-harness/wakes";
+import { type PluginTrigger, wakeLands } from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
@@ -50,9 +51,9 @@ import {
   classify,
   notRun,
   type ClassifierContext,
-  type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
+import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord, TimerProgress } from "./store";
@@ -182,13 +183,16 @@ type StartJob = {
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
-/** Mentions and watch work queue and are rate limited apart. */
+/** Mentions and watch work queue and are rate limited apart; a plugin's wake
+ * goes with mentions. */
 type Lane = "mention" | "watch";
+const addressed = (trigger: Trigger) =>
+  trigger.type === "mention" || trigger.type === "plugin";
 const laneOf = (trigger: Trigger): Lane =>
-  trigger.type === "mention" ? "mention" : "watch";
+  addressed(trigger) ? "mention" : "watch";
 /** The Interest whose lane runs the attention job, or undefined for a mention. */
 const interestOf = (trigger: Trigger) =>
-  trigger.type === "mention"
+  addressed(trigger)
     ? undefined
     : (trigger.type === "timer" ? trigger.timer : trigger.watch).interest_id;
 const channelOf = (event: RelayEvent) =>
@@ -261,6 +265,11 @@ type Runner = {
   /** Watched events whose channel roster is not confirmed yet, by id: they are
    * matched again once it is (see `RunnerHost.member`). */
   readonly held: Map<string, { event: RelayEvent; channelId?: string }>;
+  /** Notes plugins left for its next turn, grouped by channel and targeted root. */
+  readonly notes: Map<
+    string,
+    readonly { text: string; root: string | undefined }[]
+  >;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
@@ -384,12 +393,13 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
-  /** The classifier, where one can run. */
-  jev(): ClassifierNative | undefined;
-  /** Settles once the saved key's status is known; until then a classified
-   * event waits rather than pass unchecked. */
-  jevStatus(): Promise<void> | undefined;
-  /** What is known about the saved classifier key. */
+  /** The decisions service that runs classifiers, where there is one. */
+  decisions(): Decisions | undefined;
+  /** Settles once the saved TypeSafe key's status is known; until then an
+   * event classified on the `typesafe` backend waits rather than pass
+   * unchecked. */
+  keyStatus(): Promise<void> | undefined;
+  /** What is known about the saved TypeSafe key. */
   classifierKey(): ClassifierKey;
   /** Changes each time the owner saves or removes the key. */
   classifierKeyGeneration(): number;
@@ -557,11 +567,31 @@ export class AgentRunners {
     this.admit(runner);
     void this.drain(runner);
   }
+  /** Queues a plugin's wake in the agent's mention lane. Throws when this
+   * copy does not run the agent, or the lane is full. */
+  wakeIn(pubkey: string, trigger: PluginTrigger) {
+    const runner = this.runners.get(pubkey);
+    if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
+      throw new Error("This copy of Buzz does not run that agent");
+    if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
+      throw new Error("The agent is busy and could not take this wake");
+  }
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */
   runs(pubkey: string) {
     const runner = this.runners.get(pubkey);
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
+  }
+  /** Leaves `text` for the agent's next turn in this conversation, while this copy
+   * runs it. */
+  note(pubkey: string, channelId: string, text: string, root?: string) {
+    const runner = this.runners.get(pubkey);
+    if (!runner || !this.runs(pubkey)) return false;
+    runner.notes.set(channelId, [
+      ...(runner.notes.get(channelId) ?? []),
+      { text, root },
+    ]);
+    return true;
   }
   /** The agent's handle outside any run, while this copy runs it with a
    * type of `pluginId`, not changing it, and its community is live. Each
@@ -727,6 +757,7 @@ export class AgentRunners {
       typing: new Map(),
       transitioning: false,
       held: new Map(),
+      notes: new Map(),
       mayHold: true,
       epoch: 0,
       classifying: 0,
@@ -1647,18 +1678,22 @@ export class AgentRunners {
     event: RelayEvent,
     live: () => boolean,
   ): Promise<ClassifierOutcome | undefined> {
-    // A saved key is not known to be missing until its status is read.
-    await this.host.jevStatus();
-    const jev = this.host.jev();
-    // While the key cannot be read, native is still asked: it may find one.
-    if (!jev || this.host.classifierKey() === "missing") return notRun();
+    const decisions = this.host.decisions();
+    if (!decisions) return notRun();
+    // Only the `typesafe` backend needs the saved key, and it is not known to
+    // be missing until its status is read. While the key cannot be read,
+    // native is still asked: it may find one.
+    if (decisions.backend() === "typesafe") {
+      await this.host.keyStatus();
+      if (this.host.classifierKey() === "missing") return notRun();
+    }
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
     const context = await this.host.context(agent, event);
     // Stopped or changed while its context was looked up: nothing is sent.
     if (!live()) return undefined;
     const generation = this.host.classifierKeyGeneration();
-    const { pass, result } = await classify(jev, {
+    const { pass, result, backend } = await classify(decisions, {
       classifier,
       event,
       author: {
@@ -1667,8 +1702,10 @@ export class AgentRunners {
       },
       context,
     });
-    // The key was removed outside the app since it was read, the service
-    // refused it, or native found one the failed status read could not.
+    // On the `typesafe` backend: the key was removed outside the app since it
+    // was read, the service refused it, or native found one the failed status
+    // read could not. Other backends say nothing about the key.
+    if (backend !== "typesafe") return pass ? result : undefined;
     if (result.outcome === "not-run")
       this.host.setClassifierKey("missing", generation);
     else if (result.outcome === "passed")
@@ -1780,7 +1817,7 @@ export class AgentRunners {
     const agent = this.host.agent(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
-    if (trigger.type === "mention") return true;
+    if (addressed(trigger)) return true;
     if (trigger.type === "watch" || trigger.type === "catch-up")
       return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
@@ -2095,7 +2132,7 @@ export class AgentRunners {
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
       const runOnce = type.runOnce?.bind(type);
-      if (trigger.type === "mention" || !runOnce) return run(delivery);
+      if (addressed(trigger) || !runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
       delivery.workingUntil(
         wake(
@@ -2202,6 +2239,27 @@ export class AgentRunners {
       tabs: () => this.host.tabs(agent),
       saveInstructions: (text: string, channelId: string) =>
         this.host.saveInstructions(agent.pubkey, text, channelId),
+      notes: (channelId: string, root?: string) => {
+        const pending = runner.notes.get(channelId) ?? [];
+        const matches = (note: { root: string | undefined }) =>
+          root === undefined || note.root === root;
+        const notes = pending.filter(matches);
+        const kept = pending.filter((note) => !matches(note));
+        if (kept.length) runner.notes.set(channelId, kept);
+        else runner.notes.delete(channelId);
+        return notes.map((note) => note.text);
+      },
+      restoreNotes: (
+        channelId: string,
+        notes: readonly string[],
+        root?: string,
+      ) => {
+        if (notes.length)
+          runner.notes.set(channelId, [
+            ...notes.map((text) => ({ text, root })),
+            ...(runner.notes.get(channelId) ?? []),
+          ]);
+      },
       attention: this.attention(agent.pubkey),
     });
   }
@@ -2358,11 +2416,21 @@ export class AgentRunners {
     agent: Agent,
   ) {
     work?.started();
-    const event = trigger.type === "mention" ? trigger.event : undefined;
+    // A plugin's wake types in its thread as a mention of the root would, and
+    // one with no thread only in a Solo chat (`wakeLands`): never at its own id.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const event =
+      trigger.type === "mention"
+        ? trigger.event
+        : wake && { id: wake.root ?? wake.id, tags: [["h", wake.channel]] };
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
-    // Saved while it works, so a reload that stops it gives it again.
-    const resumable = event && runner.type?.resumes ? event.id : undefined;
+    // Saved while it works, so a reload that stops it gives it again. A
+    // plugin's wake has no event to read again.
+    const resumable =
+      trigger.type === "mention" && runner.type?.resumes
+        ? trigger.event.id
+        : undefined;
     if (resumable) this.mark(runner.pubkey, resumable, channel ?? "");
     let typing: (() => void) | undefined;
     const beginTyping = () => {
@@ -2371,7 +2439,13 @@ export class AgentRunners {
         // Straight to custody, so pulses stay out of what it wrote.
         async (pulse) => this.require().publish(runner.pubkey, pulse),
         // Where its turn answers, read the same way.
-        this.host.soloChat(agent, channel, runner.controller.signal),
+        this.host
+          .soloChat(agent, channel, runner.controller.signal)
+          .then((flat) => {
+            if (wake && !wakeLands(wake, flat))
+              throw new Error("The wake has no conversation here");
+            return flat;
+          }),
         event,
         channel,
         runner.typing,

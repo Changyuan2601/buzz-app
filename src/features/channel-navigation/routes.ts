@@ -2,7 +2,11 @@ import type { JsonValue, OpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
 
 /** An unsent Solo conversation: nothing exists on the relay until its first send. */
-export type SoloDraft = Readonly<{ project?: string; agent?: string }>;
+export type SoloDraft = Readonly<{
+  project?: string;
+  agent?: string;
+  linked?: string;
+}>;
 
 const agentKey = /^[0-9a-f]{64}$/;
 
@@ -14,11 +18,23 @@ export function soloDraft(
   if (value.kind !== "solo-draft") return;
   if (
     Object.keys(value).some(
-      (key) => key !== "kind" && key !== "project" && key !== "agent",
+      (key) =>
+        key !== "kind" &&
+        key !== "project" &&
+        key !== "agent" &&
+        key !== "linked",
     )
   )
     return;
-  const { project, agent } = value;
+  const { project, agent, linked } = value;
+  if (
+    linked !== undefined &&
+    (typeof linked !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        linked,
+      ))
+  )
+    return;
   if (
     project !== undefined &&
     (typeof project !== "string" || !project || project.length > 256)
@@ -32,6 +48,7 @@ export function soloDraft(
   return {
     ...(project ? { project } : {}),
     ...(agent ? { agent } : {}),
+    ...(linked ? { linked } : {}),
   };
 }
 

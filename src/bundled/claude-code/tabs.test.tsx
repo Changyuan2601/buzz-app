@@ -313,22 +313,28 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   render(<Activity agent={agent()} save={save} />);
   const user = userEvent.setup();
   const rows = screen.getAllByRole("listitem");
-  expect(rows.map((row) => row.textContent)).toEqual([
-    expect.stringContaining("channel · thread eeeeeeee"),
-    expect.stringContaining("channel · channel"),
-  ]);
+  expect(
+    within(rows[0] as HTMLElement).getByRole("button", {
+      name: "View transcript: channel · thread eeeeeeee",
+    }),
+  ).toBeVisible();
+  expect(
+    within(rows[1] as HTMLElement).getByRole("button", {
+      name: "View transcript: channel · channel",
+    }),
+  ).toBeVisible();
   const viewButton = (index: number) =>
-    screen.getAllByRole("button", { name: "View transcript" })[
+    screen.getAllByRole("button", { name: /^View transcript/ })[
       index
     ] as HTMLElement;
   await user.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute(
-      "data-loading",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Refresh transcript" }),
+    ).not.toHaveAttribute("data-loading"),
   );
   expect(screen.getByText("Two files.")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
@@ -361,10 +367,12 @@ it("sets the conversation the profile was opened from apart from recent conversa
   );
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
-    within(opened).getByRole("button", { name: "View transcript" }),
+    within(opened).getByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
-  expect(screen.getByText(/channel · channel/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "View transcript: channel · channel" }),
+  ).toBeVisible();
 });
 
 it("finds the thread's Claude session another build started", async () => {
@@ -390,7 +398,7 @@ it("finds the thread's Claude session another build started", async () => {
   );
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
-    await within(opened).findByRole("button", { name: "View transcript" }),
+    await within(opened).findByRole("button", { name: /^View transcript/ }),
   );
   expect(await screen.findByText("what changed?")).toBeVisible();
 });
@@ -489,7 +497,7 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const Activity = tab(installedType, 1);
   render(<Activity agent={agent()} save={vi.fn()} />);
   expect(
-    screen.getByText(/None\. A conversation's session starts/),
+    screen.getByText("No other conversations saved in this app yet."),
   ).toBeInTheDocument();
 });
 
@@ -1229,4 +1237,28 @@ it("keeps keyboard focus through Claude defaults discovery retries", async () =>
   expect(
     screen.getByRole("button", { name: /^Claude default model:/ }),
   ).toHaveFocus();
+});
+
+it("keeps same-channel recent threads visibly distinguishable", () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: Object.fromEntries(
+        ["e", "f"].map((char) => [
+          `channel/${char.repeat(64)}`,
+          { id: char, seen: 0, at: 1 },
+        ]),
+      ),
+    }),
+  );
+  const Activity = tab(installed().type, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const rows = screen.getAllByRole("listitem");
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => row.textContent)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("Thread eeeeeeee"),
+      expect.stringContaining("Thread ffffffff"),
+    ]),
+  );
 });

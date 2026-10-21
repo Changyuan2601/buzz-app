@@ -98,6 +98,8 @@ import TablerCaretUpIcon from "@tabler/icons-react/dist/esm/icons/IconChevronUp.
 export const CaretUpIcon = defineIcon("tabler", TablerCaretUpIcon);
 import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessageCircle.mjs";
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
+import TablerMessageReplyIcon from "@tabler/icons-react/dist/esm/icons/IconMessageReply.mjs";
+export const MessageReplyIcon = defineIcon("tabler", TablerMessageReplyIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
 import { ChatUnreadArtwork } from "./ChatUnread";
@@ -225,6 +227,8 @@ import TablerMonitorIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceDesk
 export const MonitorIcon = defineIcon("tabler", TablerMonitorIcon);
 import TablerDeviceMobileIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceMobile.mjs";
 export const DeviceMobileIcon = defineIcon("tabler", TablerDeviceMobileIcon);
+import TablerNoteIcon from "@tabler/icons-react/dist/esm/icons/IconNote.mjs";
+export const NoteIcon = defineIcon("tabler", TablerNoteIcon);
 import TablerNotionLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandNotion.mjs";
 export const NotionLogoIcon = defineIcon("tabler", TablerNotionLogoIcon);
 import TablerPaletteIcon from "@tabler/icons-react/dist/esm/icons/IconPalette.mjs";

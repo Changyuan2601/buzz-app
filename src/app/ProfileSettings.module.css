@@ -1,19 +1,18 @@
-.preview {
+.editor {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-6);
   min-width: 0;
 }
 
 .previewCopy {
   display: grid;
   gap: var(--space-1);
+  text-align: center;
   min-width: 0;
 }
 
-.preview h3,
-.preview p {
+.previewCopy h3,
+.previewCopy p {
   margin: 0;
   overflow-wrap: anywhere;
 }

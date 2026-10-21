@@ -397,6 +397,7 @@
 }
 
 .requestWindow {
+  --profile-backdrop-mask: linear-gradient(to bottom, black, 25%, transparent);
   position: relative;
   isolation: isolate;
   overflow: hidden;

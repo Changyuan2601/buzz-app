@@ -144,6 +144,7 @@ export function createChannelStore(
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
       signingAuthority: transport?.archiveAuthority,
+      agentOwner: directory.queries.owner,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
@@ -432,6 +433,7 @@ export function createChannelStore(
         profiling,
         clock,
         transport?.archiveAuthority,
+        directory.queries.owner,
       ),
       channelId,
       snapshot: idleWindow(channelId),
@@ -649,7 +651,9 @@ export function createChannelStore(
       head.rows,
       priority === "background" && intent !== channelId ? channelId : undefined,
     ).then(() => {
-      if (generation === epoch) save(channelId, head, savedProfiles);
+      const current = heads.peek(channelId);
+      if (generation === epoch && current?.events === head.events)
+        save(channelId, current, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
     return head;
@@ -2494,6 +2498,28 @@ export function createChannelStore(
     (local?.snapshot() ?? []).map((item) => [item.event.id, item]),
   );
   const unsubscribeProfiles = directory.queries.subscribe(() => {
+    if (disposed || !transport) return;
+    for (const [id, head] of heads.entries())
+      heads.set(id, {
+        ...head,
+        rows: Object.freeze(
+          foldChannelMessages(id, transport.relayAuthor, head.events),
+        ),
+      });
+    for (const [id, tail] of tails.entries()) {
+      const next = {
+        ...tail,
+        preview: messagePreview(
+          foldChannelMessages(id, transport.relayAuthor, [
+            ...(heads.peek(id)?.events ?? []),
+            ...tail.events,
+          ]),
+        ),
+      };
+      tails.set(id, next, tailBytes(next));
+    }
+    for (const state of windows.values()) setWindow(state, {});
+    setList(list);
     if (discoveryObserved) saveDiscovery();
   });
   const unsubscribeLocal = local?.subscribe(() => {

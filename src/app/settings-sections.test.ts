@@ -32,10 +32,6 @@ const cards = [
   card("other/groups"),
   card("example/membership", { section: "administration" }),
   card("example/hosted", { group: "Communities" }),
-  card("buzz.agents/jev-classifier", {
-    group: "Plugins",
-    title: "Jev classifier",
-  }),
   card("block.hosted-communities/hosted", {
     group: "Plugins",
     title: "Builderlab hosting",
@@ -52,6 +48,7 @@ const app = [
   "notifications",
   "shortcuts",
   "agents",
+  "decisions",
   "buzz.channels/templates",
   "updates",
   ...(developerMode ? ["developer"] : []),
@@ -60,7 +57,6 @@ const plugins = [
   "plugins",
   "block.builderlab/login",
   "block.hosted-communities/hosted",
-  "buzz.agents/jev-classifier",
 ];
 const outline = (model: ReturnType<typeof settingsSections>) =>
   model.groups.map((group) => [

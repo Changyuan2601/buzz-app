@@ -457,6 +457,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",
+      "glass (proposed): frosted action over profile artwork",
       "size: caption (32px, caption text) | inline | xs | sm | md (default) | lg",
       "medium leading icon + label: 12px leading / 16px trailing inset (proposed)",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",

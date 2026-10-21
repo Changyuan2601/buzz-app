@@ -1,7 +1,7 @@
 // While an agent this app runs works on a mention, it shows as typing there to
 // everyone in the channel, on every device: the owner's others and teammates'.
 // On this device the agent's activity takes the place of its typing.
-import type { RelayEvent } from "../relay/events";
+import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { AgentEventTemplate } from "./native";
 
@@ -28,7 +28,7 @@ export type Pulses = Map<string, { turns: number; stop: () => void }>;
 export function pulseTyping(
   publish: (event: AgentEventTemplate) => Promise<unknown>,
   topLevel: Promise<boolean>,
-  event: RelayEvent | undefined,
+  event: Pick<EventData, "id" | "tags"> | undefined,
   channelId: string,
   pulses: Pulses,
 ): () => void {

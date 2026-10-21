@@ -377,14 +377,15 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
-        messageAction={
+        messageAction={(variant) => (
           <AgentMessageButton
+            variant={variant}
             pubkey={selected.pubkey}
             relay={relay}
             navigator={navigator}
             navigation={navigation}
           />
-        }
+        )}
         key={selected.pubkey}
         agents={agents}
         agent={selected}

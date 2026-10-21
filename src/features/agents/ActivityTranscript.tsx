@@ -11,6 +11,7 @@ import type {
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import {
   BulbIcon,
+  CaretRightIcon,
   ChatCircleIcon,
   DotsThreeIcon,
   EyeIcon,
@@ -72,7 +73,7 @@ function Stamp({ item }: { item: TranscriptItem }) {
 export function duration(ms: number) {
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
   const minutes = Math.floor(ms / 60_000);
-  return `${minutes}m${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}s`;
+  return `${minutes}m ${Math.floor((ms % 60_000) / 1000)}s`;
 }
 const toolName = (item: ToolItem) => line(item.title) || "tool";
 /** The first location, unless the adapter's title already names it. */
@@ -80,7 +81,7 @@ const toolPath = (item: ToolItem) =>
   item.paths[0] && !item.title.includes(item.paths[0]) ? item.paths[0] : "";
 const thread = (turn: TranscriptTurn) =>
   turn.threadRootId === null
-    ? "Channel conversation"
+    ? ""
     : turn.threadRootId
       ? `Thread ${turn.threadRootId.slice(0, 8)}`
       : "Thread unknown";
@@ -137,6 +138,7 @@ function Turn({
   const facts = [
     turn.endedAt ? duration(turn.endedAt - turn.startedAt) : "",
     thread(turn),
+    ...turn.config,
     turn.source === "heartbeat" ? "heartbeat" : "",
     turn.newSession ? "new session" : "",
     turn.stopReason ?? "",
@@ -151,17 +153,18 @@ function Turn({
         known(turn.startedAt) ? `Turn ${time(turn.startedAt)}` : "Turn"
       }
     >
-      <p className={`text-body-sm ${styles.session}`}>
-        {[
-          "Turn",
-          known(turn.startedAt) &&
-            formatItemTimestamp(turn.startedAt / 1000, { withTime: true }),
-          ...turn.config,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
-      </p>
       <header className={`text-body-sm ${styles.turnHeader}`}>
+        {known(turn.startedAt) && (
+          <>
+            <time
+              dateTime={new Date(turn.startedAt).toISOString()}
+              title={new Date(turn.startedAt).toLocaleString()}
+            >
+              {formatItemTimestamp(turn.startedAt / 1000, { withTime: true })}
+            </time>
+            {" · "}
+          </>
+        )}
         <span data-state={turn.error ? "error" : state}>{status}</span>
         {facts.map((fact) => (
           <span key={fact}> · {fact}</span>
@@ -201,14 +204,20 @@ function Sections({
   sections: readonly { tag: string; body: string }[];
 }) {
   return (
-    <details>
-      <summary className="text-body-sm text-secondary">
-        {title} · {sections.length} sections
+    <details className={styles.context}>
+      <summary className="text-body-sm text-subtle">
+        <CaretRightIcon size={14} aria-hidden="true" />
+        <span>
+          {title} · {sections.length} sections
+        </span>
       </summary>
       {sections.map((section, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
         <details key={index} className={styles.section}>
-          <summary className="text-body-sm">{section.tag}</summary>
+          <summary className="text-body-sm text-subtle">
+            <CaretRightIcon size={14} aria-hidden="true" />
+            <span>{section.tag}</span>
+          </summary>
           <pre className={styles.pre}>{section.body}</pre>
         </details>
       ))}

@@ -1,6 +1,6 @@
 import type { ChannelMessage } from "./contracts";
 import type { EventData } from "./events";
-import { collapseHuddleCards, foldMessages } from "./fold";
+import { collapseHuddleCards, foldMessages, messageAuthor } from "./fold";
 import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
 
@@ -15,6 +15,7 @@ export class MessageProjection {
   private overlays = new Map<string, Set<string>>();
   private messages = new Map<string, ChannelMessage>();
   private deliveries = new Map<string, OutgoingEvent>();
+  private owners = new Map<string, string | undefined>();
   private rows: readonly ChannelMessage[] = Object.freeze([]);
   constructor(
     private channelId: string,
@@ -22,6 +23,7 @@ export class MessageProjection {
     private profiling: RelayProfiler,
     private clock = new MessageClock(),
     private signingAuthority?: string,
+    private agentOwner?: (pubkey: string) => string | undefined,
   ) {}
   snapshot() {
     return this.rows;
@@ -33,6 +35,16 @@ export class MessageProjection {
     const next = new Map(events.map((event) => [event.id, event]));
     const deliveries = new Map(operations.map((item) => [item.event.id, item]));
     const affected = new Set<string>();
+    for (const event of events) {
+      if (!messageKind(event.kind)) continue;
+      const owner = this.agentOwner?.(
+        messageAuthor(event, this.signingAuthority),
+      );
+      if (this.owners.get(event.id) !== owner) affected.add(event.id);
+      this.owners.set(event.id, owner);
+    }
+    for (const id of this.owners.keys())
+      if (!next.has(id)) this.owners.delete(id);
     const targets = (event: EventData) =>
       messageKind(event.kind)
         ? [event.id]
@@ -114,6 +126,7 @@ export class MessageProjection {
                     {
                       collapseHuddles: false,
                       signingAuthority: this.signingAuthority,
+                      agentOwner: this.agentOwner,
                     },
                   )[0]
                 : undefined;

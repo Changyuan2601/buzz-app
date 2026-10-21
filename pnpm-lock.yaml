@@ -40,6 +40,9 @@ importers:
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
+      '@pydantic/genai-prices':
+        specifier: 0.1.13
+        version: 0.1.13
       '@tabler/icons':
         specifier: 3.46.0
         version: 3.46.0
@@ -486,6 +489,11 @@ packages:
 
   '@playwright/test@1.63.0':
     resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  '@pydantic/genai-prices@0.1.13':
+    resolution: {integrity: sha512-kKzGgPFJmKK/muihOFYDtuS8PXYliRFFYWDfzwDFy7bOgyZUnEnDXpBZpo4eT2aM8bz3bXvO50F8AhFSKvMxlw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2345,6 +2353,8 @@ snapshots:
   '@playwright/test@1.63.0':
     dependencies:
       playwright: 1.63.0
+
+  '@pydantic/genai-prices@0.1.13': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     optional: true

@@ -581,3 +581,41 @@ it("markRead false reaches the reader, and a restored tab does not reveal again"
   );
   expect(body).toHaveAttribute("data-target", "post");
 });
+
+it("lets the tab supply Solo chat identity without repeating a visible heading", () => {
+  const channel = {
+    id: "beta",
+    name: "Poem explanation",
+    channelType: "solo" as const,
+  };
+  const snapshot = { status: "ready", channels: [channel] };
+  const idle = () => () => {};
+  const profiles = new Map();
+  const session = {
+    channels: { list: () => snapshot, subscribeList: idle },
+    profiles: { snapshot: () => profiles, subscribe: idle },
+    agentChoices: { snapshot: () => undefined, subscribe: idle },
+  } as unknown as RelaySession;
+  render(
+    <ConversationTab
+      tab={{ id: "chat", kind: "conversation", channelId: "beta" }}
+      channel={channel}
+      session={session}
+      scope="tab-title-test"
+      openLink={() => false}
+      canOpenLink={() => false}
+      openThread={() => {}}
+      close={() => {}}
+      active
+      visit={false}
+    />,
+  );
+  const conversation = screen.getByRole("region", {
+    name: "Conversation in Poem explanation",
+  });
+  expect(
+    within(conversation).queryByRole("heading", { name: "Poem explanation" }),
+  ).toBeNull();
+  expect(within(conversation).getByText("Conversation content")).toBeVisible();
+  expect(within(conversation).getByText("Composer content")).toBeVisible();
+});

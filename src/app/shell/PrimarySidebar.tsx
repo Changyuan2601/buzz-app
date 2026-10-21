@@ -26,8 +26,9 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
-import { ownSolo } from "../../features/solo/labels";
 import type { ChannelList } from "../../features/relay/contracts";
+import type { ContributionReader } from "../../features/conversation/contracts";
+import type { ChatIcon } from "../../features/conversation/service";
 
 const noSubscription = () => () => {};
 
@@ -42,6 +43,7 @@ type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -115,11 +117,7 @@ function ScopedSidebar({
     soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? conversationDestination(
-          channelList,
-          target.channelId,
-          connection.session?.viewer,
-        )
+      ? conversationDestination(channelList, target.channelId)
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? isSoloRoute(target.route?.params)
           ? "solo"
@@ -219,6 +217,7 @@ function ScopedSidebar({
                       scope={scope}
                       navigator={props.navigator}
                       target={props.target}
+                      chatIcons={props.chatIcons}
                     />
                   </section>
                   <div
@@ -265,12 +264,8 @@ function ScopedSidebar({
 }
 
 /** Unknown until the channel list can say; a channel outside it is Team's. */
-function conversationDestination(
-  list: ChannelList | undefined,
-  id: string,
-  viewer: string | undefined,
-) {
+function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
-  return ownSolo(channel, viewer) ? "solo" : "team";
+  return channel?.channelType === "solo" ? "solo" : "team";
 }

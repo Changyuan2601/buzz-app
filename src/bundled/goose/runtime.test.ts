@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BuzzClient } from "../../buzz-mcp/client";
+import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
@@ -9,6 +9,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./goose-testing";
+import { AgentSessions } from "./sessions";
 import {
   DEFAULT_CONFIG,
   GooseRuntime,
@@ -67,6 +68,12 @@ function setup(
     /** The channel's Canvas. */
     canvas?: string;
     repositories?: (scope: string | undefined) => string;
+    /** The owner session's native memory read. */
+    memoryRead?: (
+      pubkey: string,
+      signal: AbortSignal,
+      slug?: string,
+    ) => Promise<Memories>;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -98,7 +105,10 @@ function setup(
   ];
   const session = {
     read,
-    agentMemories: { open: vi.fn(() => memories) },
+    agentMemories: {
+      open: vi.fn(() => memories),
+      ...(options.memoryRead ? { read: options.memoryRead } : {}),
+    },
     channels: {
       list: () => ({
         channels,
@@ -125,10 +135,12 @@ function setup(
       ),
     },
   };
+  // A reconnect is a new session to the same community.
+  let connected = session;
   const relay = {
     snapshot: () => ({
       status: "ready",
-      session,
+      session: connected,
       viewer: alice,
       scope: `https://goose.example:${alice}`,
     }),
@@ -160,10 +172,11 @@ function setup(
       };
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
+    remember: vi.fn(async () => {}),
   };
-  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+  const run = (trigger: Delivery["trigger"], extra: Partial<Delivery> = {}) =>
     runtime.run({
-      trigger: { type: "mention", event },
+      trigger,
       channelId: channel,
       agent,
       config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
@@ -171,6 +184,8 @@ function setup(
       workingUntil: () => undefined,
       ...extra,
     } as unknown as Delivery);
+  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+    run({ type: "mention", event }, extra);
   const goose = () => fake.geese.find((process) => process.turns.length);
   const runOnce = (key: string, prompt: string) =>
     runtime.runOnce({
@@ -189,6 +204,7 @@ function setup(
     runtime,
     channels,
     deliver,
+    run,
     runOnce,
     fake,
     goose,
@@ -196,6 +212,9 @@ function setup(
     read,
     readFile,
     memoryOpen: session.agentMemories.open,
+    reconnect: () => {
+      connected = { ...session };
+    },
   };
 }
 
@@ -513,44 +532,98 @@ describe("GooseRuntime", () => {
   });
 });
 
+/** A goose turn calling the Buzz tools, whose native memory reads each wait
+ * for the test to answer them. */
+async function memoryTurn() {
+  const reads: { slug?: string; answer(body: string): void }[] = [];
+  const memoryRead = vi.fn(
+    (_pubkey: string, _signal: AbortSignal, slug?: string) =>
+      new Promise<Memories>((done) =>
+        reads.push({
+          ...(slug === undefined ? {} : { slug }),
+          answer: (body) =>
+            done({
+              entries: [{ slug: slug ?? "core", body, createdAt: 1 }],
+              partial: false,
+            }),
+        }),
+      ),
+  );
+  const turn = setup({ hold: true, memoryRead });
+  await turn.deliver(message("1", "@Gander remember"));
+  await flush(100);
+  const process = turn.goose();
+  const sessionId = process?.turns[0]?.sessionId ?? "";
+  const call = async (name: string, args: Record<string, unknown>) =>
+    (await process?.mcp(sessionId, "tools/call", { name, arguments: args }))
+      ?.result as { content: { text: string }[]; isError?: boolean };
+  const text = (reply: ReturnType<typeof call>) =>
+    reply.then((result) => result.content[0]?.text);
+  return { ...turn, reads, memoryRead, call, text };
+}
+
 describe("goose memory reads", () => {
+  it("does not share a read with a replacement connection", async () => {
+    const { reads, memoryRead, call, text, reconnect } = await memoryTurn();
+    const before = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
+    reconnect();
+    const after = text(call("mem_get", { slug: "core" }));
+    // The new connection reads for itself, even while the old read waits.
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
+    reads[1]?.answer("as the new connection");
+    reads[0]?.answer("as the old connection");
+    await expect(after).resolves.toBe("as the new connection");
+    await expect(before).resolves.toBe("as the old connection");
+  });
+
   it("does not share a read that started before a write", async () => {
-    const pending: ((body: string) => void)[] = [];
-    const read = vi.fn(
-      () =>
-        new Promise<{ entries: { slug: string; body: string }[] }>((done) =>
-          pending.push((body) => done({ entries: [{ slug: "core", body }] })),
-        ),
-    );
-    const relay = {
-      snapshot: () => ({
-        status: "ready",
-        session: { agentMemories: { read } },
-      }),
-    } as unknown as RelayData;
-    const runtime = new GooseRuntime(
-      {} as Host,
-      () => relay,
-      async () => null,
-    ) as unknown as {
-      memories(pubkey: string, slug?: string): Promise<unknown>;
-      forgetMemories(pubkey: string): void;
-    };
-    const before = runtime.memories(self, "core");
-    runtime.forgetMemories(self);
-    const after = runtime.memories(self, "core");
-    expect(read).toHaveBeenCalledTimes(2);
-    pending[0]?.("old");
-    await expect(before).resolves.toEqual({
-      entries: [{ slug: "core", body: "old" }],
-    });
+    const { agent, reads, memoryRead, call, text } = await memoryTurn();
+    const before = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
+    const saved = text(call("mem_set", { slug: "notes", text: "new" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
+    reads[1]?.answer("old notes");
+    await expect(saved).resolves.toBe("saved");
+    expect(agent.remember).toHaveBeenCalledWith("mem/notes", "new", 1);
+    const after = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
+    reads[0]?.answer("before the write");
+    await expect(before).resolves.toBe("before the write");
     // The old read finishing must not drop the newer one.
-    void runtime.memories(self, "core");
-    expect(read).toHaveBeenCalledTimes(2);
-    pending[1]?.("new");
-    await expect(after).resolves.toEqual({
-      entries: [{ slug: "core", body: "new" }],
+    const later = text(call("mem_get", { slug: "core" }));
+    reads[2]?.answer("after the write");
+    await expect(after).resolves.toBe("after the write");
+    await expect(later).resolves.toBe("after the write");
+    expect(memoryRead).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a shared read for the others when one caller stops waiting", async () => {
+    const { reads, memoryRead, call, text } = await memoryTurn();
+    vi.useFakeTimers();
+    // AbortSignal.timeout runs on real time; put it on the fake clock.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("", "TimeoutError")),
+        ms,
+      );
+      return controller.signal;
     });
+    try {
+      const first = call("mem_get", { slug: "core" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const second = text(call("mem_get", { slug: "core" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      // The first caller's own bound passed; the read it started goes on.
+      await expect(first).resolves.toMatchObject({ isError: true });
+      reads[0]?.answer("shared");
+      await expect(second).resolves.toBe("shared");
+      expect(memoryRead).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 
   it("gives a tool the partial listing a slow native read answers", async () => {
@@ -622,6 +695,158 @@ function slowMemories(viewer: string) {
     () => true,
   ).capability;
 }
+
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's session, as the plugin's and not a message", async () => {
+  const root = message("1", "@Gander watch my PR");
+  const f = setup();
+  await f.deliver(root);
+  await flush(100);
+  await f.run(pluginWake(root.id));
+  await flush(100);
+  const goose = f.goose();
+  expect(goose?.turns).toHaveLength(2);
+  expect(goose?.turns[1]?.sessionId).toBe(goose?.turns[0]?.sessionId);
+  const text = goose?.turns[1]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain("neither your owner nor anyone in the channel");
+  expect(text).toContain("CI failed: lint");
+  expect(text).not.toContain("<buzz-event");
+  expect(text).not.toContain(WAKE_ID);
+});
+
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const root = "1".repeat(64);
+  const f = setup({ hold: true });
+  await f.run(pluginWake(root));
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags).toContainEqual(["e", root, "", "reply"]);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const ignored = vi.fn();
+  const stream = setup();
+  await stream.run(pluginWake(), { ignored });
+  await flush(100);
+  expect(ignored).toHaveBeenCalled();
+  expect(stream.goose()).toBeUndefined();
+  const solo = setup({ solo: new Set([channel]) });
+  await solo.run(pluginWake());
+  await flush(100);
+  const text = solo.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).not.toContain(WAKE_ID);
+});
+
+it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
+  const f = setup();
+  const notes = vi.fn((at: string) =>
+    at === channel ? ["(I interrupted your reply)"] : [],
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toMatch(
+    /\n\n\(I interrupted your reply\)$/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith(channel, "1".repeat(64));
+});
+
+it.each([false, true])(
+  "hands a turn the notes plugins left while it was being prepared, and keeps them for the next when it is cancelled first (cancelled: %s)",
+  async (cancelled) => {
+    const f = setup();
+    const pending: Record<string, string[]> = {};
+    const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+    const note = () => {
+      pending[channel] = ["(I interrupted your reply)"];
+    };
+    // One left before a cancelled turn stays for the next.
+    if (cancelled) note();
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.read.mockImplementationOnce(async () => {
+      await reading;
+      return [];
+    });
+    const controller = new AbortController();
+    const done = f.deliver(
+      message("1", "@Gander go on", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      }),
+      {
+        agent: { ...f.agent, notes },
+        signal: controller.signal,
+      } as unknown as Partial<Delivery>,
+    );
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+    if (cancelled) controller.abort();
+    else note();
+    release();
+    if (cancelled) {
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(pending[channel]).toEqual(["(I interrupted your reply)"]);
+      return;
+    }
+    await done;
+    await flush(100);
+    expect(f.goose()?.turns[0]?.text).toMatch(
+      /\n\n\(I interrupted your reply\)$/,
+    );
+    expect(pending[channel]).toEqual([]);
+  },
+);
+
+it("keeps the notes of a turn goose never started for the next, ahead of newer ones", async () => {
+  const f = setup();
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  vi.spyOn(AgentSessions.prototype, "deliver").mockImplementationOnce(
+    async () => {
+      pending[channel] = ["(newer)"];
+      return {
+        ok: false,
+        error: "goose did not start in time",
+        undelivered: true,
+      };
+    },
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes, restoreNotes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)", "(newer)"]);
+});
 
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });

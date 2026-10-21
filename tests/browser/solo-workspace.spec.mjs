@@ -444,6 +444,12 @@ test.describe("reading", () => {
     const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
     const beta = sidebar.locator(`[data-solo-channel-id="${other}"]`);
     await alpha.click();
+    // Leaving the draft retires its "New chat" row, which lifts Beta under the
+    // still pointer. Hover starts on pointer entry, so leave and re-enter.
+    await expect(
+      sidebar.getByRole("button", { name: "New chat", exact: true }),
+    ).toHaveCount(0);
+    await page.mouse.move(0, 0);
     await expect(bold(beta)).toHaveCount(1);
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
@@ -580,7 +586,7 @@ test.describe("personal recipients", () => {
       await page
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", {
-          name: `Open Session: ${other.slice(0, 8)}`,
+          name: "Open Chat: Beta",
           exact: true,
         })
         .click();

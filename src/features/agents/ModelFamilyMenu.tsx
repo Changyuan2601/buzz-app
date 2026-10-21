@@ -94,7 +94,9 @@ export function ModelFamilyMenu({
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
-            {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            <span className="buzz-select-leading" aria-hidden="true">
+              {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            </span>
             {/* Select's value text: only the name ellipsizes, not Default. */}
             <span className="buzz-select-value-text">
               <span className="buzz-select-value">{selected.label}</span>

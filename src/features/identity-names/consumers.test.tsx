@@ -100,6 +100,7 @@ function fixture() {
       listeners.delete(listener);
     };
   };
+  const visibility = { status: "ready" as const, hidden: [] };
   const session = {
     presence: {
       status: () => presenceStatus,
@@ -131,6 +132,7 @@ function fixture() {
     },
     agentActivity: { snapshot: () => activity, subscribe },
     directMessages: { people: async () => ({ people: [] }) },
+    channelLifecycle: { snapshot: () => visibility, subscribe },
     typing: { snapshot: () => publicTyping, subscribe },
     thread: () => ({
       snapshot: () => thread,

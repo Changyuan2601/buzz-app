@@ -214,6 +214,11 @@ it("finds the agent's threads by name and reads their rollouts with the manifest
   ];
   const searches: unknown[] = [];
   const spawn = processes((params) => {
+    // As Codex does, list only the default provider's threads, here none,
+    // unless asked for every provider's.
+    const every =
+      Array.isArray(params.modelProviders) && !params.modelProviders.length;
+    if (!every) return { data: [], nextCursor: null };
     searches.push(params.searchTerm ?? params.parentThreadId);
     // One thread a page.
     const start = Number(params.cursor ?? 0);

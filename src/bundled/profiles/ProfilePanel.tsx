@@ -1,3 +1,4 @@
+import { useProfileMessage } from "../../features/profiles/useProfileMessage";
 import { AgentDetails } from "../agents/AgentDetails";
 import { AgentMessageButton } from "../agents/AgentMessageButton";
 import { useAgents } from "../../features/agents/react";
@@ -40,6 +41,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
+import hero from "../../features/profiles/ProfileHero.module.css";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
 import type { Agents } from "../../features/agents/service";
@@ -145,14 +150,15 @@ function OwnedAgentProfile({
           ...(context.rootId && { rootId: context.rootId }),
         }
       }
-      messageAction={
+      messageAction={(variant) => (
         <AgentMessageButton
+          variant={variant}
           pubkey={pubkey}
           relay={relay}
           navigator={navigation}
           navigation={undefined}
         />
-      }
+      )}
     />
   );
 }
@@ -240,13 +246,8 @@ function ProfileDetails({
   const tabHost = usePanelTabHost();
   const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
-  const messageAttempt = useRef<AbortController>(undefined);
-  const [openingMessage, setOpeningMessage] = useState(false);
-  const [messageError, setMessageError] = useState("");
   useEffect(() => {
     if (!tabbed) region.current?.focus();
-    // Target, viewer and community changes remount this view (see key above).
-    return () => messageAttempt.current?.abort();
   }, [tabbed]);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery.
@@ -309,56 +310,28 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
-  // As in New message, a known agent needs this community's ready native control.
-  const messageable = () =>
-    !displayAgent ||
-    session.agentChoices
-      .snapshot()
-      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
-  const canMessage =
-    session.directMessages.available &&
-    !!navigation &&
-    !!viewer &&
-    !!communityOrigin &&
-    viewer !== pubkey &&
-    messageable();
-  async function openMessage() {
-    if (
-      messageAttempt.current ||
-      !navigation ||
-      !viewer ||
-      !communityOrigin ||
-      !messageable()
-    )
-      return;
-    const controller = new AbortController();
-    messageAttempt.current = controller;
-    setOpeningMessage(true);
-    setMessageError("");
-    try {
-      const channelId = await session.directMessages.open(
-        [pubkey],
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
-      void navigation.open({
-        version: 1,
-        kind: "conversation",
-        channelId,
-        scope: { viewer, communityOrigin },
-      });
-    } catch (reason) {
-      if (!controller.signal.aborted)
-        setMessageError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not open the conversation. Try again.",
-        );
-    } finally {
-      messageAttempt.current = undefined;
-      if (!controller.signal.aborted) setOpeningMessage(false);
-    }
-  }
+  const {
+    available: canMessage,
+    opening: openingMessage,
+    error: messageError,
+    open: openMessage,
+  } = useProfileMessage({
+    session,
+    pubkey,
+    viewer,
+    agent: displayAgent,
+    enabled: !!navigation && !!communityOrigin,
+    onOpened(channelId) {
+      if (navigation && viewer && communityOrigin)
+        void navigation.open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          scope: { viewer, communityOrigin },
+        });
+    },
+  });
+
   return (
     <section
       ref={region}
@@ -368,7 +341,8 @@ function ProfileDetails({
       className={styles.root}
     >
       <div className={styles.profileContents}>
-        <div className={styles.identity}>
+        <div className={`${hero.hero} ${hero.panelHero}`}>
+          <ProfileBackdrop src={picture} />
           <div className={styles.portrait}>
             <AgentAvatar
               session={session}
@@ -382,10 +356,10 @@ function ProfileDetails({
               statusBadge={presence === "unknown" ? undefined : presence}
             />
           </div>
-          <div className="min-w-0">
-            <h2 className="text-heading">{name}</h2>
+          <div className={styles.identity}>
+            <h2 className="text-body-lg">{name}</h2>
             {presence !== "unknown" && (
-              <p className="text-body-sm text-secondary">
+              <p className="text-body-sm text-primary">
                 {
                   { online: "Active", away: "Away", offline: "Offline" }[
                     presence
@@ -393,7 +367,25 @@ function ProfileDetails({
                 }
               </p>
             )}
+            <UserStatusDisplay session={session} userId={pubkey} />
           </div>
+          {canMessage && (
+            <div className={hero.actions}>
+              <Button
+                size="sm"
+                variant={picture ? "glass" : "subtle"}
+                loading={openingMessage}
+                onClick={() => void openMessage()}
+              >
+                Message
+              </Button>
+            </div>
+          )}
+          {messageError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {messageError}
+            </p>
+          )}
         </div>
         <Tabs
           value={selectedTab}
@@ -411,21 +403,10 @@ function ProfileDetails({
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
-                  <UserStatusDisplay session={session} userId={pubkey} />
-                  {canMessage && (
-                    <div>
-                      <Button
-                        size="compact"
-                        loading={openingMessage}
-                        onClick={() => void openMessage()}
-                      >
-                        Message
-                      </Button>
-                      {messageError && <p role="alert">{messageError}</p>}
-                    </div>
-                  )}
                   {profile?.about && (
-                    <p className={styles.about}>{profile.about}</p>
+                    <SettingsGroup layout="form">
+                      <p className={styles.about}>{profile.about}</p>
+                    </SettingsGroup>
                   )}
                   {plugin && agents && plugin.agent.place !== "elsewhere" && (
                     <div>
@@ -437,30 +418,36 @@ function ProfileDetails({
                     </div>
                   )}
                   <div className={styles.publicKey}>
-                    <div className={styles.keyHeading}>
-                      <h3 className="text-body">Public key</h3>
-                      <Button
-                        size="compact"
-                        variant="ghost"
-                        aria-label="Copy npub"
-                        onClick={() => {
-                          setCopyStatus("");
-                          void Promise.resolve()
-                            .then(() => navigator.clipboard.writeText(npub))
-                            .then(
-                              () => setCopyStatus("Public key copied."),
-                              () =>
-                                setCopyStatus(
-                                  "Could not copy. Select the public key above to copy it.",
-                                ),
-                            );
-                        }}
-                      >
-                        <CopyIcon size={16} aria-hidden="true" />
-                        Copy
-                      </Button>
-                    </div>
-                    <code className="font-mono text-mono">{npub}</code>
+                    <SettingsGroup>
+                      <PreferenceRow
+                        title="Public key"
+                        subtitle={
+                          <code className={styles.keyValue}>{npub}</code>
+                        }
+                        trailing={
+                          <Button
+                            size="compact"
+                            variant="ghost"
+                            aria-label="Copy npub"
+                            onClick={() => {
+                              setCopyStatus("");
+                              void Promise.resolve()
+                                .then(() => navigator.clipboard.writeText(npub))
+                                .then(
+                                  () => setCopyStatus("Public key copied."),
+                                  () =>
+                                    setCopyStatus(
+                                      "Could not copy. Select the public key above to copy it.",
+                                    ),
+                                );
+                            }}
+                          >
+                            <CopyIcon size={16} aria-hidden="true" />
+                            Copy
+                          </Button>
+                        }
+                      />
+                    </SettingsGroup>
                     <span role="status" className={styles.feedback}>
                       {copyStatus}
                     </span>
