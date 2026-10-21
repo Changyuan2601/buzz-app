@@ -2833,6 +2833,14 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-stack-previous] {
   padding-top: var(--space-half);
 }
+/* An agent's card stays with its question, and each question with its card
+   stands apart from the next message. */
+.messageAttachments[data-inline-card] {
+  margin-top: var(--space-1);
+}
+.message:has([data-inline-card]) {
+  padding-bottom: var(--space-3);
+}
 .message .byline {
   padding-inline-start: var(--space-4);
   font-size: var(--text-caption);

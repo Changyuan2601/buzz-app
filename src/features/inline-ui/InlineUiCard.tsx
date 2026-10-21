@@ -163,10 +163,11 @@ function ChoiceForm({
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
   return (
-    <div className={className} data-no-timestamp-hint="">
+    <div className={className} data-inline-card="" data-no-timestamp-hint="">
       <form
         ref={form}
         className={styles.card}
+        data-answered={frozen || undefined}
         aria-label={profile ? "Name and avatar" : "Answer"}
         onSubmit={async (event) => {
           event.preventDefault();

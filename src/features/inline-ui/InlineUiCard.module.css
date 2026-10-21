@@ -4,10 +4,25 @@
   display: grid;
   gap: var(--space-4);
   width: min(100%, 24rem);
-  padding: var(--space-5);
+  padding: var(--space-3);
   background: var(--surface-inset);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-container);
+  transition-property: padding, background-color, border-color;
+  transition-duration: var(--duration-settle);
+  transition-timing-function: var(--easing-settle);
+}
+/* An answered card is just its answer: the frame eases away as the options
+   not chosen close. */
+.card[data-answered] {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
 }
 .choices {
   display: grid;
