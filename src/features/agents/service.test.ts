@@ -6618,7 +6618,7 @@ it("starts Welcome through the claimed runner with app input, target-only signed
     ]);
     expect(held?.agent.name).toBe("Ada");
     expect(held?.prompt).toContain('"firstAgentInThisCommunity":true');
-    expect(held?.prompt).toContain("new Solo chats in this community use you");
+    expect(held?.prompt).toContain("it'll use me by default");
     expect(held).not.toHaveProperty("trigger");
     saveWelcome(setupScope, {
       type: "example/echo",

@@ -129,6 +129,8 @@ export type MessageRowProps = {
   alignViewer?: boolean;
   /** The conversation's newest message: only it can offer live inline UI. */
   latest?: boolean;
+  /** The viewer's reply right after this message, which answers its inline UI. */
+  reply?: string | undefined;
 
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
@@ -193,6 +195,7 @@ function MessageRowContent({
   stackNext = false,
   alignViewer = true,
   latest = false,
+  reply,
 
   mediaMode = "inline",
   mediaSeekTo,
@@ -919,6 +922,17 @@ function MessageRowContent({
                     layout === "timeline" &&
                     !row.threadRootId &&
                     !!session?.messages
+                  }
+                  // A reply typed in the composer starts by tagging the agent.
+                  reply={
+                    profile?.name && reply?.startsWith(`@${profile.name} `)
+                      ? reply.slice(profile.name.length + 2).trim()
+                      : reply
+                  }
+                  author={
+                    profile?.name
+                      ? { text: profile.name, picture: profile.picture }
+                      : undefined
                   }
                   onReply={(answer) =>
                     session?.messages.send(row.channelId, answer, [

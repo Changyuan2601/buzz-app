@@ -372,37 +372,42 @@ export function useWelcomeProfile({
 }): InlineUiHostValue {
   return useMemo(
     () =>
-      !agents || !receipt || receipt.complete
+      !agents || !receipt
         ? {}
-        : {
-            async saveProfile(agent, { name, picture }) {
-              if (agent !== receipt.agent)
-                throw new Error("Welcome changed. Reopen the current setup.");
-              if (
-                name.toLocaleLowerCase() === BUZZ_AGENT_NAME.toLocaleLowerCase()
-              )
-                throw new Error(`Choose a name other than ${BUZZ_AGENT_NAME}.`);
-              signal?.throwIfAborted();
-              await agents.save(agent, { name, picture });
-              signal?.throwIfAborted();
-              if (!setDefaultAgent(scope, agent))
-                throw new Error(
-                  "The default agent could not be saved on this device.",
+        : receipt.complete
+          ? { profileSaved: true }
+          : {
+              async saveProfile(agent, { name, picture }) {
+                if (agent !== receipt.agent)
+                  throw new Error("Welcome changed. Reopen the current setup.");
+                if (
+                  name.toLocaleLowerCase() ===
+                  BUZZ_AGENT_NAME.toLocaleLowerCase()
+                )
+                  throw new Error(
+                    `Choose a name other than ${BUZZ_AGENT_NAME}.`,
+                  );
+                signal?.throwIfAborted();
+                await agents.save(agent, { name, picture });
+                signal?.throwIfAborted();
+                if (!setDefaultAgent(scope, agent))
+                  throw new Error(
+                    "The default agent could not be saved on this device.",
+                  );
+                // Solo turns start from mentions: the chat's composer tags this agent.
+                writeView(
+                  scope,
+                  `draft:${receipt.channelId}`,
+                  followupDraft([{ pubkey: agent, name }]),
                 );
-              // Solo turns start from mentions: the chat's composer tags this agent.
-              writeView(
-                scope,
-                `draft:${receipt.channelId}`,
-                followupDraft([{ pubkey: agent, name }]),
-              );
-              saveWelcome(scope, {
-                ...receipt,
-                complete: true,
-                greeting: "pending",
-              });
-              onSaved();
+                saveWelcome(scope, {
+                  ...receipt,
+                  complete: true,
+                  greeting: "pending",
+                });
+                onSaved();
+              },
             },
-          },
     [agents, scope, receipt, signal, onSaved],
   );
 }

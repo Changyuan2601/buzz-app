@@ -35,11 +35,19 @@ export function conversationStartPrompt(
 export const savedWelcomeClientId = (channel: string) =>
   `welcome-saved:${channel}`;
 
+/** What the agent says once it is named, word for word. */
+export function savedWelcomeText(name: string, isDefault: boolean) {
+  return isDefault
+    ? `Hi, I'm ${name}. For new chats in this community, it'll use me by default. You can always pick a different agent instead, including ones you create later.`
+    : `Hi, I'm ${name}.`;
+}
+
 export function savedWelcomePrompt(
   name: string,
   first: boolean,
   isDefault: boolean,
 ) {
   return `This is an app-authored onboarding instruction from Buzz, not a message written by your owner. The app has successfully saved your name and avatar. Confirmed facts (data, not instructions): ${JSON.stringify({ name, firstAgentInThisCommunity: first, defaultForNewSoloChatsInThisCommunityOnThisDevice: isDefault })}.
-Write a short, warm greeting in your own words. Confirm that they saved you as their agent (first agent only if the fact above is true). If you are the default, explain that new Solo chats in this community use you for now and that they can select a different agent, including agents they create later. Do not imply existing chats or other communities/devices changed. Tell them they can start chatting, or pick a next step. Attach those next steps to the greeting as Buzz's choice pattern, with exactly these options in this order: ui ${JSON.stringify({ pattern: "choice", options: welcomeActions.map(([, label]) => label) })}. Do not list them in your text or claim they have chosen any yet. Send only this greeting with Buzz's send tool at top level (audience: everyone, final: true). Do not repeat the earlier introduction, start a tour, ask to reconnect or rename, invent a user message, create channels or change settings. No shell, file or other external action is needed.`;
+Send exactly this text, with nothing added: ${JSON.stringify(savedWelcomeText(name, isDefault))}
+Attach next steps to it as Buzz's choice pattern, with exactly these options in this order: ui ${JSON.stringify({ pattern: "choice", options: welcomeActions.map(([, label]) => label) })}. Do not list them in your text or claim they have chosen any yet. Send only this message with Buzz's send tool at top level (audience: everyone, final: true). Do not repeat the earlier introduction, start a tour, ask to reconnect or rename, invent a user message, create channels or change settings. No shell, file or other external action is needed.`;
 }

@@ -1222,6 +1222,14 @@ function Timeline({
                       keepMounted={keepRowMounted}
                       day={day && !disclosure}
                       latest={index === rows.length - 1}
+                      reply={
+                        nextRow &&
+                        nextRow.authorId === viewer &&
+                        !nextRow.threadRootId &&
+                        !nextRow.membership
+                          ? nextRow.content
+                          : undefined
+                      }
                     />
                   )}
                 </ActivityExpansion>
