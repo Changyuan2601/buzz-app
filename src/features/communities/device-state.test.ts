@@ -32,6 +32,13 @@ vi.mock("../relay/outbox-storage", () => ({
   purgeOutboxStorage: (scope: string) => record("outbox", scope),
 }));
 
+vi.mock("../artifact-storage/store", () => ({
+  purgeArtifactStorage: (viewer: string, origin: string) =>
+    typeof indexedDB === "undefined"
+      ? Promise.resolve()
+      : record("artifacts", viewer, origin),
+}));
+
 const viewer = "a".repeat(64);
 const other = "b".repeat(64);
 const origin = "https://left.example";
@@ -128,6 +135,7 @@ it("purges the relay's heads, read state and outbox for the exact partition, in 
     ["heads.close"],
     ["read state", `${origin}:${viewer}`],
     ["outbox", `${origin}:${viewer}`],
+    ["artifacts", viewer, origin],
   ]);
 });
 
@@ -144,10 +152,15 @@ it("reports each failed relay store by name, closes heads and still clears the o
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const heads = new Error("heads blocked");
   const reads = new Error("read state blocked");
-  relay.fail.set("heads.clear", heads).set("read state", reads);
+  const artifacts = new Error("artifacts blocked");
+  relay.fail
+    .set("heads.clear", heads)
+    .set("read state", reads)
+    .set("artifacts", artifacts);
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([
     { store: "channel heads", error: heads },
     { store: "read state", error: reads },
+    { store: "artifacts", error: artifacts },
   ]);
   expect(relay.calls.map(([name]) => name)).toEqual([
     "heads",
@@ -155,9 +168,11 @@ it("reports each failed relay store by name, closes heads and still clears the o
     "heads.close",
     "read state",
     "outbox",
+    "artifacts",
   ]);
   expect(warn.mock.calls).toEqual([
     [`Couldn't clear channel heads for ${origin} on this device`, heads],
     [`Couldn't clear read state for ${origin} on this device`, reads],
+    [`Couldn't clear artifacts for ${origin} on this device`, artifacts],
   ]);
 });

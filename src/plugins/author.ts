@@ -91,3 +91,17 @@ export type {
   AgentSession,
   AgentSessions,
 } from "../features/agents/service";
+
+export type { ArtifactStorage } from "../features/artifact-storage/service";
+export type {
+  ArtifactCollection,
+  ArtifactCollectionDefinition,
+  ArtifactEntry,
+  ArtifactIndex,
+  ArtifactPage,
+  ArtifactPageQuery,
+  ArtifactRevision,
+  ArtifactAvailability,
+  SavedArtifact,
+  ArtifactImport,
+} from "../features/artifact-storage/types";
