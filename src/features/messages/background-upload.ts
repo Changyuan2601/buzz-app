@@ -112,7 +112,10 @@ export function sendInBackground(
   owner: string,
   channelId: string,
   files: readonly DraftAttachment[],
-  publish: (uploaded: readonly UploadedAttachment[]) => void | Promise<void>,
+  publish: (
+    uploaded: readonly UploadedAttachment[],
+    signal: AbortSignal,
+  ) => void | Promise<void>,
   recover: (
     files: readonly DraftAttachment[],
     preparationError?: unknown,
@@ -136,7 +139,7 @@ export function sendInBackground(
     try {
       uploaded = await store.prepareForSend(signal);
       signal.throwIfAborted();
-      await publish(uploaded);
+      await publish(uploaded, signal);
       return;
     } catch (error) {
       // Session aborts (access change, cache clear, close) restore like failures.

@@ -1355,6 +1355,12 @@ export class AgentsService extends Service implements Agents {
       activity: localActivity,
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      primaryCurrent: async (agent, event, signal) => {
+        const session = this.bindingOf(agent)?.session;
+        return session?.soloPrimary
+          ? session.soloPrimary.current(event, agent.pubkey, signal)
+          : !event.tags.some(([name]) => name === "primary");
+      },
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),

@@ -14,6 +14,8 @@ import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
 import { SOLO_LABEL } from "./labels";
+import { createSoloPrimary, PRIMARY_LABEL, primaryPin } from "./primary";
+import type { RelayEvent } from "../relay/events";
 import { beginSoloShare, finishSoloShare } from "./share-attempt";
 import { chatConversion } from "./conversion";
 import { ConvertToChannel, canConvertToChannel } from "./ConvertToChannel";
@@ -28,12 +30,13 @@ afterEach(() => {
   cleanup();
   for (const close of dispose.splice(0)) close();
 });
-function setup(solo = true) {
+function setup(solo = true, adopted = false) {
   let clock = 100,
     role = "owner",
     name = "Original",
     visibility = "private";
   let labels = solo ? [SOLO_LABEL, "work"] : ["work"];
+  if (adopted) labels.push(PRIMARY_LABEL);
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent(
       { kind, tags: [["d", id], ...tags], content: "", created_at: clock },
@@ -103,6 +106,84 @@ function setup(solo = true) {
       assign: unfile,
     },
   };
+  const identity = "b".repeat(64);
+  let binding: RelayEvent | undefined;
+  const bindingWrites: RelayEvent[] = [];
+  if (adopted) {
+    const choice = { pubkey: identity, name: "Helper", managed: false };
+    binding = finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        tags: [
+          ["ar", "1"],
+          ["h", id],
+          ["d", "22222222-2222-4222-8222-222222222222"],
+          ["type", PRIMARY_LABEL],
+          ["op", "create"],
+        ],
+        content: JSON.stringify({
+          version: 1,
+          owner: viewer,
+          identity,
+          mode: "automatic",
+          defaults: "harness-default",
+        }),
+      },
+      key,
+    );
+    labels.push(primaryPin(binding.id));
+    session.soloPrimary = createSoloPrimary({
+      viewer,
+      relayAuthor,
+      signal: new AbortController().signal,
+      read: async (filters) =>
+        filters.some((filter) => filter.kinds?.includes(39000))
+          ? [metadata()]
+          : filters.some((filter) => filter.kinds?.includes(39001))
+            ? [record(39001, [["p", viewer, "owner"]])]
+            : binding
+              ? [binding]
+              : [],
+      writer: {
+        sign,
+        publish: async (event) => {
+          expect(labels).not.toContain(SOLO_LABEL);
+          expect(labels).toContain(PRIMARY_LABEL);
+          expect(event.tags).toContainEqual(["op", "create"]);
+          binding = event;
+          bindingWrites.push(event);
+        },
+      },
+      details: details.capability,
+      membership: async () => ({
+        id,
+        name: "Original",
+        creator: viewer,
+        members: [viewer, identity],
+      }),
+      choices: {
+        ensure: () => {},
+        refresh: async () => {},
+        snapshot: () => ({
+          status: "ready",
+          identities: [choice],
+          selectable: [choice],
+          definitions: [],
+          complete: true,
+          pending: false,
+          archives: { status: "ready", archived: [] },
+          templates: {
+            status: "ready",
+            identities: [choice],
+            complete: true,
+            pending: false,
+          },
+        }),
+      },
+      profiles: { snapshot: () => new Map() },
+    });
+  }
   const close = vi.fn();
   const converted = vi.fn();
   const visit = new AbortController();
@@ -117,6 +198,10 @@ function setup(solo = true) {
   );
   return {
     session,
+    bindingWrites,
+    loseBinding: () => {
+      binding = undefined;
+    },
     close,
     convertedCallback: converted,
     unfile,
@@ -525,4 +610,58 @@ it("serializes conversion completion across two mounted forms", async () => {
     });
   }
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+});
+
+it("retains an adopted primary as a signed mention-only binding after removing Solo", async () => {
+  const h = setup(true, true);
+  await ready();
+  fireEvent.click(confirm());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.bindingWrites).toHaveLength(1);
+  expect(JSON.parse(h.bindingWrites[0]?.content ?? "null")).toEqual({
+    version: 1,
+    owner: viewer,
+    identity: "b".repeat(64),
+    mode: "mention-only",
+    defaults: "harness-default",
+  });
+  expect(h.unfile).toHaveBeenCalledOnce();
+});
+
+it("keeps an interrupted adoption in Solo until its owner recovers the binding", async () => {
+  const h = setup(true, true);
+  h.loseBinding();
+  await ready();
+  fireEvent.click(confirm());
+  await screen.findByText(
+    "Recover the primary binding before converting this chat.",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.unfile).not.toHaveBeenCalled();
+});
+
+it("unfiles an already converted chat even when binding carry-forward fails", async () => {
+  const h = setup(true, true);
+  const primary = h.session.soloPrimary;
+  if (!primary) throw new Error("Missing fixture primary capability");
+  h.session.soloPrimary = {
+    ...primary,
+    save: vi.fn().mockRejectedValue(new Error("Binding publication failed")),
+  };
+  await ready();
+  fireEvent.click(confirm());
+  await screen.findByText("Binding publication failed");
+  expect(h.unfile).toHaveBeenCalledWith(id, undefined);
+  expect(h.convertedCallback).not.toHaveBeenCalled();
+});
+
+it("reports unavailable primary connection rather than asking for binding recovery", async () => {
+  const h = setup(true, true);
+  h.session.soloPrimary = undefined;
+  await ready();
+  fireEvent.click(confirm());
+  await screen.findByText(
+    "Chat response settings are unavailable on this connection.",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
 });

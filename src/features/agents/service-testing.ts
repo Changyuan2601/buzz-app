@@ -97,6 +97,12 @@ export function fakeRelay(origin = "https://relay.example.test") {
   /** Each agent's `core` memory as the community holds it. */
   const memories = new Map<string, string>();
   const session = {
+    soloPrimary: {
+      current: vi.fn(
+        async (_event: RelayEvent, _identity: string, _signal: AbortSignal) =>
+          true,
+      ),
+    },
     archives,
     agentMemories: {
       read: vi.fn(async (pubkey: string) => {

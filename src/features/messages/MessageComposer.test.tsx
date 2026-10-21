@@ -44,6 +44,7 @@ import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
+import { createSoloPrimary } from "../solo/primary";
 import { ClaudeProcess } from "../../bundled/claude-code/claude";
 import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
@@ -228,7 +229,9 @@ function mount(
   };
   const channelList = {
     status: "ready" as const,
-    channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
+    channels: [
+      { id: "channel", labels: [], members: [first.pubkey, second.pubkey] },
+    ],
   };
   const rawSession = {
     // Full-session fixture; the detached editor intentionally omits this capability.
@@ -2247,6 +2250,50 @@ it("cancels the newest background send, restores its draft and leaves older send
     "root",
   ]);
   expect(screen.queryByText(/^Uploading/)).toBeNull();
+});
+
+it("cancels a background send during primary revalidation without publishing or losing its draft", async () => {
+  const h = await mountUploadComposer();
+  const gate = deferred<{ recipients: string[] }>();
+  const resolve = vi.fn(async () => ({ recipients: [] as string[] }));
+  resolve.mockImplementationOnce(async () => ({ recipients: [] }));
+  resolve.mockImplementationOnce(() => gate.promise);
+  const session = {
+    ...h.owner.session,
+    soloPrimary: {
+      available: true,
+      load: async () => ({ adopted: true }),
+      resolve,
+    },
+  } as unknown as RelaySession;
+  h.rerender(
+    <MessageComposer
+      session={session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+  );
+  fireEvent.change(h.input(), { target: { value: "Keep my cancelled send" } });
+  attachByPaste(h.input(), attachmentFile());
+  fireEvent.click(h.send());
+  try {
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(async () => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
+    await screen.findByText("Finishing", { exact: true });
+    expect(h.input()).toHaveValue("");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  } finally {
+    await act(async () => gate.resolve({ recipients: [] }));
+  }
+  await waitFor(() =>
+    expect(screen.queryByText("Finishing", { exact: true })).toBeNull(),
+  );
+  await waitFor(() => expect(h.input()).toHaveValue("Keep my cancelled send"));
+  expect(within(h.form()).getByText("notes.txt")).toBeVisible();
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -8190,11 +8237,13 @@ it("queues a tagged agent follow-up while agent choices no longer list it", asyn
 
 it.each([
   "available",
+  "available-unmounted",
   "archived",
   "readOnly",
   "removed",
   "converted",
   "compacting",
+  "primary-replaced",
 ] as const)(
   "revalidates a queued Solo follow-up when the chat is %s at completion",
   async (mode) => {
@@ -8205,6 +8254,7 @@ it.each([
     const listeners = new Set<() => void>();
     let state = "working";
     let members = [first.pubkey];
+    let primaryRevision = "d".repeat(64);
     let activity = snapshot();
     const channel = {
       id: "channel",
@@ -8221,6 +8271,39 @@ it.each([
       session: {
         ...h.session,
         viewer: "viewer",
+        ...(mode === "primary-replaced"
+          ? {
+              soloPrimary: {
+                available: true,
+                load: async () => ({
+                  revision: primaryRevision,
+                  binding: {
+                    version: 1,
+                    owner: "viewer",
+                    identity: first.pubkey,
+                    mode: "automatic",
+                    defaults: "harness-default",
+                  },
+                }),
+                resolve: async (
+                  _channel: string,
+                  _recipients: readonly string[],
+                  _sender: unknown,
+                  signal?: AbortSignal,
+                ) => {
+                  signal?.throwIfAborted();
+                  return {
+                    recipients: [first.pubkey],
+                    primary: {
+                      identity: first.pubkey,
+                      revision: primaryRevision,
+                      targeting: "explicit",
+                    },
+                  };
+                },
+              },
+            }
+          : {}),
         channels: {
           ...h.session.channels,
           list: () => channelList,
@@ -8261,6 +8344,8 @@ it.each([
         ],
       };
     }
+    if (mode === "primary-replaced")
+      await screen.findByRole("button", { name: "Use mentions only" });
     act(() => {
       h.commands().insertMention(first);
       h.commands().insertText("Follow up");
@@ -8277,26 +8362,34 @@ it.each([
         "true",
       );
     }
-    if (mode === "removed") members = [];
+    if (mode === "primary-replaced") primaryRevision = "e".repeat(64);
+    else if (mode === "removed") members = [];
     else if (mode === "converted") {
       channel.channelType = "group";
       h.retarget({ ownSoloConversation: false });
-    } else if (mode !== "available" && mode !== "compacting")
+    } else if (
+      mode !== "available" &&
+      mode !== "available-unmounted" &&
+      mode !== "compacting"
+    )
       channel[mode] = true;
+    if (mode === "available-unmounted") h.unmount();
     act(() => {
       state = "done";
       activity = snapshot();
       for (const listener of listeners) listener();
     });
-    if (mode !== "available") {
+    if (mode !== "available" && mode !== "available-unmounted") {
       await screen.findByText(
         mode === "compacting"
           ? "Wait for compaction to finish, or interrupt it."
-          : mode === "removed"
-            ? "A queued recipient is no longer a member of this chat."
-            : mode === "converted"
-              ? "This Solo chat or its recipients are no longer available."
-              : "This chat is no longer available for sending.",
+          : mode === "primary-replaced"
+            ? "The primary agent changed. Review chat settings and retry."
+            : mode === "removed"
+              ? "A queued recipient is no longer a member of this chat."
+              : mode === "converted"
+                ? "This Solo chat or its recipients are no longer available."
+                : "This chat is no longer available for sending.",
       );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
@@ -8326,7 +8419,8 @@ it.each([
         [],
       ),
     );
-    expect(h.input()).toHaveValue("Keep typing");
+    if (mode !== "available-unmounted")
+      expect(h.input()).toHaveValue("Keep typing");
     expect(
       screen.queryByRole("region", { name: "Queued follow-ups" }),
     ).toBeNull();
@@ -8566,3 +8660,854 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });
+
+it.each(["current", "queued", "mention-only", "replaced-before-publication"])(
+  "resolves implicit primary submission with %s settings without inserting a visible tag",
+  async (mode) => {
+    if (mode === "queued")
+      localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount({}, undefined, "f".repeat(64));
+    const revision = "d".repeat(64);
+    const primary = {
+      identity: first.pubkey,
+      revision,
+      targeting: "implicit" as const,
+    };
+    const state = {
+      revision,
+      binding: {
+        version: 1 as const,
+        owner: "f".repeat(64),
+        identity: first.pubkey,
+        mode: "automatic" as const,
+        defaults: "harness-default" as const,
+      },
+    };
+    const channels = {
+      status: "ready" as const,
+      channels: [
+        {
+          id: "channel",
+          channelType: "solo" as const,
+          creator: h.session.viewer,
+          members: ["f".repeat(64), first.pubkey],
+        },
+      ],
+    };
+    const activity = {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+        },
+      ],
+    };
+    let resolutions = 0;
+    const resolve = vi.fn(async () => {
+      resolutions++;
+      if (mode === "mention-only") return { recipients: [] };
+      if (mode === "replaced-before-publication" && resolutions > 1)
+        return {
+          recipients: [first.pubkey],
+          primary: { ...primary, revision: "e".repeat(64) },
+        };
+      return { recipients: [first.pubkey], primary };
+    });
+    h.setLibrary([first]);
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        soloPrimary: {
+          available: true,
+          load: async () => state,
+          resolve,
+        } as unknown as NonNullable<RelaySession["soloPrimary"]>,
+        channels: {
+          ...h.session.channels,
+          list: () => channels,
+        },
+        ...(mode === "queued"
+          ? {
+              agentActivity: {
+                activate: () => () => {},
+                snapshot: () => activity,
+                subscribe: () => () => {},
+              },
+            }
+          : {}),
+        channelWrites: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: ["f".repeat(64), first.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    await screen.findByRole("button", { name: "Use mentions only" });
+    h.fill("hello");
+    h.submit();
+    if (mode === "queued") {
+      const queue = await screen.findByRole("region", {
+        name: "Queued follow-ups",
+      });
+      expect(h.messages.send).not.toHaveBeenCalled();
+      fireEvent.click(within(queue).getByRole("button", { name: "Send" }));
+    } else if (mode !== "current") {
+      await screen.findByText(
+        "The primary agent changed. Review chat settings and retry.",
+      );
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.input()).toHaveValue("hello");
+      return;
+    }
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(resolve).toHaveBeenCalledWith(
+      "channel",
+      [],
+      { pubkey: h.session.viewer, source: "human" },
+      expect.any(AbortSignal),
+    );
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      "hello",
+      [first.pubkey],
+      [],
+      undefined,
+      [],
+      {},
+      [],
+      { primary, authored: [] },
+    );
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+  },
+);
+
+it("keeps ordinary channel sends independent of pending primary metadata", async () => {
+  const h = mount();
+  const gate = deferred<{ adopted: false }>();
+  const load = vi.fn(() => gate.promise);
+  const resolve = vi.fn();
+  h.retarget({
+    session: {
+      ...h.session,
+      soloPrimary: { available: true, load, resolve },
+    } as unknown as RelaySession,
+  });
+  try {
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    h.fill("Ordinary message");
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(resolve).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => gate.resolve({ adopted: false }));
+  }
+});
+
+it.each(["retained", "unavailable"])(
+  "discovers %s adoption in a converted chat with missing labels",
+  async (discovery) => {
+    const h = mount({}, undefined, "viewer");
+    const gate = deferred<{ adopted: true }>();
+    const load = vi.fn(() => gate.promise);
+    const notice =
+      "Restore the primary labels in channel settings, then reload primary.";
+    const channelList = {
+      status: "ready",
+      channels: [
+        {
+          id: "channel",
+          creator: "viewer",
+          members: ["viewer", first.pubkey],
+          labels: [],
+        },
+      ],
+    };
+    h.setLibrary([first]);
+    h.retarget({
+      session: {
+        ...h.session,
+        soloPrimary: {
+          available: true,
+          load,
+          resolve: async () => ({ recipients: [first.pubkey], notice }),
+        },
+        channels: {
+          ...h.session.channels,
+          list: () => channelList,
+        },
+      } as unknown as RelaySession,
+    });
+    try {
+      await waitFor(() => expect(load).toHaveBeenCalled());
+      expect(
+        screen.queryByRole("combobox", { name: "Primary agent" }),
+      ).toBeNull();
+      await act(async () => {
+        if (discovery === "unavailable") gate.reject(new Error(notice));
+        else gate.resolve({ adopted: true });
+      });
+      expect(
+        screen.getByRole("combobox", { name: "Primary agent" }),
+      ).toBeVisible();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        discovery === "unavailable"
+          ? notice
+          : "The primary binding is unavailable",
+      );
+      if (discovery === "unavailable")
+        expect(
+          screen.getByRole("button", { name: "Reload primary" }),
+        ).toBeVisible();
+      act(() => {
+        h.commands().insertMention(first);
+        h.commands().insertText("Retained chat request");
+      });
+      h.submit();
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual({
+        primary: undefined,
+        authored: [first.pubkey],
+      });
+      expect(
+        await screen.findByText(
+          `Message sent without primary replies. ${notice}`,
+        ),
+      ).toBeVisible();
+    } finally {
+      await act(async () => gate.resolve({ adopted: true }));
+    }
+  },
+);
+
+it.each(["success", "failure", "unadopted"])(
+  "retains reload focus through a pending primary retry and %s",
+  async (outcome) => {
+    const h = mount({}, undefined, "viewer");
+    const initial = deferred<{ adopted: boolean }>();
+    const retry = deferred<{ adopted: boolean }>();
+    const load = vi.fn(() => initial.promise);
+    const channelList = {
+      status: "ready",
+      channels: [{ id: "channel", creator: "viewer", labels: ["unrelated"] }],
+    };
+    h.retarget({
+      ownSoloConversation: outcome !== "unadopted",
+      session: {
+        ...h.session,
+        soloPrimary: { available: true, load },
+        channels: {
+          ...h.session.channels,
+          list: () => channelList,
+        },
+      } as unknown as RelaySession,
+    });
+    const user = userEvent.setup();
+    try {
+      await waitFor(() => expect(load).toHaveBeenCalled());
+      await act(async () => initial.reject(new Error("Primary read failed")));
+      const reload = await screen.findByRole("button", {
+        name: "Reload primary",
+      });
+      const startupCalls = load.mock.calls.length;
+      load.mockImplementation(() => retry.promise);
+      act(() => reload.focus());
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(startupCalls + 1));
+      expect(reload).toHaveFocus();
+      expect(reload).toHaveAttribute("aria-busy", "true");
+      await user.keyboard("{Enter}");
+      expect(load).toHaveBeenCalledTimes(startupCalls + 1);
+      await act(async () => {
+        if (outcome === "failure")
+          retry.reject(new Error("Primary retry failed"));
+        else retry.resolve({ adopted: outcome !== "unadopted" });
+      });
+      expect(screen.getByRole("button", { name: "Reload primary" })).toBe(
+        reload,
+      );
+      expect(reload).toHaveFocus();
+      expect(reload).not.toHaveAttribute("aria-busy", "true");
+      if (outcome === "failure")
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Primary retry failed",
+        );
+      else expect(screen.queryByText("Primary read failed")).toBeNull();
+    } finally {
+      await act(async () => initial.resolve({ adopted: true }));
+      await act(async () => retry.resolve({ adopted: true }));
+    }
+  },
+);
+
+it("sends a freshly resolved explicit primary while display loading, then refreshes its opt-out on focus", async () => {
+  const h = mount({}, undefined, "viewer");
+  const revision = "d".repeat(64);
+  const owner = h.session.viewer;
+  if (!owner) throw new Error("Missing fixture viewer");
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        name: "Chat",
+        channelType: "solo",
+        creator: owner,
+        members: [owner, first.pubkey],
+      },
+    ],
+  };
+  const primary = {
+    identity: first.pubkey,
+    revision,
+    targeting: "explicit" as const,
+  };
+  let mode: "automatic" | "mention-only" = "automatic";
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let loaded = false;
+  const state = () => ({
+    adopted: true as const,
+    revision,
+    binding: {
+      version: 1 as const,
+      owner,
+      identity: first.pubkey,
+      mode,
+      defaults: "harness-default" as const,
+    },
+  });
+  const load = vi.fn(async () => {
+    if (!loaded) await held;
+    return state();
+  });
+  h.setLibrary([first]);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      soloPrimary: {
+        available: true,
+        load,
+        resolve: async () => ({ recipients: [first.pubkey], primary }),
+      },
+      channels: {
+        ...h.session.channels,
+        list: () => channelList,
+      },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [owner, first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+    } as unknown as RelaySession,
+  });
+  try {
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("Explicit request");
+    });
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    loaded = true;
+    release();
+    await screen.findByRole("button", { name: "Use mentions only" });
+    mode = "mention-only";
+    fireEvent(window, new Event("focus"));
+    await screen.findByRole("button", { name: "Enable automatic replies" });
+    h.fill("Not implicitly addressed");
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+  } finally {
+    loaded = true;
+    release();
+  }
+});
+
+it("keeps a settings save alive across label and focus refreshes", async () => {
+  const h = mount({}, undefined, "viewer");
+  const state = {
+    adopted: true as const,
+    revision: "d".repeat(64),
+    binding: {
+      version: 1 as const,
+      owner: "viewer",
+      identity: first.pubkey,
+      mode: "automatic" as "automatic" | "mention-only",
+      defaults: "harness-default" as const,
+    },
+  };
+  let enter!: () => void, release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cap = {
+    available: true,
+    load: async () => state,
+    save: vi.fn(
+      async (
+        _channel: string,
+        _state: unknown,
+        _identity: string,
+        _mode: string,
+        signal: AbortSignal,
+      ) => {
+        enter();
+        await held;
+        signal.throwIfAborted();
+        state.binding.mode = "mention-only";
+        return { ...state };
+      },
+    ),
+  };
+  let labels = ["buzz.solo", "buzz.solo.primary"];
+  let channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+        labels,
+      },
+    ],
+  };
+  const session = {
+    ...h.session,
+    soloPrimary: cap,
+    channels: {
+      ...h.session.channels,
+      list: () => channelList,
+    },
+  } as unknown as RelaySession;
+  h.setLibrary([first]);
+  h.retarget({ session, ownSoloConversation: true });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Use mentions only" }),
+  );
+  try {
+    await started;
+    labels = [...labels, "buzz.solo.p:updated"];
+    channelList = {
+      ...channelList,
+      channels: channelList.channels.map((entry) => ({ ...entry, labels })),
+    };
+    h.retarget({ ownSoloConversation: true });
+    fireEvent(window, new Event("focus"));
+  } finally {
+    await act(async () => release());
+  }
+  await screen.findByRole("button", { name: "Enable automatic replies" });
+  expect(cap.save).toHaveBeenCalledOnce();
+});
+
+it.each([
+  "missing-summary",
+  "missing-labels",
+  "stale-labels",
+  "stale-labels-unavailable",
+])(
+  "resolves explicit targeting with %s instead of guessing an ordinary channel",
+  async (kind) => {
+    const h = mount({}, undefined, "viewer");
+    const display = deferred<{ adopted?: false }>();
+    const load = vi.fn(() => display.promise);
+    const notice = "Primary replies are unavailable";
+    const unavailable = kind === "stale-labels-unavailable";
+    const primary = unavailable
+      ? undefined
+      : {
+          identity: first.pubkey,
+          revision: "d".repeat(64),
+          targeting: "explicit" as const,
+        };
+    const resolve = vi.fn(async () => ({
+      recipients: unavailable ? [] : [first.pubkey],
+      primary,
+      ...(unavailable ? { notice } : {}),
+    }));
+    const list = {
+      status: "ready",
+      channels:
+        kind === "missing-summary"
+          ? []
+          : [
+              {
+                id: "channel",
+                members: ["viewer", first.pubkey],
+                ...(kind.startsWith("stale-labels")
+                  ? { labels: ["topic"] }
+                  : {}),
+              },
+            ],
+    };
+    h.setLibrary([first]);
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    h.retarget({
+      session: {
+        ...h.session,
+        soloPrimary: { available: true, load, resolve },
+        channels: { ...h.session.channels, list: () => list },
+      } as unknown as RelaySession,
+    });
+    try {
+      await waitFor(() => expect(load).toHaveBeenCalled());
+      act(() => {
+        h.commands().insertMention(first);
+        h.commands().insertText("Explicit request");
+      });
+      h.submit();
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(resolve).toHaveBeenCalled();
+      expect(h.messages.send.mock.calls[0]?.[8]).toEqual({
+        primary,
+        authored: kind === "missing-summary" ? [] : [first.pubkey],
+      });
+      if (unavailable) {
+        expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+        expect(
+          await screen.findByText(
+            `Message sent without primary replies. ${notice}`,
+          ),
+        ).toBeVisible();
+      }
+    } finally {
+      await act(async () => display.resolve({}));
+    }
+  },
+);
+
+it.each(["pending", "concurrent", "unadopted", "recovered", "failed-adopted"])(
+  "never infers an agent for shared conversation during %s primary adoption",
+  async (kind) => {
+    const h = mount({}, undefined, "guest");
+    const display = deferred<{ adopted?: true }>();
+    const resolving = deferred<void>();
+    const continueResolution = deferred<void>();
+    let adopted = kind === "pending" || kind === "failed-adopted";
+    const load = vi.fn(() => display.promise);
+    const resolve = vi.fn(async (_channel, explicit) => {
+      resolving.resolve();
+      await continueResolution.promise;
+      return {
+        recipients: explicit,
+        ...(kind === "failed-adopted"
+          ? { notice: "Discovery temporarily unavailable" }
+          : adopted
+            ? {}
+            : { unadopted: true as const }),
+      };
+    });
+    const chat = {
+      id: "channel",
+      channelType: "solo",
+      creator: "owner",
+      members: ["guest", "owner", first.pubkey],
+    };
+    const channelList = { status: "ready", channels: [chat] };
+    h.setLibrary([first]);
+    h.setProfiles(
+      new Map([
+        ["owner", { name: "Owner" }],
+        [first.pubkey, { name: "Honey", isAgent: true }],
+      ]),
+    );
+    h.retarget({
+      soloConversation: true,
+      requireMention: false,
+      session: {
+        ...h.session,
+        soloPrimary: { available: true, load, resolve },
+        channels: { ...h.session.channels, list: () => channelList },
+        channelWrites: {
+          refreshMembership: async () => chat,
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    try {
+      await waitFor(() => expect(load).toHaveBeenCalled());
+      if (kind === "recovered" || kind === "failed-adopted")
+        await act(async () =>
+          display.reject(new Error("Discovery temporarily unavailable")),
+        );
+      else if (kind === "unadopted") await act(async () => display.resolve({}));
+      h.fill("Informational message");
+      h.submit();
+      await resolving.promise;
+      expect(h.messages.send).not.toHaveBeenCalled();
+      if (kind === "concurrent") adopted = true;
+      continueResolution.resolve();
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+      expect(h.messages.send.mock.calls[0]?.[8]?.authored ?? []).toEqual([]);
+    } finally {
+      continueResolution.resolve();
+      await act(async () => display.resolve({ adopted: true }));
+    }
+  },
+);
+
+it.each(
+  ["initial", "final"].flatMap((recoveryAt) =>
+    [false, true].map((withPeople) => ({ recoveryAt, withPeople })),
+  ),
+)(
+  "reapplies the unadopted recipient rule at $recoveryAt resolution, people=$withPeople",
+  async ({ recoveryAt, withPeople }) => {
+    const h = mount({}, undefined, "viewer");
+    const notice = "Primary settings temporarily unavailable";
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let submitting = false;
+    let recovered = false;
+    const cap = createSoloPrimary({
+      viewer: "viewer",
+      relayAuthor: "relay",
+      signal: new AbortController().signal,
+      read: async () => {
+        if (!recovered) {
+          if (submitting && recoveryAt === "final") {
+            entered.resolve();
+            await release.promise;
+          }
+          throw new Error(notice);
+        }
+        return [];
+      },
+      writer: { sign: vi.fn(), publish: vi.fn() },
+      details: {
+        available: true,
+        load: vi.fn(),
+        save: vi.fn(),
+        check: vi.fn(),
+        snapshot: () => undefined,
+        subscribe: () => () => {},
+      },
+      membership: vi.fn(),
+      choices: h.session.agentChoices,
+      profiles: h.session.profiles,
+    });
+    const chat = {
+      id: "channel",
+      name: "Chat",
+      channelType: "solo" as const,
+      creator: "viewer",
+      members: ["viewer", first.pubkey, ...(withPeople ? ["person"] : [])],
+      labels: ["buzz.solo"],
+    };
+    const channelList = { status: "ready" as const, channels: [chat] };
+    h.setProfiles(new Map([["person", { name: "Person" }]]));
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        soloPrimary: cap,
+        channels: {
+          ...h.session.channels,
+          list: () => channelList,
+        },
+        channelWrites: {
+          ...h.session.channelWrites,
+          refreshMembership: async () => chat,
+        },
+      } as RelaySession,
+    });
+    await screen.findByText(notice);
+    recovered = recoveryAt === "initial";
+    submitting = true;
+    h.fill("An agent should answer this");
+    h.submit();
+    try {
+      if (recoveryAt === "final") {
+        await entered.promise;
+        expect(h.messages.send).not.toHaveBeenCalled();
+        recovered = true;
+        await act(async () => release.resolve());
+      }
+      if (withPeople) {
+        await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+        expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+      } else {
+        await screen.findByText("Tag an agent to send.");
+        expect(h.messages.send).not.toHaveBeenCalled();
+        expect(h.input()).toHaveValue("An agent should answer this");
+      }
+    } finally {
+      await act(async () => release.resolve());
+    }
+  },
+);
+
+it.each(["missing", "denied"])(
+  "keeps human sends available with a %s primary and displays its reason",
+  async (kind) => {
+    const h = mount({}, undefined, "viewer");
+    const notice = "Primary replies are unavailable";
+    const list = {
+      status: "ready",
+      channels: [
+        {
+          id: "channel",
+          channelType: "solo",
+          creator: "viewer",
+          members: ["viewer", first.pubkey],
+          labels: ["buzz.solo", "buzz.solo.primary"],
+        },
+      ],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        soloPrimary: {
+          available: true,
+          load: async () => {
+            if (kind === "denied") throw new Error(notice);
+            return { adopted: true };
+          },
+          resolve: async () => ({ recipients: [], notice }),
+        },
+        channels: { ...h.session.channels, list: () => list },
+        channelWrites: {
+          refreshMembership: async () => list.channels[0],
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    await screen.findByRole("alert");
+    h.fill("A message for the humans here");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+    expect(
+      await screen.findByText(
+        `Message sent without primary replies. ${notice}`,
+      ),
+    ).toHaveAttribute("role", "alert");
+  },
+);
+
+it("does not offer to replace a retained primary after conversion", async () => {
+  const h = mount({}, undefined, "viewer");
+  const state = {
+    adopted: true as const,
+    revision: "d".repeat(64),
+    binding: {
+      version: 1 as const,
+      owner: "viewer",
+      identity: first.pubkey,
+      mode: "automatic" as const,
+      defaults: "harness-default" as const,
+    },
+  };
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+        labels: ["buzz.solo.primary"],
+      },
+    ],
+  };
+  h.setLibrary([first]);
+  h.retarget({
+    session: {
+      ...h.session,
+      soloPrimary: { available: true, load: async () => state },
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  const control = await screen.findByRole("combobox", {
+    name: "Primary agent",
+  });
+  await waitFor(() => expect(control).toBeDisabled());
+});
+
+it.each(["disabled", "retarget", "unmount", "current"])(
+  "preserves immediate-send cancellation during final primary validation: %s",
+  async (transition) => {
+    const h = mount({}, undefined, "viewer");
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let reads = 0;
+    const resolve = vi.fn(async () => {
+      if (++reads === 2) {
+        entered.resolve();
+        await release.promise;
+      }
+      return { recipients: [] };
+    });
+    const list = {
+      status: "ready" as const,
+      channels: [
+        {
+          id: "channel",
+          channelType: "solo" as const,
+          creator: "viewer",
+          members: ["viewer"],
+        },
+      ],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      session: {
+        ...h.session,
+        soloPrimary: {
+          available: true,
+          load: async () => ({ adopted: true }),
+          resolve,
+        },
+        channelWrites: { refreshMembership: async () => list.channels[0] },
+        channels: {
+          ...h.session.channels,
+          list: () => list,
+        },
+      } as unknown as RelaySession,
+    });
+    await screen.findByText(/The primary binding is unavailable/);
+    h.fill("Keep this send in its composer");
+    h.submit();
+    try {
+      await entered.promise;
+      expect(h.messages.send).not.toHaveBeenCalled();
+      if (transition === "disabled") h.retarget({ disabled: true });
+      else if (transition === "retarget") h.retarget({ channelId: "other" });
+      else if (transition === "unmount") h.unmount();
+    } finally {
+      await act(async () => release.resolve());
+    }
+    expect(h.messages.send).toHaveBeenCalledTimes(
+      transition === "current" ? 1 : 0,
+    );
+  },
+);

@@ -18,6 +18,7 @@ import {
   useChatConversions,
   type ChatConversion,
 } from "./conversion";
+import { PRIMARY_LABEL } from "./primary";
 import { SOLO_LABEL, soloLabels } from "./labels";
 import { applySharedChannelDetails } from "./share";
 
@@ -164,6 +165,17 @@ export function ConvertToChannel({
             "Finish sharing or choose Start over before converting.",
           );
         if (!base && !receipt) return;
+        if (action === "convert" && base?.labels?.includes(PRIMARY_LABEL)) {
+          if (!session.soloPrimary?.available)
+            throw new Error(
+              "Chat response settings are unavailable on this connection.",
+            );
+          const primary = await session.soloPrimary.load(id, active);
+          if (!primary?.binding)
+            throw new Error(
+              "Recover the primary binding before converting this chat.",
+            );
+        }
         exact = chatConversion(session, id) ?? {
           draft: {
             name: base?.name ?? "",
@@ -200,6 +212,22 @@ export function ConvertToChannel({
           updateChatConversion(session, id, exact);
         }
         active.throwIfAborted();
+        let retentionError: unknown;
+        try {
+          const primary = exact.draft.labels?.includes(PRIMARY_LABEL)
+            ? await session.soloPrimary?.load(id, active)
+            : undefined;
+          if (primary?.binding && primary.binding.mode !== "mention-only")
+            await session.soloPrimary?.save(
+              id,
+              primary,
+              primary.binding.identity,
+              "mention-only",
+              active,
+            );
+        } catch (reason) {
+          retentionError = reason;
+        }
         // A channel is no longer filed in a Solo project.
         const projects = session.soloPreferences;
         if (projects.snapshot().status !== "unsupported") {
@@ -214,6 +242,7 @@ export function ConvertToChannel({
             await projects.assign(id, undefined);
           active.throwIfAborted();
         }
+        if (retentionError) throw retentionError;
         updateChatConversion(session, id, undefined);
         if (!active.aborted) {
           notify("Converted to channel.", "success");

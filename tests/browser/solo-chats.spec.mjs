@@ -210,7 +210,7 @@ test.describe("Berd-style Solo project organization", () => {
     const sent = publications()[0].event;
     expect(verifyEvent(sent)).toBe(true);
     expect(sent.tags.filter(([key]) => key === "p")).toEqual([
-      ["p", agent.pubkey],
+      ["p", agent.pubkey, "", "mention"],
     ]);
     expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", id]]);
     const viewerMessage = page.locator(`[data-message-id="${sent.id}"]`);

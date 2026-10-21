@@ -517,6 +517,18 @@ test.describe("personal recipients", () => {
     });
     try {
       await page.goto(app.origin);
+      await expect.poll(() => readHead).toBe(true);
+      await expect
+        .poll(() => app.relay.hasRoute("primary", "gamma"))
+        .toBe(true);
+      const link = app.append(
+        "primary",
+        "gamma",
+        `[Open Beta](buzz://channel/${other})`,
+      );
+      const linkedMessage = page.locator(`[data-message-id="${link.id}"]`);
+      await expect(linkedMessage).toBeVisible();
+      releaseHead();
       await newChat(page);
       await page
         .getByRole("navigation", { name: "Solo conversations" })
@@ -564,7 +576,7 @@ test.describe("personal recipients", () => {
       expect(verifyEvent(sent)).toBe(true);
       expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
-        ["p", brain.pubkey],
+        ["p", brain.pubkey, "", "mention"],
       ]);
       // The next draft retains the last notified agent, not the account default.
       await expect(tag(honey)).toHaveCount(0);
@@ -576,15 +588,7 @@ test.describe("personal recipients", () => {
       await page.locator('[data-channel-id="gamma"]').click();
       // Own Solo chats are listed in the Solo section, not the Team channel
       // list. A real conversation link still opens them in the Messages reader.
-      const link = app.append(
-        "primary",
-        "gamma",
-        `[Open Beta](buzz://channel/${other})`,
-      );
-      await expect.poll(() => readHead).toBe(true);
-      releaseHead();
-      await page
-        .locator(`[data-message-id="${link.id}"]`)
+      await linkedMessage
         .getByRole("link", {
           name: "Open Chat: Beta",
           exact: true,

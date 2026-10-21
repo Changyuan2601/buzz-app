@@ -19,6 +19,7 @@ import { createPresence } from "../presence/presence";
 import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
+import { createSoloPrimary } from "../solo/primary";
 import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
@@ -1071,7 +1072,10 @@ export function createRelaySession(
     if (
       recipients.length > 32 ||
       recipients.some(
-        (tag) => tag.length !== 2 || !/^[0-9a-f]{64}$/.test(tag[1] ?? ""),
+        (tag) =>
+          (tag.length !== 2 &&
+            (tag.length !== 4 || tag[2] !== "" || tag[3] !== "mention")) ||
+          !/^[0-9a-f]{64}$/.test(tag[1] ?? ""),
       )
     )
       throw new Error("Invalid mention recipients");
@@ -1221,6 +1225,21 @@ export function createRelaySession(
     { read: (filters, settings) => readVerified(filters, settings, false) },
     transport?.channelIdentity === true,
   );
+  const soloPrimary =
+    transport?.channelIdentity === true
+      ? createSoloPrimary({
+          viewer: transport?.viewer ?? "",
+          relayAuthor: transport?.relayAuthor,
+          signal: lifetime.signal,
+          read: (filters, { signal }) =>
+            relayRead(filters, { fresh: true, ...(signal && { signal }) }),
+          writer: transport?.configArtifacts,
+          details: details.capability,
+          membership: channelWrites.refreshMembership,
+          choices: agentChoices,
+          profiles: profiles.queries,
+        })
+      : undefined;
   startingChannel = (id) => channelWrites.starting(id);
   // Roster authority invalidates in-flight reads, including account-owned
   // preferences. Retry those once at the current epoch, never channel content
@@ -2142,6 +2161,7 @@ export function createRelaySession(
       : undefined,
     channelLifecycle: lifecycle.capability,
     channelDetails: details.capability,
+    soloPrimary,
     memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
     agentMemories: memories.capability,

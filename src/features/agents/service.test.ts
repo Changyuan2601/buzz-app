@@ -1,3 +1,5 @@
+import { createSoloPrimary, PRIMARY_LABEL, primaryPin } from "../solo/primary";
+import { SOLO_LABEL } from "../solo/labels";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
@@ -5165,6 +5167,48 @@ it("gives each matching watch one catch-up turn with the events it matched", asy
   }
 });
 
+it.each([
+  { primary: bot, delivery: "live" },
+  { primary: sibling, delivery: "live" },
+  { primary: bot, delivery: "catch-up" },
+  { primary: sibling, delivery: "catch-up" },
+])(
+  "preserves configured $delivery watches with primary $primary",
+  async ({ primary, delivery }) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const h = await setup({ identities: [echo] });
+    try {
+      const { cap, labels } = primaryFixture(h, primary, bot);
+      expect(await cap.load(channel)).toMatchObject({
+        adopted: true,
+        binding: { identity: primary },
+      });
+      const now = nowSeconds();
+      vi.setSystemTime(now * 1000);
+      await h.service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      const message = posted("watched nonowner message", now + 10);
+      if (delivery === "catch-up") {
+        labels.splice(labels.indexOf(SOLO_LABEL), 1);
+        h.history.push(message);
+        vi.setSystemTime((now + 60) * 1000);
+        h.recover();
+      } else h.emit({ events: [message] });
+      await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+      expect(h.run.mock.calls[0]?.[0].trigger.type).toBe(
+        delivery === "live" ? "watch" : "catch-up",
+      );
+      expect(heard(h.run)).toEqual([message.content]);
+    } finally {
+      await h.ctx.fiber.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
 it("does not catch up after a restart on a message it already heard live", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -7109,4 +7153,301 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+it.each(["run", "runOnce", "denied", "error", "cancelled", "throws"])(
+  "orders admission starts without holding independent lanes (%s)",
+  async (outcome) => {
+    const invoked: string[] = [];
+    let admit = (_: boolean) => {};
+    let reject = (_: Error) => {};
+    const admission = new Promise<boolean>((resolve, fail) => {
+      admit = resolve;
+      reject = fail;
+    });
+    let finish = () => {};
+    const running = new Promise<void>((resolve) => (finish = resolve));
+    let finishWork = () => {};
+    const working = new Promise<void>((resolve) => (finishWork = resolve));
+    const h = await setup({
+      ...(outcome === "runOnce"
+        ? {
+            runOnce: async () => {
+              invoked.push("watch");
+              return { ok: true };
+            },
+          }
+        : {}),
+    });
+    const cancelled = new AbortController();
+    let timeout: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      await h.service.create({ type: "example/echo", name: "Echo" });
+      await h.service.save(bot, { attentionEnabled: true });
+      await settle();
+      const cap = h.session.soloPrimary;
+      if (!cap) throw new Error("Missing fixture primary capability");
+      vi.mocked(cap.current).mockImplementation(() => admission);
+      h.run.mockImplementation((delivery) => {
+        invoked.push(delivery.trigger.type);
+        if (delivery.trigger.type !== "mention") return;
+        if (outcome === "throws") throw new Error("Run refused");
+        delivery.workingUntil(working);
+        return running;
+      });
+      if (outcome === "cancelled")
+        timeout = vi
+          .spyOn(AbortSignal, "timeout")
+          .mockReturnValueOnce(cancelled.signal);
+      h.emit({
+        events: [
+          event("held-primary", {
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+          deploy("independent-watch"),
+        ],
+      });
+      await vi.waitFor(() => expect(cap.current).toHaveBeenCalledOnce());
+      // Admission has started and all runnable queue work has drained.
+      await settle();
+      expect(invoked).toEqual([]);
+      timeout?.mockRestore();
+      if (outcome === "cancelled") cancelled.abort();
+      else if (outcome === "error") reject(new Error("Admission unavailable"));
+      else admit(outcome !== "denied");
+      await vi.waitFor(() => expect(invoked).toContain("watch"));
+      expect(invoked).toEqual(
+        ["denied", "error", "cancelled"].includes(outcome)
+          ? ["watch"]
+          : ["mention", "watch"],
+      );
+      // The watch has invoked while both mention run and handed-off work
+      // remain held. Cancellation also got here without settling admission.
+      await settle();
+      expect(
+        h.run.mock.calls.filter(([d]) => d.trigger.type === "mention"),
+      ).toHaveLength(
+        ["denied", "error", "cancelled"].includes(outcome) ? 0 : 1,
+      );
+    } finally {
+      timeout?.mockRestore();
+      admit(false);
+      finish();
+      finishWork();
+      await settle();
+      await h.ctx.fiber.dispose();
+    }
+  },
+);
+
+it.each(["revoked", "unreadable"])(
+  "rechecks %s primary admission when a queued turn reaches execution without replying",
+  async (reason) => {
+    const h = await setup();
+    let release = () => {};
+    try {
+      const agent = await h.service.create({
+        type: "example/echo",
+        name: "Echo",
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      h.run.mockImplementationOnce(async () => gate);
+      const first = event("primary-first", {
+        tags: [
+          ["h", channel],
+          ["p", agent.pubkey],
+        ],
+      });
+      const queued = event("primary-queued", {
+        tags: [
+          ["h", channel],
+          ["p", agent.pubkey],
+        ],
+      });
+      h.emit({ events: [first] });
+      await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+      h.emit({ events: [queued] });
+      await settle();
+      const cap = h.session.soloPrimary;
+      if (!cap) throw new Error("Missing fixture primary capability");
+      if (reason === "unreadable")
+        vi.mocked(cap.current).mockRejectedValue(
+          new Error("Primary admission evidence unavailable"),
+        );
+      else vi.mocked(cap.current).mockResolvedValue(false);
+      release();
+      await vi.waitFor(() =>
+        expect(cap.current).toHaveBeenCalledWith(
+          queued,
+          agent.pubkey,
+          expect.any(AbortSignal),
+        ),
+      );
+      await settle();
+      if (reason === "unreadable")
+        await vi.waitFor(() =>
+          expect(
+            h.activity.reader.work().find((row) => row.messageId === queued.id),
+          ).toMatchObject({
+            state: "error",
+            error: "Primary admission evidence unavailable",
+          }),
+        );
+      expect(h.run).toHaveBeenCalledOnce();
+      expect(await published(h.native, 9)).toEqual([]);
+    } finally {
+      release();
+      await h.ctx.fiber.dispose();
+    }
+  },
+);
+
+function primaryFixture(
+  h: Awaited<ReturnType<typeof setup>>,
+  identity: string,
+  runner = identity,
+) {
+  const revision = "e".repeat(64);
+  const labels = [SOLO_LABEL, PRIMARY_LABEL, primaryPin(revision)];
+  const binding = event(revision, {
+    pubkey: viewer,
+    kind: 45010,
+    tags: [
+      ["ar", "1"],
+      ["d", "11111111-1111-4111-8111-111111111111"],
+      ["h", channel],
+      ["type", PRIMARY_LABEL],
+      ["op", "create"],
+    ],
+    content: JSON.stringify({
+      version: 1,
+      owner: viewer,
+      identity,
+      mode: "automatic",
+      defaults: "harness-default",
+    }),
+  });
+  const choice = { pubkey: identity, name: "Echo", managed: false };
+  const cap = createSoloPrimary({
+    viewer: runner,
+    relayAuthor: viewer,
+    signal: new AbortController().signal,
+    read: async (filters) =>
+      filters.some((f) => f.kinds?.includes(39000))
+        ? [
+            event("metadata", {
+              kind: 39000,
+              pubkey: viewer,
+              tags: [["d", channel], ...labels.map((label) => ["t", label])],
+            }),
+          ]
+        : filters.some((f) => f.kinds?.includes(39001))
+          ? [
+              event("admins", {
+                kind: 39001,
+                pubkey: viewer,
+                tags: [
+                  ["d", channel],
+                  ["p", viewer, "owner"],
+                ],
+              }),
+            ]
+          : [binding],
+    membership: async () => ({
+      id: channel,
+      name: "Chat",
+      creator: viewer,
+      members: [...new Set([viewer, bot, sibling, identity])],
+    }),
+    details: {
+      available: true,
+      load: async () => ({
+        channelId: channel,
+        version: "one",
+        canEdit: false,
+        name: "Chat",
+        description: "",
+        visibility: "private",
+        labels,
+      }),
+      save: async () => {},
+      check: async () => {},
+      snapshot: () => undefined,
+      subscribe: () => () => {},
+    },
+    choices: {
+      ensure: () => {},
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        identities: [choice],
+        selectable: [choice],
+        definitions: [],
+        complete: true,
+        pending: false,
+        archives: { status: "ready", archived: [] },
+        templates: {
+          status: "ready",
+          identities: [choice],
+          complete: true,
+          pending: false,
+        },
+      }),
+    },
+    profiles: { snapshot: () => new Map() },
+  });
+  const admission = h.session.soloPrimary?.current;
+  if (!admission) throw new Error("Missing fixture admission boundary");
+  vi.mocked(admission).mockImplementation(cap.current);
+  return { cap, revision, labels, admission };
+}
+
+it("enforces the real primary capability from the agent session when a queued owner send is converted", async () => {
+  const h = await setup();
+  let release = () => {};
+  try {
+    const agent = await h.service.create({
+      type: "example/echo",
+      name: "Echo",
+    });
+    const { revision, labels, admission } = primaryFixture(h, agent.pubkey);
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.run.mockImplementationOnce(async () => gate);
+    const message = (id: string) =>
+      event(id, {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", agent.pubkey],
+          ["primary", agent.pubkey, revision, "implicit"],
+        ],
+      });
+    h.emit({ events: [message("real-primary-first")] });
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+    const queued = message("real-primary-queued");
+    h.emit({ events: [queued] });
+    await settle();
+    labels.splice(labels.indexOf(SOLO_LABEL), 1);
+    release();
+    await vi.waitFor(() =>
+      expect(admission).toHaveBeenCalledWith(
+        queued,
+        agent.pubkey,
+        expect.any(AbortSignal),
+      ),
+    );
+    await settle();
+    expect(h.run).toHaveBeenCalledOnce();
+    expect(await published(h.native, 9)).toEqual([]);
+  } finally {
+    release();
+    await h.ctx.fiber.dispose();
+  }
 });

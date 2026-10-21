@@ -8,6 +8,7 @@ export type ComposerSession = Pick<
   RelaySession,
   "viewer" | "media" | "scope"
 > & {
+  soloPrimary?: RelaySession["soloPrimary"] | undefined;
   names?: import("../identity-names/service").IdentityNameView | undefined;
   repositories: Pick<
     RelaySession["repositories"],

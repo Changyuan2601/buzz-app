@@ -416,6 +416,11 @@ export type RunnerHost = {
     channel: string,
     signal: AbortSignal,
   ): Promise<boolean>;
+  primaryCurrent?(
+    agent: Agent,
+    event: RelayEvent,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
@@ -1932,7 +1937,8 @@ export class AgentRunners {
       if (!next) break;
       // Taking a job made room: held and backlogged work may go in now.
       this.admit(runner);
-      if (next.job) this.start(runner, agent, type, run, next.lane, next.job);
+      if (next.job)
+        await this.start(runner, agent, type, run, next.lane, next.job);
     }
     runner.running = false;
   }
@@ -1976,6 +1982,8 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    let invoked = () => {};
+    const invocation = new Promise<void>((resolve) => (invoked = resolve));
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
       lifetime,
@@ -1990,6 +1998,13 @@ export class AgentRunners {
         : undefined;
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
+      if (
+        trigger.type === "mention" &&
+        trigger.event.kind === 9 &&
+        this.host.primaryCurrent &&
+        !(await this.host.primaryCurrent(agent, trigger.event, signal))
+      )
+        return;
       const start = this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.pubkey);
@@ -2014,7 +2029,7 @@ export class AgentRunners {
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });
-      const { trigger } = job;
+      invoked();
       const runOnce = type.runOnce?.bind(type);
       if (addressed(trigger) || !runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
@@ -2069,6 +2084,7 @@ export class AgentRunners {
       runner.busy.delete(lane);
       void this.drain(runner);
     });
+    return Promise.race([invocation, returned]);
   }
 
   /** The agent as `run` holds it; `signal` bounds its audience checks. */

@@ -92,6 +92,8 @@ import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
+import { usePrimarySettings } from "../solo/PrimarySettings";
+import type { EffectiveRecipients } from "../solo/primary";
 import { ComposerModels } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
@@ -432,6 +434,8 @@ function Composer({
   const startsThread =
     !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
   const host = fullSession(session);
+
+  const primarySettings = usePrimarySettings(session, channelId, solo);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
@@ -1298,29 +1302,15 @@ function Composer({
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
   const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
+    needsRecipient &&
+    !primarySettings.allowUntagged &&
+    !editing.target &&
+    !value.recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
     const recipients = [...explicit];
-    if (!recipients.length) {
-      // An untagged send relies on a person being present; confirm it against
-      // the fresh roster and agent inventory, not the rendered snapshot.
-      await session.agentChoices.refresh();
-      if (!currentAdmission())
-        throw new Error("The session changed. Review its channel and retry.");
-      const profiles = session.profiles.snapshot();
-      if (
-        !soloHasPeople(
-          channel.members,
-          session.viewer,
-          profiles,
-          knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
-        )
-      )
-        throw new Error("Tag an agent to send.");
-    }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
       // Classification no longer depends on inventory; refresh before admission.
@@ -1392,7 +1382,11 @@ function Composer({
       !outbox
     )
       return;
-    if (needsRecipient && !valueRef.current.recipients.length) {
+    if (
+      needsRecipient &&
+      !primarySettings.allowUntagged &&
+      !valueRef.current.recipients.length
+    ) {
       setError(recipientHint);
       return;
     }
@@ -1422,27 +1416,6 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
-    // A send is an agent follow-up unless it addresses a confirmed person
-    // (a loaded, non-agent profile). Those, and untagged conversation in a
-    // shared chat, go out now; recipients still being classified keep the
-    // owner's queue preference.
-    const profileSnapshot = session.profiles.snapshot();
-    const agentKeys = knownAgentPubkeys(
-      profileSnapshot,
-      session.agentChoices.snapshot(),
-    );
-    const queueFollowUp =
-      !!host &&
-      ownSoloConversation &&
-      !threadRootId &&
-      followUpBehaviorPreference() === "queue" &&
-      captured.recipients.length > 0 &&
-      !soloHasPeople(
-        captured.recipients.map(({ pubkey }) => pubkey),
-        session.viewer,
-        profileSnapshot,
-        agentKeys,
-      );
     try {
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
@@ -1504,6 +1477,76 @@ function Composer({
           }
         }
       }
+      const explicitRecipients = recipients;
+      const primaryRelevant =
+        primarySettings.relevant || !!explicitRecipients.length;
+      async function resolveRecipients(
+        signal?: AbortSignal,
+      ): Promise<EffectiveRecipients> {
+        const effective =
+          session.soloPrimary && primaryRelevant
+            ? await session.soloPrimary.resolve(
+                channelId,
+                explicitRecipients,
+                { pubkey: session.viewer ?? "", source: "human" },
+                signal,
+              )
+            : { recipients: explicitRecipients, unadopted: true as const };
+        if (solo && effective.unadopted && !effective.recipients.length) {
+          // Untagged, unadopted chats need a person even after a read recovers.
+          const channel =
+            await session.channelWrites.refreshMembership(channelId);
+          await session.agentChoices.refresh();
+          signal?.throwIfAborted();
+          const profiles = session.profiles.snapshot();
+          if (
+            !soloHasPeople(
+              channel.members,
+              session.viewer,
+              profiles,
+              knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+            )
+          )
+            throw new Error("Tag an agent to send.");
+        }
+        return effective;
+      }
+      const effective =
+        (session.soloPrimary && primaryRelevant) || solo
+          ? await resolveRecipients(attempt.signal)
+          : { recipients };
+      recipients = [...effective.recipients];
+      const primary = "primary" in effective ? effective.primary : undefined;
+      if (
+        (primary?.targeting === "implicit" &&
+          (primary.revision !== primarySettings.state?.revision ||
+            primary.identity !== primarySettings.state?.binding?.identity)) ||
+        (requireMention &&
+          !("notice" in effective && effective.notice) &&
+          primarySettings.automatic &&
+          !primary &&
+          !recipients.length)
+      ) {
+        primarySettings.refresh();
+        throw new Error(
+          "The primary agent changed. Review chat settings and retry.",
+        );
+      }
+      // A resolved agent follow-up keeps the queue preference; people and
+      // untagged conversation in a shared chat go out immediately.
+      const profileSnapshot = session.profiles.snapshot();
+      const queueFollowUp =
+        !!host &&
+        ownSoloConversation &&
+        !threadRootId &&
+        followUpBehaviorPreference() === "queue" &&
+        recipients.length > 0 &&
+        !soloHasPeople(
+          recipients,
+          session.viewer,
+          profileSnapshot,
+          knownAgentPubkeys(profileSnapshot, session.agentChoices.snapshot()),
+        );
       attempt.signal.throwIfAborted();
       if (attachments.store.snapshot().some((item) => item.status === "error"))
         return;
@@ -1537,7 +1580,29 @@ function Composer({
       const sharedSessions = sessionReferenceIds(content).filter((id) =>
         stagedSessions.has(id),
       );
+      const targeting =
+        session.soloPrimary &&
+        primaryRelevant &&
+        (primary || explicitRecipients.length)
+          ? ([{ primary, authored: explicitRecipients }] as const)
+          : ([] as const);
       // Destination and content are fixed here; a background send never retargets.
+
+      async function validatePrimary(signal?: AbortSignal) {
+        if (session.soloPrimary && primaryRelevant) {
+          const fresh = await resolveRecipients(signal);
+          if (
+            JSON.stringify(fresh.primary) !== JSON.stringify(primary) ||
+            fresh.recipients.length !== recipients.length ||
+            fresh.recipients.some((key) => !recipients.includes(key))
+          ) {
+            primarySettings.refresh();
+            throw new Error(
+              "The primary agent changed. Review chat settings and retry.",
+            );
+          }
+        }
+      }
       function publishNow(
         uploaded: readonly UploadedAttachment[],
         sender: RelaySession,
@@ -1574,6 +1639,7 @@ function Composer({
           throw new Error(
             "This Solo chat or its recipients are no longer available.",
           );
+
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -1584,16 +1650,28 @@ function Composer({
               ...(replyParentId ||
               references.length ||
               tuned ||
-              sharedSessions.length
+              sharedSessions.length ||
+              targeting.length
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || sharedSessions.length
+              ...(references.length ||
+              tuned ||
+              sharedSessions.length ||
+              targeting.length
                 ? [references]
                 : []),
-              ...(tuned || sharedSessions.length ? [sentPicks] : []),
-              ...(sharedSessions.length ? [sharedSessions] : []),
+              ...(tuned || sharedSessions.length || targeting.length
+                ? [sentPicks]
+                : []),
+              ...(sharedSessions.length || targeting.length
+                ? [sharedSessions]
+                : []),
+              ...targeting,
             )
-          : references.length || tuned || sharedSessions.length
+          : references.length ||
+              tuned ||
+              sharedSessions.length ||
+              targeting.length
             ? sender.messages.send(
                 channelId,
                 content,
@@ -1601,39 +1679,54 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned || sharedSessions.length ? [sentPicks] : []),
-                ...(sharedSessions.length ? [sharedSessions] : []),
+                ...(tuned || sharedSessions.length || targeting.length
+                  ? [sentPicks]
+                  : []),
+                ...(sharedSessions.length || targeting.length
+                  ? [sharedSessions]
+                  : []),
+                ...targeting,
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
       const publish = (
         uploaded: readonly UploadedAttachment[],
         validated = false,
+        signal = queueFollowUp ? undefined : attempt.signal,
       ) => {
-        if (compactingNow(recipients))
-          throw new Error("Wait for compaction to finish, or interrupt it.");
-        return queueFollowUp && host
-          ? followUpQueue(host).submit(
-              {
-                channelId,
-                text: content,
-                recipients,
-                beforeRelease: async () => {
-                  const channel =
-                    await session.channelWrites.refreshMembership(channelId);
-                  if (recipients.some((key) => !channel.members?.includes(key)))
-                    throw new Error(
-                      "A queued recipient is no longer a member of this chat.",
-                    );
+        const release = () => {
+          if (compactingNow(recipients))
+            throw new Error("Wait for compaction to finish, or interrupt it.");
+          signal?.throwIfAborted();
+          return queueFollowUp && host
+            ? followUpQueue(host).submit(
+                {
+                  channelId,
+                  text: content,
+                  recipients,
+                  beforeRelease: async () => {
+                    const channel =
+                      await session.channelWrites.refreshMembership(channelId);
+                    if (
+                      recipients.some((key) => !channel.members?.includes(key))
+                    )
+                      throw new Error(
+                        "A queued recipient is no longer a member of this chat.",
+                      );
+                    await validatePrimary();
+                  },
+                  publish: () => publishNow(uploaded, host),
+                  onSend: (id) => {
+                    if (live.current) onSend?.(id);
+                  },
                 },
-                publish: () => publishNow(uploaded, host),
-                onSend: (id) => {
-                  if (live.current) onSend?.(id);
-                },
-              },
-              validated,
-            )
-          : publishNow(uploaded, session);
+                validated,
+              )
+            : publishNow(uploaded, session);
+        };
+        return session.soloPrimary && primaryRelevant
+          ? validatePrimary(signal).then(release)
+          : release();
       };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
@@ -1648,8 +1741,8 @@ function Composer({
           recoveryKey,
           channelId,
           capturedAttachments,
-          async (uploaded) => {
-            const sent = await publish(uploaded);
+          async (uploaded, signal) => {
+            const sent = await publish(uploaded, false, signal);
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -1721,7 +1814,6 @@ function Composer({
           attachments.store,
         );
       } else {
-        // prepareRecipients just refreshed membership; nothing awaited since.
         const result = publish([], true);
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
@@ -1743,7 +1835,11 @@ function Composer({
       input.current?.focus();
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
-      setError(undefined);
+      setError(
+        "notice" in effective && effective.notice
+          ? `Message sent without primary replies. ${effective.notice}`
+          : undefined,
+      );
       autoTagged.current = draftKey;
       automaticTag.current = next.recipients.length
         ? JSON.stringify(next)
@@ -1856,6 +1952,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
           session={host}
@@ -1864,6 +1961,8 @@ function Composer({
           focusComposer={() => input.current?.focus()}
         />
       )}
+
+      {active && !submission && !editing.target && primarySettings.view}
       <form
         ref={form}
         className={styles.composer}

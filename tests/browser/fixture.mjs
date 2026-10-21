@@ -953,6 +953,16 @@ export const test = base.extend({
     const answer = (community, filter) => {
       // These ordinary fixture channels have no Huddle creation receipt.
       if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
+      // This relay models no primary-binding history.
+      if (filter.kinds?.includes(45011)) {
+        expect(filter).toEqual({
+          kinds: [45010, 45011],
+          "#h": [expect.any(String)],
+          limit: 64,
+          consistency: "strong",
+        });
+        return [];
+      }
       // The real relay can return both current metadata and rosters in one query.
       if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
         return [39000, 39002].flatMap((kind) =>

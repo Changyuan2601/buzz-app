@@ -6,6 +6,7 @@ import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
+import { primaryTags, type PrimaryReceipt } from "../solo/primary";
 import { sharedSessionTags } from "../sessions/shared-session-marker";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
@@ -35,6 +36,10 @@ export const MODEL_TAG = "model";
 export type RunPick = Readonly<{ model?: string; effort?: string }>;
 /** The model and effort picked for each mentioned agent, by pubkey. */
 export type MentionPicks = Readonly<Record<string, RunPick>>;
+export type MessageTargeting = Readonly<{
+  primary?: PrimaryReceipt | undefined;
+  authored?: readonly string[];
+}>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
 export function createMessages(
@@ -65,7 +70,11 @@ export function createMessages(
     if (!value) throw new Error("Message is empty");
     return value;
   };
-  const mentionTags = (channelId: string, pubkeys: readonly string[]) => {
+  const mentionTags = (
+    channelId: string,
+    pubkeys: readonly string[],
+    authored: readonly string[],
+  ) => {
     if (
       pubkeys.length > 32 ||
       pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
@@ -73,7 +82,9 @@ export function createMessages(
       throw new Error("Choose at most 32 valid mention recipients");
     const unique = [...new Set(pubkeys)];
     validateMentions(channelId, unique);
-    return unique.map((key) => ["p", key]);
+    return unique.map((key) =>
+      authored.includes(key) ? ["p", key, "", "mention"] : ["p", key],
+    );
   };
   const referenceTags = (pubkeys: readonly string[]) => {
     if (
@@ -194,6 +205,21 @@ export function createMessages(
       ],
     });
   };
+  const targetingTags = (
+    mentions: readonly string[],
+    primary?: PrimaryReceipt,
+  ) => {
+    if (
+      primary &&
+      (!mentions.includes(primary.identity) ||
+        !/^[0-9a-f]{64}$/.test(primary.revision) ||
+        !["implicit", "explicit"].includes(primary.targeting))
+    )
+      throw new Error(
+        "Primary targeting must identify a current recipient and revision",
+      );
+    return primaryTags(primary);
+  };
   return Object.freeze({
     send(
       channelId: string,
@@ -204,6 +230,7 @@ export function createMessages(
       references: readonly string[] = [],
       picks: MentionPicks = {},
       sharedSessions: readonly string[] = [],
+      targeting: MessageTargeting = {},
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -213,10 +240,11 @@ export function createMessages(
           content: text(message.content),
           tags: [
             ["h", channelId],
-            ...mentionTags(channelId, mentions),
+            ...mentionTags(channelId, mentions, targeting.authored ?? []),
             ...referenceTags(references),
             ...pickTags(mentions, picks),
             ...sharedSessionTags(content, sharedSessions),
+            ...targetingTags(mentions, targeting.primary),
             ...emojiTags(content),
             ...message.tags,
           ],
@@ -315,6 +343,7 @@ export function createMessages(
       references: readonly string[] = [],
       picks: MentionPicks = {},
       sharedSessions: readonly string[] = [],
+      targeting: MessageTargeting = {},
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -329,10 +358,11 @@ export function createMessages(
           ["h", channelId],
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
-          ...mentionTags(channelId, mentions),
+          ...mentionTags(channelId, mentions, targeting.authored ?? []),
           ...referenceTags(references),
           ...pickTags(mentions, picks),
           ...sharedSessionTags(content, sharedSessions),
+          ...targetingTags(mentions, targeting.primary),
           ...emojiTags(content),
           ...message.tags,
         ],

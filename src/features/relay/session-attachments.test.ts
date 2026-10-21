@@ -110,6 +110,55 @@ it.each([false, true])(
   },
 );
 
+it("signs and publishes an authored mention through the session admission boundary", async () => {
+  const h = setup();
+  await h.membership();
+  h.session.messages.send(
+    "c",
+    "An explicit mention",
+    [other.pubkey],
+    [],
+    undefined,
+    [],
+    {},
+    [],
+    {
+      authored: [other.pubkey],
+    },
+  );
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual([
+    "p",
+    other.pubkey,
+    "",
+    "mention",
+  ]);
+  expect(h.sign).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["p", other.pubkey, "mention"],
+  ["p", other.pubkey, "relay", "mention"],
+  ["p", other.pubkey, "", "other"],
+  ["p", other.pubkey, "", "mention", "extra"],
+])("refuses a malformed mention before signing: %j", async (...tag) => {
+  const h = setup();
+  await h.membership();
+  h.session.outbox?.send({
+    kind: 9,
+    content: "Invalid mention",
+    tags: [["h", "c"], tag],
+  });
+  await vi.waitFor(() =>
+    expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("failed"),
+  );
+  expect(h.session.outbox?.snapshot()[0]?.error).toMatch(
+    /Invalid mention recipients/,
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
 it.each(["caller", "dispose", "clear", "access"])(
   "cancels upload on %s and fences an uncooperative late result",
   async (action) => {
