@@ -1483,12 +1483,13 @@ export function relayBrokerPlugin({
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
-            let raw = "";
+            let raw = "",
+              bytes = 0;
             req.setEncoding("utf8");
             for await (const part of req) {
-              raw += part;
+              bytes += Buffer.byteLength(part);
               if (
-                Buffer.byteLength(raw) >
+                bytes >
                 (updating
                   ? 32 * 1024 * 1024
                   : watchingPresence
@@ -1498,6 +1499,7 @@ export function relayBrokerPlugin({
                       : 256)
               )
                 return json(res, 413, { error: "Live control too large" });
+              raw += part;
             }
             let streamId,
               presenceAuthors,
@@ -1603,12 +1605,14 @@ export function relayBrokerPlugin({
             return json(res, 200, { accepted: true });
           }
           if (route === "/api/relay/stream" && req.method === "POST") {
-            let raw = "";
+            let raw = "",
+              bytes = 0;
             req.setEncoding("utf8");
             for await (const part of req) {
-              raw += part;
-              if (Buffer.byteLength(raw) > 32 * 1024 * 1024)
+              bytes += Buffer.byteLength(part);
+              if (bytes > 32 * 1024 * 1024)
                 return json(res, 413, { error: "Live interests too large" });
+              raw += part;
             }
             let channels,
               joined,
