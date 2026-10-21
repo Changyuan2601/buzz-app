@@ -474,6 +474,7 @@ function DeleteMessageDialog({
           item.event.tags.some(([name, id]) => name === "e" && id === row.id),
       )?.event.id,
   );
+  const cancelAction = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
   const operation = operations.find((item) => item.event.id === operationId);
   const pending = operation?.delivery === "sending";
@@ -525,13 +526,14 @@ function DeleteMessageDialog({
   return (
     <AlertDialog
       title="Delete message?"
+      initialFocus={cancelAction}
       description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
       pending={pending}
       finalFocus={() => (operationId ? (selection.focus?.() ?? true) : true)}
       onClose={close}
       actions={
         <>
-          <Button disabled={pending} onClick={close}>
+          <Button ref={cancelAction} disabled={pending} onClick={close}>
             {operationId ? "Close" : "Cancel"}
           </Button>
           <Button variant="destructive" disabled={pending} onClick={run}>

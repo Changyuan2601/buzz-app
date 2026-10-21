@@ -127,7 +127,7 @@ html[data-keyboard-navigation] .thumb:focus-within {
   border-start-end-radius: var(--radius-row);
   background: var(--surface-popover);
   color: var(--text-standard);
-  white-space: nowrap;
+  flex-wrap: wrap;
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -205,4 +205,25 @@ html[data-keyboard-navigation] .slider * {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--text-caption--font-weight);
+}
+
+.controls {
+  display: flex;
+  align-items: end;
+  gap: var(--space-2);
+}
+.controls > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.rail {
+  margin: 0;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
 }

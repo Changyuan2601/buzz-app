@@ -933,6 +933,12 @@ companionTest(
       ).toBeInViewport();
       // The Settings modal fits each width over the retained, inert companion.
       await openSettings(page);
+      // Observe the settled frame, not its upward entrance motion.
+      await settingsDialog(page).evaluate((element) =>
+        Promise.all(
+          element.getAnimations().map((animation) => animation.finished),
+        ),
+      );
       const modal = await box(settingsDialog(page));
       expect(modal.x).toBeGreaterThanOrEqual(0);
       expect(modal.y).toBeGreaterThanOrEqual(0);

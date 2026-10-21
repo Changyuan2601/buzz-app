@@ -8,6 +8,7 @@ import {
 import { foldMessages } from "../../src/features/relay/fold";
 import { createRoot } from "react-dom/client";
 import { useState, useSyncExternalStore } from "react";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { MessageBody } from "../../src/features/conversation/MessageBody";
 import { TargetOpenerProvider } from "../../src/features/conversation/opener";
 import type {
@@ -555,6 +556,7 @@ const cardRegistry: ContributionReader<MessageRenderer> = {
   subscribe: () => () => {},
 };
 function Fixture() {
+  useKeyboardFocusVisibility();
   useSyncExternalStore(
     (listener) => {
       windowListeners.add(listener);

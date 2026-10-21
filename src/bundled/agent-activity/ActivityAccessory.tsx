@@ -16,7 +16,7 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
-  StopIcon,
+  OctagonIcon,
   WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -455,8 +455,8 @@ function ActivityBubble({
               ref={trigger}
               tabIndex={interactive ? undefined : -1}
               size="xs"
-              shape="control"
-              variant="ghost"
+              variant="subtle"
+              data-activity-summary=""
               aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
             >
               {content}
@@ -483,6 +483,7 @@ function ActivityBubble({
               return (
                 <div key={entry.agent} className={styles.row}>
                   <NavigationItem
+                    variant="option"
                     aria-label={`View activity for ${entry.name}`}
                     disabled={!target || !props.canOpen(target)}
                     onClick={() => {
@@ -506,11 +507,7 @@ function ActivityBubble({
                         }
                       >
                         <ShimmerText
-                          active={
-                            entry.lifecycle
-                              ? entry.state === "working"
-                              : entry.working
-                          }
+                          active={stopping || entry.working || starting(entry)}
                         >
                           {(stopping ? "Stopping…" : undefined) ??
                             (entry.lifecycle
@@ -522,43 +519,54 @@ function ActivityBubble({
                         </ShimmerText>
                         {preview?.detail && (
                           <span className={styles.detail}>
-                            {preview.detail}
+                            <ShimmerText active={entry.working}>
+                              {preview.detail}
+                            </ShimmerText>
                           </span>
                         )}
                       </span>
                     }
                   />
                   {entry.lifecycle && entry.state === "error" ? (
-                    <IconButton
-                      size="xs"
-                      aria-label={`Dismiss error from ${entry.name}`}
-                      icon={<XIcon />}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        // Retirement owns the last popup's close and focus
-                        // handoff; keep its focused contents until that effect.
-                        if (props.message)
-                          props.session.agentActivity.dismissError?.(
-                            entry.agent,
-                            props.channelId,
-                            props.message.id,
-                          );
-                      }}
-                    />
+                    <span className={styles.action}>
+                      <IconButton
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Dismiss error from ${entry.name}`}
+                        icon={<XIcon />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          // Retirement owns the last popup's close and focus
+                          // handoff; keep its focused contents until that effect.
+                          if (props.message)
+                            props.session.agentActivity.dismissError?.(
+                              entry.agent,
+                              props.channelId,
+                              props.message.id,
+                            );
+                        }}
+                      />
+                    </span>
                   ) : stoppable(entry) ? (
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      aria-label={`Stop ${entry.name}`}
-                      loading={stopping}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        stop(entry);
-                      }}
-                    >
-                      <StopIcon size={16} aria-hidden="true" />
-                      <span>Stop</span>
-                    </Button>
+                    <span className={styles.action}>
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        aria-label={`Stop ${entry.name}`}
+                        title="Stop"
+                        loading={stopping}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          stop(entry);
+                        }}
+                      >
+                        <OctagonIcon
+                          className={styles.stopIcon}
+                          aria-hidden="true"
+                        />
+                        <span>Stop</span>
+                      </Button>
+                    </span>
                   ) : undefined}
                 </div>
               );

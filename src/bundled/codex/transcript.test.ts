@@ -108,6 +108,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
     }),
     expect.objectContaining({ type: "message", text: "Done", posted: true }),
     expect.objectContaining({ type: "message", text: "Fixed." }),
+    expect.objectContaining({ type: "status", text: "Context compaction" }),
   ]);
   const [channelTurn] = codexTurns(
     [turn({ status: "interrupted", completedAt: null, items: [] })],
@@ -123,6 +124,25 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
 const agent = { pubkey: "a".repeat(64), name: "Sol" };
 const lookup = { agent, channelId: "channel", name: "dev", root };
 
+it.each([
+  ["summary only", { summary: ["Plan"] }, "Plan"],
+  ["content only", { content: ["Raw"] }, "Raw"],
+  ["both", { summary: ["Plan"], content: ["Raw"] }, "Plan\n\nRaw"],
+  ["both, repeated", { summary: ["Same"], content: ["Same"] }, "Same"],
+  [
+    "summary with its own repeat",
+    { summary: ["check", "retry", "check"], content: ["retry", "Raw"] },
+    "check\n\nretry\n\ncheck\n\nRaw",
+  ],
+])("shows Codex reasoning from its %s", (_, reasoning, text) => {
+  const [mapped] = codexTurns(
+    [turn({ items: [{ type: "reasoning", id: "r1", ...reasoning }] })],
+    conversation,
+  );
+  expect(mapped?.items).toEqual([
+    expect.objectContaining({ type: "thought", text }),
+  ]);
+});
 it("shows the command the model wrote, not the login shell running it", () => {
   expect(shellCommand("/bin/zsh -lc 'git diff --stat'")).toBe(
     "git diff --stat",

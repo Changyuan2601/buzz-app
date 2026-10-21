@@ -67,6 +67,10 @@
     min-height: var(--space-6);
     padding: var(--space-1) var(--space-3);
   }
+  /* Activity-only message summaries share geometry in channels and threads. */
+  .buzz-button[data-size="xs"][data-activity-summary] {
+    padding-inline: var(--space-1h) var(--space-2);
+  }
   .buzz-button[data-size="xs"] .buzz-button-label > svg,
   .buzz-button[data-size="xs"] .buzz-button-spinner {
     width: var(--space-4);
@@ -95,6 +99,13 @@
     width: var(--space-3);
     height: var(--space-3);
   }
+  /* Medium labelled actions with a leading icon use optical side insets. */
+  .buzz-button[data-size="md"]:not([data-icon-variant]):has(
+    > .buzz-button-label > svg:first-child
+  ) {
+    padding-inline-start: var(--space-3);
+    padding-inline-end: var(--space-4);
+  }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
     min-height: var(--size-control-sm);
@@ -115,6 +126,37 @@
   }
   .buzz-button[data-variant="subtle"] {
     background: var(--interaction-fill);
+  }
+  /* Profile actions over artwork; the shared material supplies fill, rim and blur. */
+  .buzz-button[data-variant="glass"] {
+    @apply glass-secondary;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--bg-glass-secondary-hover);
+    }
+  }
+  .buzz-button[data-variant="glass"]:is(:active, [aria-expanded="true"]):not(
+    [data-disabled]
+  ) {
+    background: var(--surface-panel);
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    .buzz-button[data-variant="glass"] {
+      background: var(--surface-panel);
+      backdrop-filter: none;
+    }
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--surface-panel);
+    }
+  }
+  @supports not (backdrop-filter: blur(1px)) {
+    .buzz-button[data-variant="glass"] {
+      background: var(--surface-panel);
+    }
+    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+      background: var(--surface-panel);
+    }
   }
   .buzz-button[data-variant="inverted"] {
     background: var(--surface-panel);
@@ -2016,15 +2058,25 @@
   }
 
   .buzz-preference-row {
+    --preference-row-trailing: auto;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) var(--preference-row-trailing);
     align-items: center;
     gap: var(--space-4);
     min-width: 0;
     padding: var(--space-3) 0;
   }
   .buzz-preference-row[data-has-icon] {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) var(--preference-row-trailing);
+  }
+  /* A compact choice ellipsizes its value, so a long one, such as a model
+   * name, takes at most 60% of the row and the title keeps its words. Fixed
+   * controls, such as pickers and swatches, and trailings that only contain
+   * a choice beside other content keep their full width. */
+  .buzz-preference-row:has(
+    > .buzz-preference-row-trailing > .buzz-select[data-variant="compact"]
+  ) {
+    --preference-row-trailing: fit-content(60%);
   }
   .buzz-preference-row-icon {
     display: flex;

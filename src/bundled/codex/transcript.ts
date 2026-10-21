@@ -119,13 +119,18 @@ function item(
         ? { id, at, type: "message", text: str(value.text) }
         : undefined;
     case "reasoning": {
-      const text = (Array.isArray(value.summary) ? value.summary : []).join(
-        "\n\n",
-      );
+      const texts = (part: unknown) =>
+        Array.isArray(part) ? part.map(str).filter(Boolean) : [];
+      const summary = texts(value.summary);
+      // Raw content can repeat the summary; show that text once.
+      const content = texts(value.content).filter((t) => !summary.includes(t));
+      const text = [...summary, ...content].join("\n\n");
       return text ? { id, at, type: "thought", text } : undefined;
     }
     case "plan":
       return { id, at, type: "status", text: str(value.text) };
+    case "contextCompaction":
+      return { id, at, type: "status", text: "Context compaction" };
     case "commandExecution":
       return tool({
         title: shellCommand(str(value.command)),

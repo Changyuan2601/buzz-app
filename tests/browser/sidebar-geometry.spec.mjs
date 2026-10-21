@@ -102,6 +102,10 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
       ),
     )
     .toBe(true);
+  // Snapshot admission precedes the separate live presence REQ.
+  await expect
+    .poll(() => app.relay.hasPresenceRoute("primary", app.participants[0]))
+    .toBe(true);
   app.presence("away");
   const avatar = row.locator(".buzz-avatar-status");
   await expect(avatar).toHaveAttribute("data-status", "away");

@@ -358,3 +358,173 @@ it("keeps a delayed completion in its own turn when another turn has an active s
   expect(mapped[1]?.items).toMatchObject([{ id: "new-script" }]);
   expect(mapped[1]?.items[0]).not.toHaveProperty("children");
 });
+
+it("uses each item's recorded start, keeping the turn start for an unrecorded item", () => {
+  const mapped = turns({
+    type: "commandExecution",
+    id: "nested",
+    command: "ls",
+    status: "completed",
+    durationMs: 500,
+    aggregatedOutput: "",
+  });
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        completed_at_ms: 7000,
+        item: { id: "nested" },
+      }),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 8000,
+        item: { id: "reply" },
+      }),
+    ].join("\n"),
+  );
+  const items = mapped[0]?.items ?? [];
+  expect(items.find((item) => item.id === "prompt")).toMatchObject({
+    at: 1000,
+  });
+  expect(items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 7000,
+  });
+  expect(items.find((item) => item.id === "reply")).toMatchObject({ at: 8000 });
+});
+
+it("uses a recorded finish even for a tool without a prior duration, and ignores a zero start", () => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        completed_at_ms: 7000,
+        item: { id: "nested" },
+      }),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 0,
+        item: { id: "reply" },
+      }),
+    ].join("\n"),
+  );
+  const items = mapped[0]?.items ?? [];
+  expect(items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 7000,
+  });
+  expect(items.find((item) => item.id === "reply")).toMatchObject({ at: 1000 });
+});
+
+it("shifts the app-server duration to the recorded start when no finish is recorded", () => {
+  const mapped = turns({
+    type: "commandExecution",
+    id: "nested",
+    command: "ls",
+    status: "completed",
+    durationMs: 500,
+    aggregatedOutput: "",
+  });
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        item: { id: "nested" },
+      }),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 5500,
+  });
+});
+
+const withDuration = {
+  type: "commandExecution",
+  id: "nested",
+  command: "ls",
+  status: "completed",
+  durationMs: 500,
+  aggregatedOutput: "",
+};
+
+it.each([
+  ["no start, an app-server duration", {}, withDuration, 6500, 7000],
+  [
+    "a zero start, an app-server duration",
+    { started_at_ms: 0 },
+    withDuration,
+    6500,
+    7000,
+  ],
+  ["no start, no duration", {}, undefined, 1000, undefined],
+  [
+    "a zero start, no duration",
+    { started_at_ms: 0 },
+    undefined,
+    1000,
+    undefined,
+  ],
+] as const)(
+  "never invents a duration from a recorded finish with %s",
+  (_, recordedStart, item, at, completedAt) => {
+    const mapped = item ? turns(item) : turns();
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        record("event_msg", {
+          type: "item_completed",
+          turn_id: "turn",
+          ...recordedStart,
+          completed_at_ms: 7000,
+          item: { id: "nested" },
+        }),
+      ].join("\n"),
+    );
+    const nested = mapped[0]?.items.find((entry) => entry.id === "nested");
+    expect(nested).toMatchObject({ at });
+    expect(
+      nested && "completedAt" in nested ? nested.completedAt : undefined,
+    ).toBe(completedAt);
+  },
+);
+
+it.each([
+  ["a dated", "2026-10-20T12:00:00Z", Date.parse("2026-10-20T12:00:06Z")],
+  ["an undated", "", undefined],
+  ["an invalid-timestamp", "not a time", undefined],
+])(
+  "gives %s restored exec call a finish only from a recorded start",
+  (_, callTime, completedAt) => {
+    const mapped = turns();
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        record("response_item", call("script"), callTime),
+        record("response_item", result("script"), "2026-10-20T12:00:06Z"),
+      ].join("\n"),
+    );
+    const script = mapped[0]?.items.find((item) => item.id === "script");
+    expect(script).toMatchObject({ status: "completed" });
+    expect(
+      script && "completedAt" in script ? script.completedAt : undefined,
+    ).toBe(completedAt);
+  },
+);

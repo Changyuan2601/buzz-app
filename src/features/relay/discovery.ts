@@ -374,8 +374,10 @@ export class DiscoveryState {
   }
   /** The channel list. System channels (NIP-CL) hold app data, not
    * conversation: they stay readable through get() but never list here. */
-  channels(): ChannelSummary[] {
-    return this.readable()
+  channels(
+    readable: readonly ChannelSummary[] = this.readable(),
+  ): ChannelSummary[] {
+    return readable
       .filter((channel) => channel.channelType !== "system")
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }

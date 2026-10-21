@@ -71,6 +71,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    importShared: (source) =>
+      source.runtime === "goose" || source.runtime === "goose-ai"
+        ? {
+            ...DEFAULT_CONFIG,
+            model: source.model,
+            provider: source.provider ?? "",
+          }
+        : undefined,
     Create,
     CreateModel,
     provider: {

@@ -104,6 +104,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: { ...defaults } }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "codex" &&
+      (!source.provider || source.provider === "openai")
+        ? { ...defaults, model: source.model }
+        : undefined,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

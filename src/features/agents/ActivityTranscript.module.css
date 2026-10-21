@@ -29,6 +29,11 @@
 .item {
   min-width: 0;
 }
+.at {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-subtle);
+}
 .row {
   display: flex;
   align-items: flex-start;

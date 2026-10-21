@@ -157,8 +157,15 @@ async fn stop_all_ends_every_process() {
         .start(0, "b.plugin".into(), "cat", command("cat", &[]), second)
         .unwrap();
     processes.stop_all();
-    until_exit(&mut first_events).await;
-    until_exit(&mut second_events).await;
+    // The page that reloaded hears no exit: each channel closes without one.
+    for events in [&mut first_events, &mut second_events] {
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("the channel stays open after the process stops")
+        {
+            assert_ne!(event["type"], "exit");
+        }
+    }
     assert!(processes.registry().entries.is_empty());
 }
 

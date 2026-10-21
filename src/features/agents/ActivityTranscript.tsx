@@ -25,6 +25,11 @@ import {
   WarningCircleIcon,
   WrenchIcon,
 } from "../../shared/design-system/icons/index";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+  formatTime,
+} from "../../shared/datetime";
 import styles from "./ActivityTranscript.module.css";
 
 type TurnState = "working" | "unknown" | "ended";
@@ -47,11 +52,23 @@ const STATUS: Record<string, string> = {
   yielded: "Yielded",
 };
 const line = (text: string) => text.split("\n").find(Boolean)?.trim() ?? "";
-const time = (at: number) =>
-  new Date(at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+const time = (at: number) => formatTime(at / 1000);
+/** Zero, non-finite and out-of-range times are unknown: show nothing rather
+ * than 1970 or a formatter throw. */
+const known = (at: number) => !!at && !Number.isNaN(new Date(at).getTime());
+/** An entry's time under it; the turn header already dates the prompt. */
+function Stamp({ item }: { item: TranscriptItem }) {
+  if (item.type === "prompt" || !known(item.at)) return null;
+  return (
+    <time
+      className={`text-body-sm ${styles.at}`}
+      dateTime={new Date(item.at).toISOString()}
+      title={formatFullTimestamp(item.at / 1000)}
+    >
+      {time(item.at)}
+    </time>
+  );
+}
 export function duration(ms: number) {
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
   const minutes = Math.floor(ms / 60_000);
@@ -130,14 +147,19 @@ function Turn({
   return (
     <article
       className={styles.turn}
-      aria-label={`Turn ${time(turn.startedAt)}`}
+      aria-label={
+        known(turn.startedAt) ? `Turn ${time(turn.startedAt)}` : "Turn"
+      }
     >
       <p className={`text-body-sm ${styles.session}`}>
         {[
           "Turn",
-          new Date(turn.startedAt).toLocaleString(),
+          known(turn.startedAt) &&
+            formatItemTimestamp(turn.startedAt / 1000, { withTime: true }),
           ...turn.config,
-        ].join(" · ")}
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </p>
       <header className={`text-body-sm ${styles.turnHeader}`}>
         <span data-state={turn.error ? "error" : state}>{status}</span>
@@ -153,6 +175,7 @@ function Turn({
       {turn.items.map((item) => (
         <div key={item.id} className={styles.item} data-type={item.type}>
           <Item item={item} agentName={agentName} />
+          <Stamp item={item} />
         </div>
       ))}
       {turn.error && (
@@ -405,7 +428,10 @@ function Tool({ item, agentName }: { item: ToolItem; agentName: string }) {
             Calls recorded during this script
           </p>
           {item.children.map((child) => (
-            <Item key={child.id} item={child} agentName={agentName} />
+            <div key={child.id}>
+              <Item item={child} agentName={agentName} />
+              <Stamp item={child} />
+            </div>
           ))}
         </div>
       ) : null}

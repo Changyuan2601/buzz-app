@@ -276,6 +276,7 @@ function PluginDetails({
     : null;
   const toggle = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -521,10 +522,12 @@ function PluginDetails({
           description="Removes this plugin and its rollback history from Buzz. You can install it again later."
           pending={busy || deleting}
           finalFocus={deleteTrigger}
+          initialFocus={cancelDelete}
           onClose={() => setConfirmDelete(false)}
           actions={
             <>
               <Button
+                ref={cancelDelete}
                 disabled={busy || deleting}
                 onClick={() => setConfirmDelete(false)}
               >

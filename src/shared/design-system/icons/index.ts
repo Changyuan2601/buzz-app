@@ -278,6 +278,8 @@ import TablerSquaresFourIcon from "@tabler/icons-react/dist/esm/icons/IconLayout
 export const SquaresFourIcon = defineIcon("tabler", TablerSquaresFourIcon);
 import TablerStopIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerStop.mjs";
 export const StopIcon = defineIcon("tabler", TablerStopIcon);
+import TablerOctagonIcon from "@tabler/icons-react/dist/esm/icons/IconOctagon.mjs";
+export const OctagonIcon = defineIcon("tabler", TablerOctagonIcon);
 import TablerSunIcon from "@tabler/icons-react/dist/esm/icons/IconSun.mjs";
 export const SunIcon = defineIcon("tabler", TablerSunIcon);
 import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
@@ -545,3 +547,15 @@ export const FileSpreadsheetIcon = defineIcon(
   "tabler",
   TablerFileSpreadsheetIcon,
 );
+
+import TablerPhoneEndIcon from "@tabler/icons-react/dist/esm/icons/IconPhoneEnd.mjs";
+export const PhoneEndIcon = defineIcon("tabler", TablerPhoneEndIcon);
+
+import TablerArrowsDiagonalMinimize2Icon from "@tabler/icons-react/dist/esm/icons/IconArrowsDiagonalMinimize2.mjs";
+export const ArrowsDiagonalMinimize2Icon = defineIcon(
+  "tabler",
+  TablerArrowsDiagonalMinimize2Icon,
+);
+
+import TablerPhoneIcon from "@tabler/icons-react/dist/esm/icons/IconPhone.mjs";
+export const PhoneIcon = defineIcon("tabler", TablerPhoneIcon);

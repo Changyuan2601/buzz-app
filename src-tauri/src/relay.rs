@@ -333,6 +333,24 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
             return Err("A leave request carries no content or other tags".into());
         }
+    } else if event.kind == 20002 {
+        let channel = |tag: &[String]| {
+            matches!(tag, [name, id] if name == "h" && !id.is_empty()
+                && id.len() <= 128 && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-'))
+        };
+        let reference = |tag: &[String], marker: &str| {
+            matches!(tag, [name, id, relay, role]
+                if name == "e" && hex_key(id) && relay.is_empty() && role == marker)
+        };
+        let scoped = match event.tags.as_slice() {
+            [h] => channel(h),
+            [h, reply] => channel(h) && reference(reply, "reply"),
+            [h, root, reply] => channel(h) && reference(root, "root") && reference(reply, "reply"),
+            _ => false,
+        };
+        if !event.content.is_empty() || !scoped {
+            return Err("Invalid typing indicator".into());
+        }
     } else if event.kind == 20003 {
         // Owner presence for agents: a status and one `p` tag per agent; the
         // relay keeps only the agents the signer owns.

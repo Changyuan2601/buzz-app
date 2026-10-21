@@ -17,6 +17,7 @@ import {
   type Settled,
   type ToolServer,
 } from "./goose";
+import type { SessionAction } from "../../features/agents/service";
 import { absoluteWorkspace } from "../codex/config";
 
 /** A conversation's session closes after this long without a message. */
@@ -185,6 +186,9 @@ export class AgentSessions {
   seen(key: string) {
     return this.shown.get(key) ?? 0;
   }
+  active(key: string) {
+    return this.opening.has(key) || !!this.live.get(key)?.session.working;
+  }
   /** Conversations with a session, whether each is working, and when each
    * last took in a message or ended a turn. */
   snapshot(): {
@@ -301,6 +305,27 @@ export class AgentSessions {
   async interrupt(key: string) {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
+  }
+  /** Waits for the conversation's session to finish its work, then compacts
+   * it or closes it, so the message opens a new one. Without an open session
+   * there is nothing to do. */
+  async reset(key: string, action: SessionAction): Promise<Settled> {
+    const live = this.live.get(key);
+    if (!live?.session.open) return { ok: true };
+    await live.session.idle();
+    if (this.disposed) return STOPPED;
+    if (this.live.get(key) !== live || !live.session.open) return { ok: true };
+    if (action === "new") {
+      this.drop(key, live);
+      return { ok: true };
+    }
+    const result = await this.answer(key, live, "/compact", {}, undefined);
+    // goose ends the turn either way, and says which in its text.
+    if (!result.ok || result.text === "Compaction complete") return result;
+    return {
+      ok: false,
+      error: result.text || "goose could not compact the session",
+    };
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the
@@ -459,6 +484,10 @@ export class AgentSessions {
     model: string | undefined,
   ) {
     const sent = live.session.send(text, activity, model);
+    // A final Buzz send can answer before goose finishes its model work.
+    void live.session.idle().then(() => {
+      if (this.live.get(key) === live) this.options.onChange?.();
+    });
     // Sending made it busy; a snapshot read when it opened is not.
     this.options.onChange?.();
     const settled = await sent;

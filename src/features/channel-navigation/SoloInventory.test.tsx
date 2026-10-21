@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { conversationTarget } from "./routes";
 
@@ -21,6 +21,51 @@ afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
   localStorage.clear();
+  vi.unstubAllGlobals();
+});
+
+it.each(["unavailable", "cached", "readOnly"])(
+  "immediately opens a narrow Solo row when rename is %s",
+  (state) => {
+    const f = fixture();
+    Object.assign(f.session, {
+      channelDetails: {
+        ...f.session.channelDetails,
+        available: state !== "unavailable",
+      },
+    });
+    if (state !== "unavailable") {
+      const channel = f.session.channels
+        .list()
+        .channels.find((item) => item.id === id);
+      if (!channel) throw new Error("Missing Planning fixture");
+      Object.assign(channel, { [state]: true });
+    }
+    f.replaceSession();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(max-width: 650px)",
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const row = screen.getByRole("button", { name: /^Planning/ });
+    fireEvent.click(row, { detail: 1 });
+    expect(f.open).toHaveBeenLastCalledWith(conversationTarget(scope, id));
+    fireEvent.click(row, { detail: 2 });
+    fireEvent.doubleClick(row);
+    expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
+  },
+);
+
+it("opens the chat if rename admission changes before the double-click completes", () => {
+  const f = fixture();
+  const details = { ...f.session.channelDetails, available: true };
+  Object.assign(f.session, { channelDetails: details });
+  f.replaceSession();
+  const row = screen.getByRole("button", { name: /^Planning/ });
+  details.available = false;
+  fireEvent.doubleClick(row);
+  expect(f.open).toHaveBeenLastCalledWith(conversationTarget(scope, id));
+  expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
 });
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();

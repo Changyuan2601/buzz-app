@@ -1,7 +1,14 @@
 // Browse: the agents this community's members have shared, each importable
 // as a new agent. The catalog is read a page at a time; an over-budget page is
 // retried smaller.
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { flushSync } from "react-dom";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
@@ -17,8 +24,8 @@ import type { EventData } from "../../features/relay/events";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -27,7 +34,15 @@ import {
   canonicalPublicKey,
   formatPublicKey,
 } from "../../shared/identity/public-key";
-import { AgentCard, AgentPortrait } from "./AgentCard";
+import { AgentPortrait } from "./AgentCard";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
+import { agentAvatars } from "../../features/agents/avatar-packs";
+import hero from "../../features/profiles/ProfileHero.module.css";
+import pageStyles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
 import styles from "./AgentBrowse.module.css";
 
@@ -40,10 +55,20 @@ type Importing = Readonly<{
   onImported(): void;
 }>;
 
+export type SharedAgentSelection = {
+  agent: SharedAgent;
+  session: RelaySession;
+  community: string | undefined;
+};
+type Selection = {
+  selectedId?: string | undefined;
+  onSelect(selection: SharedAgentSelection, trigger: HTMLButtonElement): void;
+};
+
 export function AgentBrowse({
   relay,
-  ...importing
-}: Importing & { relay: RelayData }) {
+  ...selection
+}: Selection & { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   if (connection.status !== "ready")
     return <p>Connect to a community to browse shared agents.</p>;
@@ -53,7 +78,7 @@ export function AgentBrowse({
       key={connection.generation}
       session={connection.session}
       community={connection.origin}
-      {...importing}
+      {...selection}
     />
   );
 }
@@ -61,8 +86,9 @@ export function AgentBrowse({
 function SharedAgentList({
   session,
   community,
-  ...importing
-}: Importing & {
+  selectedId,
+  onSelect,
+}: Selection & {
   session: RelaySession;
   community: string | undefined;
 }) {
@@ -72,8 +98,6 @@ function SharedAgentList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [selected, setSelected] = useState<SharedAgent>();
-  const trigger = useRef<HTMLButtonElement | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: An explicit retry reruns this finite read.
   useEffect(() => {
     const controller = new AbortController();
@@ -133,22 +157,29 @@ function SharedAgentList({
       )}
       <div className={cardStyles.grid}>
         {agents.map((agent) => (
-          <AgentCard
+          <SurfaceButton
             key={agent.id}
-            agent={agent}
-            community={community}
-            detail={agent.model || "Shared agent"}
-            icon={<ModelIcon model={agent.model} />}
+            className={cardStyles.card}
+            aria-label={agent.name}
+            aria-current={selectedId === agent.id || undefined}
+            data-selected={selectedId === agent.id || undefined}
+            onClick={(event) =>
+              onSelect({ agent, session, community }, event.currentTarget)
+            }
           >
-            <Button
-              onClick={(event) => {
-                trigger.current = event.currentTarget;
-                setSelected(agent);
-              }}
-            >
-              View details
-            </Button>
-          </AgentCard>
+            <span className={cardStyles.portrait} aria-hidden="true">
+              <AgentPortrait agent={agent} community={community} />
+            </span>
+            <span className={`${cardStyles.name} text-label`}>
+              {agent.name}
+            </span>
+            <span className={cardStyles.detail}>
+              <ModelIcon model={agent.model} />
+              <span className={cardStyles.detailText}>
+                {agent.model || "Shared agent"}
+              </span>
+            </span>
+          </SurfaceButton>
         ))}
       </div>
       {more && !error && (
@@ -167,71 +198,93 @@ function SharedAgentList({
           Load more
         </Button>
       )}
-      <Dialog
-        open={!!selected}
-        onOpenChange={(open) => {
-          if (!open) setSelected(undefined);
-        }}
-        title={
-          selected ? (
-            <span className={styles.heading}>
-              <span className={styles.portrait} aria-hidden="true">
-                <AgentPortrait agent={selected} community={community} />
-              </span>
-              <span className="text-heading">{selected.name}</span>
-            </span>
-          ) : (
-            "Shared agent"
-          )
-        }
-        description={
-          selected && (
-            <span className={styles.byline}>
-              By{" "}
+    </div>
+  );
+}
+
+export function SharedAgentPanel({
+  selection,
+  ...importing
+}: Importing & { selection: SharedAgentSelection }) {
+  const { agent, session, community } = selection;
+  const pack = agentAvatars.find((item) => item.url === agent.picture);
+  const picture = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    community,
+    "small",
+  );
+  return (
+    <div className={pageStyles.detailsScroll}>
+      <section className={hero.hero} aria-label={`${agent.name} identity`}>
+        <ProfileBackdrop src={pack?.preview ?? picture} />
+        <span className={pageStyles.identityPortrait}>
+          <AgentPortrait agent={agent} community={community} />
+        </span>
+        <h2 className="m-0 text-heading text-center break-words">
+          {agent.name}
+        </h2>
+        <div className={hero.actions}>
+          <ImportShared key={agent.id} shared={agent} {...importing} />
+        </div>
+      </section>
+      <section>
+        <InlineHeader title="About" />
+        <SettingsGroup>
+          <PreferenceRow
+            title="Shared by"
+            trailing={
               <Sharer
-                pubkey={selected.owner}
+                pubkey={agent.owner}
                 session={session}
                 community={community}
               />
-            </span>
-          )
-        }
-        size="wide"
-        finalFocus={trigger}
-        actions={
-          selected && (
-            <ImportShared
-              key={selected.id}
-              shared={selected}
-              {...importing}
-              onImported={() => {
-                setSelected(undefined);
-                importing.onImported();
-              }}
-            />
-          )
-        }
-      >
-        {selected && <SharedAgentDetails agent={selected} />}
-      </Dialog>
+            }
+          />
+          <PreferenceRow
+            title="Model"
+            trailing={
+              <span className={styles.fact}>
+                <ModelIcon model={agent.model} />
+                {agent.model || "Not given"}
+              </span>
+            }
+          />
+        </SettingsGroup>
+      </section>
+      <SharedAgentDetails agent={agent} />
     </div>
   );
 }
 
 function SharedAgentDetails({ agent }: { agent: SharedAgent }) {
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  const long =
+    agent.instructions.length > 320 ||
+    agent.instructions.split("\n").length > 5;
   return (
     <div className={styles.details}>
-      <p className="text-body text-secondary">
-        Import creates your own agent with this name, picture and instructions.
-        You can choose its model afterward.
-      </p>
-      <div className={`${styles.fact} text-body-sm text-secondary`}>
-        <ModelIcon model={agent.model} />
-        <span>Model: {agent.model || "Not given"}</span>
-      </div>
-      <section className={styles.instructions} aria-label="Instructions">
+      <InlineHeader title="Instructions" />
+      <section
+        id={id}
+        className={styles.instructions}
+        data-collapsed={long && !expanded ? "" : undefined}
+        aria-label="Instructions"
+      >
         {agent.instructions || "No instructions included."}
       </section>
+      {long && (
+        <div className={styles.instructionsAction}>
+          <Button
+            variant="subtle"
+            aria-expanded={expanded}
+            aria-controls={id}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "See less" : "See more"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -275,25 +328,60 @@ function Sharer({
   );
 }
 
-/** Imports the shared agent as a new agent of the chosen type, through the
- * same path that imports an earlier system's agents. */
-function ImportShared({
+/** The panel keeps one action; configuration belongs to the import dialog. */
+function ImportShared(props: Importing & { shared: SharedAgent }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <Button ref={trigger} variant="primary" onClick={() => setOpen(true)}>
+        Import
+      </Button>
+      {open && (
+        <SharedImportDialog
+          {...props}
+          onClose={() => setOpen(false)}
+          finalFocus={trigger}
+        />
+      )}
+    </>
+  );
+}
+
+function SharedImportDialog({
   shared,
   agents,
   types,
   onImported,
-}: Importing & { shared: SharedAgent }) {
-  const [type, setType] = useState(types[0]?.key ?? "");
+  onClose,
+  finalFocus,
+}: Importing & {
+  shared: SharedAgent;
+  onClose(): void;
+  finalFocus: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const [initial] = useState(() => {
+    for (const type of types) {
+      const config = type.importShared?.(shared);
+      if (config !== undefined) return { key: type.key, config };
+    }
+    return undefined;
+  });
+  const [type, setType] = useState(initial?.key ?? "");
+  const [config, setConfig] = useState<unknown>(initial?.config);
+  const [changing, setChanging] = useState(!initial);
+  const form = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const chosen = types.find((item) => item.key === type) ?? types[0];
-  if (!chosen)
-    return (
-      <p className="m-0 text-body-sm text-secondary">
-        Enable an agent type plugin to import agents.
-      </p>
-    );
+  const chosen = types.find((item) => item.key === type);
+  const Model = chosen?.CreateModel;
+  const choose = (key: string) => {
+    const next = types.find((item) => item.key === key);
+    setType(key);
+    setConfig(next?.importShared?.(shared) ?? next?.defaults().config);
+  };
   const run = async () => {
+    if (!chosen || pending) return;
     setPending(true);
     setError("");
     try {
@@ -303,6 +391,7 @@ function ImportShared({
         name: shared.name,
         ...(shared.picture ? { picture: shared.picture } : {}),
         instructions: shared.instructions,
+        ...(config !== undefined ? { config } : {}),
       });
       onImported();
     } catch (reason) {
@@ -311,37 +400,105 @@ function ImportShared({
     }
   };
   return (
-    <div className={styles.import}>
-      {error && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {error}
-        </p>
-      )}
-      {types.length > 1 && (
-        <Select
-          label="Import as"
-          value={chosen.key}
-          disabled={pending}
-          groups={[
-            {
-              label: "Agent types",
-              options: types.map((item) => ({
-                value: item.key,
-                label: item.title,
-              })),
-            },
-          ]}
-          onValueChange={setType}
-        />
-      )}
-      <Button
-        variant="primary"
-        loading={pending}
-        disabled={pending}
-        onClick={() => void run()}
-      >
-        Import
-      </Button>
-    </div>
+    <Dialog
+      open
+      title={`Import ${shared.name}`}
+      finalFocus={finalFocus}
+      preventClose={pending}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      actions={
+        <>
+          <Button disabled={pending} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!chosen || pending}
+            loading={pending}
+            onClick={() => void run()}
+          >
+            Import
+          </Button>
+        </>
+      }
+    >
+      <div ref={form} className="grid gap-4">
+        {types.length === 0 && (
+          <p className="m-0 text-body-sm text-secondary">
+            Enable an agent type plugin to import agents.
+          </p>
+        )}
+        {initial && !changing ? (
+          <>
+            <SettingsGroup>
+              <PreferenceRow title="Import as" trailing={chosen?.title} />
+              {shared.provider && (
+                <PreferenceRow title="Provider" trailing={shared.provider} />
+              )}
+              <PreferenceRow
+                title="Model"
+                trailing={shared.model || "Default"}
+              />
+            </SettingsGroup>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                // The button goes with the summary; keep focus on what replaces it.
+                flushSync(() => setChanging(true));
+                form.current
+                  ?.querySelector<HTMLElement>("[role='combobox']")
+                  ?.focus();
+              }}
+            >
+              Change settings
+            </Button>
+          </>
+        ) : (
+          types.length > 0 && (
+            <>
+              <Select
+                variant="field"
+                label="Import as"
+                placeholder="Choose an agent type"
+                value={type}
+                disabled={pending}
+                groups={[
+                  {
+                    label: "Agent types",
+                    options: types.map((item) => ({
+                      value: item.key,
+                      label: item.title,
+                    })),
+                  },
+                ]}
+                onValueChange={choose}
+              />
+              {Model && (
+                <SettingsGroup>
+                  <PreferenceRow
+                    title="Model"
+                    trailing={
+                      <Model
+                        key={type}
+                        config={config}
+                        disabled={pending}
+                        onChange={setConfig}
+                      />
+                    }
+                  />
+                </SettingsGroup>
+              )}
+            </>
+          )
+        )}
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+      </div>
+    </Dialog>
   );
 }

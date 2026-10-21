@@ -6,6 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { ActivityTranscript } from "./ActivityTranscript";
 import { codexTurns } from "../../bundled/codex/transcript";
 import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
+import { formatItemTimestamp } from "../../shared/datetime";
 
 afterEach(cleanup);
 
@@ -167,6 +168,9 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   const script = screen.getByText("exec", { exact: true }).closest("details");
   expect(script).not.toHaveAttribute("open");
   expect(script).toHaveAttribute("data-status", "completed");
+  // The script and its nested call each carry their own time.
+  expect(script?.querySelectorAll("time")).toHaveLength(1);
+  expect(script?.parentElement?.querySelectorAll("time")).toHaveLength(2);
 });
 
 it("discloses tool arguments and results without raw details, including a posted send", async () => {
@@ -220,4 +224,102 @@ it("discloses tool arguments and results without raw details, including a posted
   expect(screen.getByText("two messages")).toBeVisible();
   expect(screen.getByText("Done")).toBeVisible();
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
+});
+
+it("shows each entry's time under it, with the full date on hover, except the prompt", () => {
+  const at = Date.UTC(2026, 9, 20, 20, 1, 28);
+  const { container } = render(
+    <ActivityTranscript
+      transcript={{
+        unknownThread: 0,
+        turns: [
+          {
+            turnId: "t",
+            startedAt: at,
+            endedAt: at + 9000,
+            threadRootId: null,
+            config: [],
+            items: [
+              { id: "prompt", at, type: "prompt", text: "hi", sections: [] },
+              { id: "thought", at: at + 3000, type: "thought", text: "hmm" },
+              { id: "reply", at: at + 70_000, type: "message", text: "done" },
+            ],
+          } as never,
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  const stamps = [...container.querySelectorAll("time")];
+  expect(stamps.map((stamp) => stamp.getAttribute("datetime"))).toEqual([
+    new Date(at + 3000).toISOString(),
+    new Date(at + 70_000).toISOString(),
+  ]);
+  for (const stamp of stamps) {
+    expect(stamp.previousElementSibling).not.toBeNull();
+    expect(stamp.title).toContain("2026");
+  }
+});
+
+it("shows no time for an entry with a zero, non-finite or invalid time", () => {
+  const { container } = render(
+    <ActivityTranscript
+      transcript={{
+        unknownThread: 0,
+        turns: [
+          {
+            turnId: "t",
+            startedAt: 0,
+            endedAt: 0,
+            threadRootId: null,
+            config: [],
+            items: [
+              { id: "zero", at: 0, type: "thought", text: "a" },
+              { id: "inf", at: Infinity, type: "thought", text: "b" },
+              { id: "nan", at: NaN, type: "message", text: "c" },
+              {
+                id: "script",
+                at: 0,
+                type: "tool",
+                title: "exec",
+                status: "completed",
+                paths: [],
+                diffs: [],
+                children: [
+                  { id: "child", at: 1e20, type: "message", text: "d" },
+                ],
+              },
+            ],
+          } as never,
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  expect(container.querySelectorAll("time")).toHaveLength(0);
+});
+
+it("dates the turn heading in the shared format, and omits an unknown start", () => {
+  const at = Date.UTC(2026, 9, 20, 20, 1, 28);
+  const turn = (startedAt: number) =>
+    ({
+      turnId: `t${startedAt}`,
+      startedAt,
+      endedAt: startedAt,
+      threadRootId: null,
+      config: ["gpt-6"],
+      items: [],
+    }) as never;
+  render(
+    <ActivityTranscript
+      transcript={{ unknownThread: 0, turns: [turn(at), turn(0), turn(NaN)] }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  const expected = formatItemTimestamp(at / 1000, { withTime: true });
+  expect(screen.getByText(`Turn · ${expected} · gpt-6`)).toBeInTheDocument();
+  expect(screen.getAllByText("Turn · gpt-6")).toHaveLength(2);
 });

@@ -259,3 +259,24 @@ it("observes each saved conversation as a session, read-only", () => {
     { channelId: "dm" },
   ]);
 });
+
+it("preserves a compatible shared Codex model", () => {
+  const type = applied();
+  expect(
+    type?.importShared?.({
+      runtime: "codex",
+      provider: "openai",
+      model: "gpt-shared",
+    }),
+  ).toMatchObject({ model: "gpt-shared" });
+  expect(
+    type?.importShared?.({ runtime: "buzz-agent", model: "gpt-shared" }),
+  ).toBeUndefined();
+  expect(
+    type?.importShared?.({
+      runtime: "codex",
+      provider: "other",
+      model: "gpt-shared",
+    }),
+  ).toBeUndefined();
+});

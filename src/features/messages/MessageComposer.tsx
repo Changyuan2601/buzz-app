@@ -3,6 +3,7 @@ import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
+import { useTypingBroadcast } from "./useTypingBroadcast";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -89,6 +90,7 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
+import { AgentsContext, useSessionState } from "../agents/react";
 import { ComposerModels } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
@@ -385,6 +387,12 @@ function Composer({
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
   const solo = !!soloConversation || ownSoloConversation;
+  const channel = list.channels.find((channel) => channel.id === channelId);
+  const channelType = channel?.channelType;
+  // A DM or Solo chat is one conversation; elsewhere a top-level message
+  // starts a thread of its own.
+  const startsThread =
+    !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
   const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
@@ -433,6 +441,43 @@ function Composer({
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
+  const agents = useContext(AgentsContext);
+  const sessionPlace = useMemo(
+    () => ({
+      channelId,
+      ...(!solo &&
+      channelType !== "dm" &&
+      channelType !== "solo" &&
+      threadRootId
+        ? { root: threadRootId }
+        : {}),
+    }),
+    [channelId, solo, channelType, threadRootId],
+  );
+  // A one-to-one DM wakes its other member without an explicit mention.
+  // Include that session in both the rendered state and late send rechecks.
+  const sessionTargets = (pubkeys: readonly string[]) =>
+    channel?.channelType === "dm" && channel.members?.length === 2
+      ? [
+          ...new Set([
+            ...pubkeys,
+            ...channel.members.filter((key) => key !== session.viewer),
+          ]),
+        ]
+      : pubkeys;
+  const sessionState = useSessionState(
+    agents,
+    sessionTargets(value.recipients.map((item) => item.pubkey)),
+    sessionPlace,
+  );
+  const compacting = sessionState === "compacting";
+  const compactingNow = (
+    recipients = valueRef.current.recipients.map((item) => item.pubkey),
+  ) =>
+    sessionTargets(recipients).some(
+      (pubkey) => agents?.sessionState(pubkey, sessionPlace) === "compacting",
+    );
+
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
@@ -598,6 +643,12 @@ function Composer({
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
+  const notifyTyping = useTypingBroadcast(
+    session.typing?.send,
+    channelId,
+    threadRootId,
+    active && !editingDisabled && !editing.target && !submission && !cached,
+  );
   const label = editing.target
     ? "Edit message"
     : (customLabel ??
@@ -1228,6 +1279,7 @@ function Composer({
     }
     if (
       disabled ||
+      compactingNow() ||
       accepted ||
       conflict ||
       admission.current ||
@@ -1380,6 +1432,8 @@ function Composer({
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
+        if (compactingNow(recipients))
+          throw new Error("Wait for compaction to finish, or interrupt it.");
         const destination = session.channels
           .list()
           .channels.find((channel) => channel.id === channelId);
@@ -1437,8 +1491,10 @@ function Composer({
       const publish = (
         uploaded: readonly UploadedAttachment[],
         validated = false,
-      ) =>
-        queueFollowUp && host
+      ) => {
+        if (compactingNow(recipients))
+          throw new Error("Wait for compaction to finish, or interrupt it.");
+        return queueFollowUp && host
           ? followUpQueue(host).submit(
               {
                 channelId,
@@ -1460,6 +1516,7 @@ function Composer({
               validated,
             )
           : publishNow(uploaded, session);
+      };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
         setSending(true);
@@ -1838,9 +1895,11 @@ function Composer({
               extensions={extensions}
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
+                const textChanged = next.text !== valueRef.current.text;
                 if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
+                if (textChanged && next.text.trim()) notifyTyping();
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
@@ -2022,6 +2081,8 @@ function Composer({
                   onResolved={(next) => {
                     resolvedPicks.current = next;
                   }}
+                  startsThread={startsThread}
+                  place={sessionPlace}
                 />
               )}
             <IconButton
@@ -2036,14 +2097,19 @@ function Composer({
               title={
                 editing.target
                   ? "Save changes"
-                  : untagged
-                    ? "Tag an agent to send"
-                    : "Send message"
+                  : compacting
+                    ? "Wait for compaction to finish, or interrupt it."
+                    : untagged
+                      ? "Tag an agent to send"
+                      : "Send message"
               }
-              focusableWhenDisabled={untagged || undefined}
+              focusableWhenDisabled={
+                untagged || (!editing.target && compacting) || undefined
+              }
               disabled={
                 disabled ||
                 untagged ||
+                (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||
                 (!!editing.target && (editing.locked || editDisabled)) ||
                 admitting ||
@@ -2063,6 +2129,11 @@ function Composer({
             />
           </div>
         </div>
+        {!editing.target && compacting && (
+          <p className={styles.composerStatus} role="status">
+            Compacting session…
+          </p>
+        )}
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}

@@ -443,6 +443,7 @@ it("observes independent owned-agent typing and releases on its updates", () => 
   const unsubscribe = vi.fn();
   const h = fixture({
     typing: {
+      async send() {},
       snapshot: () => typing,
       subscribe: (listener: () => void) => {
         listeners.add(listener);

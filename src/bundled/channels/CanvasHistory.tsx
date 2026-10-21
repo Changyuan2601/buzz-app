@@ -271,9 +271,11 @@ export function CanvasHistory({
         </>
       )}
       <Dialog
+        size="compact"
         open={confirm}
         onOpenChange={setConfirm}
         title="Restore this version?"
+        description="This publishes the selected version as a new Canvas revision. Existing history is kept."
         initialFocus={cancel}
         finalFocus={() =>
           attempted.current ? refreshButton.current : restoreButton.current
@@ -299,10 +301,6 @@ export function CanvasHistory({
           </>
         }
       >
-        <p>
-          This publishes the selected version as a new Canvas revision. Existing
-          history is kept.
-        </p>
         {dirty && (
           <p>
             Your unsaved draft will be kept separately. Copy any edits you want

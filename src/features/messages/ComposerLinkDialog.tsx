@@ -46,6 +46,7 @@ export function ComposerLinkDialog({
   };
   return (
     <Dialog
+      size="compact"
       open
       dismissOnOutsideClick={false}
       onOpenChange={(open) => {

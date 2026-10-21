@@ -1,19 +1,32 @@
 import { Popover } from "@base-ui/react/popover";
 import { Slider } from "@base-ui/react/slider";
 import {
+  useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type Ref,
 } from "react";
-import { useMentionModels } from "../agents/react";
+import {
+  AgentsContext,
+  useSessionState,
+  useMentionModels,
+} from "../agents/react";
 import type { MentionModelChoice } from "../agents/react";
-import type { Effort } from "../agents/service";
+import type {
+  Effort,
+  SessionPlace,
+  SessionControlAction,
+} from "../agents/service";
 import type { MentionPicks, RunPick } from "../relay/messages";
 import {
   CaretDownIcon,
+  ArrowsInIcon,
+  ArrowCounterClockwiseIcon,
+  StopIcon,
   GaugeIcon,
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -28,28 +41,54 @@ import {
 import styles from "./ComposerModels.module.css";
 
 /** Model and effort for the next run of each mentioned agent of the viewer's
- * that offers a choice. Unpicked agents run with their own. */
+ * that offers a choice. Session controls act immediately on this conversation. */
 export function ComposerModels({
   pubkeys,
   value,
   disabled,
   onChange,
   onResolved,
+  startsThread,
+  place,
 }: {
   pubkeys: readonly string[];
   value: MentionPicks;
   disabled: boolean;
   onChange(value: MentionPicks): void;
   onResolved(value: MentionPicks): void;
+  /** The message starts a thread of its own, as a channel's top-level one
+   * does, so a thread-scoped agent has no session to act on. */
+  startsThread: boolean;
+  place: SessionPlace;
 }) {
   const [open, setOpen] = useState(false);
-  const choices = useMentionModels(pubkeys);
+  const mentioned = useMentionModels(pubkeys);
+  const choices = useMemo<readonly MentionModelChoice[]>(
+    () =>
+      startsThread
+        ? mentioned.flatMap((choice) => {
+            if (choice.session !== "thread") return [choice];
+            const { session: _, ...rest } = choice;
+            return rest.loading ||
+              rest.models.length > 1 ||
+              rest.models.some((model) => model.efforts.length)
+              ? [rest]
+              : [];
+          })
+        : mentioned,
+    [mentioned, startsThread],
+  );
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: Record<string, RunPick> = { ...value };
+    const resolved: Record<string, RunPick> = Object.fromEntries(
+      Object.entries(value).map(([pubkey, { model, effort }]) => [
+        pubkey,
+        { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      ]),
+    );
     for (const choice of choices) {
       if (choice.loading || !choice.sendDefaults) continue;
       const saved = value[choice.pubkey] ?? {};
@@ -84,6 +123,9 @@ export function ComposerModels({
     const { [pubkey]: _, ...rest } = value;
     onChange(next.model || next.effort ? { ...rest, [pubkey]: next } : rest);
   };
+  const label = choices.some((choice) => choice.session)
+    ? "Model, effort, and session controls"
+    : "Model and effort for the next run";
   return (
     <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
       <Popover.Trigger
@@ -95,11 +137,9 @@ export function ComposerModels({
             type="button"
             disabled={disabled}
             data-selected={picked.length ? "" : undefined}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             title={
-              picked.length
-                ? `Next run: ${picked.join(", ")}`
-                : "Model and effort for the next run"
+              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
             }
             icon={<GaugeIcon size={18} aria-hidden="true" />}
           />
@@ -117,13 +157,14 @@ export function ComposerModels({
         >
           <Popover.Popup
             className={styles.popup}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             initialFocus={thumb}
           >
             {choices.map((choice, index) => (
               <AgentChoice
                 key={choice.pubkey}
                 choice={choice}
+                place={place}
                 named={choices.length > 1}
                 value={value[choice.pubkey] ?? {}}
                 disabled={disabled}
@@ -146,6 +187,7 @@ const runModel = (choice: MentionModelChoice, picked: string | undefined) =>
 
 function AgentChoice({
   choice,
+  place,
   named,
   value,
   disabled,
@@ -153,12 +195,14 @@ function AgentChoice({
   thumb,
 }: {
   choice: MentionModelChoice;
+  place: SessionPlace;
   named: boolean;
   value: RunPick;
   disabled: boolean;
   pick(next: RunPick): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
+  const [feedback, setFeedback] = useState("");
   if (choice.loading)
     return (
       <div className={styles.loading} role="status" aria-busy="true">
@@ -210,25 +254,40 @@ function AgentChoice({
   return (
     <div className={styles.agent}>
       {named && <span className={styles.about}>{choice.name}</span>}
-      {runs.efforts.length > 0 ? (
-        <EffortSlider
-          name={choice.name}
-          model={model}
-          efforts={runs.efforts}
-          resting={runs.effort}
-          value={value.effort}
-          disabled={disabled}
-          pick={(effort) =>
-            pick({
-              ...(value.model ? { model: value.model } : {}),
-              ...(effort ? { effort } : {}),
-            })
-          }
-          {...(thumb ? { thumb } : {})}
-        />
-      ) : (
-        // Without a slider the model sits on its own tab, not on the thread.
-        <div className={styles.solo}>{model}</div>
+      <div className={styles.controls}>
+        {runs.efforts.length > 0 ? (
+          <EffortSlider
+            name={choice.name}
+            model={model}
+            efforts={runs.efforts}
+            resting={runs.effort}
+            value={value.effort}
+            disabled={disabled}
+            pick={(effort) =>
+              pick({
+                ...(value.model ? { model: value.model } : {}),
+                ...(effort ? { effort } : {}),
+              })
+            }
+            {...(thumb ? { thumb } : {})}
+          />
+        ) : (
+          // Without a slider the model sits on its own tab, not on the thread.
+          <div className={styles.solo}>{model}</div>
+        )}
+        {choice.session && (
+          <SessionRail
+            pubkey={choice.pubkey}
+            name={choice.name}
+            place={place}
+            onFeedback={setFeedback}
+          />
+        )}
+      </div>
+      {feedback && (
+        <span className={styles.about} role="status">
+          {feedback}
+        </span>
       )}
     </div>
   );
@@ -304,5 +363,79 @@ function EffortSlider({
         </Slider.Track>
       </Slider.Control>
     </Slider.Root>
+  );
+}
+
+function SessionRail({
+  pubkey,
+  name,
+  place,
+  onFeedback,
+}: {
+  pubkey: string;
+  name: string;
+  place: SessionPlace;
+  onFeedback(message: string): void;
+}) {
+  const agents = useContext(AgentsContext);
+  const state = useSessionState(agents, [pubkey], place);
+  const act = async (action: SessionControlAction) => {
+    onFeedback("");
+    try {
+      await agents?.session(pubkey, place, action);
+      onFeedback(
+        action === "compact"
+          ? "Session compacted"
+          : action === "new"
+            ? "New session started"
+            : "Interrupt requested",
+      );
+    } catch (error) {
+      onFeedback(
+        error instanceof Error ? error.message : "Session action failed",
+      );
+    }
+  };
+  return (
+    <fieldset className={styles.rail} aria-label={`${name}'s session`}>
+      {(
+        [
+          ["compact", "Compact session", ArrowsInIcon],
+          ["new", "Start a new session", ArrowCounterClockwiseIcon],
+          ["interrupt", "Interrupt", StopIcon],
+        ] as const
+      ).map(([action, label, Icon]) => {
+        const enabled =
+          action === "interrupt"
+            ? state === "active" || state === "compacting"
+            : state === "idle";
+        const title =
+          state === "unavailable"
+            ? `${label}: session controls unavailable. Check the agent's connection and the app running it.`
+            : state === "compacting"
+              ? action === "interrupt"
+                ? "Interrupt compaction"
+                : "Compacting session. Wait for it to finish, or interrupt it."
+              : enabled
+                ? label
+                : action === "interrupt"
+                  ? "Nothing to interrupt. The session is idle."
+                  : `Wait for the active turn to finish before ${action === "compact" ? "compacting" : "starting a new session"}.`;
+        return (
+          <IconButton
+            key={action}
+            size="sm"
+            type="button"
+            icon={<Icon aria-hidden="true" />}
+            aria-label={label}
+            title={title}
+            disabled={!enabled}
+            loading={action === "compact" && state === "compacting"}
+            focusableWhenDisabled
+            onClick={() => void act(action)}
+          />
+        );
+      })}
+    </fieldset>
   );
 }

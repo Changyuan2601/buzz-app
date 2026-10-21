@@ -1,4 +1,6 @@
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
+import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
@@ -1999,4 +2001,291 @@ it("deletes only your own note, by its address", async () => {
   expect(published).toEqual([
     { kind: 5, content: "", tags: [["a", `30023:${me}:plan`]] },
   ]);
+});
+
+// The hive channel: Bob administers it, and Owner's agent Alice joins it.
+const ownerKey = new Uint8Array(32).fill(7);
+const owner = bytesToHex(schnorr.getPublicKey(ownerKey));
+const attested = async (agent: string) => {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent}:`),
+  );
+  return [
+    "auth",
+    owner,
+    "",
+    bytesToHex(schnorr.sign(new Uint8Array(digest), ownerKey)),
+  ];
+};
+const hive = (roles: Readonly<Record<string, string>>) =>
+  event({
+    kind: 39002,
+    tags: [
+      ["d", "chan"],
+      ...Object.entries(roles).map(([p, r]) => ["p", p, "", r]),
+    ],
+  });
+const repo = (
+  pubkey: string,
+  d: string,
+  channels: string[],
+  extra: string[][] = [],
+) =>
+  event({
+    kind: 30617,
+    pubkey,
+    id: d.padEnd(64, "0"),
+    tags: [["d", d], ...channels.map((c) => ["buzz-channel", c]), ...extra],
+  });
+const git = (client: BuzzClient) => {
+  const gitAuth = vi.fn(async (owner: string, name: string) => ({
+    url: `https://relay/git/${owner}/${name}.git`,
+    header: "Authorization: Nostr abc",
+  }));
+  client.gitAuth = gitAuth;
+  return gitAuth;
+};
+
+/** A fake relay over `events` that then serves what `client` publishes. */
+const announcing = (events: BuzzEvent[]) => {
+  const { client, published } = fake(events);
+  client.publish = vi.fn(async (template: Template) => {
+    published.push(template);
+    const created = event({
+      ...template,
+      pubkey: client.pubkey,
+      id: published.length.toString(16).padStart(64, "e"),
+      created_at: 2_000_000_000 + published.length,
+    });
+    events.push(created);
+    return created;
+  });
+  return { client, published };
+};
+
+it("gives the channel's repository and a Git header signed for it", async () => {
+  const { client } = fake([
+    hive({ [bob]: "admin", [alice]: "member" }),
+    repo(bob, "hive", ["chan"]),
+    // Access follows the first binding, so this one belongs elsewhere.
+    repo(bob, "other", ["elsewhere", "chan"]),
+    // Any member may bind a repository; the channel trusts only its leads.
+    repo(alice, "impostor", ["chan"]),
+  ]);
+  const gitAuth = git(client);
+  const answer = await callTool(client, { channel: "chan" }, "repo", {});
+  expect(gitAuth).toHaveBeenCalledWith(bob, "hive");
+  const url = `https://relay/git/${bob}/hive.git`;
+  expect(answer).toBe(
+    [
+      `hive: ${url}`,
+      "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
+      `git -c http.${url}.extraHeader='Authorization: Nostr abc' clone ${url}`,
+    ].join("\n"),
+  );
+});
+
+it("trusts a lead's agent, and asks which when there are several", async () => {
+  const { client } = fake([
+    hive({ [bob]: "admin", [owner]: "owner", [alice]: "member" }),
+    repo(alice, "hive", ["chan"], [await attested(alice)]),
+    repo(bob, "b", ["chan"]),
+  ]);
+  const gitAuth = git(client);
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", {}),
+  ).rejects.toThrow(`Choose repo: ${bob}/b, ${alice}/hive`);
+  await callTool(client, { channel: "chan" }, "repo", {
+    repo: `${alice}/hive`,
+  });
+  expect(gitAuth).toHaveBeenCalledWith(alice, "hive");
+});
+
+it("creates one protected repository for a channel it leads", async () => {
+  const { client, published } = announcing([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [me]: "admin" }),
+  ]);
+  const gitAuth = git(client);
+  for (const create of [".hive", "a..b", "a/b", "h".repeat(65)])
+    await expect(
+      callTool(client, { channel: "chan" }, "repo", { create }),
+    ).rejects.toThrow("create must be");
+  await expect(
+    callTool(client, { channel: "hidden" }, "repo", { create: "hive" }),
+  ).rejects.toThrow();
+  expect(published).toEqual([]);
+  await callTool(client, { channel: "chan" }, "repo", { create: "hive" });
+  expect(published).toEqual([
+    {
+      kind: 30617,
+      content: "",
+      tags: [
+        ["d", "hive"],
+        ["name", "hive"],
+        ["buzz-channel", "chan"],
+        ["buzz-protect", "refs/heads/**", "no-force-push", "no-delete"],
+      ],
+    },
+  ]);
+  expect(gitAuth).toHaveBeenCalledWith(me, "hive");
+});
+
+it("never moves its own repository, or starts a second one", async () => {
+  const { client, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [me]: "admin", [bob]: "admin" }),
+    repo(me, "hive", ["elsewhere"]),
+  ]);
+  git(client);
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow("You already have a repository named hive.");
+  expect(published).toEqual([]);
+  const { client: bound } = fake([
+    hive({ [bob]: "admin" }),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  git(bound);
+  await expect(
+    callTool(bound, { channel: "chan" }, "repo", { create: "again" }),
+  ).rejects.toThrow("already has a repository");
+  await expect(
+    callTool(bound, { channel: "empty" }, "repo", {}),
+  ).rejects.toThrow("has no repository from its owners or admins");
+});
+
+it("lets only a lead or a lead's agent start the channel's repository", async () => {
+  const { client, published } = announcing([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [me]: "member", [owner]: "owner" }),
+  ]);
+  git(client);
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow("Only a channel's owner or an admin, or their agent");
+  expect(published).toEqual([]);
+  Object.assign(client, { owner });
+  await callTool(client, { channel: "chan" }, "repo", { create: "hive" });
+  expect(published).toHaveLength(1);
+});
+
+it("reads past a page of untrusted repositories, and never guesses past five", async () => {
+  const spam = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      event({
+        kind: 30617,
+        pubkey: alice,
+        id: i.toString(16).padStart(64, "a"),
+        created_at: 1000 + i,
+        tags: [
+          ["d", `spam${i}`],
+          ["buzz-channel", "chan"],
+        ],
+      }),
+    );
+  const { client } = fake([
+    hive({ [bob]: "admin", [me]: "admin" }),
+    ...spam(150),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  const gitAuth = git(client);
+  await callTool(client, { channel: "chan" }, "repo", {});
+  await callTool(client, { channel: "chan" }, "repo", { repo: `${bob}/hive` });
+  expect(gitAuth).toHaveBeenNthCalledWith(1, bob, "hive");
+  expect(gitAuth).toHaveBeenNthCalledWith(2, bob, "hive");
+
+  const { client: flooded, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [bob]: "admin", [me]: "admin" }),
+    ...spam(500),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  git(flooded);
+  await expect(
+    callTool(flooded, { channel: "chan" }, "repo", {}),
+  ).rejects.toThrow("could not all be read");
+  await expect(
+    callTool(flooded, { channel: "chan" }, "repo", { create: "mine" }),
+  ).rejects.toThrow("could not all be read");
+  expect(published).toEqual([]);
+});
+
+it("starts one repository at a time, from the relay's writer, and confirms it", async () => {
+  const led = (channel: string) => [
+    event({ kind: 39000, id: channel.padEnd(64, "1"), tags: [["d", channel]] }),
+    event({
+      kind: 39002,
+      id: channel.padEnd(64, "2"),
+      tags: [
+        ["d", channel],
+        ["p", me, "", "admin"],
+      ],
+    }),
+  ];
+  const { client, published } = announcing([...led("chan"), ...led("other")]);
+  git(client);
+  const results = await Promise.allSettled([
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+    callTool(client, { channel: "other" }, "repo", { create: "hive" }),
+  ]);
+  expect(published).toHaveLength(1);
+  expect(results.map((result) => result.status)).toEqual([
+    "fulfilled",
+    "rejected",
+  ]);
+  expect((results[1] as PromiseRejectedResult).reason.message).toBe(
+    "You already have a repository named hive.",
+  );
+  const reads = vi
+    .mocked(client.query)
+    .mock.calls.flatMap(([filters]) => filters)
+    .filter((filter) =>
+      (filter.kinds as number[] | undefined)?.includes(30617),
+    );
+  expect(reads.every((filter) => filter.consistency === "strong")).toBe(true);
+
+  // Another session of it rebinds the name before the relay is read back.
+  const { client: raced } = announcing(led("chan"));
+  git(raced);
+  const publish = raced.publish;
+  raced.publish = vi.fn(async (template: Template) => {
+    const created = await publish(template);
+    await publish({
+      ...template,
+      tags: template.tags.map((t) =>
+        t[0] === "buzz-channel" ? ["buzz-channel", "elsewhere"] : t,
+      ),
+    });
+    return created;
+  });
+  await expect(
+    callTool(raced, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow("hive was announced, but the relay binds it elsewhere.");
+});
+
+it("says how to get the header when only that failed", async () => {
+  const { client } = announcing([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [me]: "admin" }),
+  ]);
+  client.gitAuth = vi.fn(async () => {
+    throw new Error("offline.");
+  });
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow(
+    "Started hive, but its Git header failed: offline. Call repo again without create.",
+  );
+});
+
+it("refuses Git where the host holds no key", async () => {
+  const { client } = fake([
+    hive({ [bob]: "admin" }),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", {}),
+  ).rejects.toThrow("Git access needs Buzz Desktop.");
 });

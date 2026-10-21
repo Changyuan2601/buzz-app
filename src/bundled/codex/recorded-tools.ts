@@ -12,6 +12,8 @@ const object = (value: unknown): Json | undefined =>
     ? (value as Json)
     : undefined;
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+const ms = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const SCRIPT_STATUS: Record<string, string> = {
   "Script completed": "completed",
   "Script failed": "failed",
@@ -45,7 +47,10 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       },
     ]),
   );
-  const calls = new Map<string, { item: ToolItem; owner: string }>();
+  const calls = new Map<
+    string,
+    { item: ToolItem; owner: string; dated: boolean }
+  >();
   const active = new Map<ToolItem, string>();
   let turnId = "";
   for (const line of file.split("\n")) {
@@ -74,6 +79,25 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       const item = draft?.existing.get(id);
       if (!draft || !item || draft.seen.has(id)) continue;
       draft.seen.add(id);
+      // App-server history stamps every item with its turn's start. The
+      // rollout records when each item actually ran.
+      // Zero is the rollout's unknown-start sentinel, not a real time.
+      const startedAt = ms(payload.started_at_ms) || undefined;
+      const completedAt = ms(payload.completed_at_ms) || undefined;
+      // Never invent a duration: a lone recorded time moves an existing
+      // app-server duration rather than measuring from the turn start.
+      if (item.type === "tool") {
+        const known = item.completedAt;
+        if (startedAt !== undefined && completedAt !== undefined)
+          item.completedAt = completedAt;
+        else if (known !== undefined && startedAt !== undefined)
+          item.completedAt = startedAt + known - item.at;
+        else if (known !== undefined && completedAt !== undefined) {
+          item.at = completedAt - (known - item.at);
+          item.completedAt = completedAt;
+        }
+      }
+      if (startedAt !== undefined) item.at = startedAt;
       // There is no parent id in these records. Associate only inside a
       // single unfinished exec; concurrent/ambiguous calls stay independent.
       const parents = [...active].filter(
@@ -84,13 +108,9 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       // A shell process can outlive its exec. Its completion timestamp alone
       // cannot establish ownership by the currently active script.
       const command = object(payload.item)?.type === "CommandExecution";
-      const startedAt = payload.started_at_ms;
       if (
         parent &&
-        (!command ||
-          (typeof startedAt === "number" &&
-            Number.isFinite(startedAt) &&
-            startedAt >= parent.at)) &&
+        (!command || (startedAt !== undefined && startedAt >= parent.at)) &&
         (item.type === "tool" || (item.type === "message" && item.posted))
       ) {
         parent.children ??= [];
@@ -118,8 +138,10 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       // safely be assigned to a subsequently active script in this turn.
       const owner = drafts.get(found.owner);
       if (owner && item.status === "yielded") owner.ambiguous = true;
+      // An undated call starts at the turn-start fallback; pairing it with a
+      // real finish would invent a duration.
       const at = Date.parse(str(record.timestamp));
-      if (Number.isFinite(at)) item.completedAt = at;
+      if (found.dated && Number.isFinite(at)) item.completedAt = at;
       active.delete(item);
       continue;
     }
@@ -157,7 +179,11 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
     // can arrive while another script is the only active call.
     if ([...active.values()].includes(draft.turn.turnId))
       draft.ambiguous = true;
-    calls.set(callId, { item, owner: draft.turn.turnId });
+    calls.set(callId, {
+      item,
+      owner: draft.turn.turnId,
+      dated: Number.isFinite(at),
+    });
     draft.ordered.push(item);
     active.set(item, draft.turn.turnId);
   }

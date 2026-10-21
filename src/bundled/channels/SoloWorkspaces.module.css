@@ -1,8 +1,37 @@
+.conversationIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  flex: 0 0 var(--space-5);
+}
+
 .chatRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
+}
+
+.nameEditor {
+  min-width: 0;
+  padding-inline-start: var(--session-row-inset);
+}
+
+.nameEditorRow {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--space-1) + var(--space-half));
+}
+
+.nameEditorRow > .conversationIcon {
+  height: var(--session-action-size);
+  color: var(--text-subtle);
+}
+
+.nameEditorField {
+  min-width: 0;
+  flex: 1;
 }
 
 .chatRow > span:first-child {
@@ -247,12 +276,4 @@
     position: static;
     transform: none;
   }
-}
-
-.conversationIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--space-5);
-  flex: 0 0 var(--space-5);
 }

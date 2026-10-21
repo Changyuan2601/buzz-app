@@ -1472,7 +1472,11 @@ function ChannelWorkspace({
           }
         />
       )}
-      <Panel as="article" aria-label="Conversation">
+      <Panel
+        as="article"
+        aria-label="Conversation"
+        data-solo-focus-pane={solo ? "" : undefined}
+      >
         <div
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
           style={

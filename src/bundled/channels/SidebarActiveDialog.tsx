@@ -46,6 +46,7 @@ export function SidebarActiveDialog({
   };
   return (
     <Dialog
+      size="compact"
       open
       title="Active in the last"
       headerGap="compact"

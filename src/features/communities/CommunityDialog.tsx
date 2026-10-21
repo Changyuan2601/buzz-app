@@ -264,11 +264,19 @@ export function CommunityDialog({
       }}
       preventClose={busy}
       description={
-        step === "destination" && !unavailable
-          ? connectionFrom
-            ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
-            : "Use your identity across communities. Your profile and conversations stay separate in each one."
-          : undefined
+        unavailable
+          ? undefined
+          : step === "destination"
+            ? connectionFrom
+              ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
+              : "Use your identity across communities. Your profile and conversations stay separate in each one."
+            : step === "access"
+              ? `Connect to ${destination?.name} with your Buzz identity.`
+              : mode === "profile"
+                ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
+                : original?.exists
+                  ? "Your existing community profile is loaded. Keep it or update it here."
+                  : "Start with your local profile, or choose how you appear in this community."
       }
       leadingActions={
         !unavailable && (
@@ -385,10 +393,6 @@ export function CommunityDialog({
             )}
             {step === "access" && (
               <>
-                <p>
-                  Connect to <strong>{destination?.name}</strong> with your Buzz
-                  identity.
-                </p>
                 <Field label="Invite code (if required)">
                   <Input
                     disabled={busy}
@@ -445,22 +449,13 @@ export function CommunityDialog({
               </>
             )}
             {step === "profile" && (
-              <>
-                <p>
-                  {mode === "profile"
-                    ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
-                    : original?.exists
-                      ? "Your existing community profile is loaded. Keep it or update it here."
-                      : "Start with your local profile, or choose how you appear in this community."}
-                </p>
-                <ProfileFields
-                  community={mode === "profile" ? undefined : id}
-                  onBusyChange={setUploading}
-                  profile={profile}
-                  onChange={setProfile}
-                  disabled={busy}
-                />
-              </>
+              <ProfileFields
+                community={mode === "profile" ? undefined : id}
+                onBusyChange={setUploading}
+                profile={profile}
+                onChange={setProfile}
+                disabled={busy}
+              />
             )}
             {error && step !== "destination" && (
               <p role="alert" className={styles.error}>

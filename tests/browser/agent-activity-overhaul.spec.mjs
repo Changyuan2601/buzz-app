@@ -207,10 +207,20 @@ test("message activity opens a grouped preview and the agent's profile without l
         .boundingBox();
       expect(groupBox.y + groupBox.height).toBeLessThanOrEqual(formBox.y);
       await expect(bubble).toHaveAttribute("data-size", "xs");
-      await expect(region).toHaveCSS("margin-top", "8px");
+      // Channel and thread activity use the same gap below their message.
+      const channelGap = await row
+        .locator("[data-thread-summary]")
+        .evaluate((element) => getComputedStyle(element).marginTop);
+      await expect(region).toHaveCSS("margin-top", channelGap);
       const buttonBox = await bubble.boundingBox();
-      // 16px mini avatar + 4px badge inset + 8px xs button inset.
-      expect(buttonBox.height).toBe(28);
+      const artworkBox = await bubble
+        .locator(".buzz-avatar")
+        .first()
+        .boundingBox();
+      expect(artworkBox.y).toBeGreaterThan(buttonBox.y);
+      expect(artworkBox.y + artworkBox.height).toBeLessThan(
+        buttonBox.y + buttonBox.height,
+      );
       expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(width);
       await bubble.focus();
       await page.keyboard.press("Enter");

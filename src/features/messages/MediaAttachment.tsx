@@ -18,6 +18,11 @@ import {
 import { ArrowsOutIcon, XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
+import {
+  openingFrame,
+  openingFrameCapture,
+  rememberOpeningFrame,
+} from "../relay/media";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
@@ -94,11 +99,12 @@ export function MediaAttachment({
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [capturedPreview, setCapturedPreview] = useState<string>();
-  const [measuredDimensions, setMeasuredDimensions] = useState<{
-    width: number;
-    height: number;
-  }>();
+  const captured = source ? openingFrame(source) : undefined;
+  const openingSeek = useRef<{ time: number; capture: number }>(undefined);
+  const [capturedPreview, setCapturedPreview] = useState(captured?.poster);
+  const [measuredDimensions, setMeasuredDimensions] = useState<
+    { width: number; height: number } | undefined
+  >(captured && { width: captured.width, height: captured.height });
   const dimensions = attachment.dimensions ?? measuredDimensions;
   const previewStyle = dimensions
     ? ({
@@ -219,15 +225,19 @@ export function MediaAttachment({
             width: element.videoWidth,
             height: element.videoHeight,
           });
-        if (!preview && element.currentTime === 0) {
+        if (!preview && !capturedPreview && element.currentTime === 0) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
-          element.currentTime = Math.min(0.1, element.duration || 0.1);
+          const time = Math.min(0.1, element.duration || 0.1);
+          openingSeek.current = { time, capture: openingFrameCapture() };
+          element.currentTime = time;
           return;
         }
       }}
       onSeeked={(event) => {
         const element = event.currentTarget;
+        const opening = openingSeek.current;
+        openingSeek.current = undefined;
         if (!preview && !capturedPreview && element.videoWidth > 0) {
           try {
             const canvas = document.createElement("canvas");
@@ -237,10 +247,27 @@ export function MediaAttachment({
               1,
               Math.round(element.videoHeight * scale),
             );
-            canvas
-              .getContext("2d")
-              ?.drawImage(element, 0, 0, canvas.width, canvas.height);
-            setCapturedPreview(canvas.toDataURL("image/jpeg", 0.8));
+            const context = canvas.getContext("2d");
+            context?.drawImage(element, 0, 0, canvas.width, canvas.height);
+            const poster = canvas.toDataURL("image/jpeg", 0.8);
+            // Only a drawn opening frame is shared; an explicit timecode seek
+            // or a blank export stays with this mount.
+            if (
+              context &&
+              opening &&
+              Math.abs(element.currentTime - opening.time) < 0.01 &&
+              poster.startsWith("data:image/jpeg;")
+            )
+              rememberOpeningFrame(
+                source,
+                {
+                  poster,
+                  width: element.videoWidth,
+                  height: element.videoHeight,
+                },
+                opening.capture,
+              );
+            setCapturedPreview(poster);
           } catch {
             // A decoded frame may still paint in the video when canvas export
             // is unavailable; the poster capture is only a compatibility aid.

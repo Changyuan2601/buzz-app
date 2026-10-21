@@ -1,6 +1,12 @@
-import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import {
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../relay/session";
-import { Button } from "../../shared/design-system/ui/Button";
+import { Button, type ButtonProps } from "../../shared/design-system/ui/Button";
+import { AgentsContext, useSessionState } from "../agents/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { followUpQueue } from "./follow-up-queue";
@@ -76,22 +82,51 @@ export function QueuedFollowUps({
                 icon={<TrashIcon size={16} strokeWidth={1.5} />}
                 onClick={() => queue.remove(entry.id)}
               />
-              <Button
-                data-queue-action="send"
+              <QueuedSend
+                channelId={channelId}
+                recipients={entry.recipients}
                 onFocus={() => {
                   focused.current = { id: entry.id, action: "send" };
                 }}
-                variant="subtle-muted"
-                size="caption"
                 disabled={disabled}
                 onClick={() => queue.sendNow(entry.id)}
-              >
-                Send
-              </Button>
+              />
             </div>
           </li>
         ))}
       </ol>
     </section>
+  );
+}
+
+/** A queued message can target different agents from the current draft. */
+function QueuedSend({
+  recipients,
+  channelId,
+  ...props
+}: Pick<ButtonProps, "disabled" | "onClick" | "onFocus"> & {
+  recipients: readonly string[];
+  channelId: string;
+}) {
+  const state = useSessionState(useContext(AgentsContext), recipients, {
+    channelId,
+  });
+  const compacting = state === "compacting";
+  return (
+    <Button
+      {...props}
+      data-queue-action="send"
+      variant="subtle-muted"
+      size="caption"
+      disabled={props.disabled || compacting}
+      focusableWhenDisabled={compacting || undefined}
+      title={
+        compacting
+          ? "Wait for compaction to finish, or interrupt it."
+          : "Send now"
+      }
+    >
+      Send
+    </Button>
   );
 }

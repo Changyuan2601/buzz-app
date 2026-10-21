@@ -710,6 +710,20 @@ export function policyRelay({
           ),
       );
     },
+    hasPresenceRoute(community, author) {
+      return sockets.some(
+        (socket) =>
+          socket.readyState === 1 &&
+          socket.community === community &&
+          [...socket.routes.values()].some((filters) =>
+            filters.some(
+              (filter) =>
+                filter.kinds.includes(20001) &&
+                filter.authors?.includes(author),
+            ),
+          ),
+      );
+    },
     presence(community, event) {
       let deliveries = 0;
       for (const socket of sockets) {
@@ -753,7 +767,7 @@ export function policyRelay({
         "observer must traverse the production owner-only route",
       ).toBeGreaterThan(0);
     },
-    publish(community, event) {
+    publish(community, event, { requireSubscriber = true } = {}) {
       let deliveries = 0;
       // Relay-authored group state names its channel with d, not h.
       const destinationTag =
@@ -778,10 +792,11 @@ export function policyRelay({
           deliveries++;
         }
       }
-      expect(
-        deliveries,
-        "event must traverse an explicit production channel REQ",
-      ).toBeGreaterThan(0);
+      if (requireSubscriber)
+        expect(
+          deliveries,
+          "event must traverse an explicit production channel REQ",
+        ).toBeGreaterThan(0);
     },
     failRoute(
       community,

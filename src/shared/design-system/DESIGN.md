@@ -146,8 +146,14 @@ standalone consequential confirmation. “Modal” is the interaction mode, not 
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
 
-Compose title and optional useful description, task body, then actions. Put the
-completion action in the `actions` footer, with Cancel/Close before it. Keep other
+Compose title and optional useful description together in the shared header
+heading, with Close aligned beside them. This lockup applies to both `Dialog`
+and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
+optional task content, then actions. Without task content, use the shared inset
+as the gap between the header and actions. Pass introductory copy through `description` and
+omit `children` when there is no task body; do not add an empty wrapper. Keep field
+help, status, warnings, and section-specific explanations with their content.
+Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
 task controls in the body; reserve `headerActions` for contextual utilities beside
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
@@ -155,27 +161,36 @@ close button, body padding, or footer with feature-specific markup.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
-| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
+| Short form or confirmation | `size="compact"` Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
 | Settings or another sectioned modal | `navigation={{ label, content }}` | Shared flush sidebar and detail scrollports; stacked navigation at narrow widths |
 | Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
 
-Centered navigated modals use direct viewport insets and settle at `transform: none`,
-so text does not remain inside a transformed surface. Starting styles must override
-the same settled placement selector, including portalled first paint. Their surface and contents
-enter together from 0.99 scale in one `duration-fast` fade with `easing-enter`,
-with no blank-card stage or delayed content. Scale is entry-only; exit stays a fade. The scrim retains its shared fade; exit uses `duration-fast`.
-Keyboard, reduced-motion and `motion="none"` stay immediate. Their header uses the shared
-panel-header minimum height, space-2 vertical padding and centered title/actions.
-Leading dialog padding keeps the title aligned with navigation content; trailing
-space-2 padding gives the Close control an even top, bottom and outer-edge gutter.
-`container` optionally fills a positioned host element instead of the viewport;
-pass null while that element is mounting. Keep query containment and transforms
-inside a sibling content region, not above this portal, so fixed backdrops still
-block the whole window. Other dialogs retain their existing motion; keyboard and
-reduced-motion preferences still suppress transitions.
+Dialogs and modals share a `2rem` inset, reduced to `1rem` at viewport widths
+of `30rem` or less, and a secondary (`subtle`) Close button. The responsive inset
+applies to headers, bodies, actions, and navigation panes; search keeps its
+documented field framing.
+Use `size="compact"` for a short form or confirmation: a centered `25rem` maximum
+width. Standard modals use `40rem`, wide modals `55rem`, and expanded modals `72rem`.
+Modals start `8rem` from the viewport top, with a `1rem` bottom/side gutter and
+viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
+`1rem` so actions remain reachable, including with enlarged text.
+Expanded modals support tables, two-column content, or integrated navigation.
+When a short window or enlarged text leaves too little room below navigation
+chrome, the whole modal scrolls while retaining at least one control-height pane
+inside its insets. Navigation headers and each pane use the same inset; list
+rows retain their shared padding and align through the existing wrapper offset.
+
+Surface and contents enter together with a `0.75rem` upward fade over
+`duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses
+`duration-fast` (`120ms`). The settled surface has no animation transform.
+Keyboard, reduced-motion and `motion="none"` stay immediate. Base UI owns
+transition presence, focus and dismissal. Search retains its documented compact
+field framing but shares modal placement and motion. Right-side inspectors and
+host-contained surfaces retain their established placement; fullscreen media
+retains renderer-owned geometry.
 
 These are starting choices, not permission to combine every option. Default to
 content height; reserve stable height when changing results would otherwise make
@@ -198,6 +213,11 @@ remains an outside dismissal; actual dragging keeps the modal open without enabl
 blocked controls underneath. The host owns
 platform APIs and exact drag-region hit testing, not the design system.
 
+AlertDialog leaves initial focus selection to Base UI, excluding header Close
+until focus enters. This preserves body-field or first-action focus; Base UI
+retains ownership of touch behavior. Explicit `initialFocus` overrides remain
+authoritative. Close then participates in the normal Tab cycle.
+
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
 loses work. Keep failure and recovery in the modal with entered values intact.
@@ -207,10 +227,11 @@ closes. If automatic restoration loses the trigger, pass the surviving trigger
 through the shared `finalFocus` contract; preserve the shared guard against
 stealing focus after the person moves elsewhere.
 
-The geometry options above belong to `Dialog`; `AlertDialog` does not expose the
-same props or structured body yet. Its visual parity is an
-[open shared-owner gap](../../../docs/design-system-adoption.md#gaps-to-address-when-migrating-owners).
-Do not compensate with a private modal shell or silently switch confirmation semantics.
+`AlertDialog` uses the compact geometry and the same header/body/action framing.
+It retains alert-dialog semantics and pending dismissal protection. Pass
+`initialFocus` when a confirmation has an established first-action focus target;
+the header Close button must not silently replace that flow. Do not switch
+confirmation semantics just to select a visual size.
 
 ### Menus, popovers, and pickers
 
@@ -719,6 +740,11 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
 
+An Input that must retain focus during asynchronous work can pair `readOnly` with
+`aria-disabled="true"` to use the shared disabled appearance without removing
+keyboard focus. Its feature owner must prevent edits and keep `aria-busy` on the
+working region; `aria-disabled` alone does not prevent native input.
+
 Navigation labels are controls, not selectable document text. `NavigationItem`,
 tabs, and sidebar section/project disclosure headings prevent text selection,
 including when opening a context menu. Keep this behavior on the navigation
@@ -772,6 +798,9 @@ avatar/count groups without wrapping individual labels. Thread reply summaries
 use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
+Proposed: medium labelled buttons with a leading icon use 12px leading and 16px
+trailing padding for optical balance. Text-only and icon-only buttons retain their
+existing insets.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
@@ -860,9 +889,11 @@ selection-mark slot in every option so selecting the widest label cannot resize 
 Compact choices can pass `valueSuffix` for short metadata that must stay visible,
 such as an agent card's Default source. It sits directly after the value on the
 same line; only the value truncates. Keep the full choice in the popup and value
-hint. The caller owns its column width. `align="end"` anchors a trailing choice popup
-to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. An option may include one concise supporting
+hint. The caller owns its column width; in PreferenceRow a compact choice takes at
+most 60% of the row, beyond its min-content width, so a long value ellipsizes
+before the row title loses its words. Other trailing controls keep their width.
+`align="end"` anchors a trailing choice popup to the trigger’s right edge; the
+default remains `start`. Pass `disabled` explicitly when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
@@ -1103,7 +1134,7 @@ inline layer (such as an inspector) before dismissing the dialog. Nested modal
 layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
-at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
+at 55rem and preserves viewport gutters; `height="stable"` can reserve the body
 while changing catalog selection. Content-sized dialogs also scroll only their
 body when viewport-capped, without reserving extra height; their title and
 actions stay outside that scrollport. If enlarged title/actions alone cannot fit
@@ -1111,7 +1142,7 @@ the viewport, the outer dialog scrolls as a fallback so pointer access does not
 depend on focusing an offscreen control. Flow bodies retain at least one control
 height plus their padding, with scroll padding to reveal complete focused fields
 rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
-Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
+Use `size="expanded"` for large reading surfaces such as code diffs, capped at 72rem;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
 
@@ -1129,13 +1160,17 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal padding: `--space-5` (20px),
-or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
-on top of that body padding. Create/Edit channel forms opt into
+vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
+or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
+on top of that body padding. Footers following body content also reserve a fixed
+`--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
+meets the buttons directly. Header-only confirmations retain their header-to-action
+gap. Create/Edit channel forms opt into
 `headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
 other dialog compositions retain their default spacing. Their privacy confirmation
-steps also opt into `footerGap="compact"` for 8px between the final checkbox row
-and the actions; returning to the form restores the normal body-bottom padding.
+steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
+before the fixed footer gutter; returning to the form restores the normal
+body-bottom padding.
 Session settings uses content height and the default footer spacing, with one
 body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
@@ -1146,8 +1181,8 @@ administration errors sit outside that scrollport, below its fixed search contro
 Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
 body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
-The shared Dialog uses state opacity and settling transform tokens for a centered
-0.98-scale entrance, with fast timing on exit. Base UI owns transition presence;
+The shared Dialog uses `duration-settle` and `easing-enter` for a subtle upward
+fade, with `duration-fast` on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.
 Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
 `motion="none"` for frequently used surfaces such as the search palette.

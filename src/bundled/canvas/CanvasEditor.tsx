@@ -271,6 +271,7 @@ export function CanvasEditor({
         </div>
       </div>
       <Dialog
+        size="compact"
         open={confirmReload}
         onOpenChange={setConfirmReload}
         dismissOnOutsideClick

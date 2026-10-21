@@ -4,6 +4,8 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
+import { AgentsContext } from "../agents/react";
+import type { Agents } from "../agents/service";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
@@ -40,9 +42,9 @@ function fixture() {
     });
     return publish;
   };
-  function mount() {
+  function mount(agents?: Agents) {
     render(
-      <>
+      <AgentsContext.Provider value={agents}>
         <input aria-label="Composer" />
         <button type="button">Elsewhere</button>
         <QueuedFollowUps
@@ -51,11 +53,40 @@ function fixture() {
           disabled={false}
           focusComposer={() => screen.getByRole("textbox").focus()}
         />
-      </>,
+      </AgentsContext.Provider>,
     );
   }
   return { queue, add, mount };
 }
+it("keeps queued Send focused when compaction finishes, then sends with Enter", async () => {
+  const h = fixture();
+  const publish = h.add("first");
+  const listeners = new Set<() => void>();
+  const types: readonly never[] = [];
+  let compacting = true;
+  const agents = {
+    types: () => types,
+    sessionState: () => (compacting ? "compacting" : "idle"),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as Agents;
+  h.mount(agents);
+  const user = userEvent.setup();
+  const send = screen.getByRole("button", { name: "Send" });
+  send.focus();
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Enter}");
+  expect(publish).not.toHaveBeenCalled();
+  act(() => {
+    compacting = false;
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(publish).toHaveBeenCalledOnce();
+});
 it("restores focus to a remaining row and then the composer after keyboard removal", async () => {
   const h = fixture();
   h.add("first");

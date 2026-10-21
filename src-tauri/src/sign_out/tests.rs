@@ -81,7 +81,15 @@ fn walk(root: &Path, dir: &Path) -> Vec<String> {
         .unwrap()
         .flat_map(|entry| {
             let path = entry.unwrap().path();
-            let name = path.strip_prefix(root).unwrap().display().to_string();
+            // Joined with `/` so the expected listings hold on Windows too,
+            // where `display()` would use `\`.
+            let name = path
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             if path.is_dir() {
                 let mut nested = walk(root, &path);
                 nested.push(format!("{name}/"));

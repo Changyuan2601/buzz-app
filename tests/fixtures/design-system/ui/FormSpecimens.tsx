@@ -83,6 +83,9 @@ export function InputExamples() {
 >
   <Input readOnly value="workspace-studio" />
 </Field>
+<Field label="Saving" aria-busy="true">
+  <Input readOnly aria-disabled="true" value="Design studio" />
+</Field>
 <Field label="Disabled">
   <Input disabled value="Managed by your organization" />
 </Field>
@@ -112,6 +115,9 @@ export function InputExamples() {
           description="You can focus and copy this value."
         >
           <Input readOnly value="workspace-studio" />
+        </Field>
+        <Field label="Saving" aria-busy="true">
+          <Input readOnly aria-disabled="true" value="Design studio" />
         </Field>
         <Field label="Disabled">
           <Input disabled value="Managed by your organization" />

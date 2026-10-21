@@ -113,6 +113,7 @@
     "allow-app-agent-search-profiles",
     "allow-app-agent-upload",
     "allow-app-agent-media",
+    "allow-app-agent-git-auth",
     "allow-app-agent-remember",
     "allow-app-agent-claim",
     "allow-app-agent-release",

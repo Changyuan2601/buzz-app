@@ -2,7 +2,8 @@
 //! stdin stays open for the plugin, and stdout and stderr stream back as they
 //! arrive. A process belongs to the plugin that started it and to the page that
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
-//! app exits. It runs with the user's own access: there is no sandbox.
+//! app exits. A page that reloaded hears nothing of it after. It runs with the
+//! user's own access: there is no sandbox.
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
@@ -187,10 +188,17 @@ impl HostProcesses {
             for reader in readers.into_iter().flatten() {
                 let _ = reader.await;
             }
-            state.registry().entries.remove(&handle);
-            let _ = on_event.send(ProcessEvent::Exit {
-                code: status.and_then(|status| status.code()),
-            });
+            let mut registry = state.registry();
+            registry.entries.remove(&handle);
+            // A page that reloaded is told nothing: it stopped the process by
+            // going, and may run until it unloads, taking the exit for a failure.
+            let reloaded = registry.page != page;
+            drop(registry);
+            if !reloaded {
+                let _ = on_event.send(ProcessEvent::Exit {
+                    code: status.and_then(|status| status.code()),
+                });
+            }
         });
         Ok(handle)
     }
@@ -230,7 +238,7 @@ impl HostProcesses {
         }
         Ok(())
     }
-    /// Stops every process: the page that owned them is gone.
+    /// Stops every process, without telling the page: it is gone.
     pub(crate) fn stop_all(&self) {
         let mut registry = self.registry();
         registry.page += 1;

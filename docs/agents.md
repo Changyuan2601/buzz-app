@@ -133,6 +133,32 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
+A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+session controls in the composer's gauge popover: **Compact session**,
+**Start a new session**, and **Interrupt**. A side rail keeps all three visible.
+Compact and New are enabled while that harness session is idle; Interrupt is
+enabled while it is active, including work after a final Buzz reply. Disabled
+controls remain focusable and explain their state in a tooltip. The app holding
+the agent's runner performs the action; other copies explain where to use it.
+Send keeps its existing steering or Solo queue preference and carries no session
+action.
+While manual compaction runs, its icon shows a spinner and the composer says
+“Compacting session…”. Compact, New and Send (including Enter) are disabled;
+the draft remains editable and Interrupt remains available. Send returns when
+compaction finishes, fails or is interrupted. The block applies to messages
+targeting that harness session; other sessions remain usable.
+
+`sessionControls.scope(agent)` returns the agent's session scope. Controls appear in a
+thread, DM or Solo chat, and at a channel's top level for a channel-scoped agent.
+A thread-scoped agent's top-level message starts a thread of its own, so it has
+no existing session to control. goose compacts only a session still open. A new
+session is primed with the conversation on the next message. Compaction failures
+appear beside the controls. Session actions never travel on messages. A mention
+received during an action is accepted into that session's handoff and releases
+the agent's mention lane immediately. It waits for the action without spending
+its handover deadline; other conversations continue, and stopping the agent
+cancels the deferred work.
+
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
 recommendation; blank thinking preferences follow the selected model's default
@@ -174,6 +200,21 @@ selected community's agents, with their settings.
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
 process status, so a stopped agent is as selectable as a running one.
+
+### Turns a close or reload stopped
+
+Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
+reloading the app stops them; the native host then sends no exit for them. The
+runner keeps each mention turn working then in agent storage
+(`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
+those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
+reads each mention again and gives it to `run` marked `resumed`, which tells the
+agent to carry on in its saved session; **Don’t resume** forgets them. Either
+answer covers only the agents the notice names, and only Resume gives those
+mentions again: a replay or live delivery of one never does. A turn
+stays saved until its resumed turn settles, so closing again first loses none.
+Mentions queued behind a working turn, watch turns and other types are not
+kept.
 
 ## Shared agent selection
 

@@ -226,7 +226,12 @@ describe("GooseProcess", () => {
     });
     await expect(settled).resolves.toEqual({ ok: true });
     expect(session.busy).toBe(false);
-    process.turns[0]?.finish();
+    expect(session.working).toBe(true);
+    session.interrupt();
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    await session.idle();
+    expect(session.working).toBe(false);
   });
 
   it("steers a message that arrives mid-turn into it", async () => {

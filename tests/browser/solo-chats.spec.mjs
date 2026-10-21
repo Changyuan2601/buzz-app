@@ -746,19 +746,6 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   page,
   app,
 }) => {
-  const readbacks = [];
-  await page.route("**/api/relay/**/query", async (route) => {
-    const response = await route.fetch();
-    const events = await response.json();
-    readbacks.push(
-      ...events.filter(
-        (event) =>
-          event.kind === 39000 &&
-          event.tags.some(([key, value]) => key === "d" && value === id),
-      ),
-    );
-    await route.fulfill({ response });
-  });
   await page.goto(app.origin);
   await newChat(page);
   const actions = page.getByRole("button", {
@@ -902,7 +889,30 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await lifetime
     .getByRole("textbox", { name: "Chat name", exact: true })
     .fill("Make contrast meet accessibility standards");
-  await save.click();
+  // Observe the browser's actual confirmation read without proxying its queries
+  // through a separate APIRequestContext connection pool.
+  const [readback] = await Promise.all([
+    page.waitForResponse(async (response) => {
+      if (
+        !response.url().endsWith("/api/relay/primary/query") ||
+        !response.ok() ||
+        !response
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.kinds?.includes(39000))
+      )
+        return false;
+      return (await response.json()).some(
+        (event) =>
+          event.kind === 39000 &&
+          event.tags.some(([key, value]) => key === "d" && value === id) &&
+          event.tags.some(
+            ([key, value]) => key === "ttl" && value === "1209600",
+          ),
+      );
+    }),
+    save.click(),
+  ]);
   await expect(lifetime).not.toBeVisible();
   const renamedRow = sidebar.getByRole("button", {
     name: "Make contrast meet accessibility standards",
@@ -922,8 +932,11 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
     ["t", "buzz.solo"],
     ["t", "buzz.session.named"],
   ]);
-  const saved = readbacks.find((entry) =>
-    entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
+  const saved = (await readback.json()).find(
+    (entry) =>
+      entry.kind === 39000 &&
+      entry.tags.some(([key, value]) => key === "d" && value === id) &&
+      entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
   );
   expect(saved).toBeDefined();
   expect(verifyEvent(saved)).toBe(true);
@@ -956,6 +969,44 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Escape");
 
   await expect(renamedRow).toBeFocused();
+  // Inline renaming exercises native text selection and the actual sidebar host.
+  await renamedRow.dblclick();
+  await expect(lifetime).not.toBeVisible();
+  const inlineName = sidebar.getByRole("textbox", {
+    name: "Chat name",
+    exact: true,
+  });
+  await expect(inlineName).toBeFocused();
+  await expect
+    .poll(() =>
+      inlineName.evaluate((input) => [
+        input.selectionStart,
+        input.selectionEnd,
+        input.value.length,
+      ]),
+    )
+    .toEqual([0, 42, 42]);
+  await page.keyboard.type("Inline plan");
+  await inlineName.press("Enter");
+  await expect(inlineName).toHaveCount(0);
+  const inlineRow = sidebar.getByRole("button", {
+    name: "Inline plan",
+    exact: true,
+  });
+  await expect(inlineRow).toBeVisible();
+  await expect(inlineRow).toBeFocused();
+  expect(app.report.detailsPublications).toHaveLength(2);
+  const rename = app.report.detailsPublications[1];
+  expect(verifyEvent(rename)).toBe(true);
+  expect(rename.tags).toContainEqual(["name", "Inline plan"]);
+  expect(rename.tags.some(([key]) => key === "ttl")).toBe(false);
+  await inlineRow.dblclick();
+  await expect(inlineName).toBeFocused();
+  await page.keyboard.type("Discard this");
+  await inlineName.press("Escape");
+  await expect(inlineName).toHaveCount(0);
+  await expect(inlineRow).toBeFocused();
+  expect(app.report.detailsPublications).toHaveLength(2);
 });
 
 // Native caret placement after focus handoffs and popup picks needs a browser.

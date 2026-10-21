@@ -68,7 +68,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   page,
   app,
 }, testInfo) => {
-  await page.setViewportSize({ width: 480, height: 400 });
+  await page.setViewportSize({ width: 480, height: 320 });
   await page.addInitScript(() =>
     localStorage.setItem("buzz-font-scale.v1", "2"),
   );
@@ -182,7 +182,9 @@ for (const action of ["Remove from this device", "Leave community"]) {
     await page.keyboard.press("Enter");
     let dialog = page.getByRole("alertdialog");
     // Cancel must still restore the exact trigger rather than focus Profile.
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+    await expect(
+      dialog.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(trigger).toBeFocused();
     await page.keyboard.press("Enter");
@@ -540,7 +542,7 @@ confirmedPresence(
         const content = await pluginContent.boundingBox();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - scrollport.y).toBe(20);
+        expect(content.y - scrollport.y).toBe(32);
       } else {
         // Narrow Settings stacks its navigation above the detail.
         expect(navigation.y + navigation.height).toBeLessThanOrEqual(
