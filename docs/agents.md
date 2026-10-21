@@ -840,3 +840,5 @@ The shared Buzz `send` tool requires a `cursor`: the latest message ID the agent
 Local sends share admission per relay authority and conversation, including across agents. The last accepted publication supplements relay reads while it is not visible there. Independent Buzz hosts and other relay clients can still race; the relay does not enforce a conditional append. This is not evidence that a model understood the supplied messages, and it does not change speech playback.
 
 When a locally accepted message is still absent from relay reads, a rejected send withholds a replacement cursor until that message is readable. Read again to retrieve its context before reconsidering. Admission is serialized per local connection and channel because channel reads include thread replies; unrelated threads retain separate cursor heads.
+
+A send is temporarily refused while the latest conversation timestamp is at or ahead of this device's clock; retry after the clock advances. Temporary accepted-message evidence is discarded once a send check or a read confirms relay visibility, so later deletion or retention does not leave that evidence blocking the conversation.

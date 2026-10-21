@@ -2549,3 +2549,63 @@ it("uses sub-second message ordering and keeps other threads out of admission", 
     }),
   ).resolves.toContain("sent ");
 });
+
+it("refuses future context until wall-clock publication can advance it", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+  try {
+    const events = [event({ id: root, created_at: 102 })];
+    const { client } = fake(events);
+    client.publish = vi.fn(async (template: Template) => {
+      const created = event({
+        ...template,
+        id: String(events.length + 2).repeat(64),
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [...(template.tags ?? []), ["ms", String(Date.now() % 1000)]],
+      });
+      events.push(created);
+      return created;
+    });
+    const args = { audience: "everyone", text: "Answer", cursor: root };
+    await expect(
+      callTool(client, { channel: "chan" }, "send", args),
+    ).rejects.toThrow("clock");
+    expect(client.publish).not.toHaveBeenCalled();
+    clock.mockReturnValue(102_001);
+    const sent = String(
+      await callTool(client, { channel: "chan" }, "send", args),
+    );
+    await expect(
+      callTool(client, { channel: "chan" }, "send", args),
+    ).rejects.toThrow("Stale cursor");
+    clock.mockReturnValue(102_002);
+    await expect(
+      callTool(client, { channel: "chan" }, "send", {
+        ...args,
+        cursor: sent.match(/cursor ([a-f0-9]{64})/)?.[1],
+      }),
+    ).resolves.toContain("sent ");
+    expect(client.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it("retires pending evidence across views after a read, allowing deletion recovery", async () => {
+  const events = [event({ id: root })];
+  const { client } = fake(events);
+  const args = { audience: "everyone", text: "Answer", cursor: root };
+  await callTool(client, { channel: "chan", root }, "send", args);
+  const accepted = await vi.mocked(client.publish).mock.results[0]?.value;
+  if (!accepted) throw new Error("Missing publication");
+  events.push(accepted);
+  expect(
+    await callTool(client, { channel: "chan", root }, "read", {}),
+  ).toContain(`cursor ${accepted.id}`);
+  events.pop();
+  expect(await callTool(client, { channel: "chan" }, "read", {})).toContain(
+    `cursor ${root}`,
+  );
+  await expect(
+    callTool(client, { channel: "chan" }, "send", args),
+  ).resolves.toContain("sent ");
+});

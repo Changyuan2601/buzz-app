@@ -10,6 +10,22 @@ type MessageHead = Pick<BuzzEvent, "id" | "created_at" | "tags">;
 type Admission = { tail: Promise<void>; heads: Map<string, MessageHead> };
 const communities = new Map<string, Map<string, Admission>>();
 const standalone = new WeakMap<object, Map<string, Admission>>();
+const scopeOf = (client: BuzzClient) =>
+  client.sendScope ?? client.relayAuthor ?? client.query;
+
+/** Once readable, a publication no longer needs temporary admission evidence. */
+export function observeSendMessages(
+  client: BuzzClient,
+  events: readonly BuzzEvent[],
+) {
+  const scope = scopeOf(client);
+  const states =
+    typeof scope === "string" ? communities.get(scope) : standalone.get(scope);
+  const visible = new Set(events.map((event) => event.id));
+  for (const state of states?.values() ?? [])
+    for (const [view, head] of state.heads)
+      if (visible.has(head.id)) state.heads.delete(view);
+}
 
 export function newestMessage<
   T extends Pick<BuzzEvent, "id" | "created_at" | "tags">,
@@ -33,7 +49,7 @@ export async function guardedSend(
   publish: () => Promise<BuzzEvent>,
   describe: (events: readonly BuzzEvent[]) => Promise<readonly string[]>,
 ) {
-  const scope = client.sendScope ?? client.relayAuthor ?? client.query;
+  const scope = scopeOf(client);
   // Every agent on the same local connection shares one admission queue.
   let conversations =
     typeof scope === "string" ? communities.get(scope) : standalone.get(scope);
@@ -92,6 +108,7 @@ export async function guardedSend(
     const messages = found.filter(
       (event) => !root || (threadReference(event)?.rootId ?? event.id) === root,
     );
+    observeSendMessages(client, found);
     const accepted = state.heads.get(root ?? "");
     const head = newestMessage(accepted ? [...messages, accepted] : messages);
     if (cursor !== (head?.id ?? "0")) {
@@ -112,6 +129,12 @@ export async function guardedSend(
         `${cursor === undefined ? "cursor is required" : "Stale cursor"}. Nothing sent. Reconsider your draft with this context before sending again.\ncursor ${head?.id ?? "0"}\n${latest.map((line) => line.slice(0, 4000)).join("\n")}`,
       );
     }
+    // Desktop signing uses this device's wall clock. Do not admit a reply
+    // that could sort before the message it answers, including an ms tie.
+    if (head && eventMs(head) >= Date.now())
+      throw new Error(
+        "Conversation timestamp is ahead of this device's clock. Nothing sent. Retry once the clock has passed the latest message timestamp.",
+      );
     const event = await publish();
     // Keep only admission evidence, never another agent's cached message body.
     const evidence = {

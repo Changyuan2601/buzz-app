@@ -5,6 +5,7 @@ import {
   CONVERSATION_MESSAGES,
   guardedSend,
   newestMessage,
+  observeSendMessages,
 } from "./send-cursor";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import {
@@ -585,6 +586,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // shown, in the relay's newest-first order, is where the next page starts.
     // A short page is only what the relay returned: serving-time filtering and
     // retention can leave older history unseen.
+    observeSendMessages(client, first ? [first, ...found] : found);
     const shown = found.slice(0, max);
     const last = shown.at(-1);
     const lines = await tools.messages(
