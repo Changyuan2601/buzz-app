@@ -84,9 +84,19 @@ export function readTodos(content: string) {
           : / · Assignee: ([\p{L}\p{N}][\p{L}\p{N} .’'_-]*)$/u.exec(
               content.slice(offset, end),
             );
-        const namedAssignee = named?.[1]
-          ? { name: named[1].trim(), start: offset + named.index }
-          : undefined;
+        const namedText =
+          paragraph?.type === "paragraph" &&
+          paragraph.children.some(
+            (child) =>
+              child.type === "text" &&
+              (child.position?.start.offset ?? Infinity) <=
+                offset + (named?.index ?? 0) &&
+              (child.position?.end.offset ?? -1) >= end,
+          );
+        const namedAssignee =
+          named?.[1] && namedText
+            ? { name: named[1].trim(), start: offset + named.index }
+            : undefined;
         items.push({
           offset: offset + match[1].length,
           label: content

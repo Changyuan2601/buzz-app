@@ -208,3 +208,11 @@ it("recognizes a plain Canvas assignment and replaces or clears it without dupli
   expect(readTodos(assigned).items[0]?.assignee?.name).toBe("Alice");
   expect(assigned).not.toContain("Assignee: John");
 });
+
+it("does not clear a named assignment lookalike inside multiline code", () => {
+  const before = "## Todos\n- [ ] Task ` · Assignee: John\n  continued`\n";
+  const item = first(before);
+  expect(item.namedAssignee).toBeUndefined();
+  expect(assignTodo(before, item.offset)).toBe(before);
+  expect(() => assignTodo(before, item.offset, sam)).toThrow(/safely/);
+});
