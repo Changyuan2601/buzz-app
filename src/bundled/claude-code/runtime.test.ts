@@ -688,7 +688,7 @@ it("answers Claude's tool calls as the agent, in the thread it is working in", a
         method: "tools/call",
         params: {
           name: "send",
-          arguments: { audience: "everyone", text: "Looking now" },
+          arguments: { audience: "everyone", cursor: "0", text: "Looking now" },
         },
       },
     },
@@ -1511,7 +1511,7 @@ it("continues an owner's Solo chat as one channel session posted at the top leve
   );
   expect(prompt).toContain('<conversation-context included="1"');
   expect(prompt).toContain("Earlier in the chat");
-  await send(claude, "call-1", { text: "Looking now" });
+  await send(claude, "call-1", { text: "Looking now", cursor: first.id });
   expect(await send(claude, "call-2", { text: "x", reply: first.id })).toEqual({
     content: [
       {
@@ -1603,7 +1603,10 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn, a
   // Admitted to the channel's conversation, it is told so even if the agent
   // is moved to thread scope meanwhile.
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
-  await send(claude, "call-1", { text: "Still top level" });
+  await send(claude, "call-1", {
+    text: "Still top level",
+    cursor: mention("2").id,
+  });
   claude?.finish();
   await flush(10);
   const next = claudes().flatMap((process) => process.prompts)[1] ?? "";
@@ -1611,7 +1614,7 @@ it("finishes a Solo turn under its policy when the chat is converted mid-turn, a
   await send(
     claudes().find((process) => process.prompts.includes(next)),
     "call-2",
-    { text: "Threaded", reply: mention("2").id },
+    { text: "Threaded", reply: mention("2").id, cursor: mention("2").id },
   );
   expect(published.map((event) => event.tags)).toEqual([
     [["h", channel]],

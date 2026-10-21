@@ -209,7 +209,10 @@ describe("GooseRuntime", () => {
     const reply = await process?.mcp(
       process.turns[0]?.sessionId ?? "",
       "tools/call",
-      { name: "send", arguments: { audience: "everyone", path: "notes.md" } },
+      {
+        name: "send",
+        arguments: { audience: "everyone", path: "notes.md", cursor: "0" },
+      },
     );
     expect(reply?.result).not.toMatchObject({ isError: true });
     expect(readFile).toHaveBeenCalledWith("notes.md", {
