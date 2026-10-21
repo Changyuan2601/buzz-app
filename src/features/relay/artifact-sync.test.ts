@@ -324,7 +324,7 @@ it("uses bounded current reads and requests a delta after live overflow", async 
       .mock.calls.every((call) => call[3].length <= 100),
   ).toBe(true);
   expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
-});
+}, 15_000); // This case signs and verifies 1,002 distinct live events.
 
 it("keeps capacity backoff when a live read starts before the repair timer", async () => {
   const h = setup();
