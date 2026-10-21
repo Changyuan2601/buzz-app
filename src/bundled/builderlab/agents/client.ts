@@ -313,6 +313,27 @@ export function createAgentClient(
         signal,
       );
     },
+    /** Has Beekeeper save the agent's own hourly wake in `channelId`, a relay
+     * workflow signed with the agent's key, replacing any earlier one. */
+    async setHeartbeat(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      channelId: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "set-agent-heartbeat",
+        { agent_id: agent.id, community_url: community, channel_id: channelId },
+        signal,
+      );
+      if (result.status === "succeeded") return;
+      throw new Error(
+        typeof result.error_message === "string" && result.error_message
+          ? result.error_message
+          : "Builderlab did not confirm the hourly wake.",
+      );
+    },
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,

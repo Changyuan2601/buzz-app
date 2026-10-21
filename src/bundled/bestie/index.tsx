@@ -255,14 +255,18 @@ function Setup({
               Hourly wake: {state.record.wakeProblem}
             </p>
           )}
-          {(state.instructionsChanged || state.status === "busy") && (
+          {(state.instructionsChanged ||
+            state.status === "busy" ||
+            (state.status === "ready" && state.record?.wakeProblem)) && (
             <Button
               size="sm"
               variant="outline"
               loading={state.status === "busy"}
               onClick={() => void bestie.setup()}
             >
-              Update Bestie's instructions
+              {state.instructionsChanged || state.status === "busy"
+                ? "Update Bestie's instructions"
+                : "Retry the hourly wake"}
             </Button>
           )}
           <details className="w-full text-body-sm text-muted">

@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { parse, stringify } from "yaml";
-import { signed } from "../../features/relay/testing";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
-import { HEARTBEAT_NAME, wakeText } from "./heartbeat";
 import { bestieInstructions, promptVersion } from "./prompt";
 import { BUILDERLAB_TYPE } from "./setup";
 import { bestieFixture, cleanups, HOME } from "./testing";
@@ -18,26 +15,16 @@ beforeEach(() => {
     configurable: true,
     value: "MacIntel",
   });
-  // Web Locks run one holder per name at a time, across windows.
-  const held = new Map<string, Promise<unknown>>();
   Object.defineProperty(navigator, "locks", {
     configurable: true,
     value: {
       request: async (
-        name: string,
+        _name: string,
         options: { signal: AbortSignal },
         work: () => Promise<void>,
       ) => {
         options.signal.throwIfAborted();
-        const before = held.get(name) ?? Promise.resolve();
-        const run = before
-          .catch(() => {})
-          .then(() => {
-            options.signal.throwIfAborted();
-            return work();
-          });
-        held.set(name, run);
-        return run;
+        return work();
       },
     },
   });
@@ -122,79 +109,44 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
       )
     ];
   expect(instructed).toBeLessThan(order ?? 0);
-  // One hourly relay workflow in the home wakes Bestie by its display name.
-  const heartbeat = kinds(h, 30620);
-  expect(heartbeat).toHaveLength(1);
-  expect(heartbeat[0]?.tags).toContainEqual(["h", HOME]);
-  expect(parse(heartbeat[0]?.content ?? "")).toMatchObject({
-    name: HEARTBEAT_NAME,
-    enabled: true,
-    trigger: { on: "schedule", cron: "0 * * * *" },
-    steps: [{ id: "upkeep", action: "send_message", text: wakeText("Bestie") }],
+  // Beekeeper signs Bestie's hourly wake as Bestie; the owner signs no workflow.
+  expect(kinds(h, 30620)).toHaveLength(0);
+  const wake = h.requests("set-agent-heartbeat");
+  expect(wake).toHaveLength(1);
+  const [, input] = wake[0] ?? [];
+  expect(
+    JSON.parse((input as { request: { body: string } }).request.body),
+  ).toEqual({
+    agent_id: h.rows[0]?.agent_id,
+    community_url: "wss://community.example",
+    channel_id: HOME,
   });
-  expect(h.bestie.snapshot().record).toMatchObject({
-    heartbeatId: expect.any(String),
-    wakeName: "Bestie",
-  });
+  expect(h.bestie.snapshot().record).toMatchObject({ heartbeat: true });
   expect(h.bestie.snapshot().record?.wakeProblem).toBeUndefined();
 });
 
-it("readdresses the hourly wake when Bestie is renamed, keeping the owner's edits", async () => {
+it("finishes setup when Builderlab can't save the hourly wake, and retries it", async () => {
   const h = await bestieFixture(native.invoke);
-  await h.bestie.setup();
-  const id = h.bestie.snapshot().record?.heartbeatId;
-  // The owner turns the wake off in Workflows.
-  const first = kinds(h, 30620)[0];
-  if (!first) throw new Error("No heartbeat");
-  const edited = parse(first.content);
-  edited.enabled = false;
-  h.events.push(
-    signed(h.identity, {
-      kind: 30620,
-      created_at: first.created_at + 1,
-      content: stringify(edited),
-      tags: first.tags,
-    }),
-  );
-  h.rename("agent", "Bob");
-  // The rename comes later than the owner's edit.
-  const now = Date.now();
-  vi.spyOn(Date, "now").mockReturnValue(now + 10_000);
-  await h.restart();
-  await vi.waitFor(() =>
-    expect(h.bestie.snapshot().record?.wakeName).toBe("Bob"),
-  );
-  const saves = kinds(h, 30620);
-  // Setup's save and the readdress; the owner's edit came from Workflows.
-  expect(
-    h.publish.mock.calls.filter(([event]) => event.kind === 30620),
-  ).toHaveLength(2);
-  const latest = saves.at(-1);
-  expect(latest?.tags).toContainEqual([
-    "d",
-    first.tags.find(([tag]) => tag === "d")?.[1],
-  ]);
-  expect(parse(latest?.content ?? "")).toMatchObject({
-    enabled: false,
-    steps: [{ text: wakeText("Bob") }],
+  h.reply("set-agent-heartbeat", 200, {
+    status: "failed",
+    error_code: "rejected",
+    error_message: "The relay rejected the hourly wake: forbidden",
   });
-  expect(h.bestie.snapshot().record?.heartbeatId).toBe(id);
-});
-
-it("schedules no wake that would also ping an owner with Bestie's name", async () => {
-  const h = await bestieFixture(native.invoke);
-  h.rename("owner", "bestie");
   await h.bestie.setup();
-  expect(h.bestie.snapshot().status).toBe("ready");
-  expect(kinds(h, 30620)).toHaveLength(0);
-  expect(h.bestie.snapshot().record?.wakeProblem).toMatch(/both named Bestie/);
-  // Renaming the owner retries on the next look.
-  h.rename("owner", "Ada");
-  await h.restart();
-  await vi.waitFor(() => expect(kinds(h, 30620)).toHaveLength(1));
-  await vi.waitFor(() =>
-    expect(h.bestie.snapshot().record?.wakeProblem).toBeUndefined(),
-  );
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    record: {
+      complete: true,
+      wakeProblem: "The relay rejected the hourly wake: forbidden",
+    },
+  });
+  expect(h.bestie.snapshot().record?.heartbeat).toBeFalsy();
+  await h.bestie.setup();
+  expect(h.requests("set-agent-heartbeat")).toHaveLength(2);
+  expect(h.bestie.snapshot().record).toMatchObject({ heartbeat: true });
+  expect(h.bestie.snapshot().record?.wakeProblem).toBeUndefined();
+  expect(h.requests("register-agent")).toHaveLength(1);
+  expect(kinds(h, 9)).toHaveLength(1);
 });
 
 it("reopens a finished setup after restart without another agent, channel or intro", async () => {
@@ -207,6 +159,7 @@ it("reopens a finished setup after restart without another agent, channel or int
   expect(h.bestie.snapshot().status).toBe("ready");
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.requests("update-agent")).toHaveLength(1);
+  expect(h.requests("set-agent-heartbeat")).toHaveLength(1);
   expect(h.events).toHaveLength(published);
 });
 

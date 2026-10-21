@@ -117,9 +117,6 @@ export async function bestieFixture(invoke: Mock) {
             status: 1,
           };
           rows.push(row);
-          // Beekeeper publishes the agent's profile under its name.
-          if (row.agent_pubkey === remote.pubkey)
-            setProfile(remote, body.agent_name);
         }
         result = {
           status: 1,
@@ -139,6 +136,15 @@ export async function bestieFixture(invoke: Mock) {
         );
         if (row) row.agent_instructions = body.agent_instructions;
         result = {};
+      } else if (path === "set-agent-heartbeat") {
+        // Beekeeper signs the wake as the agent; the relay holds it.
+        result = rows.some((item) => item.agent_id === body.agent_id)
+          ? { status: "succeeded", workflow_id: crypto.randomUUID() }
+          : {
+              status: "failed",
+              error_code: "unauthorized",
+              error_message: "No active Buzz agent",
+            };
       } else throw new Error(`Unexpected Builderlab endpoint: ${path}`);
       return { status: 200, headers: {}, body: JSON.stringify(result) };
     },
@@ -152,16 +158,6 @@ export async function bestieFixture(invoke: Mock) {
   let clock = 1_700_000_000;
   let failKind: number | undefined;
   const events: RelayEvent[] = [];
-  function setProfile(keys: ReturnType<typeof keypair>, name: string) {
-    events.push(
-      signed(keys, {
-        kind: 0,
-        created_at: clock++,
-        content: JSON.stringify({ display_name: name }),
-        tags: [],
-      }),
-    );
-  }
   let saved: readonly OutgoingEvent[] = [];
   let closed = deferred<void>();
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
@@ -211,7 +207,7 @@ export async function bestieFixture(invoke: Mock) {
         media: () => undefined,
         query,
         writer: {
-          kinds: [9, 9000, 9007, 30177, 30620, 46020, 5],
+          kinds: [9, 9000, 9007, 30177, 46020, 5],
           sign,
           publish,
         },
@@ -341,7 +337,6 @@ export async function bestieFixture(invoke: Mock) {
     publish,
     query,
     viewer: identity.pubkey,
-    identity,
     agent: remote.pubkey,
     requests: (path: string) =>
       invoke.mock.calls.filter(
@@ -364,10 +359,6 @@ export async function bestieFixture(invoke: Mock) {
     },
     failPublication(kind: number) {
       failKind = kind;
-    },
-    /** Publishes a profile name for Bestie, or for the owner. */
-    rename(who: "agent" | "owner", name: string) {
-      setProfile(who === "agent" ? remote : identity, name);
     },
     addMember(pubkey: string) {
       for (const home of channels.values()) home.members.push(pubkey);
