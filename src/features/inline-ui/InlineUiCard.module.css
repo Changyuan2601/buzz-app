@@ -71,43 +71,20 @@
 .shuffle {
   justify-self: start;
 }
-/* Answering closes what wasn't chosen like an accordion, on its timing: it
-   fades, then its row and the gap before it close. */
-.collapsible,
-.collapsibleEnd {
-  --collapse-gap: var(--space-3);
-  display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows var(--duration-settle) var(--easing-settle),
-    margin-block-start var(--duration-settle) var(--easing-settle),
-    opacity var(--duration-fast) var(--easing-state);
-}
-.collapsibleEnd {
-  --collapse-gap: var(--space-4);
-}
-.collapsibleContent {
-  min-height: 0;
-}
-/* Clipped only while closing, so open tiles keep their focus rings. */
-[data-collapsed] > .collapsibleContent {
-  overflow: clip;
-}
-:is(.collapsible, .collapsibleEnd)[data-collapsed] {
-  grid-template-rows: 0fr;
-  margin-block-start: calc(-1 * var(--collapse-gap));
-  opacity: 0;
-}
-.shuffle {
+/* Answering fades out what wasn't chosen; the card then eases to its new
+   height on the accordion's timing. */
+.fade,
+.shuffle,
+.actions {
   transition: opacity var(--duration-fast) var(--easing-state);
 }
-.shuffle[data-collapsed] {
+:is(.fade, .shuffle, .actions)[data-fading] {
   opacity: 0;
 }
 @media (prefers-reduced-motion: reduce) {
-  .collapsible,
-  .collapsibleEnd,
-  .shuffle {
+  .fade,
+  .shuffle,
+  .actions {
     transition: none;
   }
 }

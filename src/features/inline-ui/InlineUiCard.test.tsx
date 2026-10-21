@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { render, screen, within } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { InlineUiCard } from "./InlineUiCard";
 import { InlineUiHost } from "./host";
 
@@ -57,7 +57,7 @@ it("freezes a saved profile on the agent's chosen name, without Shuffle or Submi
   expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
 });
 
-it("closes the options not chosen when a live choice is answered, keeping the card mounted", () => {
+it("closes the options not chosen when a live choice is answered, keeping the card mounted", async () => {
   const ui = { pattern: "choice" as const, options: ["Short", "Detailed"] };
   const view = render(
     <InlineUiCard ui={ui} agent="a" live onReply={() => {}} />,
@@ -85,4 +85,13 @@ it("closes the options not chosen when a live choice is answered, keeping the ca
   expect(
     within(view.container).queryByRole("button", { name: "Submit" }),
   ).toBeNull();
+  // After fading they are gone, so the card shrinks to just the answer.
+  await vi.waitFor(() =>
+    expect(
+      within(view.container).queryAllByRole("radio", {
+        hidden: true,
+        name: "Detailed",
+      }),
+    ).toHaveLength(0),
+  );
 });

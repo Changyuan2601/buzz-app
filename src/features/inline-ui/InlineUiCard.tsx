@@ -1,4 +1,4 @@
-import { useContext, useRef, useState } from "react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { randomAgentAvatar } from "../agents/avatar-packs";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -99,8 +99,49 @@ function ChoiceForm({
   const frozen = !!answered;
   const [picked, setChoice] = useState<string | null>(null);
   const [typed, setOwn] = useState("");
-  // Only a card answered while open has Shuffle and Submit to close.
-  const [answeredHere] = useState(!answered);
+  // Answering closes what wasn't chosen like an accordion: it fades, then
+  // it is gone and the card eases to its new height. A card that arrives
+  // answered starts closed.
+  const [phase, setPhase] = useState<"open" | "closed">(
+    answered ? "closed" : "open",
+  );
+  const form = useRef<HTMLFormElement>(null);
+  const from = useRef<number>(undefined);
+  useLayoutEffect(() => {
+    const card = form.current;
+    if (!frozen || phase !== "open" || !card) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+      return setPhase("closed");
+    const timer = setTimeout(
+      () => {
+        from.current = card.offsetHeight;
+        setPhase("closed");
+      },
+      cssTime(card, "--duration-fast"),
+    );
+    return () => clearTimeout(timer);
+  }, [frozen, phase]);
+  useLayoutEffect(() => {
+    const card = form.current;
+    const start = from.current;
+    if (phase !== "closed" || !card || start === undefined) return;
+    from.current = undefined;
+    const end = card.offsetHeight;
+    if (end === start || !card.animate) return;
+    card.style.overflow = "clip";
+    const resize = card.animate(
+      [{ height: `${start}px` }, { height: `${end}px` }],
+      {
+        duration: cssTime(card, "--duration-settle"),
+        easing: getComputedStyle(card).getPropertyValue("--easing-settle"),
+      },
+    );
+    const done = () => card.style.removeProperty("overflow");
+    resize.onfinish = done;
+    resize.oncancel = done;
+    return () => resize.cancel();
+  }, [phase]);
+  const open = phase !== "closed";
   // A frozen card shows its answer, whatever was picked or typed before.
   const choice = !answered
     ? picked
@@ -114,6 +155,7 @@ function ChoiceForm({
   return (
     <div className={className}>
       <form
+        ref={form}
         className={styles.card}
         aria-label={profile ? "Name and avatar" : "Answer"}
         onSubmit={async (event) => {
@@ -163,8 +205,8 @@ function ChoiceForm({
                 />
               )}
             </div>
-            {(!frozen || answeredHere) && (
-              <div className={styles.shuffle} {...collapse(frozen)}>
+            {open && (
+              <div className={styles.shuffle} {...fade(frozen)}>
                 <Button
                   variant="prominent"
                   size="sm"
@@ -192,61 +234,54 @@ function ChoiceForm({
           <Field label={profile ? "Name" : "Answer"} labelVisibility="hidden">
             <RadioGroup<string | null>
               value={choice === OWN ? null : choice}
-              disabled={busy}
+              disabled={busy && !frozen}
               readOnly={frozen}
               onValueChange={setChoice}
             >
-              {ui.options.map((option) => (
-                <div
-                  key={option}
-                  className={styles.collapsible}
-                  {...collapse(frozen && option !== choice)}
-                >
-                  <div className={styles.collapsibleContent}>
+              {ui.options
+                .filter((option) => open || option === choice)
+                .map((option) => (
+                  <div
+                    key={option}
+                    className={styles.fade}
+                    {...fade(frozen && option !== choice)}
+                  >
                     <Radio value={option} label={option} variant="tile" />
                   </div>
-                </div>
-              ))}
+                ))}
             </RadioGroup>
           </Field>
-          <div
-            className={styles.collapsible}
-            {...collapse(frozen && choice !== OWN)}
-          >
-            <div className={styles.collapsibleContent}>
+          {(open || choice === OWN) && (
+            <div className={styles.fade} {...fade(frozen && choice !== OWN)}>
               <RadioWriteIn
                 aria-label="Write your own"
                 placeholder="Write your own"
                 selected={choice === OWN}
                 value={own}
-                disabled={busy}
+                disabled={busy && !frozen}
                 readOnly={frozen}
                 maxLength={profile ? 64 : 500}
                 onFocus={() => setChoice(OWN)}
                 onChange={(event) => setOwn(event.target.value)}
               />
             </div>
-          </div>
+          )}
         </div>
-        {error && (
+        {error && !frozen && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error}
           </p>
         )}
-        {(!frozen || answeredHere) && (
-          <div className={styles.collapsibleEnd} {...collapse(frozen)}>
-            <div className={styles.collapsibleContent}>
-              <div className={styles.actions}>
-                <Button
-                  type="submit"
-                  variant="prominent"
-                  loading={busy}
-                  disabled={!answer}
-                >
-                  Submit
-                </Button>
-              </div>
-            </div>
+        {open && (
+          <div className={styles.actions} {...fade(frozen)}>
+            <Button
+              type="submit"
+              variant="prominent"
+              loading={busy && !frozen}
+              disabled={!answer}
+            >
+              Submit
+            </Button>
           </div>
         )}
       </form>
@@ -254,10 +289,14 @@ function ChoiceForm({
   );
 }
 
-/** Answering closes what wasn't chosen like an accordion: it fades, then its
- * space closes. Closed parts leave the accessibility tree and focus order. */
-function collapse(closed: boolean) {
-  return closed
-    ? { "data-collapsed": "", "aria-hidden": true, inert: true }
-    : {};
+/** Marks a part that wasn't chosen as fading out: out of reach at once. */
+function fade(gone: boolean) {
+  return gone ? { "data-fading": "", "aria-hidden": true, inert: true } : {};
+}
+
+/** A design-system duration token, in milliseconds. */
+function cssTime(element: Element, token: string) {
+  const value = getComputedStyle(element).getPropertyValue(token).trim();
+  const time = Number.parseFloat(value);
+  return Number.isNaN(time) ? 0 : value.endsWith("ms") ? time : time * 1000;
 }
