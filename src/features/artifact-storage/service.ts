@@ -93,6 +93,10 @@ export class ArtifactStorageService extends Service implements ArtifactStorage {
     };
     const facade: ArtifactCollection = {
       scope: collection.scope,
+      refreshError() {
+        valid();
+        return checked(collection.refreshError());
+      },
       get(id) {
         valid();
         return checked(collection.get(id));

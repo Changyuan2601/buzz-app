@@ -34,7 +34,8 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
     relay: "https://relay.test",
     partition: "https://relay.test:viewer",
   });
-  const collection = { get, close, scope: scopeDescriptor };
+  const refreshError = vi.fn(async () => null);
+  const collection = { get, close, refreshError, scope: scopeDescriptor };
   const factory = vi.fn(() => collection);
   const stores = service as unknown as { stores: Map<string, unknown> };
   stores.stores.set(JSON.stringify(["viewer", "https://relay.test"]), {
@@ -61,6 +62,8 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   });
   expect(handle).not.toHaveProperty("applyBatch");
   expect(handle.scope).toBe(scopeDescriptor);
+  expect(await handle.refreshError()).toBeNull();
+  expect(refreshError).toHaveBeenCalledOnce();
   await handle.get("task");
   expect(get).toHaveBeenCalledWith("task");
   scope = { viewer: "other", selected: "https://relay.test" };

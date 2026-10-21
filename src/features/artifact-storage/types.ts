@@ -3,7 +3,6 @@ import type { RelayEvent } from "../relay/events";
 
 export type ArtifactRevision = Readonly<{
   id: string;
-  parents: readonly string[];
   content: string;
   event?: RelayEvent;
 }>;
@@ -16,9 +15,6 @@ export type SavedArtifact = Readonly<{
   channelId?: string;
   type?: string;
   current?: ArtifactRevision;
-  conflicts: readonly ArtifactRevision[];
-  /** At least one parent is missing from the saved ancestry. */
-  unresolved: boolean;
   /** Cached content does not establish current access. */
   availability: ArtifactAvailability;
   /** A plugin-owned snapshot, without shared revision proof. */
@@ -64,6 +60,7 @@ export type ArtifactCollection = {
     partition: string;
   }>;
   get(id: string): Promise<ArtifactEntry | undefined>;
+  refreshError(): Promise<string | null>;
   page(query: ArtifactPageQuery): Promise<ArtifactPage>;
   /** Subscribe before the first read. Each notification requires a fresh read. */
   subscribe(listener: () => void): () => void;
@@ -88,14 +85,13 @@ export type ReceivedArtifact = Readonly<{
 export type ArtifactSnapshot = Readonly<{
   source: string;
   generation: string;
-  captureSequence: number;
 }>;
 export type ArtifactBatch = Readonly<{
   /** Exact authoritative query scope, defined by the sync owner. */
   source: string;
-  snapshot?: ArtifactSnapshot;
+  snapshot: ArtifactSnapshot;
   records?: readonly ReceivedArtifact[];
-  /** Snapshot members whose revision is already saved. */
+  /** Snapshot members whose exact current revision is already saved. */
   seen?: readonly Readonly<{ id: string; revisionId: string }>[];
   availability?: readonly Readonly<{
     id: string;
@@ -106,8 +102,13 @@ export type ArtifactBatch = Readonly<{
 }>;
 /** Host-only writes. Plugins submit shared changes through the delivery service. */
 export type HostArtifactCollection = ArtifactCollection & {
-  applyBatch(batch: ArtifactBatch): Promise<void>;
+  applyBatch(batch: ArtifactBatch, signal?: AbortSignal): Promise<void>;
   checkpoint(): Promise<string | null>;
+  setRefreshError(
+    snapshot: ArtifactSnapshot,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
   beginSnapshot(source: string): Promise<ArtifactSnapshot>;
   /** The caller validates server completion before this local transaction. */
   completeSnapshot(
