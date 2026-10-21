@@ -57,7 +57,8 @@ describe("Canvas todo source edits", () => {
       ["Ship", ["Ship"]],
       ["Other", []],
     ]);
-    const nested = items[2]!;
+    const nested = items[2];
+    if (!nested) throw new Error("Expected grandchild todo");
     expect(setStatus(content, nested.offset, "todo")).toBe(
       content.replace("[X]", "[ ]"),
     );

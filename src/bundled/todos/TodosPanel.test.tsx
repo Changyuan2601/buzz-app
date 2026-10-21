@@ -101,11 +101,12 @@ it("shows nested tasks with parent context across statuses and saves only the ch
   f.canvas.read.mockResolvedValue({ ...head, content });
   render(<TodosPanel {...f.props} />);
   const child = await screen.findByRole("checkbox", { name: "Build" });
-  expect(within(child.closest("li")!).getByText("Ship")).toBeInTheDocument();
   const grandchild = screen.getByRole("checkbox", { name: "Test" });
-  expect(
-    within(grandchild.closest("li")!).getByText("Ship / Build"),
-  ).toBeInTheDocument();
+  const childRow = child.closest("li"),
+    grandchildRow = grandchild.closest("li");
+  if (!childRow || !grandchildRow) throw new Error("Expected nested todo rows");
+  expect(within(childRow).getByText("Ship")).toBeInTheDocument();
+  expect(within(grandchildRow).getByText("Ship / Build")).toBeInTheDocument();
   await userEvent.setup().click(child);
   await saved();
   expect(f.canvas.save).toHaveBeenCalledWith(
