@@ -742,6 +742,8 @@ function Timeline({
         ? rows.findIndex(
             (row) =>
               row.id === revealMessageId ||
+              // A sent card answer is shown in its card, which reveals it.
+              row.id === answered.cards.get(revealMessageId) ||
               row.membershipRows?.some(
                 (member) => member.id === revealMessageId,
               ),
@@ -908,6 +910,7 @@ function Timeline({
     revealedSignal,
     updateJumpToLatest,
     revealMessageId,
+    answered.cards,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {

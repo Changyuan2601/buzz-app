@@ -96,60 +96,70 @@ function ChoiceForm({
     avatar: ReturnType<typeof randomAgentAvatar>;
     ready: Promise<unknown>;
   }>(undefined);
-  const frozen = !!answered;
+  // Submitting closes the card at once on what was sent, so it never shows
+  // a pending state; a failed send reopens it with the error.
+  const [sent, setSent] = useState<InlineUiAnswer>();
+  const shown = sent ?? answered;
+  const frozen = !!shown;
   const [picked, setChoice] = useState<string | null>(null);
   const [typed, setOwn] = useState("");
-  // Answering closes what wasn't chosen like an accordion: it fades, then
-  // it is gone and the card eases to its new height. A card that arrives
+  // Answering closes what wasn't chosen like an accordion: each part fades
+  // while its space and the gap before it close, together, on the
+  // accordion's timing; then the parts are gone. A card that arrives
   // answered starts closed.
   const [phase, setPhase] = useState<"open" | "closed">(
     answered ? "closed" : "open",
   );
   const form = useRef<HTMLFormElement>(null);
-  const from = useRef<number>(undefined);
   useLayoutEffect(() => {
     const card = form.current;
     if (!frozen || phase !== "open" || !card) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+    const parts = [...card.querySelectorAll<HTMLElement>("[data-closing]")];
+    if (
+      !card.animate ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
       return setPhase("closed");
-    const timer = setTimeout(
-      () => {
-        from.current = card.offsetHeight;
-        setPhase("closed");
-      },
-      cssTime(card, "--duration-fast"),
+    const timing = {
+      duration: cssTime(card, "--duration-settle"),
+      easing: getComputedStyle(card).getPropertyValue("--easing-settle"),
+      fill: "forwards" as const,
+    };
+    const closing = parts.map((part) => {
+      if (part.dataset.closing === "fade")
+        return part.animate([{ opacity: 1 }, { opacity: 0 }], timing);
+      const gap =
+        Number.parseFloat(
+          part.parentElement ? getComputedStyle(part.parentElement).rowGap : "",
+        ) || 0;
+      part.style.overflow = "clip";
+      return part.animate(
+        [
+          { height: `${part.offsetHeight}px`, marginTop: "0px", opacity: 1 },
+          { height: "0px", marginTop: `${-gap}px`, opacity: 0 },
+        ],
+        timing,
+      );
+    });
+    let current = true;
+    void Promise.all(closing.map((animation) => animation.finished)).then(
+      () => current && setPhase("closed"),
+      () => {},
     );
-    return () => clearTimeout(timer);
+    return () => {
+      current = false;
+      for (const animation of closing) animation.cancel();
+      for (const part of parts) part.style.removeProperty("overflow");
+    };
   }, [frozen, phase]);
-  useLayoutEffect(() => {
-    const card = form.current;
-    const start = from.current;
-    if (phase !== "closed" || !card || start === undefined) return;
-    from.current = undefined;
-    const end = card.offsetHeight;
-    if (end === start || !card.animate) return;
-    card.style.overflow = "clip";
-    const resize = card.animate(
-      [{ height: `${start}px` }, { height: `${end}px` }],
-      {
-        duration: cssTime(card, "--duration-settle"),
-        easing: getComputedStyle(card).getPropertyValue("--easing-settle"),
-      },
-    );
-    const done = () => card.style.removeProperty("overflow");
-    resize.onfinish = done;
-    resize.oncancel = done;
-    return () => resize.cancel();
-  }, [phase]);
   const open = phase !== "closed";
   // A frozen card shows its answer, whatever was picked or typed before.
-  const choice = !answered
+  const choice = !shown
     ? picked
-    : ui.options.includes(answered.text)
-      ? answered.text
+    : ui.options.includes(shown.text)
+      ? shown.text
       : OWN;
-  const own = answered && choice === OWN ? answered.text : typed;
-  const [busy, setBusy] = useState(false);
+  const own = shown && choice === OWN ? shown.text : typed;
   const [error, setError] = useState("");
   const answer = (choice === OWN ? own : (choice ?? "")).trim();
   return (
@@ -160,9 +170,9 @@ function ChoiceForm({
         aria-label={profile ? "Name and avatar" : "Answer"}
         onSubmit={async (event) => {
           event.preventDefault();
-          if (busy || !answer || !onSubmit) return;
-          setBusy(true);
+          if (frozen || !answer || !onSubmit) return;
           setError("");
+          setSent({ text: answer, picture: avatar.preview ?? avatar.url });
           try {
             await onSubmit(answer, avatar.url);
           } catch (reason) {
@@ -171,7 +181,8 @@ function ChoiceForm({
                 ? reason.message
                 : "Couldn't send. Try again.",
             );
-            setBusy(false);
+            setSent(undefined);
+            setPhase("open");
           }
         }}
       >
@@ -189,12 +200,12 @@ function ChoiceForm({
                 });
               }}
             >
-              {answered ? (
+              {shown ? (
                 <Avatar
                   size="fill"
-                  src={answered.picture}
-                  alt={answered.text}
-                  fallback={answered.text}
+                  src={shown.picture}
+                  alt={shown.text}
+                  fallback={shown.text}
                 />
               ) : (
                 <Avatar
@@ -206,11 +217,11 @@ function ChoiceForm({
               )}
             </div>
             {open && (
-              <div className={styles.shuffle} {...fade(frozen)}>
+              <div className={styles.shuffle} {...closing(frozen, "fade")}>
                 <Button
                   variant="prominent"
                   size="sm"
-                  disabled={busy || !!turn}
+                  disabled={frozen || !!turn}
                   onClick={() => {
                     let pick = randomAgentAvatar();
                     while (pick.id === avatar.id) pick = randomAgentAvatar();
@@ -231,34 +242,40 @@ function ChoiceForm({
           </div>
         )}
         <div className={styles.choices}>
-          <Field label={profile ? "Name" : "Answer"} labelVisibility="hidden">
-            <RadioGroup<string | null>
-              value={choice === OWN ? null : choice}
-              disabled={busy && !frozen}
-              readOnly={frozen}
-              onValueChange={setChoice}
-            >
-              {ui.options
-                .filter((option) => open || option === choice)
-                .map((option) => (
-                  <div
-                    key={option}
-                    className={styles.fade}
-                    {...fade(frozen && option !== choice)}
-                  >
-                    <Radio value={option} label={option} variant="tile" />
-                  </div>
-                ))}
-            </RadioGroup>
-          </Field>
+          {(open || choice !== OWN) && (
+            <div {...closing(frozen && choice === OWN)}>
+              <Field
+                label={profile ? "Name" : "Answer"}
+                labelVisibility="hidden"
+              >
+                <RadioGroup<string | null>
+                  value={choice === OWN ? null : choice}
+                  readOnly={frozen}
+                  onValueChange={setChoice}
+                >
+                  {ui.options
+                    .filter((option) => open || option === choice)
+                    .map((option) => (
+                      <div
+                        key={option}
+                        {...closing(
+                          frozen && choice !== OWN && option !== choice,
+                        )}
+                      >
+                        <Radio value={option} label={option} variant="tile" />
+                      </div>
+                    ))}
+                </RadioGroup>
+              </Field>
+            </div>
+          )}
           {(open || choice === OWN) && (
-            <div className={styles.fade} {...fade(frozen && choice !== OWN)}>
+            <div {...closing(frozen && choice !== OWN)}>
               <RadioWriteIn
                 aria-label="Write your own"
                 placeholder="Write your own"
                 selected={choice === OWN}
                 value={own}
-                disabled={busy && !frozen}
                 readOnly={frozen}
                 maxLength={profile ? 64 : 500}
                 onFocus={() => setChoice(OWN)}
@@ -273,15 +290,12 @@ function ChoiceForm({
           </p>
         )}
         {open && (
-          <div className={styles.actions} {...fade(frozen)}>
-            <Button
-              type="submit"
-              variant="prominent"
-              loading={busy && !frozen}
-              disabled={!answer}
-            >
-              Submit
-            </Button>
+          <div {...closing(frozen)}>
+            <div className={styles.actions}>
+              <Button type="submit" variant="prominent" disabled={!answer}>
+                Submit
+              </Button>
+            </div>
           </div>
         )}
       </form>
@@ -289,9 +303,10 @@ function ChoiceForm({
   );
 }
 
-/** Marks a part that wasn't chosen as fading out: out of reach at once. */
-function fade(gone: boolean) {
-  return gone ? { "data-fading": "", "aria-hidden": true, inert: true } : {};
+/** Marks a part that wasn't chosen as closing, out of reach at once. It
+ * collapses its space, or only fades where it holds no space of its own. */
+function closing(gone: boolean, how: "collapse" | "fade" = "collapse") {
+  return gone ? { "data-closing": how, "aria-hidden": true, inert: true } : {};
 }
 
 /** A design-system duration token, in milliseconds. */

@@ -71,20 +71,3 @@
 .shuffle {
   justify-self: start;
 }
-/* Answering fades out what wasn't chosen; the card then eases to its new
-   height on the accordion's timing. */
-.fade,
-.shuffle,
-.actions {
-  transition: opacity var(--duration-fast) var(--easing-state);
-}
-:is(.fade, .shuffle, .actions)[data-fading] {
-  opacity: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .fade,
-  .shuffle,
-  .actions {
-    transition: none;
-  }
-}

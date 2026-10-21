@@ -2,6 +2,7 @@ import type { ChannelMessage } from "../relay/contracts";
 
 /** The longest reply a choice card can show as its written answer. */
 const MAX_ANSWER = 500;
+const NONE: ReadonlyMap<string, string> = new Map();
 
 /** The viewer's reply right after an agent's choice card answers it, and the
  * card shows that answer, so the reply's own bubble would only repeat it.
@@ -12,9 +13,15 @@ export function cardAnswers(
   rows: readonly ChannelMessage[],
   viewer: string | undefined,
   agents: ReadonlySet<string>,
-): Readonly<{ rows: readonly ChannelMessage[]; answers: Map<string, string> }> {
+): Readonly<{
+  rows: readonly ChannelMessage[];
+  /** Each answered card's answer. */
+  answers: ReadonlyMap<string, string>;
+  /** Each taken-out reply's card. */
+  cards: ReadonlyMap<string, string>;
+}> {
   const answers = new Map<string, string>();
-  const answerIds = new Set<string>();
+  const cards = new Map<string, string>();
   rows.forEach((card, index) => {
     const reply = rows[index + 1];
     if (
@@ -34,10 +41,10 @@ export function cardAnswers(
     )
       return;
     answers.set(card.id, reply.content);
-    answerIds.add(reply.id);
+    cards.set(reply.id, card.id);
   });
-  return {
-    rows: answerIds.size ? rows.filter((row) => !answerIds.has(row.id)) : rows,
-    answers,
-  };
+  // Unchanged rows keep their identity, so the timeline doesn't reposition.
+  return cards.size
+    ? { rows: rows.filter((row) => !cards.has(row.id)), answers, cards }
+    : { rows, answers: NONE, cards: NONE };
 }
