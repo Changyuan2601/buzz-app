@@ -52,7 +52,7 @@ it.each(["binding-mismatch", "authorization-denied"])(
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       failure === "binding-mismatch"
-        ? "Settings → Hosted Communities"
+        ? "Settings → Builderlab hosting"
         : "administrator",
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();

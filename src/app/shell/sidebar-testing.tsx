@@ -4,6 +4,8 @@ import { act, render } from "@testing-library/react";
 import { vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadTransport } from "../../features/relay/transport";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
@@ -28,8 +30,12 @@ export function fixture(
   canCreate = false,
   agents?: Agents,
   counts = { observedCount: 2, attentionCount: 1 },
+  host: {
+    transport?: ReadTransport;
+    federatedIdentity?: FederatedIdentity;
+  } = {},
 ) {
-  const owner = createRelaySession(null);
+  const owner = createRelaySession(host.transport ?? null);
   owners.push(owner);
   const base = owner.session;
   const listeners = new Set<() => void>();
@@ -171,6 +177,9 @@ export function fixture(
                 relay={relay}
                 navigator={navigator}
                 target={target}
+                {...(host.federatedIdentity
+                  ? { federatedIdentity: host.federatedIdentity }
+                  : {})}
               >
                 <button type="button">Inbox</button>
               </PrimarySidebar>

@@ -307,59 +307,16 @@ It checks distinct authority/operation grants, enabled artifact revision, and
 live registration, then sends the adapter session as `Authorization: Bearer`
 only to the adapter origin on the allowlisted routes. It never forwards the
 credential under a legacy header, and a 401 from those routes fails that call
-without ending the session. No Buzz-managed
-CLI listener or provisioning is advertised without the companion CLI contract.
+without ending the session.
 The Node development host retains its supported broker flow.
-
-Fake secure-store tests and a loopback HTTP adapter fixture exercise native
-exchange, cryptographic assertion proof, expiry agreement, persistence/restart,
-stale-result fencing, and request grant enforcement. They do not establish OS
-consent, deployed adapter compatibility, TLS socket upgrade, or all protected
-transport paths. Use a configured staging build in a disposable OS account for
-attended browser/adapter, restart/sign-out, HTTP/write, WSS/NIP-42, media/range,
-and repository read/import acceptance before live use. Windows/Linux need
-separate acceptance; do not substitute a profile or HOME override for OS isolation.
 
 For the shared sign-in and community recovery UI alone, run the environment-free
 fixture server documented below and open `/tests/fixtures/federated-identity.html`.
 Click **Sign in**, then **Cancel sign-in** or **Complete** in fixture controls;
 verify both consumers observe the shared status and optional-email confirmation.
 **Binding mismatch** shows existing identity-link guidance; **Storage failure**
-shows recovery without claiming success. This fixture uses Header, SettingsGroup,
-Button, and the Settings content column. It does not exercise the running app's
+shows recovery without claiming success. It does not exercise the running app's
 full navigation or native credentials.
-
-### Implementation validation, 9 October 2026
-
-Checked the uncommitted FI implementation against base
-`fcb3c655ee5ff13c2dcdf20698de7479eba1833b` with pinned tools:
-
-- Full Vitest: 653 files, 9,147 tests passed, no unhandled errors.
-- Native foundation, credential-store, and plugin-manager suites: 559 tests
-  passed; eight existing native tests ignored. This includes a fake-store
-  exchange → persistence → restart restore → same-key assertion flow, real
-  loopback callback handling, and native plugin registration enforcement.
-- Unconfigured native tests and a configured, compile-only build both passed.
-  TypeScript, design typechecking/static checks, Biome, Rust formatting, release
-  YAML parsing, and diff whitespace checks passed. The pre-push script had no
-  committed JavaScript inputs; the full Vitest gate was run explicitly instead.
-- Deliberately breaking the body-bound NIP-98 hash and explicit transaction
-  unlock made their owner-boundary regressions fail; both repairs then passed.
-  Extracted React snapshot/subscription callbacks failed before binding and
-  passed after the service repair.
-- Shared Header, SettingsGroup, Button, and Settings-column integration was
-  inspected in the isolated UI fixture in both themes, narrow/wide widths,
-  enlarged text, and keyboard/pointer operation. No browser journey was added
-  or removed. Independent native/SDK review found no remaining blockers.
-
-Earlier broad runs exposed intermittent failures in unchanged reminder,
-shortcode, browser-host Git, app-agent lock, and command-timeout tests. Focused
-runs and the final full suites passed; this does not establish those flakes are
-eliminated. Review size is approximately +3,579/−739 production/tooling lines
-and +1,797/−1,144 test/support lines, separating colocated Rust test modules.
-This evidence predates publication and does not establish deployed acceptance.
-Attended native acceptance, human product feedback, the API protocol extension,
-and the companion CLI remain the gaps described above.
 
 ## Packaged connection
 
@@ -451,8 +408,7 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter. NIP-FI acquisition and attachment are implemented, with deployed transport
-acceptance still pending as described above.
+and other broker-only helpers are not claimed by this adapter.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

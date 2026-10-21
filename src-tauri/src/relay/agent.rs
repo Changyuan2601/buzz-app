@@ -941,7 +941,7 @@ mod tests {
             json!({"kinds": [30078], "limit": 1}),
         )
         .await;
-        community.assert_carried(&server.await.unwrap()[0]);
+        community.assert_carried(&server.heads().await[0]);
     }
     #[tokio::test]
     async fn memory_page_attaches_for_required_discovery() {

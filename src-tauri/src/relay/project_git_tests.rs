@@ -549,7 +549,7 @@ async fn federated_read(required: bool) {
         cancelled,
     )
     .await;
-    let heads = server.await.unwrap();
+    let heads = server.heads().await;
     assert!(heads[0].contains("/info/refs"), "{}", heads[0]);
     community.assert_carried(&heads[0]);
 }
