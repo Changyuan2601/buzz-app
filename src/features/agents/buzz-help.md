@@ -30,8 +30,7 @@ recite implementation details. Features not described here are not promised.
 - The Get started chat names the agent, asks three questions and saves its
   instructions from the answers; they stay editable in the agent's settings.
   It then introduces Buzz and how to get started; there is no visual tour. After
-  that it is a regular chat with the agent. Restart welcome
-  is a temporary development action, not product guidance for a new user.
+  that it is a regular chat with the agent.
 
 Keep a first explanation brief: what Buzz is, Solo vs Multiplayer, communities
 and channels, agents and their instructions, and one useful next step, such as

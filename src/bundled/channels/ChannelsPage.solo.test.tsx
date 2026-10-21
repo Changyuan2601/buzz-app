@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
@@ -27,6 +27,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
+import { saveWelcome } from "../../features/sessions/welcome";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
@@ -872,6 +873,46 @@ it("finishes a linked chat across roster updates without appending source prose"
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
   expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
+});
+
+describe("a linked draft stays out of implicit Welcome", () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const source = {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
+  };
+  it("with no default agent and no own Solo chat", async () => {
+    const f = fixture({
+      type: "stream",
+      target: (scope) => soloDraftTarget(scope, { linked }),
+    });
+    writeView(f.scope, linkedDraftKey(linked), source);
+    f.mount();
+    expect(
+      await screen.findByRole("textbox", { name: "Message your agents" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Message your agent" }),
+    ).toBeNull();
+  });
+  it("with an incomplete Welcome receipt", async () => {
+    const f = fixture({
+      target: (scope) => soloDraftTarget(scope, { linked }),
+    });
+    writeView(f.scope, linkedDraftKey(linked), source);
+    saveWelcome(f.scope, {
+      channelId: "44444444-4444-4444-8444-444444444444",
+      type: "claude/claude",
+      complete: false,
+    });
+    f.mount();
+    expect(
+      await screen.findByRole("textbox", { name: "Message your agents" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Message your agent" }),
+    ).toBeNull();
+  });
 });
 
 it("opens the existing chat name editor from Rename", async () => {

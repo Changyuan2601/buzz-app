@@ -79,22 +79,8 @@ visible error, not permission to bypass the claim. The Dock icon names the branc
    admission remain unchanged. The default is a device-local view preference scoped
    to account/community, not global identity, ownership, online state or permission.
 
-The development build offers **Solo → Restart welcome** in the selected relay,
-including relays that have never used this new flow. The entry stays visible during
-setup; once a welcome reply is confirmed or setup is complete, confirmation can
-clear that local setup receipt and open the app-authored Welcome screen again.
-Cancel keeps the current setup; a changed receipt blocks a stale confirmation.
-Other relays, existing chats, agents, provider connection and the current default
-are preserved. Nothing is created until **Continue**; that creates a new real
-agent/chat. Saving the new customization replaces the local default. Before a
-confirmed welcome, Restart stays disabled so creation/startup recovery cannot be
-silently abandoned. This entry is not included in production builds.
-
 Provider/customization cards are centered within the message-content column, not
-left-aligned under its text gutter. The centering/restart feedback pass passes
-TypeScript, targeted Biome and 10 sidebar cases, including Cancel/focus restoration,
-confirmed customization reset and the in-progress creation guard. No screenshots
-or live publications were made.
+left-aligned under its text gutter.
 
 Name ideas come from the selected provider using its effective model in a bounded,
 tools-free scratch request: Claude safe-mode, Codex ephemeral isolated exec, or a
@@ -236,8 +222,6 @@ release. It retains its original base; newer mainline changes are not integrated
   Its welcome uses the ordinary channel session and cancels live or opening work.
   Goose provider flows requiring external sign-in retain their existing guidance;
   no in-app OAuth support is invented.
-- Restart welcome remains development-only and must be removed before the final
-  onboarding flow is finalized.
 - Focused protocol fixtures cover continuing sessions and cancellation; mounted
   controls cover all three rows and actual Goose setup. These are not live vendor
   acceptance or packaged/native quit-relaunch validation. No new live chat posts
@@ -317,5 +301,4 @@ Focused automated checks cover visible action sends, continuing protocol
 sessions, instruction saving and timeline composition. Full live Codex/Goose
 acceptance, packaged relaunch and browser geometry/accessibility across themes
 and sizes remain deferred. Keep other development copies from holding the same
-agent while testing; do not bypass the normal execution claim. Restart welcome
-remains temporary development UI.
+agent while testing; do not bypass the normal execution claim.

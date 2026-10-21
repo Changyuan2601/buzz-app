@@ -27,6 +27,8 @@ export function WelcomeGreeting({
   signal: AbortSignal;
 }) {
   const [busy, setBusy] = useState(false);
+  // An owner's retry keeps its button mounted, so focus survives a failure.
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState("");
   const active = useRef(false);
   const starting = useRef(false);
@@ -53,6 +55,7 @@ export function WelcomeGreeting({
       if (starting.current || !receipt.agent) return;
       starting.current = true;
       setBusy(true);
+      setRetrying(retry && !observe);
       setError("");
       try {
         signal.throwIfAborted();
@@ -97,7 +100,10 @@ export function WelcomeGreeting({
           setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
         starting.current = false;
-        if (active.current) setBusy(false);
+        if (active.current) {
+          setBusy(false);
+          setRetrying(false);
+        }
       }
     },
     [agents, current, receipt.agent, receipt.channelId, scope, session, signal],
@@ -116,23 +122,19 @@ export function WelcomeGreeting({
   }, [greet, receipt.greeting, receipt.greetingId]);
   if (
     receipt.greetingId ||
-    (!error && (busy || receipt.greeting === "pending"))
+    (!error && !retrying && (busy || receipt.greeting === "pending"))
   )
     return null;
   return (
     <div className={styles.setupControls}>
       <div className={styles.step}>
-        {!busy && (
-          <>
-            <p className="text-body-sm text-subtle" role="status">
-              Your agent is saved. Its greeting may still arrive; check before
-              trying again.
-            </p>
-            <Button onClick={() => void greet(true)}>
-              Check and retry greeting
-            </Button>
-          </>
-        )}
+        <p className="text-body-sm text-subtle" role="status">
+          Your agent is saved. Its greeting may still arrive; check before
+          trying again.
+        </p>
+        <Button loading={busy} onClick={() => void greet(true)}>
+          Check and retry greeting
+        </Button>
         {error && <p role="alert">{error}</p>}
       </div>
     </div>

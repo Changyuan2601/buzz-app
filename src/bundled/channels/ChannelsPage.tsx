@@ -223,13 +223,14 @@ function ChannelWorkspace({
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
   const { receipt: welcomeReceipt } = useWelcomeReceipt(scope);
-  // First run: a plain new chat with no Solo history or default agent yet,
-  // or an unfinished setup, opens Welcome instead.
+  // First run: a plain new chat (not one linked from a message) with no Solo
+  // history or default agent yet, or an unfinished setup, opens Welcome instead.
   const welcoming =
     welcomeRoute ||
     (!!draft &&
       !draft.agent &&
       !draft.project &&
+      !draft.linked &&
       list.status === "ready" &&
       ((!readDefaultAgent(scope) &&
         !list.channels.some((item) => ownSolo(item, queries.viewer))) ||

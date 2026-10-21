@@ -125,3 +125,28 @@ it("hands focus on when a choice is submitted, so it isn't lost with the closing
   expect(onReply).toHaveBeenCalledWith("Short");
   expect(answered).toHaveBeenCalledOnce();
 });
+
+it("hands focus on only after a name is saved, and keeps it in the card if the save fails", async () => {
+  const ui = { pattern: "profile" as const, options: ["Juniper", "Atlas"] };
+  const answered = vi.fn();
+  let reject: (reason: Error) => void = () => {};
+  const saveProfile = vi.fn(
+    () => new Promise<void>((_, fail) => (reject = fail)),
+  );
+  render(
+    <InlineUiHost.Provider value={{ saveProfile, answered }}>
+      <InlineUiCard ui={ui} agent="a" live onReply={() => {}} />
+    </InlineUiHost.Provider>,
+  );
+  await userEvent.click(screen.getByRole("radio", { name: "Juniper" }));
+  screen.getByRole("button", { name: "Submit" }).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(saveProfile).toHaveBeenCalledOnce();
+  expect(answered).not.toHaveBeenCalled();
+  reject(new Error("Couldn't save."));
+  expect(await screen.findByText("Couldn't save.")).toBeVisible();
+  expect(answered).not.toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Submit" })).toHaveFocus(),
+  );
+});

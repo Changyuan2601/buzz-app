@@ -3237,6 +3237,51 @@ it("offers an agent's choice only while it is the newest message, and sends the 
   }
 });
 
+it("keeps an agent's numbered options in thread layout, which cannot host the card", () => {
+  const agent = keypair();
+  const ui = { pattern: "choice", options: ["Warm", "Direct"] };
+  const [folded] = foldMessages("channel", keypair().pubkey, [
+    message(
+      agent,
+      "channel",
+      "What tone should I use?\n\n1. Warm\n2. Direct\n\nOr reply with your own answer.",
+      1,
+      [["ui", JSON.stringify(ui)]],
+    ),
+  ]);
+  if (!folded) throw new Error("No folded message");
+  const session = {
+    messages: { send: vi.fn() },
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  renderDom(
+    <MessageRow
+      row={folded}
+      session={session}
+      agentPubkeys={new Set([agent.pubkey])}
+      layout="thread"
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    expect(
+      screen.queryByRole("radio", { name: "Warm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual(["Warm", "Direct"]);
+  } finally {
+    cleanup();
+  }
+});
+
 it("offers an agent's profile names only where the host can save them", async () => {
   const agent = keypair();
   const ui = { pattern: "profile", options: ["Pip", "Juniper"] };

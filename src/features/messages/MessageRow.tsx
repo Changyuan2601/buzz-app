@@ -318,8 +318,14 @@ function MessageRowContent({
   );
   const presenceId = useId();
   // Only an agent's own message may present a pattern; others read as plain text.
+  // Surfaces that cannot host the card (threads) keep the plain-text options.
+  const hostsInlineUi =
+    layout === "timeline" && !row.threadRootId && !!session?.messages;
   const inlineUi =
-    !shownRow && row.inlineUi && agentPubkeys?.has(row.authorId)
+    !shownRow &&
+    hostsInlineUi &&
+    row.inlineUi &&
+    agentPubkeys?.has(row.authorId)
       ? row.inlineUi
       : undefined;
   const shown = useMemo(
@@ -981,13 +987,7 @@ function MessageRowContent({
                   ui={inlineUi.ui}
                   agent={row.authorId}
                   // An answered card is done even while it is the newest row.
-                  live={
-                    latest &&
-                    !reply &&
-                    layout === "timeline" &&
-                    !row.threadRootId &&
-                    !!session?.messages
-                  }
+                  live={latest && !reply}
                   // A reply typed in the composer starts by tagging the agent.
                   reply={
                     profile?.name && reply?.startsWith(`@${profile.name} `)

@@ -22,6 +22,10 @@ import type { AgentStore } from "../../features/agents/store";
 export const IDLE_MS = 15 * 60_000;
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
+const CANCELLED: Settled = {
+  ok: false,
+  error: "Conversation start was cancelled",
+};
 
 /** What is saved for one conversation. */
 export type SavedSession = Readonly<{
@@ -80,6 +84,8 @@ export class AgentSessions {
     | undefined;
   private disposed = false;
   private readonly cancelledStarts = new WeakSet<Promise<Live | Settled>>();
+  /** Counts each conversation's stops, so a delivery can tell it was cancelled. */
+  private readonly stops = new Map<string, number>();
   private readonly now: () => number;
   private readonly newId: () => string;
 
@@ -223,9 +229,17 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
+    const stopped = this.stops.get(key);
+    const cancelled = (): Settled | undefined =>
+      this.stops.get(key) === stopped ? undefined : CANCELLED;
     const opened = await this.open(key, saved?.id, seen);
     if (!("process" in opened)) return opened;
     live = opened;
+    const early = cancelled();
+    if (early) {
+      this.drop(key, live);
+      return early;
+    }
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),
@@ -237,6 +251,9 @@ export class AgentSessions {
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
+      // A stopped start never falls back to a new session.
+      const stoppedStart = cancelled();
+      if (stoppedStart) return stoppedStart;
       // Nothing has taken the message in yet.
       let retry: string;
       try {
@@ -251,6 +268,8 @@ export class AgentSessions {
           undelivered: true,
         };
       }
+      const stoppedRetry = cancelled();
+      if (stoppedRetry) return stoppedRetry;
       return this.deliver(key, retry, seen, { pick, ...activity });
     }
     return delivered;
@@ -288,6 +307,7 @@ export class AgentSessions {
   /** Stops only this conversation when an app-authored startup is cancelled.
    * A process still opening is stopped when its start finishes. */
   stop(key: string) {
+    this.stops.set(key, (this.stops.get(key) ?? 0) + 1);
     const live = this.live.get(key);
     if (live) this.drop(key, live);
     const opening = this.opening.get(key);
@@ -379,7 +399,7 @@ export class AgentSessions {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.cancelledStarts.has(opened)) {
           void live.process.kill();
-          return { ok: false, error: "Conversation start was cancelled" };
+          return CANCELLED;
         }
         if (this.disposed) {
           void live.process.kill();

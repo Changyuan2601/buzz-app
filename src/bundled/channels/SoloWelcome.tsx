@@ -440,6 +440,8 @@ export function WelcomeControls({
 }) {
   const found = useAgent(agents, receipt.agent ?? "");
   const [busy, setBusy] = useState(false);
+  // An owner's retry keeps its button mounted, so focus survives a failure.
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(false);
   const starting = useRef(false);
@@ -480,6 +482,7 @@ export function WelcomeControls({
       if (current?.kickoff && !retry) return;
       starting.current = true;
       setBusy(true);
+      setRetrying(retry);
       setError("");
       try {
         signal.throwIfAborted();
@@ -516,7 +519,10 @@ export function WelcomeControls({
         if (mounted.current && !signal.aborted) setError(errorText(reason));
       } finally {
         starting.current = false;
-        if (mounted.current) setBusy(false);
+        if (mounted.current) {
+          setBusy(false);
+          setRetrying(false);
+        }
       }
     },
     [agents, session, scope, signal, receipt],
@@ -568,25 +574,25 @@ export function WelcomeControls({
     );
   // The agent's typing shows the introduction is on its way; only a stalled
   // or failed one needs the owner.
-  if (!error && (busy || receipt.replyId || receipt.kickoff !== "attempted"))
+  if (
+    !error &&
+    !retrying &&
+    (busy || receipt.replyId || receipt.kickoff !== "attempted")
+  )
     return null;
   return (
     <div className={styles.setupControls}>
       <div className={styles.step}>
-        {!busy && (
-          <>
-            <p className="text-body-sm text-subtle" role="status">
-              Your agent's hello may still arrive. Check for it before trying
-              again.
-            </p>
-            <Button
-              disabled={!found.type?.startConversation}
-              onClick={() => void kickoff(true)}
-            >
-              Check and retry introduction
-            </Button>
-          </>
-        )}
+        <p className="text-body-sm text-subtle" role="status">
+          Your agent's hello may still arrive. Check for it before trying again.
+        </p>
+        <Button
+          disabled={!found.type?.startConversation}
+          loading={busy}
+          onClick={() => void kickoff(true)}
+        >
+          Check and retry introduction
+        </Button>
         {error && <p role="alert">{error}</p>}
       </div>
     </div>

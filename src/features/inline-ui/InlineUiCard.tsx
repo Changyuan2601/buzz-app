@@ -122,6 +122,13 @@ function ChoiceForm({
     answered ? "closed" : "open",
   );
   const form = useRef<HTMLFormElement>(null);
+  // Set when a failed send reopens a card that held focus, until it is back.
+  const refocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!refocus.current || frozen || phase !== "open") return;
+    refocus.current = false;
+    form.current?.querySelector<HTMLElement>('button[type="submit"]')?.focus();
+  }, [frozen, phase]);
   useLayoutEffect(() => {
     const card = form.current;
     if (!frozen || phase !== "open" || !card) return;
@@ -188,11 +195,16 @@ function ChoiceForm({
           if (frozen || !answer || !onSubmit) return;
           setError("");
           setSent({ text: answer, picture: avatar.preview ?? avatar.url });
-          // Focus would otherwise go down with the closing controls.
-          if (form.current?.contains(document.activeElement)) onAnswered?.();
+          const held = !!form.current?.contains(document.activeElement);
+          // Focus would otherwise go down with the closing controls. A
+          // profile save hands it on only once it succeeds, since the
+          // destination stays disabled until then; a failure keeps it here.
+          if (held && !profile) onAnswered?.();
           try {
             await onSubmit(answer, avatar.url);
+            if (held && profile) onAnswered?.();
           } catch (reason) {
+            refocus.current = held;
             setError(
               reason instanceof Error
                 ? reason.message

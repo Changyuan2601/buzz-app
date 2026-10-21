@@ -636,3 +636,86 @@ it("offers the app's own name card when the agent's hello came without one", asy
   );
   expect(readWelcome("scope")).toMatchObject({ complete: true });
 });
+
+it("keeps the introduction retry mounted and focused while checking and after it fails", async () => {
+  const f = fixture();
+  const attempted = {
+    ...receipt,
+    kickoff: "attempted" as const,
+    kickoffAt: 100,
+  };
+  saveWelcome("scope", attempted);
+  let fail: (reason: Error) => void = () => {};
+  vi.mocked(f.agents.welcome).mockReturnValueOnce(
+    new Promise((_, reject) => {
+      fail = reject;
+    }),
+  );
+  render(
+    <WelcomeControls
+      {...f}
+      scope="scope"
+      signal={new AbortController().signal}
+      receipt={attempted}
+    />,
+  );
+  const retry = screen.getByRole("button", {
+    name: "Check and retry introduction",
+  });
+  await userEvent.click(retry);
+  await waitFor(() => expect(f.agents.welcome).toHaveBeenCalledOnce());
+  expect(retry).toBeInTheDocument();
+  expect(retry).toHaveAttribute("aria-busy", "true");
+  await userEvent.click(retry);
+  expect(f.agents.welcome).toHaveBeenCalledOnce();
+  fail(new Error("Provider unavailable"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Provider unavailable",
+  );
+  expect(
+    screen.getByRole("button", { name: "Check and retry introduction" }),
+  ).toBe(retry);
+  expect(retry).toHaveFocus();
+});
+
+it("keeps the greeting retry mounted and focused while checking and after it fails", async () => {
+  const f = fixture();
+  const attempted = {
+    ...receipt,
+    complete: true,
+    greeting: "attempted" as const,
+    greetingAt: 100,
+  };
+  saveWelcome("scope", attempted);
+  let fail: (reason: Error) => void = () => {};
+  vi.mocked(f.agents.welcome).mockReturnValueOnce(
+    new Promise((_, reject) => {
+      fail = reject;
+    }),
+  );
+  render(
+    <WelcomeGreeting
+      {...f}
+      scope="scope"
+      receipt={attempted}
+      signal={new AbortController().signal}
+    />,
+  );
+  const retry = await screen.findByRole("button", {
+    name: "Check and retry greeting",
+  });
+  await userEvent.click(retry);
+  await waitFor(() => expect(f.agents.welcome).toHaveBeenCalledOnce());
+  expect(retry).toBeInTheDocument();
+  expect(retry).toHaveAttribute("aria-busy", "true");
+  await userEvent.click(retry);
+  expect(f.agents.welcome).toHaveBeenCalledOnce();
+  fail(new Error("Provider unavailable"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Provider unavailable",
+  );
+  expect(screen.getByRole("button", { name: "Check and retry greeting" })).toBe(
+    retry,
+  );
+  expect(retry).toHaveFocus();
+});

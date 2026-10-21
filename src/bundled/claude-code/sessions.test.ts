@@ -884,6 +884,27 @@ it("cancels a conversation while its process is opening without ever submitting 
   }
 });
 
+it("does not start over when an adopted resumed process is stopped before it initializes", async () => {
+  const store = memoryStore();
+  store.set("welcome", { id: "lost", seen: 4, at: 1 });
+  const { pool, claudes } = sessions({ store });
+  const fresh = vi.fn(async () => "fresh app instruction");
+  const result = pool.deliver("welcome", "private app instruction", 0, {
+    fresh,
+  });
+  while (!claudes()[0]?.received.some((m) => m.type === "user"))
+    await Promise.resolve();
+  pool.stop("welcome");
+  expect(await result).toEqual({
+    ok: false,
+    error: "Conversation start was cancelled",
+  });
+  expect(fresh).not.toHaveBeenCalled();
+  expect(claudes()).toHaveLength(1);
+  expect(store.get("welcome")).toMatchObject({ id: "lost" });
+  pool.dispose();
+});
+
 it("marks a message whose process could not start as never delivered", async () => {
   const launched = Promise.reject(new Error("no settings"));
   launched.catch(() => undefined);
