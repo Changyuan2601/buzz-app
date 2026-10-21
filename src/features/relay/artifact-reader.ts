@@ -7,6 +7,8 @@ export const ARTIFACT_SYNC_LIMITS = Object.freeze({
   pageRows: 100,
   currentRows: 100,
   responseBytes: 8_388_608,
+  permanentChannelsOnly: true,
+  checkpointLifetimeSeconds: 2_592_000,
 });
 export type ArtifactSyncQuery = Readonly<{
   artifact: "current";

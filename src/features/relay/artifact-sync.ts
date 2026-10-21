@@ -105,6 +105,7 @@ export function provideArtifactSync(
     let requested = true;
     const dirty = new Set<string>();
     let retry = 0;
+    let retryKind: "delta" | "current" | undefined;
     let notBefore = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let batch: AbortController | undefined;
@@ -118,11 +119,11 @@ export function provideArtifactSync(
         now.session.live.snapshot().status === "connected"
       );
     };
-    const schedule = (delay: number) => {
+    const schedule = (delay: number, delta = false) => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
-        requested = true;
+        requested ||= delta;
         void pump();
       }, delay);
     };
@@ -139,6 +140,7 @@ export function provideArtifactSync(
       }
     };
     group.request = request;
+    const repair = setInterval(request, REPAIR_MS);
     async function pump() {
       if (
         running ||
@@ -147,6 +149,10 @@ export function provideArtifactSync(
         !active()
       )
         return;
+      if (Date.now() < notBefore) {
+        schedule(notBefore - Date.now());
+        return;
+      }
       const current = session;
       const reader = current?.artifactSync;
       if (!current || !reader) return;
@@ -160,6 +166,7 @@ export function provideArtifactSync(
       batch = new AbortController();
       const signal = AbortSignal.any([group.lifetime.signal, batch.signal]);
       let syncing: OpenArtifactCollection | undefined;
+      let deltaWork = false;
       try {
         const entry = [...group.entries][0];
         if (!entry || entry.signal.aborted) return;
@@ -171,9 +178,14 @@ export function provideArtifactSync(
           JSON.stringify([entry.owner, entry.definition.name]),
         );
         operation.throwIfAborted();
-        const ids = accepted.artifactIds.length
-          ? accepted.artifactIds.slice(0, ARTIFACT_SYNC_LIMITS.currentRows)
-          : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
+        const ids =
+          retryKind === "delta"
+            ? []
+            : accepted.artifactIds.length
+              ? accepted.artifactIds.slice(0, ARTIFACT_SYNC_LIMITS.currentRows)
+              : requested && retryKind !== "current"
+                ? []
+                : [...dirty].slice(0, ARTIFACT_SYNC_LIMITS.currentRows);
         if (ids.length) {
           for (const id of ids) dirty.delete(id);
           try {
@@ -194,6 +206,7 @@ export function provideArtifactSync(
             throw error;
           }
         } else if (requested) {
+          deltaWork = true;
           requested = false;
           await reconcileArtifactDelta(
             reader,
@@ -204,6 +217,7 @@ export function provideArtifactSync(
           );
         } else return;
         retry = 0;
+        retryKind = undefined;
         notBefore = 0;
         if (ids.length)
           queueMicrotask(() => {
@@ -220,6 +234,7 @@ export function provideArtifactSync(
             if (groups.get(group.key) === group) groups.delete(group.key);
           } else {
             retry = 0;
+            retryKind = undefined;
             requested = true;
           }
         } else if (!signal.aborted) {
@@ -227,10 +242,14 @@ export function provideArtifactSync(
           const permanent =
             error instanceof ArtifactSyncError &&
             ["sync_limit", "sync_invalid"].includes(error.code);
+          requested ||= deltaWork;
           if (retry <= 3 && !permanent) {
-            requested = true;
-            schedule(RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS);
+            retryKind = deltaWork ? "delta" : "current";
+            const delay = RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS;
+            notBefore = Date.now() + delay;
+            schedule(delay);
           } else {
+            retryKind = undefined;
             notBefore = Date.now() + REPAIR_MS;
           }
         }
@@ -240,7 +259,7 @@ export function provideArtifactSync(
         batch = undefined;
         if (!group.lifetime.signal.aborted) {
           if (retry === 0 && (requested || dirty.size)) void pump();
-          else if (!timer) schedule(REPAIR_MS);
+          else if (retry > 0 && !timer) schedule(REPAIR_MS, true);
         }
       }
     }
@@ -334,6 +353,7 @@ export function provideArtifactSync(
         requested = true;
       } else if (!connected || changed) {
         retry = 0;
+        retryKind = undefined;
         request();
       }
       connected = ready;
@@ -351,6 +371,7 @@ export function provideArtifactSync(
     } finally {
       batch?.abort();
       clearTimeout(timer);
+      clearInterval(repair);
       stopRelay();
       stopSession();
       stopLive();

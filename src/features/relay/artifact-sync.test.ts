@@ -433,9 +433,128 @@ it("uses bounded current reads and requests a delta after live overflow", async 
   await vi.advanceTimersByTimeAsync(0);
   expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(10);
   expect(
+    vi.mocked(reconcileArtifactDelta).mock.invocationCallOrder[1],
+  ).toBeLessThan(
+    vi.mocked(reconcileArtifactCurrent).mock.invocationCallOrder[0] as number,
+  );
+  expect(
     vi
       .mocked(reconcileArtifactCurrent)
       .mock.calls.every((call) => call[3].length <= 100),
   ).toBe(true);
   expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+});
+
+it("keeps capacity backoff when a live read starts before the repair timer", async () => {
+  const h = setup();
+  h.add();
+  await vi.advanceTimersByTimeAsync(30_000);
+  vi.mocked(reconcileArtifactCurrent).mockRejectedValueOnce(
+    new ArtifactSyncError("sync_limit", "Large"),
+  );
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["type", "test.task"],
+        ["d", "task"],
+      ],
+    }),
+  );
+  h.confirmed(event);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(30_000);
+  h.confirmed(event);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(2);
+});
+
+it("keeps transient retry times under live hints and reports a persistent current failure", async () => {
+  const h = setup();
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  vi.mocked(reconcileArtifactCurrent).mockRejectedValue(
+    new Error("Disconnected"),
+  );
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["type", "test.task"],
+        ["d", "task"],
+      ],
+    }),
+  );
+  h.confirmed(event);
+  await vi.advanceTimersByTimeAsync(0);
+  for (let i = 0; i < 10; i++) {
+    h.confirmed(event);
+    await vi.advanceTimersByTimeAsync(50);
+  }
+  expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(4);
+  expect(vi.mocked(reconcileArtifactCurrent).mock.calls[3]?.[5]).toEqual({
+    reportFailure: true,
+  });
+  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
+});
+
+it("keeps the periodic delta deadline under continuing live hints", async () => {
+  const h = setup();
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["type", "test.task"],
+        ["d", "task"],
+      ],
+    }),
+  );
+  for (let i = 0; i < 6; i++) {
+    await vi.advanceTimersByTimeAsync(9000);
+    h.confirmed(event);
+    await vi.advanceTimersByTimeAsync(0);
+  }
+  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+});
+
+it("keeps a failed delta retry round ahead of queued live reads", async () => {
+  const h = setup();
+  vi.mocked(reconcileArtifactDelta).mockRejectedValue(
+    new Error("Disconnected"),
+  );
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["type", "test.task"],
+        ["d", "task"],
+      ],
+    }),
+  );
+  h.confirmed(event);
+  await vi.advanceTimersByTimeAsync(7000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(4);
+  expect(vi.mocked(reconcileArtifactDelta).mock.calls[3]?.[4]).toEqual({
+    reportFailure: true,
+  });
+  expect(reconcileArtifactCurrent).not.toHaveBeenCalled();
 });

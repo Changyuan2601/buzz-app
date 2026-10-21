@@ -4,7 +4,7 @@ The host saves confirmed relay artifacts through `ArtifactStorageService`. Plugi
 
 ## Sync contract
 
-Sync uses the existing relay session and socket. The native transport exposes `session.artifactSync` only when NIP-11 advertises the exact version 1 `artifacts.sync` contract: `overlapSeconds:120`, `pageRows:100`, `currentRows:100`, and `responseBytes:8388608`. The relay prerequisite is [PR 8523](https://github.com/block/buzz/pull/8523). This client does not deploy it.
+Sync uses the existing relay session and socket. The native transport exposes `session.artifactSync` only when NIP-11 advertises the exact version 1 `artifacts.sync` contract: `overlapSeconds:120`, `pageRows:100`, `currentRows:100`, and `responseBytes:8388608`, `permanentChannelsOnly:true`, and `checkpointLifetimeSeconds:2592000`. The relay prerequisite is [PR 8523](https://github.com/block/buzz/pull/8523). This client does not deploy it.
 
 Each collection has one fixed current query. An initial paged read discovers authorized artifacts. Later reads use an opaque checkpoint for changes since the last successful server start time, with a 120-second overlap. Live messages do not advance progress. The overlap is a recovery assumption. It does not prove recovery from every delayed database commit. Sync covers permanent channels. TTL retirement is outside this contract.
 
