@@ -8,6 +8,7 @@ import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
   channel,
+  largeArtwork = false,
   icon,
   nameAccessory,
   badge,
@@ -19,9 +20,11 @@ export function ChannelSidebarRow({
   presenceDescription,
   onSelect,
   onPrepare,
+  onRename,
   onHideDm,
 }: {
   channel: ChannelSummary;
+  largeArtwork?: boolean;
   icon: ReactNode;
   nameAccessory?: ReactNode;
   badge?: ReactNode;
@@ -35,19 +38,25 @@ export function ChannelSidebarRow({
   presenceDescription?: string | undefined;
   onSelect: (id: string) => void;
   onPrepare: (id: string) => void;
+  onRename?: (() => void) | undefined;
   onHideDm?: (id: string) => void;
 }) {
   const presenceId = useId();
   const selectButton = (
     <NavigationItem
       type="button"
+      variant={largeArtwork ? "rail" : "row"}
+      aria-label={largeArtwork ? channel.name : undefined}
       data-channel-id={channel.id}
       data-working={working || undefined}
       aria-current={selected === channel.id ? "page" : undefined}
       aria-describedby={presenceDescription ? presenceId : undefined}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
-      onClick={() => onSelect(channel.id)}
+      onClick={(event) => {
+        if (event.detail < 2) onSelect(channel.id);
+      }}
+      onDoubleClick={onRename}
       selected={selected === channel.id}
       label={
         <span
@@ -61,7 +70,8 @@ export function ChannelSidebarRow({
       icon={
         <span
           className={styles.iconSpace}
-          data-dm-visual={dmVisualSpacing || undefined}
+          data-large-artwork={largeArtwork || undefined}
+          data-dm-visual={(!largeArtwork && dmVisualSpacing) || undefined}
         >
           {icon}
         </span>
@@ -77,7 +87,7 @@ export function ChannelSidebarRow({
   );
   return (
     <div
-      className={styles.row}
+      className={largeArtwork ? styles.railRow : styles.row}
       data-channel-sidebar-row=""
       data-ordinary={ordinary || undefined}
       data-selected={selected === channel.id || undefined}
@@ -90,7 +100,7 @@ export function ChannelSidebarRow({
           </span>
         )}
       </div>
-      {channel.channelType === "dm" && onHideDm && (
+      {!largeArtwork && channel.channelType === "dm" && onHideDm && (
         <span className={`${styles.more} ${styles.remove}`}>
           <IconButton
             type="button"

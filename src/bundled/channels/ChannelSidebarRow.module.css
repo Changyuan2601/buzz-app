@@ -128,3 +128,20 @@
   width: max-content;
   max-width: var(--available-width);
 }
+
+.railRow {
+  position: relative;
+  width: 100%;
+  margin-block: var(--space-1);
+}
+.iconSpace[data-large-artwork] {
+  width: var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+  height: var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+  flex-basis: var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+}
+
+@container navigation-rail (min-width: 12rem) {
+  .railRow {
+    --sidebar-artwork-size: calc(var(--space-6) * 1.5);
+  }
+}

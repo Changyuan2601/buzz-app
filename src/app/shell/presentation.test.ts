@@ -138,7 +138,7 @@ describe("page mark precedence", () => {
 describe("header area selection", () => {
   const entries: RegisteredPage[] = [
     { ...messages, primary: true, placement: "topbar" },
-    inbox,
+    { ...inbox, primary: true },
     {
       ...page("buzz.reminders/reminders", "Reminders"),
       primary: true,
@@ -165,7 +165,7 @@ describe("header area selection", () => {
   ];
   test.each([
     ["buzz.channels/channels", "buzz.channels/channels"],
-    ["buzz.inbox/inbox", "buzz.channels/channels"],
+    ["buzz.inbox/inbox", "buzz.inbox/inbox"],
     ["buzz.reminders/reminders", "buzz.reminders/reminders"],
     ["buzz.agents/agents", "buzz.agents/agents"],
     ["buzz.workflows/workflows", "buzz.workflows/workflows"],

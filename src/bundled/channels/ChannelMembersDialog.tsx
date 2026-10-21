@@ -1,3 +1,4 @@
+import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { motion, useReducedMotion } from "motion/react";
 import { Button as BaseButton } from "@base-ui/react/button";
@@ -49,7 +50,6 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
   CircleNotchIcon,
-  UsersIcon,
 } from "../../shared/design-system/icons";
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
@@ -349,13 +349,19 @@ export function ChannelMembersButton({
     <>
       <IconButton
         ref={trigger}
+        variant="avatar"
         size="sm"
+        style={{
+          width: "auto",
+          minWidth: "var(--size-control-sm)",
+          paddingInline: "var(--space-1)",
+        }}
         aria-label="Channel members"
         title="Channel members"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        icon={<UsersIcon size="1rem" aria-hidden="true" />}
+        icon={<ChannelMemberAvatars session={session} channelId={channelId} />}
       />
       {open && (
         <ChannelMembersDialog

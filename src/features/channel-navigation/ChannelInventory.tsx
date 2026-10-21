@@ -1,3 +1,5 @@
+import type { ContributionReader } from "../conversation/contracts";
+import type { ChatIcon } from "../conversation/service";
 import { revealCreatedChannel } from "./created-channel";
 import {
   useCallback,
@@ -13,7 +15,7 @@ import {
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { ownSolo } from "../solo/labels";
+import { SoloInventory } from "./SoloInventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -21,8 +23,12 @@ import { useChannelList } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import type { SidebarFrame } from "./SidebarFrame";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
   MenuGroup,
   MenuGroupLabel,
   MenuIcon,
@@ -40,6 +46,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
 import { clientMetrics } from "../developer/client-metrics";
 import {
+  Filter2Icon,
   BellIcon,
   BellSlashIcon,
   ChatCircleIcon,
@@ -90,6 +97,7 @@ type Inventory = {
   dmPreviews: ReadonlyMap<string, UnreadDmPreview>;
   frame: Pick<ComponentProps<typeof SidebarFrame>, "busy" | "launchPending">;
   before: ReactNode;
+  filterAction: ReactNode;
   content: ReactNode;
   after: ReactNode;
   dialogs: ReactNode;
@@ -100,10 +108,12 @@ export function ChannelInventory({
   relay,
   navigator,
   agents,
+  chatIcons,
   target,
   queries,
   cached,
   layoutReady = true,
+  flatSidebar = false,
   connectionError,
   scope,
   viewer,
@@ -112,11 +122,13 @@ export function ChannelInventory({
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
   target: OpenTarget;
   queries: RelaySession;
   cached: boolean;
   /** Other inventories sharing this viewport must settle before restoring it. */
   layoutReady?: boolean;
+  flatSidebar?: boolean;
   connectionError?: string | undefined;
   scope: string;
   viewer?: string | undefined;
@@ -138,6 +150,15 @@ export function ChannelInventory({
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
   );
+  const soloPreferences = useSidebarPreferences(queries.soloPreferences);
+  const soloGroups = new Set(
+    soloPreferences.data?.sections.map((section) => section.id),
+  );
+  const hasSavedWorkspace = (channel: ChannelSummary) =>
+    !flatSidebar &&
+    soloGroups.has(soloPreferences.data?.assignments[channel.id] ?? "") &&
+    !preferences.data?.starred.includes(channel.id) &&
+    !preferences.data?.assignments[channel.id];
   const hiddenDms = useHiddenDms(scope, queries, list);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(
@@ -209,8 +230,7 @@ export function ChannelInventory({
     (channel) =>
       !channel.huddle &&
       !channel.metadataPending &&
-      // Solo lists the viewer's own Solo chats.
-      !ownSolo(channel, queries.viewer) &&
+      !hasSavedWorkspace(channel) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -428,30 +448,34 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
+  const [visibility, setVisibility] = useState("all");
+  const visibleChannels = sidebarChannels.filter((channel) => {
+    const privateChat =
+      channel.private ||
+      channel.channelType === "dm" ||
+      channel.channelType === "solo";
+    return (
+      visibility === "all" ||
+      (visibility === "private" ? privateChat : !privateChat)
+    );
+  });
   const sections = startup.ready
     ? sidebarSections(
-        sidebarChannels,
+        visibleChannels,
         preferences.data,
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
+  const [showOlder, setShowOlder] = useState(false);
   const filteredSections = useSidebarFilters(
     sections,
     Object.fromEntries(
-      Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
-        key.startsWith("section:") ? `group:${key.slice(8)}` : key,
-        mode,
-      ]),
+      sections.map((section) => [section.key, showOlder ? "all" : "active"]),
     ),
     current?.id,
     queries.unread,
     Object.fromEntries(
-      Object.entries(preferences.data?.activeWindowSeconds ?? {}).map(
-        ([key, seconds]) => [
-          key.startsWith("section:") ? `group:${key.slice(8)}` : key,
-          seconds,
-        ],
-      ),
+      sections.map((section) => [section.key, 5 * 24 * 60 * 60]),
     ),
     list.activityStatus === "ready",
   );
@@ -540,28 +564,6 @@ export function ChannelInventory({
     ids.splice(to, 0, sectionId);
     void preferences.reorderSections(sectionId, ids).catch(() => {});
   };
-  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
-    void preferences
-      .setSort(
-        key.startsWith("group:") ? `section:${key.slice(6)}` : key,
-        mode,
-        preferences.data?.sections.map((section) => section.id) ?? [],
-      )
-      .catch(() => {});
-  };
-  const setSectionFilter = (
-    key: string,
-    mode: "all" | "unreads" | "active",
-    activeWindowSeconds?: number | null,
-  ) => {
-    return preferences.setFilter(
-      key.startsWith("group:") ? `section:${key.slice(6)}` : key,
-      mode,
-      preferences.data?.sections.map((section) => section.id) ?? [],
-      undefined,
-      activeWindowSeconds,
-    );
-  };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (
@@ -570,7 +572,7 @@ export function ChannelInventory({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (placementWritable && channel.channelType !== "forum") {
+    if (placementWritable) {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
@@ -599,9 +601,7 @@ export function ChannelInventory({
                   ? "starred"
                   : currentSectionId
                     ? `group:${currentSectionId}`
-                    : movingDm
-                      ? "dms"
-                      : "channels"
+                    : "channels"
               }
               onValueChange={(destination) => {
                 if (destination === "starred")
@@ -638,14 +638,12 @@ export function ChannelInventory({
                   {group.name}
                 </MenuRadioItem>
               ))}
-              {movingDm && (
-                <MenuRadioItem value="dms" closeOnClick={false}>
-                  <MenuIcon>
-                    <ChatCircleIcon size={14} />
-                  </MenuIcon>
-                  Direct messages
-                </MenuRadioItem>
-              )}
+              <MenuRadioItem value="channels" closeOnClick={false}>
+                <MenuIcon>
+                  <ChatCircleIcon size={14} />
+                </MenuIcon>
+                Recent
+              </MenuRadioItem>
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
@@ -982,6 +980,52 @@ export function ChannelInventory({
     [lifecycleCallbacks],
   );
   return render({
+    filterAction: (
+      <MenuRoot>
+        <MenuTrigger
+          render={
+            <IconButton
+              size="sm"
+              variant="ghost"
+              aria-label="Filter messages"
+              title="Filter messages"
+              icon={<Filter2Icon size={16} />}
+            />
+          }
+        />
+        <MenuPopup align="end">
+          <MenuGroup>
+            <MenuGroupLabel>Visibility</MenuGroupLabel>
+            <MenuRadioGroup value={visibility} onValueChange={setVisibility}>
+              <MenuRadioItem closeOnClick={false} value="all">
+                All chats
+              </MenuRadioItem>
+              <MenuRadioItem closeOnClick={false} value="private">
+                Private chats
+              </MenuRadioItem>
+              <MenuRadioItem closeOnClick={false} value="public">
+                Public chats
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel>All messages</MenuGroupLabel>
+            <MenuRadioGroup
+              value={showOlder ? "all" : "recent"}
+              onValueChange={(value) => setShowOlder(value === "all")}
+            >
+              <MenuRadioItem closeOnClick={false} value="recent">
+                Last 5 days
+              </MenuRadioItem>
+              <MenuRadioItem closeOnClick={false} value="all">
+                All time
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
+        </MenuPopup>
+      </MenuRoot>
+    ),
     sidebar,
     dmPreviews: unreadDmPreviews,
     frame: {
@@ -1036,237 +1080,231 @@ export function ChannelInventory({
     ),
     content: (
       <>
-        <ChannelSidebarDnd
-          writable={placementWritable}
-          onMove={(channelId, sectionKey) =>
-            sectionKey === "starred"
-              ? setChannelStar(channelId, true)
-              : assignGroup(
-                  channelId,
-                  sectionKey.startsWith("group:")
-                    ? sectionKey.slice("group:".length)
-                    : undefined,
-                )
-          }
-          onReorder={(sectionKey, overKey) =>
-            moveGroup(
-              sectionKey.slice("group:".length),
-              groupIds.indexOf(overKey.slice("group:".length)),
-            )
-          }
-          overlay={(id, group) => {
-            if (group) {
-              const section = sections.find(({ key }) => key === id);
-              return section ? (
-                <div className={styles.channelDragOverlay}>
-                  {section.icon && (
-                    <SidebarGroupIcon icon={section.icon} session={queries} />
-                  )}
-                  <span>{section.title}</span>
-                </div>
-              ) : null;
-            }
-            const channel = sidebarChannels.find(
-              (channel) => channel.id === id,
-            );
-            if (!channel) return null;
-            const Icon = channelIcon(channel);
-            return (
-              <div className={styles.channelDragOverlay}>
-                <Icon size={16} />
-                <span>{channel.name}</span>
-              </div>
-            );
-          }}
-        >
-          {filteredSections.map((section) => (
-            <DroppableSidebarSection
-              key={section.key}
-              groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
-              disabled={
-                !placementWritable || !isChannelDropSectionKey(section.key)
-              }
-              reorderable={orderWritable && section.key.startsWith("group:")}
-              move={
-                orderWritable && section.key.startsWith("group:")
-                  ? (() => {
-                      const id = section.key.slice("group:".length);
-                      const index = groupIds.indexOf(id);
-                      return {
-                        up:
-                          index > 0
-                            ? () => moveGroup(id, index - 1)
-                            : undefined,
-                        down:
-                          index < groupIds.length - 1
-                            ? () => moveGroup(id, index + 1)
-                            : undefined,
-                      };
-                    })()
-                  : undefined
-              }
-              sectionKey={section.key}
-              title={section.title}
-              icon={section.icon}
+        {!flatSidebar && (
+          <div
+            className={styles.savedWorkspaces}
+            hidden={visibility === "public"}
+          >
+            <SoloInventory
               session={queries}
-              open={!sidebar.collapsed.includes(section.key)}
-              onToggle={(open) => sidebar.toggle(section.key, open)}
-              channelCount={section.allRows.length}
-              filter={
-                preferences.data
-                  ? {
-                      value:
-                        preferences.data.filters?.[
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key
-                        ] ?? "all",
-                      disabled: !preferences.filterWritable,
-                      activeWindowSeconds:
-                        preferences.data.activeWindowSeconds?.[
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key
-                        ],
-                      change: (mode, seconds) =>
-                        setSectionFilter(section.key, mode, seconds),
-                      dismissError: () =>
-                        preferences.dismissFilterError(
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key,
-                        ),
-                    }
-                  : undefined
+              scope={scope}
+              navigator={navigator}
+              target={target}
+              chatIcons={chatIcons}
+              groupedOnly
+            />
+          </div>
+        )}
+        <div className={flatSidebar ? styles.avatarRail : undefined}>
+          <ChannelSidebarDnd
+            writable={placementWritable}
+            onMove={(channelId, sectionKey) =>
+              sectionKey === "starred"
+                ? setChannelStar(channelId, true)
+                : assignGroup(
+                    channelId,
+                    sectionKey.startsWith("group:")
+                      ? sectionKey.slice("group:".length)
+                      : undefined,
+                  )
+            }
+            onReorder={(sectionKey, overKey) =>
+              moveGroup(
+                sectionKey.slice("group:".length),
+                groupIds.indexOf(overKey.slice("group:".length)),
+              )
+            }
+            overlay={(id, group) => {
+              if (group) {
+                const section = sections.find(({ key }) => key === id);
+                return section ? (
+                  <div className={styles.channelDragOverlay}>
+                    {section.icon && (
+                      <SidebarGroupIcon icon={section.icon} session={queries} />
+                    )}
+                    <span>{section.title}</span>
+                  </div>
+                ) : null;
               }
-              channels={{
-                rows: section.hiddenRows,
-                selected: current?.id,
-                select,
-              }}
-              onRemove={
-                preferences.removeSectionWritable &&
-                section.key.startsWith("group:")
-                  ? async () => {
-                      await preferences.removeSection(section.key.slice(6));
-                      sidebar.toggle(section.key, true);
-                    }
-                  : undefined
-              }
-              removalFocus={() =>
-                sidebar.list.current?.querySelector<HTMLButtonElement>(
-                  '[data-sidebar-section="channels"] button',
-                )
-              }
-              createChannel={
-                section.key === "starred" || isChannelSectionKey(section.key)
-                  ? {
-                      available: queries.channelCreation.available,
-                      open: (trigger) => {
-                        createChannelTrigger.current = trigger;
-                        setInitialStarred(section.key === "starred");
-                        setInitialGroup(
-                          section.key.startsWith("group:")
-                            ? section.key.slice(6)
-                            : "",
-                        );
-                        setCreateChannelOpen(true);
-                      },
-                    }
-                  : undefined
-              }
-              newMessage={
-                section.key === "dms"
-                  ? () => {
-                      if (viewer && relay.snapshot().session === queries)
-                        void navigator.open({
-                          version: 1,
-                          kind: "page",
-                          pluginId: "buzz.channels",
-                          pageId: "channels",
-                          scope: {
-                            viewer,
-                            communityOrigin: scope.slice(
-                              0,
-                              -(viewer.length + 1),
-                            ),
-                          },
-                          route: { version: 1, params: "new-message" },
-                        });
-                    }
-                  : undefined
-              }
-              sort={
-                preferences.sortWritable
-                  ? {
-                      value:
-                        preferences.data?.sort?.[
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key
-                        ] ?? "alpha",
-                      change: (mode) => setSectionSort(section.key, mode),
-                    }
-                  : undefined
-              }
+              const channel = sidebarChannels.find(
+                (channel) => channel.id === id,
+              );
+              if (!channel) return null;
+              const Icon = channelIcon(channel);
+              return (
+                <div className={styles.channelDragOverlay}>
+                  <Icon size={16} />
+                  <span>{channel.name}</span>
+                </div>
+              );
+            }}
+          >
+            {filteredSections.map((section) => (
+              <DroppableSidebarSection
+                key={section.key}
+                groupIndex={groupIds.indexOf(
+                  section.key.slice("group:".length),
+                )}
+                disabled={
+                  !placementWritable || !isChannelDropSectionKey(section.key)
+                }
+                reorderable={orderWritable && section.key.startsWith("group:")}
+                move={
+                  orderWritable && section.key.startsWith("group:")
+                    ? (() => {
+                        const id = section.key.slice("group:".length);
+                        const index = groupIds.indexOf(id);
+                        return {
+                          up:
+                            index > 0
+                              ? () => moveGroup(id, index - 1)
+                              : undefined,
+                          down:
+                            index < groupIds.length - 1
+                              ? () => moveGroup(id, index + 1)
+                              : undefined,
+                        };
+                      })()
+                    : undefined
+                }
+                sectionKey={section.key}
+                title={
+                  section.key === "channels" ? "All messages" : section.title
+                }
+                compactTitle={flatSidebar}
+                hideTitle={flatSidebar}
+                icon={section.icon}
+                session={queries}
+                open={!sidebar.collapsed.includes(section.key)}
+                onToggle={(open) => sidebar.toggle(section.key, open)}
+                channelCount={section.allRows.length}
+                onRemove={
+                  preferences.removeSectionWritable &&
+                  section.key.startsWith("group:")
+                    ? async () => {
+                        await preferences.removeSection(section.key.slice(6));
+                        sidebar.toggle(section.key, true);
+                      }
+                    : undefined
+                }
+                removalFocus={() =>
+                  sidebar.list.current?.querySelector<HTMLButtonElement>(
+                    '[data-sidebar-section="channels"] button',
+                  )
+                }
+                createChannel={
+                  section.key === "starred" || isChannelSectionKey(section.key)
+                    ? {
+                        available: queries.channelCreation.available,
+                        open: (trigger) => {
+                          createChannelTrigger.current = trigger;
+                          setInitialStarred(section.key === "starred");
+                          setInitialGroup(
+                            section.key.startsWith("group:")
+                              ? section.key.slice(6)
+                              : "",
+                          );
+                          setCreateChannelOpen(true);
+                        },
+                      }
+                    : undefined
+                }
+                newMessage={
+                  section.key === "dms"
+                    ? () => {
+                        if (viewer && relay.snapshot().session === queries)
+                          void navigator.open({
+                            version: 1,
+                            kind: "page",
+                            pluginId: "buzz.channels",
+                            pageId: "channels",
+                            scope: {
+                              viewer,
+                              communityOrigin: scope.slice(
+                                0,
+                                -(viewer.length + 1),
+                              ),
+                            },
+                            route: { version: 1, params: "new-message" },
+                          });
+                      }
+                    : undefined
+                }
+              >
+                {section.rows.map((channel) => {
+                  const selected =
+                    current?.id === channel.id ? current.id : undefined;
+                  const actions = rowActions(channel, section.key);
+                  const menuEnabled = actions.length > 0;
+                  const menuOpen =
+                    menuEnabled &&
+                    rowMenu?.channelId === channel.id &&
+                    rowMenu.sectionKey === section.key;
+                  return (
+                    <ChannelSidebarItem
+                      largeArtwork={flatSidebar}
+                      profile={
+                        channel.channelType === "dm" &&
+                        channel.participants?.length === 1
+                          ? dmProfiles.get(channel.participants[0] ?? "")
+                          : undefined
+                      }
+                      key={channel.id}
+                      channel={channel}
+                      session={queries}
+                      working={workingChannels.has(channel.id)}
+                      selected={composingMessage ? undefined : selected}
+                      onSelect={select}
+                      onOpenThread={openActivityThread}
+                      onOpenWorkingAgent={openWorkingAgent}
+                      onOpenAgentActivity={openAgentActivity}
+                      menuEnabled={menuEnabled}
+                      sectionKey={section.key}
+                      selectFrame={
+                        channel.channelType !== "dm" &&
+                        isChannelDropSectionKey(section.key)
+                          ? DraggableChannel
+                          : undefined
+                      }
+                      onOpenMenu={openRowMenu}
+                      menuOpen={menuOpen}
+                      menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+                      menuContent={
+                        menuOpen ? (
+                          <>
+                            {actions}
+                            {readWrite?.pending && <p role="status">Saving…</p>}
+                            {readWrite?.error && (
+                              <p role="alert">{readWrite.error}</p>
+                            )}
+                          </>
+                        ) : undefined
+                      }
+                      onCloseMenu={closeRowMenu}
+                      onMenuClosed={rowMenuClosed}
+                      menuFinalFocus={rowMenuFinalFocus}
+                    />
+                  );
+                })}
+              </DroppableSidebarSection>
+            ))}
+          </ChannelSidebarDnd>
+        </div>
+        {(showOlder ||
+          filteredSections.some(
+            (section) => section.hiddenRows.length > 0,
+          )) && (
+          <div className={styles.olderMessagesRow}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowOlder(!showOlder)}
             >
-              {section.rows.map((channel) => {
-                const selected =
-                  current?.id === channel.id ? current.id : undefined;
-                const actions = rowActions(channel, section.key);
-                const menuEnabled = actions.length > 0;
-                const menuOpen =
-                  menuEnabled &&
-                  rowMenu?.channelId === channel.id &&
-                  rowMenu.sectionKey === section.key;
-                return (
-                  <ChannelSidebarItem
-                    profile={
-                      channel.channelType === "dm" &&
-                      channel.participants?.length === 1
-                        ? dmProfiles.get(channel.participants[0] ?? "")
-                        : undefined
-                    }
-                    key={channel.id}
-                    channel={channel}
-                    session={queries}
-                    working={workingChannels.has(channel.id)}
-                    selected={composingMessage ? undefined : selected}
-                    onSelect={select}
-                    onOpenThread={openActivityThread}
-                    onOpenWorkingAgent={openWorkingAgent}
-                    onOpenAgentActivity={openAgentActivity}
-                    menuEnabled={menuEnabled}
-                    sectionKey={section.key}
-                    selectFrame={
-                      channel.channelType !== "dm" &&
-                      isChannelDropSectionKey(section.key)
-                        ? DraggableChannel
-                        : undefined
-                    }
-                    onOpenMenu={openRowMenu}
-                    menuOpen={menuOpen}
-                    menuAnchor={menuOpen ? rowMenu.anchor : undefined}
-                    menuContent={
-                      menuOpen ? (
-                        <>
-                          {actions}
-                          {readWrite?.pending && <p role="status">Saving…</p>}
-                          {readWrite?.error && (
-                            <p role="alert">{readWrite.error}</p>
-                          )}
-                        </>
-                      ) : undefined
-                    }
-                    onCloseMenu={closeRowMenu}
-                    onMenuClosed={rowMenuClosed}
-                    menuFinalFocus={rowMenuFinalFocus}
-                  />
-                );
-              })}
-            </DroppableSidebarSection>
-          ))}
-        </ChannelSidebarDnd>
+              {showOlder ? "Show less" : "Show more"}
+            </Button>
+          </div>
+        )}
+
         {!startup.ready && (
           <p className={styles.empty} role="status">
             Loading your sidebar…
@@ -1289,63 +1327,6 @@ export function ChannelInventory({
             Offline · Showing saved conversations.
             <Button onClick={relay.retry}>Retry connection</Button>
           </p>
-        )}
-        {preferences.sortErrors?.map(({ group, mode, error }) => (
-          <div key={group} className={styles.preferenceNotice} role="alert">
-            <p>
-              Couldn’t save the sort order for{" "}
-              {sections.find(
-                ({ key }) =>
-                  key ===
-                  (group.startsWith("section:")
-                    ? `group:${group.slice(8)}`
-                    : group),
-              )?.title ?? "this section"}
-              . {error}
-            </p>
-            <button type="button" onClick={() => setSectionSort(group, mode)}>
-              Retry sort
-            </button>
-            <button
-              type="button"
-              onClick={() => preferences.dismissSortError(group)}
-            >
-              Dismiss
-            </button>
-          </div>
-        ))}
-        {preferences.filterErrors?.map(
-          ({ group, mode, activeWindowSeconds, error }) => (
-            <div key={group} className={styles.preferenceNotice} role="alert">
-              <p>
-                Couldn’t save the filter for{" "}
-                {sections.find(
-                  ({ key }) =>
-                    key ===
-                    (group.startsWith("section:")
-                      ? `group:${group.slice(8)}`
-                      : group),
-                )?.title ?? "this section"}
-                . {error}
-              </p>
-              <button
-                type="button"
-                onClick={() =>
-                  void setSectionFilter(group, mode, activeWindowSeconds).catch(
-                    () => {},
-                  )
-                }
-              >
-                Retry filter
-              </button>
-              <button
-                type="button"
-                onClick={() => preferences.dismissFilterError(group)}
-              >
-                Dismiss
-              </button>
-            </div>
-          ),
         )}
         {[...mute.intents.values()]
           .filter((intent) => !intent.pending)

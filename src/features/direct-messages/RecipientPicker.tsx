@@ -15,7 +15,12 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { XIcon } from "../../shared/design-system/icons/index";
+import { Input } from "../../shared/design-system/ui/Input";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import {
+  MagnifyingGlassIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
 import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
@@ -31,6 +36,7 @@ export function RecipientPicker({
   disabled,
   excludedPubkeys = [],
   initiallyOpen = true,
+  layout = "header",
   onChange,
 }: {
   session: RelaySession;
@@ -41,6 +47,8 @@ export function RecipientPicker({
   excludedPubkeys?: readonly string[];
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
+  /** Embedded forms supply their own spacing and separators. */
+  layout?: "header" | "embedded" | "panel";
   onChange(people: Recipient[]): void;
 }) {
   const [query, setQuery] = useState("");
@@ -253,6 +261,81 @@ export function RecipientPicker({
       shape={person.isAgent ? "squircle" : "circle"}
     />
   );
+  const RecipientInput = layout === "embedded" ? Input : "input";
+  const recipientInput = (
+    <RecipientInput
+      id={id}
+      ref={input}
+      {...(layout !== "embedded" ? { className: styles.toInput } : {})}
+      type={layout === "embedded" ? "search" : "text"}
+      aria-label="Message recipients"
+      role="combobox"
+      aria-expanded={open && !disabled}
+      aria-controls={listed ? highlight.listId : undefined}
+      aria-autocomplete="list"
+      {...highlight.fieldProps}
+      placeholder={
+        selected.length
+          ? atLimit
+            ? "8 people selected"
+            : "Add another person…"
+          : layout === "embedded"
+            ? "Search people and agents…"
+            : "Find a person…"
+      }
+      value={query}
+      disabled={disabled}
+      readOnly={atLimit}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      maxLength={100}
+      onFocus={() => setOpen(true)}
+      onChange={(event) => {
+        setQuery(event.target.value);
+        setOpen(true);
+      }}
+      onKeyDown={(event) => {
+        // The picker's own keys, Backspace and Escape, skip these too.
+        if (
+          event.nativeEvent.isComposing ||
+          event.nativeEvent.keyCode === 229 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.altKey
+        )
+          return;
+        if (event.key === "Backspace" && !query && selected.length) {
+          event.preventDefault();
+          const last = selected.at(-1);
+          if (last) remove(last.pubkey);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+        } else if (atLimit) {
+          if (event.key === "Enter" && open) event.preventDefault();
+        } else if (event.key === " " && !event.shiftKey) {
+          const person = exactRecipient();
+          if (person) {
+            event.preventDefault();
+            choose(person);
+          }
+        } else if (event.key === "Tab" && !event.shiftKey) {
+          // Tab picks the highlighted row, as in @ mentions. With no
+          // highlight it moves focus as usual.
+          const person = listed ? byPubkey.get(highlight.active) : undefined;
+          if (person) {
+            event.preventDefault();
+            choose(person);
+          }
+        } else if (!highlight.keyDown(event) && open && event.key === "Enter") {
+          event.preventDefault();
+        }
+      }}
+    />
+  );
   return (
     <Popover.Root
       modal={false}
@@ -277,6 +360,7 @@ export function RecipientPicker({
       <fieldset
         aria-label="Recipients"
         className={styles.recipientHeader}
+        data-layout={layout}
         ref={field}
         onBlur={(event) => {
           if (
@@ -299,7 +383,7 @@ export function RecipientPicker({
             }
           }}
         >
-          <label htmlFor={id}>To:</label>
+          {layout !== "embedded" && <label htmlFor={id}>To:</label>}
           {selected.map((person) => (
             <span className={styles.chip} key={person.pubkey}>
               <button
@@ -336,81 +420,17 @@ export function RecipientPicker({
               {person.isAgent && <span className={styles.agent}>Agent</span>}
             </span>
           ))}
-          <input
-            id={id}
-            ref={input}
-            className={styles.toInput}
-            aria-label="Message recipients"
-            role="combobox"
-            aria-expanded={open && !disabled}
-            aria-controls={listed ? highlight.listId : undefined}
-            aria-autocomplete="list"
-            {...highlight.fieldProps}
-            placeholder={
-              selected.length
-                ? atLimit
-                  ? "8 people selected"
-                  : "Add another person…"
-                : "Find a person…"
-            }
-            value={query}
-            disabled={disabled}
-            readOnly={atLimit}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            maxLength={100}
-            onFocus={() => setOpen(true)}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setOpen(true);
-            }}
-            onKeyDown={(event) => {
-              // The picker's own keys, Backspace and Escape, skip these too.
-              if (
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.altKey
-              )
-                return;
-              if (event.key === "Backspace" && !query && selected.length) {
-                event.preventDefault();
-                const last = selected.at(-1);
-                if (last) remove(last.pubkey);
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
-              } else if (atLimit) {
-                if (event.key === "Enter" && open) event.preventDefault();
-              } else if (event.key === " " && !event.shiftKey) {
-                const person = exactRecipient();
-                if (person) {
-                  event.preventDefault();
-                  choose(person);
-                }
-              } else if (event.key === "Tab" && !event.shiftKey) {
-                // Tab picks the highlighted row, as in @ mentions. With no
-                // highlight it moves focus as usual.
-                const person = listed
-                  ? byPubkey.get(highlight.active)
-                  : undefined;
-                if (person) {
-                  event.preventDefault();
-                  choose(person);
-                }
-              } else if (
-                !highlight.keyDown(event) &&
-                open &&
-                event.key === "Enter"
-              ) {
-                event.preventDefault();
-              }
-            }}
-          />
+          {layout === "embedded" ? (
+            <div className={styles.recipientSearch}>
+              <InputGroup
+                leading={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+              >
+                {recipientInput}
+              </InputGroup>
+            </div>
+          ) : (
+            recipientInput
+          )}
         </div>
         <Popover.Portal>
           <Popover.Positioner

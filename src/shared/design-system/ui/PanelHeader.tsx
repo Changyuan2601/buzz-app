@@ -8,15 +8,22 @@ export function PanelHeader({
   navigation,
   actions,
   variant = "default",
+  divider = "inset",
 }: {
   title: ReactNode;
   icon?: ReactNode;
   navigation?: ReactNode;
   actions?: ReactNode;
   variant?: "default" | "compact";
+  divider?: "inset" | "full";
 }) {
   return (
-    <header data-buzz-ui="" className="panel-header" data-variant={variant}>
+    <header
+      data-buzz-ui=""
+      className="panel-header"
+      data-variant={variant}
+      data-divider={divider}
+    >
       {navigation}
       <div className="panel-header-title">
         {icon}

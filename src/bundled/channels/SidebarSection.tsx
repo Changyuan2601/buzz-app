@@ -53,6 +53,7 @@ export function SidebarSection({
   sectionKey,
   title,
   hideTitle = false,
+  compactTitle = false,
   icon,
   session,
   open,
@@ -76,6 +77,7 @@ export function SidebarSection({
   sectionKey: string;
   title: string;
   hideTitle?: boolean;
+  compactTitle?: boolean;
   icon?: string | undefined;
   session?: RelaySession | undefined;
   open: boolean;
@@ -150,10 +152,16 @@ export function SidebarSection({
   };
   if (hideTitle)
     return (
-      <div className={`${styles.channelSection} ${styles.untitledSection}`}>
+      <section
+        ref={dropRef}
+        data-sidebar-section={sectionKey}
+        aria-label={title}
+        className={`${styles.channelSection} ${styles.untitledSection}`}
+      >
+        {compactTitle && <h3 className={styles.railSectionTitle}>{title}</h3>}
         <div
           id={id}
-          className={`${styles.sectionContent} ${styles.untitledSectionContent}`}
+          className={`${styles.sectionContent} ${newMessage ? styles.untitledSectionContent : ""}`}
         >
           <div>{children}</div>
         </div>
@@ -168,7 +176,7 @@ export function SidebarSection({
             />
           )}
         </div>
-      </div>
+      </section>
     );
   return (
     <div

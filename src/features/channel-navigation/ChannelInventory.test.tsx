@@ -19,7 +19,6 @@ import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-stor
 import type {
   SidebarGroups,
   SidebarPreferences,
-  SidebarFilterMode,
 } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
@@ -208,91 +207,74 @@ function fixture(
   return { view, navigator, snapshot, list, session, publish, drop };
 }
 
-it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
-  const user = userEvent.setup();
-  let filters: Record<string, SidebarFilterMode> = {};
+it("combines chat types by recency, keeps the current chat, and reveals activity older than seven days", async () => {
+  const now = 1_800_000_000;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now * 1000);
   const preferences = createSidebarPreferencesStore({
     read: async () => ({
       sections: [],
       assignments: {},
       starred: [],
       muted: [],
-      filters,
+      filters: { channels: "unreads" },
     }),
     available: true,
-    writeFilter: async (group, mode) => {
-      filters = mode === "all" ? {} : { [group]: mode };
-      return { filters, activeWindowSeconds: {} };
-    },
   });
-  const h = fixture(preferences.queries);
-  const mounted = render(h.view("alpha"));
-  await screen.findByRole("button", { name: "gamma" });
-  await user.click(
-    screen.getByRole("button", { name: "More actions for Channels" }),
-  );
-  expect(screen.queryByRole("menuitem", { name: "View All" })).toBeNull();
-  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
-  fireEvent.click(
-    await screen.findByRole("menuitemradio", { name: "Unreads" }),
-  );
-  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "More actions for Channels" }),
-  );
-  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
-  const betaChoice = await screen.findByRole("menuitem", { name: "beta" });
-  const choices = betaChoice.closest('[role="menu"]');
-  assert(choices instanceof HTMLElement);
-  expect(within(choices).queryByRole("menuitem", { name: "alpha" })).toBeNull();
-  expect(
-    within(choices).getByRole("menuitem", { name: "gamma" }),
-  ).toBeVisible();
-  fireEvent.click(betaChoice);
-  expect(h.navigator.open).toHaveBeenCalledWith(
-    expect.objectContaining({ kind: "conversation", channelId: "beta" }),
-  );
-  mounted.rerender(h.view("beta"));
-  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
-  mounted.rerender(h.view("not-in-this-section"));
-  expect(screen.queryByText("0 matches")).toBeNull();
-  expect(
-    screen
-      .getByLabelText("Channels", { selector: "summary" })
-      .closest("details"),
-  ).toHaveAttribute("open");
-  expect(screen.queryByText("No channels match this filter.")).toBeNull();
-  mounted.unmount();
-  expect(filters).toEqual({ channels: "unreads" });
-  expect(
-    readView("https://relay.test:viewer", "channel-sidebar", {}),
-  ).not.toHaveProperty("sectionFilters");
-  const restored = render(h.view("gamma"));
-  expect(await screen.findByRole("button", { name: "gamma" })).toBeVisible();
-  expect(screen.queryByText("0 matches")).toBeNull();
-  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
-  restored.rerender(h.view("alpha"));
-  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "gamma" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "More actions for Channels" }),
-  );
-  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: "All" }));
-  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: "More actions for Channels" }),
-  );
-  expect(screen.queryByRole("menuitem", { name: "View All" })).toBeNull();
-  restored.unmount();
-  expect(
-    readView("https://relay.test:viewer", "channel-sidebar", {}),
-  ).not.toHaveProperty("sectionFilters");
-  expect(filters).toEqual({});
-  preferences.dispose();
+  const h = fixture(preferences.queries, "ready", [
+    {
+      id: "old",
+      name: "Old chat",
+      channelType: "stream",
+      lastActivityAt: now - 7 * 86400 - 1,
+    },
+    {
+      id: "current",
+      name: "Current old chat",
+      channelType: "stream",
+      lastActivityAt: now - 8 * 86400,
+    },
+    { id: "dm", name: "Recent DM", channelType: "dm", lastActivityAt: now - 1 },
+    {
+      id: "solo",
+      name: "Recent private chat",
+      channelType: "solo",
+      creator: "a".repeat(64),
+      lastActivityAt: now - 2,
+    },
+    {
+      id: "edge",
+      name: "Just inside seven days",
+      channelType: "stream",
+      lastActivityAt: now - 7 * 86400 + 1,
+    },
+  ]);
+  const mounted = render(h.view("current"));
+  try {
+    await screen.findByRole("button", { name: "Recent DM" });
+    expect(screen.queryByRole("button", { name: "Old chat" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Current old chat" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Just inside seven days" }),
+    ).toBeVisible();
+    const names = () =>
+      Array.from(document.querySelectorAll("[data-channel-id]")).map((row) =>
+        row.getAttribute("data-channel-id"),
+      );
+    expect(names()).toEqual(["dm", "solo", "edge", "current"]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("button", { name: "Old chat" })).toBeVisible();
+    expect(names()).toEqual(["dm", "solo", "edge", "old", "current"]);
+    await user.click(screen.getByRole("button", { name: "Show less" }));
+    expect(screen.queryByRole("button", { name: "Old chat" })).toBeNull();
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  } finally {
+    mounted.unmount();
+    preferences.dispose();
+    clock.mockRestore();
+  }
 });
 
 it("ignores local and legacy filter state", async () => {
@@ -424,7 +406,7 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
       await screen.findByRole("menuitem", { name: "Move conversation" }),
     );
     expect(
-      await screen.findByRole("menuitemradio", { name: "Direct messages" }),
+      await screen.findByRole("menuitemradio", { name: "Recent" }),
     ).toBeChecked();
     await screen.findByRole("menuitemradio", { name: "Work" });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
@@ -439,7 +421,7 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
         document.querySelector('[data-sidebar-section="group:work"]'),
       ).toContainElement(screen.getByRole("button", { name: "Alice" }));
       expect(
-        document.querySelector('[data-sidebar-section="dms"]'),
+        document.querySelector('[data-sidebar-section="channels"]'),
       ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
     });
     fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
@@ -451,12 +433,10 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
     expect(
       await screen.findByRole("menuitemradio", { name: "Work" }),
     ).toBeChecked();
-    fireEvent.click(
-      screen.getByRole("menuitemradio", { name: "Direct messages" }),
-    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Recent" }));
     await waitFor(() => {
       expect(
-        document.querySelector('[data-sidebar-section="dms"]'),
+        document.querySelector('[data-sidebar-section="channels"]'),
       ).toContainElement(screen.getByRole("button", { name: "Alice" }));
       expect(
         document.querySelector('[data-sidebar-section="group:work"]'),
@@ -546,7 +526,7 @@ it.each(["ready", "error"] as const)(
   },
 );
 
-it.each(["Laptop", "Channels", "Starred"])(
+it.each(["Laptop", "Recent", "Starred"])(
   "uses only the invoking section for placement (%s)",
   async (section) => {
     const fromGroup = section === "Laptop";
@@ -1231,7 +1211,7 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
 });
 
 // The actual mounted caller owns the Solo/Team visibility boundary.
-it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one", async () => {
+it("shows both owned private chats and shared chats in the same inventory", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1239,9 +1219,8 @@ it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one
     creator: "a".repeat(64),
   });
   render(h.view("alpha", undefined, true));
-  await userEvent.click(screen.getByRole("tab", { name: "Team" }));
   await screen.findByRole("button", { name: "gamma" });
-  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
   h.publish("beta", { creator: "b".repeat(64) });
   expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
   expect(h.navigator.open).not.toHaveBeenCalled();

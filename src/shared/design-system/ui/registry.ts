@@ -762,6 +762,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     behavior: "Base UI Button.",
     variants: [
       "row",
+      "rail",
       "pill",
       "option",
       "text",

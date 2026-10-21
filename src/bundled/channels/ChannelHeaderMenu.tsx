@@ -34,6 +34,7 @@ export function ChannelHeaderMenu({
   openDetails,
   openCanvas,
   menuPanels,
+  menuItems,
   openMenuPanel,
   finishConversion,
 }: {
@@ -45,6 +46,7 @@ export function ChannelHeaderMenu({
   finishConversion?: (() => void) | undefined;
   openCanvas(trigger: HTMLButtonElement): void;
   menuPanels?: readonly RegisteredPanel[] | undefined;
+  menuItems?: (trigger: RefObject<HTMLButtonElement | null>) => ReactNode;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -82,6 +84,7 @@ export function ChannelHeaderMenu({
         finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
       }
     >
+      {menuItems?.(trigger)}
       {finishConversion && (
         <MenuItem onClick={finishConversion}>
           <MenuIcon>{null}</MenuIcon>

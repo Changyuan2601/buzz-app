@@ -1900,3 +1900,16 @@ and horizontal padding and 21px icons. Their 20px radius follows the modal radiu
 the 12px gutter, and their hover surfaces align with the input.
 
 Inline search settings use the search variant of PreferenceRow with a gear icon and the same title/subtitle hierarchy as destination rows. Results height transitions for 180ms, disabled with reduced motion. The clear control reserves space to keep input dimensions stable.
+
+### Conversation rail
+
+The Messages sidebar prefers conversation members' portraits, using a compact collage
+for groups and a single Avatar for one other member. Human and agent identities
+retain their circle/squircle shapes. Unknown membership uses a neutral icon.
+
+Proposed: `NavigationItem variant="rail"` presents an avatar-only destination
+with a visually hidden label, a prominent selected tile, and overlaid unread
+metadata. At 12rem container width it becomes a labeled row. The feature owns
+resizing, the `navigation-rail` inline-size container, identity artwork, and section
+dividers; the shared navigation control owns hover, selection, and keyboard focus.
+Artwork is 48px in the compact rail and 36px in the expanded list at default scale.

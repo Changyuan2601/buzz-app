@@ -5,7 +5,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { canEditLifetime } from "../../features/solo/Lifetime";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
@@ -19,7 +18,7 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
+import { DotsThreeIcon } from "../../shared/design-system/icons";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
 import {
   NewWorkspaceDialog,
@@ -38,6 +37,7 @@ export function SoloHeading({
   signal,
   children,
   paneToggle,
+  menuItems,
   onConvert,
   onLifecycle,
 }: {
@@ -50,10 +50,10 @@ export function SoloHeading({
   children?: ReactNode;
   /** The tab pane toggle, owned by the conversation page; it ends the header. */
   paneToggle?: ReactNode;
+  menuItems?: (trigger: RefObject<HTMLButtonElement | null>) => ReactNode;
   onConvert(trigger: HTMLElement | null): void;
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
   const [settingsOpen, setSettingsOpen] = useState<{
@@ -99,6 +99,7 @@ export function SoloHeading({
                   }
                 />
                 <MenuPopup aria-label="Chat actions" align="end">
+                  {menuItems?.(actionsTrigger)}
                   <SoloChatMenuItems
                     session={session}
                     channel={channel}
@@ -146,20 +147,6 @@ export function SoloHeading({
           channel={channel}
           signal={signal}
           onConvert={onConvert}
-        />
-        <IconButton
-          ref={settingsTrigger}
-          size="toolbar"
-          aria-label="Chat settings"
-          title="Chat settings"
-          icon={<GearIcon size="1rem" aria-hidden="true" />}
-          disabled={
-            !!channel.readOnly ||
-            (!session.canvas.available && !canEditLifetime(session, channel))
-          }
-          onClick={() =>
-            setSettingsOpen({ visit: signal, trigger: settingsTrigger })
-          }
         />
       </SoloTitle>
       {sharing && (

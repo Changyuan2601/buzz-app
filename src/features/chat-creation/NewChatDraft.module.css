@@ -1,0 +1,47 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+.composer {
+  margin-top: auto;
+  width: 100%;
+  max-width: none;
+  margin-inline: auto;
+}
+
+.visibility {
+  min-width: 0;
+  margin: 0;
+  margin-inline-end: var(--space-2);
+  padding: 0;
+  border: 0;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.introduction {
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  place-items: center;
+  padding: var(--space-6);
+}

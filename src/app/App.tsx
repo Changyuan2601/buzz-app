@@ -275,13 +275,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell
-            creationAction={
-              <NewMenu
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-              />
-            }
             workspaceRef={setWorkspaceElement}
             sidebar={(pageNavigation) => (
               <PrimarySidebar
@@ -290,6 +283,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 agents={services.agents}
                 chatIcons={services.conversation.chatIcons}
                 target={workspace.target}
+                creationAction={
+                  <NewMenu
+                    relay={services.relay}
+                    navigator={services.navigation}
+                    agents={services.agents}
+                  />
+                }
               >
                 {pageNavigation}
               </PrimarySidebar>

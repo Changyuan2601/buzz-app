@@ -8,7 +8,7 @@ import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { splitPartition } from "../../features/relay/partition";
 import type { ArchiveShortcut } from "./ChannelsPage";
 export const inject = [
   "pages",
@@ -49,7 +49,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
         !document.activeElement?.closest(".xterm")),
     run: () => {
       const { scope } = relay.snapshot();
-      if (scope) void navigator.open(soloDraftTarget(scope));
+      const parts = scope && splitPartition(scope);
+      if (parts)
+        void navigator.open({
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.channels",
+          pageId: "channels",
+          scope: parts,
+          route: { version: 1, params: "new-chat-recipient" },
+        });
     },
   });
   ctx.shortcuts.register({

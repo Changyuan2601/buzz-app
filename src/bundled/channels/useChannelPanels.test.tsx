@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   ChannelPanelContext,
@@ -10,6 +10,11 @@ import type {
   RegisteredPanel,
 } from "../../features/panels/service";
 import { useChannelPanels } from "./useChannelPanels";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+} from "../../shared/design-system/ui/Menu";
 
 afterEach(cleanup);
 
@@ -241,3 +246,58 @@ it.each(["bottom", "side"] as const)(
     expect(open).not.toHaveBeenCalled();
   },
 );
+
+it("opens the native terminal from overflow and returns focus to its surviving trigger", async () => {
+  const user = userEvent.setup();
+  const context: ChannelPanelContext = {
+    scope: "scope",
+    viewer: "viewer",
+    channelId: "alpha",
+    channelName: "Alpha",
+    relayUrl: "wss://example.com",
+  };
+  const panel: RegisteredPanel = {
+    id: "terminal",
+    key: "buzz.terminal/terminal",
+    pluginId: "buzz.terminal",
+    revision: "1",
+    title: "Terminal",
+    matches: () => false,
+    component: ({ close, channelContext }) => (
+      <>
+        <p>Terminal for {channelContext?.channelName}</p>
+        <button type="button" onClick={close}>
+          Close terminal
+        </button>
+      </>
+    ),
+  };
+  const available = [panel];
+  const panels: Panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    register: () => {},
+    resolve: () => undefined,
+  };
+  function Harness() {
+    const trigger = useRef<HTMLButtonElement>(null);
+    const drawer = useChannelPanels(panels, context);
+    return (
+      <>
+        <MenuRoot>
+          <MenuTrigger ref={trigger}>Chat actions</MenuTrigger>
+          <MenuPopup>{drawer.menuItems(trigger)}</MenuPopup>
+        </MenuRoot>
+        {drawer.content}
+      </>
+    );
+  }
+  render(<Harness />);
+  screen.getByRole("button", { name: "Chat actions" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(screen.getByRole("menuitem", { name: "Terminal" }));
+  expect(screen.getByText("Terminal for Alpha")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Close terminal" }));
+  expect(screen.queryByText("Terminal for Alpha")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Chat actions" })).toHaveFocus();
+});

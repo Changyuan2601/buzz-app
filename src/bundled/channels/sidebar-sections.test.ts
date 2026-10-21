@@ -98,11 +98,9 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       ).toHaveLength(1);
   };
   const expectedProjection = [
-    { key: "starred", ids: ["solo", "star", "starred-dm"] },
+    { key: "starred", ids: ["forum", "solo", "star", "starred-dm"] },
     { key: "group:channels", ids: ["grouped-dm", "work"] },
-    { key: "channels", ids: ["other"] },
-    { key: "forums", ids: ["forum"] },
-    { key: "dms", ids: ["home-dm"] },
+    { key: "channels", ids: ["home-dm", "other"] },
   ];
   expect(project(roster, new Set(["hidden-dm"]))).toEqual(expectedProjection);
   assertExactlyOnce(project(roster, new Set(["hidden-dm"])), [
@@ -124,24 +122,23 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       roster.filter((channel) => channel.id !== "starred-dm"),
       new Set(["hidden-dm"]),
     ).find(({ key }) => key === "starred")?.ids,
-  ).toEqual(["solo", "star"]);
+  ).toEqual(["forum", "solo", "star"]);
   expect(sidebarSections([])).toEqual([
-    { key: "channels", title: "Channels", icon: undefined, rows: [] },
-    { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
+    { key: "channels", title: "Recent", icon: undefined, rows: [] },
   ]);
   expect(
     sidebarSections(roster, undefined, new Set(["hidden-dm"])).flatMap(
       (section) => section.rows.map((channel) => channel.id),
     ),
   ).toEqual([
-    "other",
-    "solo",
-    "star",
-    "work",
     "forum",
     "grouped-dm",
     "home-dm",
+    "other",
+    "solo",
+    "star",
     "starred-dm",
+    "work",
   ]);
 });
 
@@ -183,12 +180,10 @@ it("sorts every section independently with deterministic inactive and tie fallba
     ]),
   ).toEqual([
     ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
-    ["channels", []],
-    ["forums", ["forum-new", "forum-old"]],
-    ["dms", []],
+    ["channels", ["forum-new", "forum-old"]],
   ]);
   expect(sidebarSections(roster)[0]?.rows.map((channel) => channel.id)).toEqual(
-    ["quiet-a", "quiet-b", "a-id", "z-id", "new"],
+    ["new", "a-id", "z-id", "forum-new", "forum-old", "quiet-a", "quiet-b"],
   );
 });
 it("Star projection is exclusive and retains empty saved groups", () => {
@@ -208,19 +203,17 @@ it("Star projection is exclusive and retains empty saved groups", () => {
     ["starred", ["alpha", "beta"]],
     ["group:work", []],
     ["channels", []],
-    ["dms", []],
   ]);
   expect(placements(["alpha"])).toEqual([
     ["starred", ["alpha"]],
     ["group:work", ["beta"]],
     ["channels", []],
-    ["dms", []],
   ]);
   expect(saved.assignments).toEqual({ beta: "work" });
 });
 
 it.each(["starred", "section:work", "channels", "forums", "dms"])(
-  "%s Recent affects only its own section",
+  "%s legacy sort preference does not split or reorder the combined Recent list",
   (key) => {
     const keys = ["starred", "section:work", "channels", "forums", "dms"];
     const channels = keys.flatMap((section, i) => [
@@ -252,10 +245,10 @@ it.each(["starred", "section:work", "channels", "forums", "dms"])(
     });
     expect(
       sections.map((section) => section.rows.map((row) => row.name)),
-    ).toEqual(
-      keys.map((section) =>
-        section === key ? ["Zulu", "Alpha"] : ["Alpha", "Zulu"],
-      ),
-    );
+    ).toEqual([
+      ["Zulu", "Alpha"],
+      ["Zulu", "Alpha"],
+      ["Zulu", "Zulu", "Zulu", "Alpha", "Alpha", "Alpha"],
+    ]);
   },
 );

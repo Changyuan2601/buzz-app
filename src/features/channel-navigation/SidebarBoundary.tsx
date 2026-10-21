@@ -4,7 +4,10 @@ import { SidebarList } from "./SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 
 export class SidebarBoundary extends Component<
-  Pick<ComponentProps<typeof SidebarFrame>, "header" | "panelId"> & {
+  Pick<
+    ComponentProps<typeof SidebarFrame>,
+    "header" | "panelId" | "panelHeader"
+  > & {
     children: ReactNode;
   },
   { failed: boolean }
@@ -19,6 +22,7 @@ export class SidebarBoundary extends Component<
         <SidebarFrame
           label="Sidebar"
           header={this.props.header}
+          panelHeader={this.props.panelHeader}
           panelId={this.props.panelId}
         >
           <SidebarList>

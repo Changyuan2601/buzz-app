@@ -65,10 +65,12 @@ function saveSidebarWidth(scope: string, width: number) {
 export function ResizableSidebar({
   scope,
   className = "shell-sidebar-default",
+  rail = false,
   children,
 }: {
   scope: string;
   className?: string;
+  rail?: boolean;
   children: ReactNode;
 }) {
   // A workspace change reads that workspace's width without remounting the
@@ -79,6 +81,8 @@ export function ResizableSidebar({
   }));
   if (view.scope !== scope) setView({ scope, width: readSidebarWidth(scope) });
   const width = view.scope === scope ? view.width : readSidebarWidth(scope);
+  const [railWidth, setRailWidth] = useState(112);
+  const displayWidth = rail ? railWidth : width;
   useLayoutEffect(() => {
     const update = () => {
       const width = readSidebarWidth(scope);
@@ -93,6 +97,10 @@ export function ResizableSidebar({
     return stop;
   }, [scope]);
   const resize = (next: number) => {
+    if (rail) {
+      setRailWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(96, Math.round(next))));
+      return;
+    }
     const clamped = clampSidebarWidth(next);
     if (clamped === width) return;
     saveSidebarWidth(scope, clamped);
@@ -100,15 +108,29 @@ export function ResizableSidebar({
   };
   return (
     <>
-      <div className={className} style={{ width }}>
+      <div
+        className={className}
+        data-sidebar-rail={rail || undefined}
+        style={
+          rail
+            ? {
+                width: displayWidth,
+                minWidth: 96,
+                maxWidth: SIDEBAR_MAX_WIDTH,
+                containerType: "inline-size",
+                containerName: "navigation-rail",
+              }
+            : { width }
+        }
+      >
         {children}
       </div>
       <ResizeHandle
-        width={width}
+        width={displayWidth}
         setWidth={resize}
-        min={SIDEBAR_MIN_WIDTH}
+        min={rail ? 96 : SIDEBAR_MIN_WIDTH}
         max={SIDEBAR_MAX_WIDTH}
-        reset={() => resize(SIDEBAR_DEFAULT_WIDTH)}
+        reset={() => resize(rail ? 112 : SIDEBAR_DEFAULT_WIDTH)}
         label="Resize sidebar"
         className={styles.handle}
       />

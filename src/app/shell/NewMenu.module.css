@@ -1,11 +1,27 @@
-.createIcon {
-  transition: transform var(--duration-state) var(--easing-state);
+.expandedCreation {
+  display: none;
+  width: 100%;
 }
-[aria-expanded="true"] .createIcon {
-  transform: rotate(45deg);
+.compactCreation {
+  display: flex;
 }
-@media (prefers-reduced-motion: reduce) {
-  .createIcon {
-    transition: none;
+@container navigation-rail (min-width: 12rem) {
+  .compactCreation {
+    display: none;
   }
+  .expandedCreation {
+    display: block;
+  }
+}
+
+.creationArtwork {
+  background: var(--affordance-accent);
+  color: var(--text-accent);
+  border-radius: var(--radius-control);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--space-6) * 1.5);
+  height: calc(var(--space-6) * 1.5);
+  flex: 0 0 calc(var(--space-6) * 1.5);
 }

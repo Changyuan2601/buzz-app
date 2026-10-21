@@ -1,0 +1,58 @@
+.artwork {
+  display: inline-grid;
+  place-items: center;
+  width: var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+  height: var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+  flex: 0 0 var(--sidebar-artwork-size, calc(var(--space-6) * 2));
+}
+.artwork[data-fallback] {
+  border-radius: var(--radius-pill);
+  color: var(--text-subtle);
+  background: var(--surface-inset);
+}
+.group {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.group > span {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48%;
+  height: 48%;
+  padding: calc(var(--space-half) / 2);
+}
+.group > span:nth-child(1) {
+  inset: 2% auto auto 2%;
+}
+.group > span:nth-child(2) {
+  inset: 2% 2% auto auto;
+}
+.group > span:nth-child(3) {
+  inset: auto auto 2% 2%;
+}
+.group > span:nth-child(4) {
+  inset: auto 2% 2% auto;
+}
+.group[data-count="2"] > span {
+  width: 64%;
+  height: 64%;
+}
+.group[data-count="2"] > span:nth-child(2) {
+  inset: auto 0 0 auto;
+}
+.group[data-count="3"] > span {
+  width: 54%;
+  height: 54%;
+}
+.group[data-count="3"] > span:nth-child(1) {
+  inset: 0 auto auto 23%;
+}
+.group[data-count="3"] > span:nth-child(2) {
+  inset: auto auto 0 0;
+}
+.group[data-count="3"] > span:nth-child(3) {
+  inset: auto 0 0 auto;
+}

@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import type {
   ChannelPanelContext,
   PanelContext,
@@ -8,6 +14,12 @@ import type {
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelView } from "../../features/panels/PanelView";
+import {
+  MenuGroup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import { TerminalWindowIcon } from "../../shared/design-system/icons";
 import styles from "./Channels.module.css";
 
 type Opening = {
@@ -82,8 +94,49 @@ export function useChannelPanels(
   });
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);
+  const toggle = (
+    panel: RegisteredPanel,
+    target: string,
+    trigger?: HTMLElement | null,
+  ) => {
+    if (!context || !bound(context, panel)) return;
+    if (panel.channelPlacement === "tab") tabs?.toggle(panel, context, target);
+    else if (selected?.panel === panel) hide(selected);
+    else {
+      onOpen?.();
+      setOpened({
+        panel,
+        context,
+        target,
+        trigger:
+          trigger ??
+          (document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null),
+      });
+    }
+  };
+  const terminal = available.find(
+    (panel) => panel.key === "buzz.terminal/terminal",
+  );
   return {
     close: () => setOpened(undefined),
+    menuItems: (trigger: RefObject<HTMLButtonElement | null>) =>
+      context &&
+      terminal && (
+        <MenuGroup>
+          <MenuItem
+            onClick={() =>
+              toggle(terminal, JSON.stringify(context), trigger.current)
+            }
+          >
+            <MenuIcon>
+              <TerminalWindowIcon size={16} />
+            </MenuIcon>
+            Terminal
+          </MenuItem>
+        </MenuGroup>
+      ),
     launchers: context && (
       <div className={styles.channelLaunchers}>
         {available
@@ -123,23 +176,7 @@ export function useChannelPanels(
                 open={(target) =>
                   bound(context, panel) && !!opener?.open(target)
                 }
-                toggle={(target) => {
-                  if (!bound(context, panel)) return;
-                  if (tabbed) tabs?.toggle(panel, context, target);
-                  else if (selected?.panel === panel) hide(selected);
-                  else {
-                    onOpen?.();
-                    setOpened({
-                      panel,
-                      context,
-                      target,
-                      trigger:
-                        document.activeElement instanceof HTMLElement
-                          ? document.activeElement
-                          : null,
-                    });
-                  }
-                }}
+                toggle={(target) => toggle(panel, target)}
               />
             );
           })}

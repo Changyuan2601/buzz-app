@@ -73,7 +73,9 @@ export function SoloWorkspaces({
   onNew,
   onConverted,
   visit,
+  groupedOnly = false,
 }: {
+  groupedOnly?: boolean;
   onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
@@ -211,7 +213,7 @@ export function SoloWorkspaces({
       name: "Chats",
       rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
-  ];
+  ].filter((project) => !groupedOnly || project.id);
   // A collapse request takes effect after the editor closes. Keep its draft and
   // save owner mounted and reachable, including when a save needs recovery.
   const renamingProject = projects.find((project) =>

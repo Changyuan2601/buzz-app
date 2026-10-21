@@ -57,7 +57,6 @@ export function AppShell({
   onOpenTarget,
   launchers,
   companion,
-  creationAction,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -85,7 +84,6 @@ export function AppShell({
   onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
-  creationAction?: ReactNode;
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
@@ -172,7 +170,6 @@ export function AppShell({
   const historyRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const creationRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLElement>(null);
   const toolbarRef = useRef<HTMLElement>(null);
   const overflowTrigger = useRef<HTMLButtonElement>(null);
@@ -198,11 +195,7 @@ export function AppShell({
         gap;
       const center =
         (topbarRef.current?.offsetWidth ?? 0) +
-        2 *
-          Math.max(
-            creationRef.current?.offsetWidth ?? 0,
-            searchRef.current?.offsetWidth ?? 0,
-          ) +
+        (searchRef.current?.offsetWidth ?? 0) +
         gap;
       const compact =
         narrow ||
@@ -225,7 +218,6 @@ export function AppShell({
       historyRef.current,
       actionsRef.current,
       topbarRef.current,
-      creationRef.current,
       searchRef.current,
       toolbarRef.current,
     ]) {
@@ -306,11 +298,8 @@ export function AppShell({
           )}
           {navigationControls}
         </div>
-        <div className="shell-center-capsule shell-capsule chrome-navigation">
-          <div ref={creationRef} className="shell-create-action shell-capsule">
-            {creationAction}
-          </div>
-          <div className="shell-page-switcher">
+        <div className="shell-center-capsule shell-capsule">
+          <div className="shell-page-switcher chrome-navigation">
             {headerPages.length > 0 && (
               <PopoverRoot
                 open={overflowOpen && compactPages}
@@ -378,7 +367,10 @@ export function AppShell({
               </nav>
             )}
           </div>
-          <div ref={searchRef} className="shell-search-action shell-capsule">
+          <div
+            ref={searchRef}
+            className="shell-search-action shell-capsule chrome-navigation"
+          >
             <PageSearch
               pages={pages}
               onSelect={onSelect}

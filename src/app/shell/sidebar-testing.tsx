@@ -107,11 +107,22 @@ export function fixture(
     [agent, { name: "Owned Agent", isAgent: true as const }],
     [outsider, { name: "Outside Agent", isAgent: true as const }],
   ]);
+  const live = {
+    ...base.live.snapshot(),
+    roster: { state: "verified" as const },
+  };
   const session: RelaySession = {
     ...base,
     scope,
     viewer,
+    sidebarPreferences: {
+      ...base.sidebarPreferences,
+      snapshot: () => preferences,
+      ensure: async () => {},
+    },
+    live: { ...base.live, snapshot: () => live },
     channelCreation: { ...base.channelCreation, available: canCreate },
+    directMessages: { ...base.directMessages, available: canCreate },
     channels: { ...base.channels, list: () => list, ensureList() {} },
     soloPreferences: {
       ...base.soloPreferences,
@@ -136,6 +147,7 @@ export function fixture(
     profiles: { ...base.profiles, snapshot: () => profiles },
     unread: {
       ...base.unread,
+      ensure: async () => {},
       snapshot: (target) => {
         if (!newer || target.kind !== "channel" || target.channelId === id)
           return unread;
@@ -194,21 +206,22 @@ export function fixture(
     <ChannelNavigationProvider relay={relay}>
       <ToastProvider>
         {combined ? (
-          <>
-            <NewMenu relay={relay} navigator={navigator} agents={agents} />
-            {sidebarVisible && (
-              <PrimarySidebar
-                relay={relay}
-                navigator={navigator}
-                target={target}
-                chatIcons={chatIcons}
-              >
-                <button type="button">Inbox</button>
-              </PrimarySidebar>
-            )}
-          </>
+          sidebarVisible && (
+            <PrimarySidebar
+              relay={relay}
+              navigator={navigator}
+              target={target}
+              chatIcons={chatIcons}
+              creationAction={
+                <NewMenu relay={relay} navigator={navigator} agents={agents} />
+              }
+            >
+              <button type="button">Inbox</button>
+            </PrimarySidebar>
+          )
         ) : (
           <SoloInventory
+            key={snapshot.generation}
             session={snapshot.session}
             scope={scope}
             navigator={navigator}
@@ -239,6 +252,7 @@ export function fixture(
     replaceSession() {
       act(() => {
         snapshot = { ...snapshot, session: { ...session }, generation: 2 };
+        rendered.rerender(tree());
         publish();
       });
     },

@@ -1,3 +1,4 @@
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { LightningIcon } from "../../shared/design-system/icons";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -161,6 +162,7 @@ export function ChannelActivityPopover({
   channelId,
   channelName,
   trigger,
+  showNameTooltip = false,
   agents,
   agentProfiles,
   onOpenWorkingAgent,
@@ -171,6 +173,7 @@ export function ChannelActivityPopover({
   channelId: string;
   channelName: string;
   trigger: ReactElement;
+  showNameTooltip?: boolean;
   agents?: readonly string[];
   agentProfiles?: ReadonlyMap<string, Profile>;
   onOpenWorkingAgent?: (
@@ -245,6 +248,19 @@ export function ChannelActivityPopover({
     if (actions.current) actions.current.close();
     else setOpen(false);
   };
+  const triggerControl = (
+    <PopoverTrigger
+      render={trigger}
+      aria-expanded={open}
+      data-popup-preview={preview ? "" : undefined}
+      openOnHover={hasActivity}
+      delay={250}
+      closeDelay={150}
+      onPointerDown={(event) => {
+        triggerPointerType.current = event.pointerType;
+      }}
+    />
+  );
   return (
     <PopoverRoot
       modal={false}
@@ -292,16 +308,13 @@ export function ChannelActivityPopover({
             .catch(() => {});
       }}
     >
-      <PopoverTrigger
-        render={trigger}
-        data-popup-preview={preview ? "" : undefined}
-        openOnHover={hasActivity}
-        delay={250}
-        closeDelay={150}
-        onPointerDown={(event) => {
-          triggerPointerType.current = event.pointerType;
-        }}
-      />
+      {showNameTooltip ? (
+        <Tooltip content={channelName} side="right">
+          {triggerControl}
+        </Tooltip>
+      ) : (
+        triggerControl
+      )}
       <PopoverPopup
         data-channel-activity=""
         side="right"

@@ -45,7 +45,6 @@ it("filters sections independently while preserving their saved sort and roster 
   ).toEqual([
     ["group:work", []],
     ["channels", ["newer", "older"]],
-    ["dms", []],
   ]);
   unmount();
   owner.dispose();

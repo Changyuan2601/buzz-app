@@ -1,12 +1,6 @@
 import { useLayoutEffect } from "react";
-import { TerminalWindowIcon } from "../../shared/design-system/icons/index";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { PluginModule } from "../../plugins/api";
 import type { ChannelLauncherProps } from "../../features/panels/service";
-import {
-  formatBinding,
-  isApplePlatform,
-} from "../../features/shortcuts/format";
 import { nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
@@ -36,12 +30,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () => !!binding?.available(),
     run: () => binding?.toggle(),
   });
-  function Launcher({
-    context,
-    toggle,
-    pressed,
-    available,
-  }: ChannelLauncherProps) {
+  function Launcher({ context, toggle, available }: ChannelLauncherProps) {
     const target = JSON.stringify(context);
     useLayoutEffect(() => {
       const current = { toggle: () => toggle(target), available };
@@ -50,19 +39,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (binding === current) binding = undefined;
       };
     }, [toggle, target, available]);
-    return (
-      <IconButton
-        size="toolbar"
-        icon={<TerminalWindowIcon size={16} aria-hidden="true" />}
-        aria-label="Toggle channel terminal"
-        title={`Terminal (${formatBinding(TOGGLE_BINDING, isApplePlatform(navigator.platform)).text})`}
-        aria-expanded={pressed}
-        onClick={(event) => {
-          event.currentTarget.focus();
-          toggle(target);
-        }}
-      />
-    );
+    // Keep the keyboard binding alive while the host overflow is closed.
+    return null;
   }
   ctx.panels.register({
     id: "terminal",

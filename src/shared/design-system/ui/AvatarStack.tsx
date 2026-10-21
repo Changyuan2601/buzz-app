@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "motion/react";
 import { Avatar } from "./Avatar";
 import styles from "./AvatarStack.module.css";
 
@@ -13,12 +14,17 @@ export function AvatarStack({
   items,
   size = "compact",
   max = 3,
+  animateEntrance = false,
 }: {
   items: readonly StackAvatar[];
-  size?: "compact" | "small" | "mini" | "hero";
+  size?: "compact" | "small" | "mini" | "hero" | "hero-large";
   /** How many avatars show before the overflow count. */
   max?: number;
+  /** Playful hero entry, matching the huddle avatar spring. */
+  animateEntrance?: boolean;
 }) {
+  const reduced = useReducedMotion();
+  const animate = animateEntrance && !reduced;
   if (!items.length) return null;
   return (
     <span
@@ -28,8 +34,18 @@ export function AvatarStack({
       data-size={size}
     >
       {items.slice(0, max).map((item, index) => (
-        <span
+        <motion.span
           key={item.id}
+          initial={animate ? { scale: 0.9, rotate: -10 } : false}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={
+            animate
+              ? {
+                  scale: { type: "spring", stiffness: 380, damping: 16 },
+                  rotate: { type: "spring", stiffness: 380, damping: 20 },
+                }
+              : { duration: 0 }
+          }
           className={styles.item}
           // Each overlaps the one before it.
           style={{ zIndex: index + 1 }}
@@ -50,10 +66,10 @@ export function AvatarStack({
             shape={item.shape}
             size="fill"
           />
-        </span>
+        </motion.span>
       ))}
       {items.length > max &&
-        (size === "hero" ? (
+        (size === "hero" || size === "hero-large" ? (
           // A hero count is one more stack item, shaped like the avatars.
           <span
             className={styles.item}

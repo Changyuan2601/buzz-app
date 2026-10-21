@@ -1,3 +1,7 @@
+import { SidebarChatArtwork } from "./SidebarChatArtwork";
+import { SoloChatName } from "./SoloChatName";
+import { canEditLifetime } from "../../features/solo/Lifetime";
+import { ownSolo } from "../../features/solo/labels";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
   memo,
@@ -5,6 +9,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ComponentType,
   type ReactNode,
@@ -20,6 +25,7 @@ import type { RelaySession } from "../../features/relay/session";
 import {
   ChatCircleIcon,
   ClockIcon,
+  LockIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
@@ -34,6 +40,7 @@ import styles from "./Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 type ItemProps = {
+  largeArtwork?: boolean;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -120,6 +127,7 @@ function useOrdinaryUnread(
 }
 
 function ChannelSidebarItemCore({
+  largeArtwork = false,
   channel,
   profile,
   session,
@@ -159,16 +167,48 @@ function ChannelSidebarItemCore({
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
+  const [renaming, setRenaming] = useState(false);
   const Icon =
-    channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
+    channel.channelType === "dm"
+      ? ChatCircleIcon
+      : channel.channelType === "solo"
+        ? LockIcon
+        : channelIcon(channel);
+  const artwork = largeArtwork ? (
+    <SidebarChatArtwork
+      channel={channel}
+      profile={profile}
+      session={session}
+      icon={<Icon size={28} />}
+      presence={presence === "unknown" ? undefined : presence}
+    />
+  ) : undefined;
   const row = (
     <ChannelSidebarRow
+      largeArtwork={largeArtwork}
       channel={channel}
+      onRename={
+        ownSolo(channel, session.viewer) && canEditLifetime(session, channel)
+          ? () => setRenaming(true)
+          : undefined
+      }
       working={agents.length > 0}
       ordinary={ordinary}
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
-        channel.channelType === "dm" ? (
+        largeArtwork ? (
+          channel.channelType === "dm" ? (
+            <DmTypingBadge
+              session={session}
+              channelId={channel.id}
+              agents={agents}
+            >
+              {artwork}
+            </DmTypingBadge>
+          ) : (
+            artwork
+          )
+        ) : channel.channelType === "dm" ? (
           <DmTypingBadge
             session={session}
             channelId={channel.id}
@@ -234,11 +274,21 @@ function ChannelSidebarItemCore({
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
           )}
+          {channel.channelType === "dm" && (
+            <span
+              className={styles.privacyMarker}
+              data-rail={largeArtwork || undefined}
+              title="Private chat"
+            >
+              <LockIcon size={16} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+          )}
         </>
       }
       wrapSelect={(trigger) => {
         const activity = (
           <ChannelActivityPopover
+            showNameTooltip={largeArtwork}
             session={session}
             channelId={channel.id}
             channelName={channel.name}
@@ -288,6 +338,25 @@ function ChannelSidebarItemCore({
       {...(onHideDm ? { onHideDm } : {})}
     />
   );
+  if (renaming)
+    return (
+      <SoloChatName
+        session={session}
+        id={channel.id}
+        title={channel.name}
+        close={(focus) => {
+          setRenaming(false);
+          if (focus)
+            requestAnimationFrame(() =>
+              document
+                .querySelector<HTMLElement>(
+                  `[data-channel-id="${CSS.escape(channel.id)}"]`,
+                )
+                ?.focus(),
+            );
+        }}
+      />
+    );
   if (!menuEnabled) return row;
   return (
     <ContextMenuRoot

@@ -15,6 +15,11 @@
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-standard);
 }
+.recipientHeader[data-layout="panel"],
+.recipientHeader[data-layout="embedded"] {
+  padding: 0;
+  border-bottom: 0;
+}
 .toField {
   display: flex;
   align-items: center;
@@ -282,4 +287,14 @@
   .chip {
     max-width: 11.875rem;
   }
+}
+
+.recipientSearch {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+.recipientHeader[data-layout="panel"] {
+  flex: 1;
+  padding: 0 var(--space-2);
 }

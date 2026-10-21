@@ -11,10 +11,12 @@ export function SidebarFrame({
   children,
   header,
   panelId,
+  panelHeader,
 }: {
   label: string;
   header?: ReactNode;
   panelId?: string | undefined;
+  panelHeader?: ReactNode;
   busy?: boolean | undefined;
   launchPending?: "required" | "settling" | undefined;
   children?: ReactNode;
@@ -26,6 +28,7 @@ export function SidebarFrame({
       aria-busy={busy}
       data-buzz-launch-pending={launchPending}
     >
+      {panelHeader}
       <div className={styles.sidebar}>
         <SidebarNavigation>
           {header && <div className={styles.sidebarFilter}>{header}</div>}

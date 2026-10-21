@@ -755,7 +755,7 @@
     min-height: 0;
     overflow: hidden;
     border: 1px solid transparent;
-    border-radius: var(--radius-container);
+    border-radius: var(--radius-control);
     background: var(--surface-panel);
     box-shadow: var(--shadow-panel);
   }
@@ -1055,6 +1055,7 @@
     pointer-events: none;
   }
 
+  .panel-header[data-divider="full"]::after,
   .panel[data-joined] .panel-header::after {
     inset-inline: 0;
   }
@@ -1235,6 +1236,69 @@
     color: var(--navigation-item-text, var(--text-standard));
   }
 
+  /* Avatar destinations in a narrow rail; labels remain accessible. */
+  .navigation-item-label {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .navigation-item-trailing {
+    flex: 0 0 auto;
+    color: var(--text-metadata);
+  }
+
+  .navigation-item[data-variant="rail"] {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 5rem;
+    padding: var(--space-4);
+    border-radius: var(--radius-container);
+  }
+  .navigation-item[data-variant="rail"][data-selected] {
+    background: var(--affordance-prominent);
+    color: var(--text-on-prominent);
+  }
+  .navigation-item[data-variant="rail"] .navigation-item-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .navigation-item[data-variant="rail"] .navigation-item-trailing {
+    position: absolute;
+    inset-block-start: var(--space-1);
+    inset-inline-end: var(--space-1);
+  }
+
+  @container navigation-rail (min-width: 12rem) {
+    .navigation-item[data-variant="rail"] {
+      justify-content: flex-start;
+      gap: var(--space-3);
+      min-height: 3.5rem;
+      padding: var(--space-2);
+      border-radius: var(--radius-row);
+    }
+    .navigation-item[data-variant="rail"] .navigation-item-label {
+      position: static;
+      width: auto;
+      height: auto;
+      min-width: 0;
+      flex: 1;
+      clip-path: none;
+    }
+    .navigation-item[data-variant="rail"] .navigation-item-trailing {
+      position: static;
+    }
+  }
+
   /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
   .chrome-navigation {
     display: inline-flex;
@@ -1316,19 +1380,6 @@
 
   .navigation-item[data-inset] {
     padding-left: calc(var(--space-control-inset) + var(--space-4));
-  }
-
-  .navigation-item-label {
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .navigation-item-trailing {
-    flex: 0 0 auto;
-    color: var(--text-metadata);
   }
 
   /* SidebarNavigation copies main's compact sidebar appearance. Keep this global:

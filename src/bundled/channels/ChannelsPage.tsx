@@ -1,3 +1,4 @@
+import { NewChatDraft } from "../../features/chat-creation/NewChatDraft";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -12,7 +13,7 @@ import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { sharedSessionsTarget } from "./shared-sessions-panel";
-import { UsersIcon } from "../../shared/design-system/icons";
+import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
 import {
   soloDraft,
   soloDraftTarget,
@@ -187,9 +188,13 @@ function ChannelWorkspace({
   panels: Panels;
   archive?: ArchiveShortcut | undefined;
 }) {
+  const composingChat =
+    navigation?.target.kind === "page" &&
+    (navigation.target.route?.params === "new-chat" ||
+      navigation.target.route?.params === "new-chat-recipient");
   const composingMessage =
     navigation?.target.kind === "page" &&
-    navigation.target.route?.params === "new-message";
+    (navigation.target.route?.params === "new-message" || composingChat);
   const draftTarget = navigation?.target;
   const draft = useMemo(
     () =>
@@ -1523,22 +1528,38 @@ function ChannelWorkspace({
           data-attachment-drop-zone=""
         >
           {composingMessage ? (
-            <NewMessage
-              session={queries}
-              scope={scope}
-              extensions={extensions}
-              onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
-              onOpened={(channelId) => {
-                handoff?.clearPreparingDm();
-                if (!behindSettings()) select(channelId);
-              }}
-              onStarted={(channelId, id) => {
-                handoff?.clearPreparingDm();
-                if (behindSettings()) return;
-                setSent({ channelId, id });
-                select(channelId);
-              }}
-            />
+            composingChat ? (
+              <NewChatDraft
+                host={
+                  navigator
+                    ? { panels, relay, navigation: navigator }
+                    : undefined
+                }
+                session={queries}
+                scope={scope}
+                extensions={extensions}
+                onStarted={(id) => {
+                  if (!behindSettings()) select(id);
+                }}
+              />
+            ) : (
+              <NewMessage
+                session={queries}
+                scope={scope}
+                extensions={extensions}
+                onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
+                onOpened={(channelId) => {
+                  handoff?.clearPreparingDm();
+                  if (!behindSettings()) select(channelId);
+                }}
+                onStarted={(channelId, id) => {
+                  handoff?.clearPreparingDm();
+                  if (behindSettings()) return;
+                  setSent({ channelId, id });
+                  select(channelId);
+                }}
+              />
+            )
           ) : draft ? (
             <SoloDraft
               key={JSON.stringify([
@@ -1581,6 +1602,7 @@ function ChannelWorkspace({
             <>
               {current && solo ? (
                 <SoloHeading
+                  menuItems={drawer.menuItems}
                   key={`${current.id}:${navigation?.entryId ?? ""}`}
                   session={queries}
                   scope={scope}
@@ -1639,6 +1661,12 @@ function ChannelWorkspace({
                       <>
                         {current && (
                           <IconButton
+                            variant="avatar"
+                            style={{
+                              width: "auto",
+                              minWidth: "var(--size-control-sm)",
+                              paddingInline: "var(--space-1)",
+                            }}
                             size="sm"
                             aria-label="Channel members"
                             title="Channel members"
@@ -1648,11 +1676,17 @@ function ChannelWorkspace({
                             onClick={(event) =>
                               openMembers(event.currentTarget)
                             }
-                            icon={<UsersIcon size="1rem" aria-hidden="true" />}
+                            icon={
+                              <ChannelMemberAvatars
+                                session={queries}
+                                channelId={current.id}
+                              />
+                            }
                           />
                         )}
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          menuItems={drawer.menuItems}
                           key={`channel-actions:${currentId ?? "empty"}`}
                           channel={current}
                           session={queries}

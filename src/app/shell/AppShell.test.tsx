@@ -71,11 +71,11 @@ it("hides and shows the channel sidebar without re-rendering its content", async
       primary: true,
     },
     {
-      id: "inbox",
-      key: "buzz.inbox/inbox",
-      pluginId: "buzz.inbox",
+      id: "projects",
+      key: "example.projects/projects",
+      pluginId: "example.projects",
       revision: "1",
-      title: "Inbox",
+      title: "Projects",
       component: () => null,
       primary: true,
     },
@@ -104,7 +104,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   });
   const navigation = document.getElementById("shell-navigation");
   const rendered = renders.mock.calls.length;
-  const row = () => within(content).getByRole("button", { name: "Inbox" });
+  const row = () => within(content).getByRole("button", { name: "Projects" });
   expect(row()).not.toHaveAttribute("aria-current");
 
   for (const [label, hidden] of [
@@ -120,7 +120,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(renders).toHaveBeenCalledTimes(rendered);
 
   // A selection change still reaches the page rows the sidebar renders.
-  rerender(shell("buzz.inbox/inbox"));
+  rerender(shell("example.projects/projects"));
   expect(renders.mock.calls.length).toBeGreaterThan(rendered);
   expect(row()).toHaveAttribute("aria-current", "page");
 });
@@ -598,7 +598,7 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
 });
 
 it.each([false, true])(
-  "keeps Inbox in Messages and preserves sidebar visibility across pages (compact: %s)",
+  "selects Inbox in the top bar and preserves sidebar visibility across pages (compact: %s)",
   async (compact) => {
     vi.stubGlobal("matchMedia", (media: string) => ({
       media,
@@ -651,11 +651,6 @@ it.each([false, true])(
         name: "Communities",
       }),
     ).toBeVisible();
-    if (!compact)
-      expect(screen.getByRole("button", { name: "Inbox" })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
     if (compact)
       await userEvent.click(screen.getByRole("button", { name: "More pages" }));
     const nav = screen.getByRole("navigation", {
@@ -664,9 +659,12 @@ it.each([false, true])(
     const messages = within(nav).getByRole(compact ? "button" : "tab", {
       name: "Messages",
     });
-    expect(messages).toHaveAttribute(
+    const inbox = within(nav).getByRole(compact ? "button" : "tab", {
+      name: "Inbox",
+    });
+    expect(inbox).toHaveAttribute(
       compact ? "aria-current" : "aria-selected",
-      "true",
+      compact ? "page" : "true",
     );
     const top = within(nav).getByRole(compact ? "button" : "tab", {
       name: "Top",
@@ -714,11 +712,11 @@ it.each([false, true])(
       "page",
     );
     rerender(shell("buzz.inbox/inbox"));
-    expect(messages).toHaveAttribute("aria-selected", "true");
+    expect(inbox).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
-    const panel = screen.getByRole("tabpanel", { name: "Messages" });
-    expect(panel).toHaveAttribute("id", messages.getAttribute("aria-controls"));
-    expect(panel).toHaveAttribute("aria-labelledby", messages.id);
+    const panel = screen.getByRole("tabpanel", { name: "Inbox" });
+    expect(panel).toHaveAttribute("id", inbox.getAttribute("aria-controls"));
+    expect(panel).toHaveAttribute("aria-labelledby", inbox.id);
     expect(panel).toHaveTextContent("Child content");
     await userEvent.click(messages);
     expect(onSelect).toHaveBeenLastCalledWith("buzz.channels/channels", {

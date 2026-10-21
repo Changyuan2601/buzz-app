@@ -38,6 +38,8 @@ export function soloDraft(
 export function isChannelRoute(params: JsonValue) {
   return (
     params === "new-message" ||
+    params === "new-chat" ||
+    params === "new-chat-recipient" ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );

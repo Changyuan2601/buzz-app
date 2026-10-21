@@ -37,7 +37,7 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import creationStyles from "./SoloInventory.module.css";
-import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
+import { PlusIcon, LockIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ContributionReader } from "../conversation/contracts";
 import type { ChatIcon } from "../conversation/service";
@@ -47,7 +47,7 @@ import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 const noSubscription = () => () => {};
 const chatIcon = (
   <span className={styles.conversationIcon} aria-hidden="true">
-    <ChatCircleIcon size={16} />
+    <LockIcon size={16} />
   </span>
 );
 
@@ -58,8 +58,10 @@ export function SoloInventory({
   navigator,
   target,
   chatIcons,
+  groupedOnly = false,
 }: {
   session: RelaySession;
+  groupedOnly?: boolean;
   scope: string;
   navigator: Navigation;
   target: OpenTarget;
@@ -73,6 +75,10 @@ export function SoloInventory({
   const preferences = useSyncExternalStore(
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
+  );
+  const sidebarPreferences = useSyncExternalStore(
+    session.sidebarPreferences.subscribe,
+    session.sidebarPreferences.snapshot,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -123,7 +129,17 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    .filter((item) => !item.archived && ownSolo(item, session.viewer))
+    .filter(
+      (item) =>
+        !item.archived &&
+        (ownSolo(item, session.viewer) ||
+          preferences.data?.sections.some(
+            (section) => section.id === preferences.data?.assignments[item.id],
+          )) &&
+        (!groupedOnly ||
+          (!sidebarPreferences.data?.starred.includes(item.id) &&
+            !sidebarPreferences.data?.assignments[item.id])),
+    )
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
@@ -146,44 +162,51 @@ export function SoloInventory({
     void navigator.open(soloDraftTarget(scope, project ? { project } : {}));
   };
   return (
-    <nav className={styles.sidebarContents} aria-label="Solo conversations">
-      <div
-        className={creationStyles.header}
-        data-actions-visible={menuOpen || undefined}
-      >
-        <InlineHeader
-          title={<span className="text-standard">Solo</span>}
-          actions={
-            <div className={creationStyles.actions}>
-              <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      ref={trigger}
-                      size="compact"
-                      aria-label="New chat or workspace"
-                      title="New chat or workspace"
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                    />
-                  }
-                />
-                <MenuPopup align="end">
-                  <MenuItem onClick={() => newChat()}>New chat</MenuItem>
-                  <MenuItem
-                    disabled={!session.soloPreferences.sectionCreationWritable}
-                    onClick={() => {
-                      if (current()) setCreatingProject(true);
-                    }}
-                  >
-                    New workspace…
-                  </MenuItem>
-                </MenuPopup>
-              </MenuRoot>
-            </div>
-          }
-        />
-      </div>
-      {empty && (
+    <nav
+      className={styles.sidebarContents}
+      aria-label={groupedOnly ? "Custom workspaces" : "Solo conversations"}
+    >
+      {!groupedOnly && (
+        <div
+          className={creationStyles.header}
+          data-actions-visible={menuOpen || undefined}
+        >
+          <InlineHeader
+            title={<span className="text-standard">Solo</span>}
+            actions={
+              <div className={creationStyles.actions}>
+                <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+                  <MenuTrigger
+                    render={
+                      <IconButton
+                        ref={trigger}
+                        size="compact"
+                        aria-label="New chat or workspace"
+                        title="New chat or workspace"
+                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                      />
+                    }
+                  />
+                  <MenuPopup align="end">
+                    <MenuItem onClick={() => newChat()}>New chat</MenuItem>
+                    <MenuItem
+                      disabled={
+                        !session.soloPreferences.sectionCreationWritable
+                      }
+                      onClick={() => {
+                        if (current()) setCreatingProject(true);
+                      }}
+                    >
+                      New workspace…
+                    </MenuItem>
+                  </MenuPopup>
+                </MenuRoot>
+              </div>
+            }
+          />
+        </div>
+      )}
+      {empty && !groupedOnly && (
         <NavigationItem
           variant="row"
           label="New chat"
@@ -203,6 +226,7 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
+        groupedOnly={groupedOnly}
         navigator={navigator}
         visit={navigator.snapshot().attempt.signal}
         session={session}
