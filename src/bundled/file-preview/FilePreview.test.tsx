@@ -192,6 +192,45 @@ it("opens a registered Markdown preview from the real message row and restores d
   ).toHaveAttribute("download", "notes.md");
 });
 
+it.each([
+  ["TEXT/PLAIN; charset=utf-8", "Plain text"],
+  [" text/markdown ", "Markdown"],
+])(
+  "uses the resolved format for %s file and panel labels",
+  async (mime, label) => {
+    const { conversation, panels } = await pluginFixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("")));
+    const open = vi.fn<(target: string) => boolean>(() => true);
+    render(
+      <MessageRow
+        row={{ ...row, attachments: [{ ...attachment, name: "notes", mime }] }}
+        profile={undefined}
+        media={() => source}
+        day={false}
+        retry={undefined}
+        extensions={conversation}
+        canOpenLink={(target) => !!panels.resolve(target)}
+        onOpenLink={open}
+      />,
+    );
+    expect(screen.getByText(`${label} · 132 B`)).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Preview notes", exact: true }),
+    );
+    const target = open.mock.calls[0]?.[0];
+    if (!target) throw new Error("No preview opened");
+    const panel = panels.resolve(target);
+    if (!panel) throw new Error("No preview panel registered");
+    render(<PanelView panel={panel} target={target} close={() => {}} />);
+    const preview = screen.getByRole("region", {
+      name: "Preview: notes",
+      exact: true,
+    });
+    expect(within(preview).getByText(`${label} · 132 B`)).toBeVisible();
+    await within(preview).findByText("This file is empty.");
+  },
+);
+
 it("keeps uploaded composer attachments inside their existing modal without a second panel action", async () => {
   const { conversation, panels } = await pluginFixture();
   const open = vi.fn(() => true);

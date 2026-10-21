@@ -12,8 +12,11 @@ import {
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
 
-const contentSelector =
-  "[data-message-action-anchor], [data-message-attachments] > *";
+// Captioned messages leave attachment controls outside the text hover area.
+const contentSelector = (row: Element) =>
+  row.querySelector("[data-message-action-anchor]")
+    ? "[data-message-action-anchor]"
+    : "[data-message-attachments] > *";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -111,7 +114,7 @@ export function useFloatingActionBar(
     if (!floating || !row || !bar) return;
     const contentAt = (target: EventTarget | null) =>
       target instanceof Element && row.contains(target)
-        ? target.closest(contentSelector)
+        ? target.closest(contentSelector(row))
         : null;
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (!(target instanceof Element)) return false;
@@ -154,7 +157,9 @@ export function useFloatingActionBar(
     };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
+    const initialContent = row.querySelector(
+      `:is(${contentSelector(row)}):hover`,
+    );
     let hovered = !!initialContent || bar.matches(":hover");
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
@@ -290,7 +295,7 @@ export function useFloatingActionBar(
       // excluding bylines, reactions, activity and the row's empty side space.
       let whole = anchor;
       let first = visual;
-      for (const element of row.querySelectorAll(contentSelector)) {
+      for (const element of row.querySelectorAll(contentSelector(row))) {
         const rect =
           element === visual ? anchor : element.getBoundingClientRect();
         if (!rect.width || !rect.height) continue;

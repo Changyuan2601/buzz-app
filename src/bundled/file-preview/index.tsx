@@ -40,6 +40,9 @@ function PreviewAttachment({
       attachment={attachment}
       source={source}
       onOpenLink={open}
+      typeLabel={
+        previewFormat(attachment) === "markdown" ? "Markdown" : "Plain text"
+      }
       {...(preview ? { onPreview: () => open(target) } : {})}
     />
   );

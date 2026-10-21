@@ -44,7 +44,6 @@ function Preview({
   const [state, setState] = useState<PreviewState>({ kind: "loading" });
   useEffect(() => {
     const controller = new AbortController();
-    setState({ kind: "loading" });
     void loadPreview(
       file.source,
       AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
@@ -75,6 +74,7 @@ function Preview({
         attachment={file.attachment}
         source={file.source}
         onOpenLink={open}
+        typeLabel={file.format === "markdown" ? "Markdown" : "Plain text"}
       />
       {state.kind === "loading" ? (
         <p role="status">Loading preview…</p>

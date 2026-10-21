@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { openPage } from "./navigation.mjs";
 import {
   expectMessageActionsHidden as hidden,
   hoverMessage,
@@ -202,190 +203,148 @@ for (const own of [true, false]) {
   });
 }
 
-// Browser-only: caption and attachment content share one raised action position
-// while retaining native hit testing and an uninterrupted pointer path.
-for (const own of [false, true]) {
-  test(`captioned ${own ? "own" : "received"} attachments keep their actions reachable`, async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    const event = app.append(
-      "primary",
-      "alpha",
-      "A caption\nwith three lines\n[Caption reference](https://example.com/caption)",
-      true,
-      own,
-      undefined,
-      undefined,
-      [
+// Browser-only: real hover, top-layer hit testing, and pointer traversal.
+test.describe("captioned attachment actions", () => {
+  test.use({
+    productionBroker: false,
+    readState: false,
+    threadUnread: false,
+    channelIds: ["htian-playground"],
+    channelNames: { "htian-playground": "htian-playground" },
+    historyCounts: { "htian-playground": 1 },
+  });
+  for (const own of [false, true]) {
+    test(`captioned ${own ? "own" : "received"} attachments keep their actions reachable`, async ({
+      page,
+      app,
+    }) => {
+      await page.goto(app.origin);
+      await openPage(page, "Messages");
+      await page
+        .getByRole("button", { name: "htian-playground", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          app.report.streamInterests.some(
+            (entry) =>
+              entry.community === "primary" &&
+              entry.channels.includes("htian-playground"),
+          ),
+        )
+        .toBe(true);
+      const tags = [
         [
           "imeta",
           "url https://fixture.test/report.pdf",
           "m application/pdf",
           "filename report.pdf",
         ],
-      ],
-    );
-    const row = page.locator(
-      `[data-channel-timeline] [data-message-id="${event.id}"]`,
-    );
-    const attachment = row.locator("[data-message-attachments] > *").first();
-    const caption = row.locator("[data-message-action-anchor]").first();
-    const actions = actionsFor(row);
-    await expect(attachment).toBeVisible();
-    await settle(page);
-    await attachment.hover();
-    await shown(actions);
-    await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
-    const target = actions.getByRole("button", {
-      name: "More message actions",
+      ];
+      const event = app.append(
+        "primary",
+        "htian-playground",
+        "A caption\nwith three lines\n[Caption reference](https://example.com/caption)",
+        true,
+        own,
+        undefined,
+        undefined,
+        tags,
+      );
+      const row = page.locator(
+        `[data-channel-timeline] [data-message-id="${event.id}"]`,
+      );
+      const attachment = row.locator("[data-message-attachments] > *").first();
+      const caption = row.locator("[data-message-action-anchor]").first();
+      const actions = actionsFor(row);
+      await expect(attachment).toBeVisible();
+      await settle(page);
+      await attachment.hover();
+      await hidden(actions);
+      await caption.hover();
+      await shown(actions);
+      await above(actions);
+      const target = actions.getByRole("button", {
+        name: "More message actions",
+      });
+      const button = await target.boundingBox();
+      await page.mouse.move(
+        button.x + button.width / 2,
+        button.y + button.height / 2,
+        { steps: 30 },
+      );
+      await shown(actions);
+      await target.click();
+      await expect(page.getByRole("menu")).toBeVisible();
+      await actions.evaluate((bar) =>
+        Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+      );
+      const anchored = await actions.evaluate((bar) =>
+        bar.getBoundingClientRect().toJSON(),
+      );
+      const coveredAttachment = await attachment.boundingBox();
+      await page.mouse.move(
+        coveredAttachment.x + coveredAttachment.width / 2,
+        coveredAttachment.y + coveredAttachment.height / 2,
+      );
+      expect(
+        await actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
+      ).toEqual(anchored);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await page.mouse.click(0, 0);
+      await attachment.hover();
+      await hidden(actions);
+      await page.mouse.move(0, 0);
+      await page.setViewportSize({ width: 390, height: 950 });
+      await settle(page);
+      await caption.hover();
+      await shown(actions);
+      await above(actions);
+      const reference = row.getByRole("link", { name: "Caption reference" });
+      expect(
+        await reference.evaluate((node) => {
+          const rect = node.getBoundingClientRect();
+          return node.contains(
+            document.elementFromPoint(
+              rect.x + rect.width / 2,
+              rect.y + rect.height / 2,
+            ),
+          );
+        }),
+      ).toBe(true);
+      await attachment.hover();
+      await hidden(actions);
+      // Keyboard users can still reach and retain the message controls.
+      await reference.focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(target).toBeFocused();
+      await shown(actions);
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("menu")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await expect(target).toBeFocused();
+      await shown(actions);
+      await page.mouse.click(0, 0);
+      // A message with no caption still exposes its actions over the attachment.
+      const fileOnly = app.append(
+        "primary",
+        "htian-playground",
+        "",
+        true,
+        own,
+        undefined,
+        undefined,
+        tags,
+      );
+      const fileRow = page.locator(
+        `[data-channel-timeline] [data-message-id="${fileOnly.id}"]`,
+      );
+      await fileRow.locator("[data-message-attachments] > *").first().hover();
+      await shown(actionsFor(fileRow));
     });
-    const button = await target.boundingBox();
-    // Travel from the attachment through its caption to the shared toolbar.
-    await page.mouse.move(
-      button.x + button.width / 2,
-      button.y + button.height / 2,
-      { steps: 30 },
-    );
-    await shown(actions);
-    await target.click();
-    await expect(page.getByRole("menu")).toBeVisible();
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
-    const anchored = await actions.evaluate((bar) =>
-      bar.getBoundingClientRect().toJSON(),
-    );
-    // The open menu's backdrop owns this point; use real pointer travel rather
-    // than asking Playwright to hover the intentionally covered caption.
-    const coveredCaption = await caption.boundingBox();
-    await page.mouse.move(
-      coveredCaption.x + coveredCaption.width / 2,
-      coveredCaption.y + coveredCaption.height / 2,
-    );
-    expect(
-      await actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
-    ).toEqual(anchored);
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("menu")).toHaveCount(0);
-    // Caption and attachment hover share one stable above-message location.
-    await page.mouse.click(0, 0);
-    await caption.hover();
-    await shown(actions);
-    await above(actions);
-    await page.mouse.move(0, 0);
-    await page.setViewportSize({ width: 390, height: 950 });
-    await settle(page);
-    await attachment.hover();
-    await shown(actions);
-    await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
-    const reference = row.getByRole("link", { name: "Caption reference" });
-    // The hovered media's toolbar must not take hits from the caption above it.
-    expect(
-      await reference.evaluate((node) => {
-        const rect = node.getBoundingClientRect();
-        return node.contains(
-          document.elementFromPoint(
-            rect.x + rect.width / 2,
-            rect.y + rect.height / 2,
-          ),
-        );
-      }),
-    ).toBe(true);
-    await reference.evaluate((node) =>
-      node.addEventListener(
-        "click",
-        (event) => {
-          event.preventDefault();
-          node.dataset.clicked = "true";
-        },
-        { once: true },
-      ),
-    );
-    await reference.click();
-    await expect(reference).toHaveAttribute("data-clicked", "true");
-    await page
-      .getByRole("textbox", { name: "Message #Alpha", exact: true })
-      .click();
-    const captionBox = await caption.boundingBox();
-    const attachmentBox = await attachment.boundingBox();
-    // Use the interior beside the shorter caption, clear of Chromium's
-    // fractional hit-test expansion at the tiny inter-block margin.
-    const contentGap = {
-      x: own
-        ? (attachmentBox.x + captionBox.x) / 2
-        : (captionBox.x +
-            captionBox.width +
-            attachmentBox.x +
-            attachmentBox.width) /
-          2,
-      y: captionBox.y + captionBox.height / 2,
-    };
-    expect(
-      await row.evaluate((node, point) => {
-        const hit = document.elementFromPoint(point.x, point.y);
-        return (
-          node.contains(hit) &&
-          !!hit?.closest("[data-message-payload]") &&
-          !hit.closest(
-            "[data-message-action-anchor], [data-message-attachments] > *",
-          )
-        );
-      }, contentGap),
-    ).toBe(true);
-    // A gap cannot activate actions, but must retain them after media hover.
-    await page.mouse.move(contentGap.x, contentGap.y);
-    await hidden(actions);
-    await attachment.hover();
-    await shown(actions);
-    await page.mouse.move(contentGap.x, contentGap.y, { steps: 10 });
-    await shown(actions);
-    // Leave both the content and its route to the wider toolbar. Returning to
-    // the content gap alone must not reactivate actions.
-    const raised = await actions.boundingBox();
-    const outside = {
-      x: own
-        ? Math.min(captionBox.x, attachmentBox.x, raised.x) - 4
-        : Math.max(
-            captionBox.x + captionBox.width,
-            attachmentBox.x + attachmentBox.width,
-            raised.x + raised.width,
-          ) + 4,
-      y: contentGap.y,
-    };
-    await page.mouse.move(outside.x, outside.y, { steps: 10 });
-    await hidden(actions);
-    await page.mouse.move(contentGap.x, contentGap.y);
-    await hidden(actions);
-    await attachment.hover();
-    await shown(actions);
-    await page.mouse.move(contentGap.x, contentGap.y, { steps: 10 });
-    await shown(actions);
-    const raisedButton = await target.boundingBox();
-    await page.mouse.move(
-      raisedButton.x + raisedButton.width / 2,
-      raisedButton.y + raisedButton.height / 2,
-      { steps: 30 },
-    );
-    await shown(actions);
-    await target.click();
-    await expect(page.getByRole("menu")).toBeVisible();
-    await page.mouse.move(contentGap.x, contentGap.y);
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("menu")).toHaveCount(0);
-    await expect(target).toBeFocused();
-    await shown(actions);
-    await page.mouse.move(contentGap.x, contentGap.y + 1);
-    await shown(actions);
-  });
-}
+  }
+});
 
 // Browser-only: top-layer painting/hit testing across containment, real scrolling,
 // and stable header geometry cannot be established in jsdom.

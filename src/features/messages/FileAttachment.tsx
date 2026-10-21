@@ -40,12 +40,14 @@ export function FileAttachment({
   source,
   onOpenLink,
   onPreview,
+  typeLabel,
   variant = "card",
 }: {
   attachment: Attachment;
   source: string | undefined;
   onOpenLink(url: string): boolean;
   onPreview?: (() => void) | undefined;
+  typeLabel?: string;
   variant?: "card" | "summary";
 }) {
   const [downloadError, setDownloadError] = useState(false);
@@ -69,21 +71,13 @@ export function FileAttachment({
     );
 
   if (source && proxySource && (onPreview || variant === "summary")) {
-    const type =
-      /\.(md|markdown)$/i.test(attachment.name ?? "") ||
-      /^text\/(x-)?markdown(?:;|$)/i.test(attachment.mime ?? "")
-        ? "Markdown"
-        : /\.txt$/i.test(attachment.name ?? "") ||
-            attachment.mime?.startsWith("text/plain")
-          ? "Plain text"
-          : (mimeLabel(attachment.mime) ?? "File");
     const label = (
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName} title={displayName}>
           {displayName}
         </span>
         <span className={styles.fileAttachmentMeta}>
-          {type}
+          {typeLabel ?? mimeLabel(attachment.mime) ?? "File"}
           {attachment.size !== undefined &&
             ` · ${formatFileSize(attachment.size)}`}
         </span>

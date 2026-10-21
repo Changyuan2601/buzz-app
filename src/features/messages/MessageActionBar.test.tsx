@@ -31,14 +31,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function Row(props: ComponentProps<typeof MessageActionBar>) {
+function Row({
+  caption = true,
+  ...props
+}: ComponentProps<typeof MessageActionBar> & { caption?: boolean }) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
       <span>Message author</span>
-      <div data-message-action-anchor>
-        <span>Message bubble</span>
-      </div>
+      {caption && (
+        <div data-message-action-anchor>
+          <span>Message bubble</span>
+        </div>
+      )}
       <div data-message-attachments>
         <span>Message attachment</span>
       </div>
@@ -172,7 +177,7 @@ it("defers desktop controls until row interaction and retains them after leaving
 
 it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
   pointerMedia();
-  render(
+  const view = render(
     <StrictMode>
       <Row copyText={() => "Hello"} />
     </StrictMode>,
@@ -185,17 +190,28 @@ it("reveals actions only over message content or the toolbar, not the row's empt
   fireEvent.pointerEnter(row);
   fireEvent.pointerOver(row);
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
-  for (const content of ["Message bubble", "Message attachment"]) {
-    const target = screen.getByText(content);
-    fireEvent.pointerOver(target, { relatedTarget: row });
-    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
-    fireEvent.pointerOut(target, { relatedTarget: bar });
-    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
-    fireEvent.pointerOver(bar, { relatedTarget: target });
-    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
-    fireEvent.pointerOut(bar, { relatedTarget: row });
-    expect(row.hasAttribute("data-actions-revealed")).toBe(false);
-  }
+  const bubble = screen.getByText("Message bubble");
+  const attachment = screen.getByText("Message attachment");
+  fireEvent.pointerOver(attachment);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOver(bubble);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(bubble, { relatedTarget: attachment });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  fireEvent.pointerOver(bubble);
+  fireEvent.pointerOut(bubble, { relatedTarget: bar });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(bar, { relatedTarget: row });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  // An edit can remove the caption without replacing the toolbar owner.
+  view.rerender(
+    <StrictMode>
+      <Row caption={false} copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  fireEvent.pointerOver(attachment);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+  fireEvent.pointerOut(attachment, { relatedTarget: row });
   fireEvent.pointerOver(screen.getByText("Message author"));
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
 });
