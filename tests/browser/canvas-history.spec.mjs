@@ -157,6 +157,30 @@ test("Canvas history previews and restores without losing the editor draft", asy
   const bounds = await dialog.boundingBox();
   expect(bounds.x).toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  // Save keeps its native focus handoff in each mode after history recovery.
+  await dialog.getByRole("tab", { name: "Edit", exact: true }).click();
+  await dialog.getByRole("button", { name: "Reload saved Canvas" }).click();
+  await page.getByRole("button", { name: "Discard and reload" }).click();
+  await expect(editor).toHaveValue(old.content);
+  const save = dialog.getByRole("button", { name: "Save Canvas", exact: true });
+  await editor.fill("Saved from edit");
+  await page.clock.setFixedTime(new Date((head.created_at + 1) * 1000));
+  await save.focus();
+  await page.keyboard.press("Enter");
+  await expect(save).toBeDisabled();
+  await expect(editor).toBeFocused();
+  await editor.fill("Saved from preview");
+  await dialog.getByRole("button", { name: "Preview", exact: true }).click();
+  await page.clock.setFixedTime(new Date((head.created_at + 1) * 1000));
+  await save.focus();
+  await page.keyboard.press("Enter");
+  await expect(save).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeFocused();
+  await expect(
+    dialog.getByRole("region", { name: "Canvas preview" }),
+  ).toHaveText("Saved from preview");
 });
 
 // Disabling a focused native textarea drops focus in browsers, unlike jsdom.

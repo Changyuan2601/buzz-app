@@ -381,33 +381,63 @@ it("ignores the stale StrictMode read after the current read enables typing and 
   }
 });
 
-it("retains the draft after a failed save and keeps editing after a successful retry", async () => {
-  const user = userEvent.setup();
-  const { canvas } = fixture();
-  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
-  await waitFor(() => expect(text).toHaveValue("Saved"));
-  fireEvent.change(text, { target: { value: "Local draft" } });
-  canvas.save.mockRejectedValueOnce(new Error("Offline: draft kept"));
-  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Offline: draft kept",
-  );
-  expect(text).toHaveValue("Local draft");
-  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
-    content: "Local draft",
-    base: head.id,
-  });
-  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-  await waitFor(() =>
-    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
-  );
-  expect(canvas.save).toHaveBeenLastCalledWith(
-    channelId,
-    "Local draft",
-    head.id,
-  );
-  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
-});
+it.each([false, true])(
+  "keeps focus for keyboard retry after a failed save (preview=%s)",
+  async (preview) => {
+    const user = userEvent.setup();
+    const { canvas } = fixture();
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() => expect(text).toHaveValue("Saved"));
+    fireEvent.change(text, { target: { value: "Local draft" } });
+    if (preview)
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+    let reject!: (reason: Error) => void;
+    canvas.save.mockReturnValueOnce(
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+    );
+    const save = screen.getByRole("button", { name: "Save Canvas" });
+    save.focus();
+    try {
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(canvas.save).toHaveBeenCalledOnce());
+      expect(save).toHaveAttribute("aria-disabled", "true");
+    } finally {
+      await act(async () => reject(new Error("Offline: draft kept")));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Offline: draft kept",
+    );
+    expect(save).toHaveFocus();
+    expect(text).toHaveValue("Local draft");
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+      content: "Local draft",
+      base: head.id,
+    });
+    canvas.save.mockResolvedValueOnce({
+      ...head,
+      content: "Local draft",
+      id: "b".repeat(64),
+    });
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save Canvas" }),
+      ).toBeDisabled(),
+    );
+    expect(canvas.save).toHaveBeenCalledTimes(2);
+    expect(canvas.save).toHaveBeenLastCalledWith(
+      channelId,
+      "Local draft",
+      head.id,
+    );
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
+    expect(
+      preview ? screen.getByRole("button", { name: "Edit" }) : text,
+    ).toHaveFocus();
+  },
+);
 
 function hold(operation: ReturnType<typeof vi.fn>) {
   let land!: (event: typeof head) => void;

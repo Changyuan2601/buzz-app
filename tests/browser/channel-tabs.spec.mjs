@@ -532,7 +532,9 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   ).toBeDisabled();
   await canvasRegion.getByRole("button", { name: "Save Canvas" }).hover();
   await expect(page.getByRole("tooltip")).toHaveText("No changes to save");
-  await text.fill("Channel-scoped draft");
+  await text.focus();
+  await page.keyboard.insertText("Channel-scoped draft");
+  await text.evaluate((element) => element.setSelectionRange(2, 7));
   await expect(status).toHaveText("Unsaved changes");
   await expect(
     canvasRegion.getByRole("button", { name: "Save Canvas" }),
@@ -551,7 +553,18 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await expect(edit).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(text).toBeVisible();
+  expect(
+    await text.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]),
+  ).toEqual([2, 7]);
+  await text.focus();
+  await text.press("ControlOrMeta+z");
+  await expect(text).toHaveValue("");
+  await expect(status).toBeEmpty();
   await expect.poll(() => text.boundingBox()).toEqual(cleanBox);
+  await text.fill("Channel-scoped draft");
   await thread.click();
   await expect(text).toBeHidden();
   await viewCanvas();

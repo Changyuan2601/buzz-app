@@ -253,8 +253,10 @@ export function CanvasEditor({
         setBase(event.id);
       }
     } catch (reason) {
-      if (generation === operation.current)
+      if (generation === operation.current) {
+        handoff.current = null;
         setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
       if (generation === operation.current) setBusy(false);
     }
