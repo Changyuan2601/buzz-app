@@ -290,7 +290,9 @@ function ChoiceForm({
           {(open || choice === OWN) && (
             <div {...closing(frozen && choice !== OWN)}>
               <Field
-                label={ui.options.length ? "Write your own" : ownLabel}
+                label={
+                  ui.options.length && !frozen ? "Write your own" : ownLabel
+                }
                 labelVisibility="hidden"
                 error={!frozen && ownError ? error : undefined}
               >

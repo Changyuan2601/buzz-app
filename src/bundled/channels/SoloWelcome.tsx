@@ -457,12 +457,14 @@ export function WelcomeControls({
         !row.threadRootId &&
         row.authorId === receipt.agent,
     );
-    if (reply)
-      saveWelcome(scope, {
-        ...receipt,
-        kickoff: "observed",
-        replyId: reply.id,
-      });
+    if (!reply) return;
+    const latest = readWelcome(scope);
+    if (
+      latest?.channelId === receipt.channelId &&
+      latest.agent === receipt.agent &&
+      !latest.replyId
+    )
+      saveWelcome(scope, { ...latest, kickoff: "observed", replyId: reply.id });
   }, [window, receipt, scope]);
   useEffect(() => {
     mounted.current = true;
@@ -553,6 +555,9 @@ export function WelcomeControls({
   )
     return (
       <div className={styles.setupControls}>
+        <p className="text-body-sm text-subtle">
+          Name your agent to start chatting.
+        </p>
         <InlineUiCard
           ui={NAME_CARD}
           agent={receipt.agent ?? ""}
