@@ -28,7 +28,7 @@ Existing timer fields remain required. Set `interval_secs: 60` with `cron_utc`; 
 
 Cron considers only the current UTC minute. It skips missed minutes. One occurrence can run during a matching minute. Work that waits beyond that minute does not start.
 
-A shared interval starts at `armed_at + interval_secs` when no shared progress exists. An overdue interval runs once. Its next interval starts from admission of that run. Saved progress survives app restart and transfer to another machine. Existing timers without `shared` keep their local progress and missed-run behavior.
+A shared interval starts at `armed_at + interval_secs` when no shared progress exists. An overdue interval runs once. Its next interval starts from the fresh clock read before the host signs its admission. Saved progress survives app restart and transfer to another machine. A changed `armed_at` sets a new deadline and preserves usage. An explicit restart needs a new signed definition revision. A rearm with the same arm time also needs a new revision. Existing timers without `shared` keep their local progress and missed-run behavior.
 
 `sharedAttention.runNow(pubkey, slug, requestId)` queues a shared timer in its existing Interest lane. The caller must retain the UUID `requestId` across retries. The call requires this app to hold the local agent claim. It returns `{ status: "queued", requestId }`; this does not prove dispatch. A confirmed manual admission resets interval progress. The same manual request cannot dispatch twice. Expiry and occurrence limits still apply.
 
@@ -36,7 +36,7 @@ A shared interval starts at `armed_at + interval_secs` when no shared progress e
 
 The host uses the relay's existing NIP-AR transaction. It serializes artifact identity, checks create or `prev`, stores the revision, and advances the head in one database transaction. See [the relay transaction](https://github.com/block/buzz/blob/main/crates/buzz-db/src/store/artifact.rs) and [its concurrent update test](https://github.com/block/buzz/blob/main/crates/buzz-db/src/store/artifact_postgres_tests.rs).
 
-The host owns `buzz.agent.attention-progress` artifacts. A timer has one subject per definition and revision. An event watch has one subject per source event and definition revision. UUIDv5 derives these subjects from the definition UUID. Manual requests also have a durable subject that prevents request replay. Each admission has a random nonce, so two callers cannot sign identical admission events.
+The host owns `buzz.agent.attention-progress` artifacts. A timer has one subject per definition and revision. An event watch has one subject per source event and definition revision. UUIDv5 derives these subjects from the definition UUID. Manual requests also have a durable subject that prevents request replay. Each timer makes at most one admission attempt per existing tick. A failed shared read does not stop another timer. Shared and local timers use deadline order. Each admission has a random nonce, so two callers cannot sign identical admission events.
 
 Only a confirmed new acceptance grants dispatch. A conflict, duplicate, failed read, or uncertain acceptance grants nothing. A timer update advances its occurrence count and next due time in that same transaction. A manual request consumes its request subject before it changes timer progress. A conflict in that second step cancels the request. An interrupted step leaves uncertainty. Recovery does not dispatch a consumed request.
 

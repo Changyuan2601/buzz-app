@@ -265,10 +265,14 @@ export function setAttention(
       ? {
           ...timers,
           [slug]:
-            state &&
-            prior?.type === "timer" &&
-            prior.cron_utc === value.cron_utc
-              ? rearmed(value, state, schedule)
+            state && prior?.type === "timer"
+              ? rearmed(
+                  value,
+                  state,
+                  prior.cron_utc !== value.cron_utc && !schedule
+                    ? "rearm"
+                    : schedule,
+                )
               : timerState(value, undefined, now),
         }
       : timers;

@@ -7352,4 +7352,209 @@ describe("shared attention through the claimed runner", () => {
     release();
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
   });
+  it("runs a local timer when a shared progress read fails", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    const { shared: _, ...local } = f.timer;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      Object.assign(f.session, {
+        snapshotRead: async () => {
+          throw new Error("Read denied");
+        },
+      });
+      await f.service.save(bot, {
+        attention: { "watch/local": { ...local, interval_secs: 30 } },
+      });
+      await vi.advanceTimersByTimeAsync(35_000);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+      expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+        slug: "watch/local",
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+  it("uses deadline order for local and shared timers", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    const { shared: _, ...local } = f.timer;
+    await f.service.save(bot, {
+      attention: { "watch/local": { ...local, interval_secs: 30 } },
+    });
+    await new Promise<void>((resolve) => realImmediate(resolve));
+    vi.setSystemTime(1_060_000);
+    await f.service.save(bot, { config: { reply: "current" } });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    expect(
+      f.run.mock.calls.map(([delivery]) =>
+        delivery.trigger.type === "timer" ? delivery.trigger.slug : "event",
+      ),
+    ).toEqual(["watch/local", "watch/tick"]);
+  });
+  it("bounds admission failures to the existing tick", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const publish = vi
+      .spyOn(f.io.writer, "publish")
+      .mockRejectedValue(new Error("Send denied"));
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(f.run).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+    } finally {
+      error.mockRestore();
+      publish.mockRestore();
+    }
+  });
+  it("marks a final manual occurrence as spent", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const f = await sharedFixture(relay, def);
+    await f.service.save(bot, {
+      attention: { "watch/tick": { ...f.timer, max_occurrences: 1 } },
+    });
+    await f.plugin.agents.sharedAttention.runNow(
+      bot,
+      "watch/tick",
+      "10000000-0000-4000-8000-000000000004",
+    );
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({ spent: true });
+  });
+  it.each(["admission", "result"])(
+    "keeps other catch-up items after one %s fails",
+    async (failure) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(1_000_000);
+      const relay = sharedRelay();
+      const def = definition(relay);
+      const f = await sharedFixture(relay, def);
+      await f.service.save(bot, {
+        attention: {
+          "watch/tick": null,
+          "watch/channel": null,
+          "watch/chat": { ...chat["watch/chat"], shared: f.timer.shared },
+        },
+      });
+      await settle();
+      await settle();
+      vi.setSystemTime(1_060_000);
+      const first = posted("first", 1020);
+      const second = posted("second", 1030);
+      f.history.push(first, second);
+      const original = vi.mocked(f.io.writer.publish).getMockImplementation();
+      if (!original) throw new Error("Missing relay publisher");
+      const publish = vi
+        .spyOn(f.io.writer, "publish")
+        .mockImplementation(async (event, signal) => {
+          const progress = JSON.parse(event.content);
+          if (
+            failure === "admission" &&
+            progress.occurrence.id === second.id &&
+            progress.result === "uncertain"
+          )
+            throw new Error("One admission fails");
+          if (
+            failure === "result" &&
+            progress.occurrence.id === first.id &&
+            progress.result === "completed"
+          )
+            throw new Error("One result fails");
+          await original(event, signal);
+        });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        f.recover();
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+        const trigger = f.run.mock.calls[0]?.[0].trigger;
+        expect(trigger).toMatchObject({ type: "catch-up" });
+        if (trigger?.type !== "catch-up")
+          throw new Error("Missing catch-up trigger");
+        expect(trigger.events.map(({ event }) => event.id)).toEqual(
+          failure === "admission" ? [first.id] : [first.id, second.id],
+        );
+        await vi.waitFor(async () =>
+          expect(
+            await f.service.sharedAttention.progress(
+              bot,
+              "watch/chat",
+              failure === "admission" ? first.id : second.id,
+            ),
+          ).toMatchObject({ result: "completed" }),
+        );
+      } finally {
+        error.mockRestore();
+        publish.mockRestore();
+      }
+    },
+  );
+  it("does not start a turn while migration holds an awaited timer selection", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const relay = sharedRelay();
+    const def = definition(relay);
+    const client = relay.client;
+    let releaseRead = () => {};
+    let reading = () => {};
+    const heldRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    let block = true;
+    relay.client = () => {
+      const io = client();
+      return {
+        ...io,
+        read: async (...args: Parameters<typeof io.read>) => {
+          if (block && args[0][0]?.["#d"]?.[0] !== channel) {
+            block = false;
+            reading();
+            await heldRead;
+          }
+          return io.read(...args);
+        },
+      };
+    };
+    const f = await sharedFixture(relay, def);
+    const replacement = vi.fn();
+    f.plugin.agents.register({
+      id: "replacement",
+      title: "Replacement",
+      defaults: () => ({ config: {} }),
+      run: replacement,
+    });
+    await started;
+    await vi.advanceTimersByTimeAsync(60_000);
+    let releaseType = () => {};
+    const heldType = new Promise<void>((resolve) => {
+      releaseType = resolve;
+    });
+    const persist = f.native.setType.getMockImplementation();
+    f.native.setType.mockImplementationOnce(async (...args) => {
+      await heldType;
+      await persist?.(...args);
+    });
+    const changing = f.service.retype(bot, "example/replacement");
+    await vi.waitFor(() => expect(f.native.setType).toHaveBeenCalledOnce());
+    releaseRead();
+    await new Promise<void>((resolve) => realImmediate(resolve));
+    expect(f.run).not.toHaveBeenCalled();
+    expect(replacement).not.toHaveBeenCalled();
+    releaseType();
+    await changing;
+  });
 });

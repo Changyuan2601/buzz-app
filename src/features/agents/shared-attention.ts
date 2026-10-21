@@ -22,6 +22,7 @@ export type SharedAttentionProgress = Readonly<{
   /** Consumption is durable before dispatch. Recovery never repeats it. */
   result: "uncertain" | "completed" | "cancelled" | "failed";
   admission_id: string;
+  armed_at?: number;
 }>;
 export type SharedAttentionCapability = Readonly<{
   supported: boolean;
@@ -53,6 +54,7 @@ export type SharedCandidate = Readonly<{
   id: string;
   head?: RelayEvent | undefined;
   progress: SharedAttentionProgress;
+  interval_secs?: number;
 }>;
 const TYPE = "buzz.agent.attention-progress";
 const tag = (event: RelayEvent, key: string) =>
@@ -116,6 +118,7 @@ function decode(
     value.definition_revision !== ref.definition_revision ||
     !integer(value.used) ||
     !integer(value.next_due) ||
+    (value.armed_at !== undefined && !integer(value.armed_at)) ||
     !value.occurrence ||
     typeof value.occurrence.id !== "string" ||
     value.occurrence.definition_revision !== ref.definition_revision ||
@@ -168,6 +171,7 @@ export async function sharedTimerCandidate(
     (timer.expires_at !== null && now >= timer.expires_at)
   )
     return;
+  if (!requestId && timer.cron_utc && !utcCron(timer.cron_utc)(now)) return;
   if (!(await sharedDefinitionCurrent(io, ref, signal))) return;
   const id = await progressId(ref);
   const saved = await head(io, ref.channel_id, id, signal);
@@ -182,7 +186,9 @@ export async function sharedTimerCandidate(
     ? now
     : timer.cron_utc
       ? minute
-      : (prior?.next_due ?? timer.armed_at + timer.interval_secs);
+      : prior?.armed_at === timer.armed_at
+        ? prior.next_due
+        : timer.armed_at + timer.interval_secs;
   if (
     !requestId &&
     (now < scheduled ||
@@ -199,7 +205,9 @@ export async function sharedTimerCandidate(
     reference: ref,
     id,
     ...(saved ? { head: saved } : {}),
+    ...(!timer.cron_utc ? { interval_secs: timer.interval_secs } : {}),
     progress: {
+      armed_at: timer.armed_at,
       version: 1,
       definition_id: ref.definition_id,
       definition_revision: ref.definition_revision,
@@ -241,8 +249,16 @@ async function write(
   io: SharedAttentionIO,
   candidate: SharedCandidate,
   signal: AbortSignal,
+  admission = false,
 ) {
-  const { reference: ref, id, head: prior, progress } = candidate;
+  const { reference: ref, id, head: prior } = candidate;
+  const progress =
+    admission && candidate.interval_secs !== undefined
+      ? {
+          ...candidate.progress,
+          next_due: Math.floor(Date.now() / 1000) + candidate.interval_secs,
+        }
+      : candidate.progress;
   const signed = await io.writer.sign(
     {
       kind: 45010,
@@ -291,9 +307,9 @@ export async function admitShared(
       ),
       head: undefined,
     };
-    const consumed = await write(io, marker, signal);
+    const consumed = await write(io, marker, signal, true);
     if (!consumed) return;
-    const accepted = await write(io, candidate, signal);
+    const accepted = await write(io, candidate, signal, true);
     if (!accepted)
       await write(
         io,
@@ -306,7 +322,7 @@ export async function admitShared(
       );
     return accepted;
   }
-  return write(io, candidate, signal);
+  return write(io, candidate, signal, true);
 }
 export async function finishShared(
   io: SharedAttentionIO,
@@ -315,37 +331,40 @@ export async function finishShared(
   result: "completed" | "cancelled" | "failed",
   signal: AbortSignal,
 ) {
-  await write(
-    io,
-    {
-      ...candidate,
-      head: accepted,
-      progress: { ...candidate.progress, result },
-    },
-    signal,
-  );
-  if (candidate.progress.occurrence.id.startsWith("manual:")) {
-    const id = await uuidv5(
-      candidate.reference.definition_id,
-      `attention:${candidate.progress.occurrence.id}`,
-    );
-    const marker = await head(io, candidate.reference.channel_id, id, signal);
-    if (
-      marker &&
-      decode(marker, candidate.reference).admission_id ===
-        candidate.progress.admission_id
-    )
-      await write(
+  const progress = decode(accepted, candidate.reference);
+  const writes: (() => Promise<unknown>)[] = [
+    () =>
+      write(
         io,
-        {
-          ...candidate,
-          id,
-          head: marker,
-          progress: { ...candidate.progress, result },
-        },
+        { ...candidate, head: accepted, progress: { ...progress, result } },
         signal,
+      ),
+  ];
+  if (candidate.progress.occurrence.id.startsWith("manual:"))
+    writes.push(async () => {
+      const id = await uuidv5(
+        candidate.reference.definition_id,
+        `attention:${candidate.progress.occurrence.id}`,
       );
-  }
+      const marker = await head(io, candidate.reference.channel_id, id, signal);
+      if (
+        marker &&
+        decode(marker, candidate.reference).admission_id ===
+          candidate.progress.admission_id
+      )
+        await write(
+          io,
+          { ...candidate, id, head: marker, progress: { ...progress, result } },
+          signal,
+        );
+    });
+  const results = await Promise.allSettled(writes.map((write) => write()));
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      "Shared result is uncertain",
+    );
 }
 
 export function sharedAttentionIO(

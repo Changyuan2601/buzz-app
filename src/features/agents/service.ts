@@ -961,7 +961,16 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
     const { attentionEnabled: _, ...rest } = next;
     next = change.attentionEnabled ? { ...rest, attentionEnabled: true } : rest;
   }
-  for (const [slug, value] of Object.entries(change.attention ?? {}))
+  for (const [slug, value] of Object.entries(change.attention ?? {})) {
+    const prior = record.attention[slug]?.value;
+    if (
+      value?.type === "timer" &&
+      value.shared &&
+      change.restart?.includes(slug) &&
+      prior?.type === "timer" &&
+      prior.shared?.definition_revision === value.shared.definition_revision
+    )
+      throw new Error("A shared timer restart needs a new definition revision");
     next = setAttention(
       next,
       slug,
@@ -969,6 +978,7 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
       undefined,
       change.restart?.includes(slug) ? "restart" : undefined,
     );
+  }
   // As the spec's writer: an Interest stays while anything still uses it.
   for (const [slug, value] of Object.entries(change.attention ?? {})) {
     const id = parseSlug(slug)?.id;

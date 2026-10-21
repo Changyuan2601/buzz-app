@@ -312,3 +312,29 @@ it("keeps a record saved since, when a late move from the old shared value lands
   expect(readRecords(open())[pubkey]?.config).toEqual({ word: "newer" });
   expect(readRecords(second)[pubkey]?.config).toEqual({ word: "newer" });
 });
+
+it("preserves used occurrences when a cron expression changes", () => {
+  const timer = {
+    type: "timer",
+    interest_id: "x",
+    prompt: "Run",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1000,
+    max_occurrences: 1,
+    expires_at: null,
+    cron_utc: "* * * * *",
+  } as const;
+  const armed = setAttention(record, "watch/t", timer, 1000);
+  const used = {
+    ...armed,
+    timers: { "watch/t": { armedAt: 1000, nextDue: 1080, used: 1 } },
+  };
+  const edited = setAttention(
+    used,
+    "watch/t",
+    { ...timer, cron_utc: "*/2 * * * *" },
+    1060,
+  );
+  expect(edited.timers?.["watch/t"]?.used).toBe(1);
+});

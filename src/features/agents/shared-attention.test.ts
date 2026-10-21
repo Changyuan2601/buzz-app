@@ -1,4 +1,4 @@
-import { assert, describe, expect, it } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import type { TimerWatch } from "./attention";
 import {
@@ -7,13 +7,19 @@ import {
   readSharedProgress,
   sharedDefinitionCurrent,
   sharedEventCandidate,
-  sharedTimerCandidate,
+  sharedTimerCandidate as prepareTimer,
 } from "./shared-attention";
 import { sharedRelay } from "./shared-attention-testing";
 
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
 const definition = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
 const signal = () => AbortSignal.timeout(10_000);
+afterEach(() => vi.useRealTimers());
+async function sharedTimerCandidate(...args: Parameters<typeof prepareTimer>) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(args[2] * 1000);
+  return prepareTimer(...args);
+}
 function present<T>(value: T | undefined): T {
   assert.isDefined(value);
   return value;
@@ -251,5 +257,53 @@ describe("shared admission", () => {
         "manual:10000000-0000-4000-8000-000000000002",
       ),
     ).toMatchObject({ result: "cancelled" });
+  });
+  it("sets the next interval after a delayed definition read", async () => {
+    const { relay, timer } = setup();
+    const io = relay.client();
+    const candidate = present(
+      await sharedTimerCandidate(io, timer, 1060, signal()),
+    );
+    vi.setSystemTime(1090_000);
+    const accepted = present(await admitShared(io, candidate, signal()));
+    expect(await readSharedProgress(io, timer.shared, signal())).toMatchObject({
+      next_due: 1150,
+    });
+    await finishShared(io, candidate, accepted, "completed", signal());
+    expect(await readSharedProgress(io, timer.shared, signal())).toMatchObject({
+      next_due: 1150,
+    });
+  });
+  it("preserves usage and applies a changed arm time to shared progress", async () => {
+    const { relay, timer } = setup();
+    const io = relay.client();
+    const first = present(
+      await sharedTimerCandidate(io, timer, 1060, signal()),
+    );
+    await admitShared(io, first, signal());
+    const rearmed = { ...timer, armed_at: 1100 };
+    expect(
+      await sharedTimerCandidate(io, rearmed, 1120, signal()),
+    ).toBeUndefined();
+    const second = present(
+      await sharedTimerCandidate(io, rearmed, 1160, signal()),
+    );
+    expect(second.progress).toMatchObject({
+      used: 2,
+      occurrence: { scheduled_at: 1160 },
+    });
+  });
+  it("does not read shared cron state outside a matching minute", async () => {
+    const { relay, timer } = setup();
+    const io = relay.client();
+    expect(
+      await sharedTimerCandidate(
+        io,
+        { ...timer, cron_utc: "0 * * * *" },
+        1060,
+        signal(),
+      ),
+    ).toBeUndefined();
+    expect(io.read).not.toHaveBeenCalled();
   });
 });

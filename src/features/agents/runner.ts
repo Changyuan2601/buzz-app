@@ -229,6 +229,7 @@ type Runner = {
   readonly queues: Record<Lane, Job[]>;
   running: boolean;
   again: boolean;
+  readonly checkedTimers: Set<AttentionObject>;
   /** Each lane's runs in the current minute. */
   readonly rates: Record<Lane, { windowStart: number; admitted: number }>;
   /** Watches catching up now, whose live events wait in `waiting` until they
@@ -570,7 +571,10 @@ export class AgentRunners {
   }
   /** Wakes each runner, which starts any timer that is due. */
   tick() {
-    for (const pubkey of this.runners.keys()) this.wake(pubkey);
+    for (const runner of this.runners.values()) {
+      runner.checkedTimers.clear();
+      this.wake(runner.pubkey);
+    }
   }
   /** Wakes the agent's runner, as when the changes its timers wait for are
    * saved: one due meanwhile starts now, not at the next tick. */
@@ -705,6 +709,7 @@ export class AgentRunners {
       queues: { mention: [], watch: [] },
       running: false,
       again: false,
+      checkedTimers: new Set(),
       rates: {
         mention: { windowStart: 0, admitted: 0 },
         watch: { windowStart: 0, admitted: 0 },
@@ -1823,6 +1828,7 @@ export class AgentRunners {
           timer: TimerWatch;
           object: AttentionObject;
           state: TimerState;
+          shared?: SharedCandidate;
         }
       | undefined;
     for (const object of Object.values(agent.attention)) {
@@ -1830,34 +1836,46 @@ export class AgentRunners {
       if (timer.type !== "timer" || !timer.enabled || now < timer.armed_at)
         continue;
       if (timer.shared) {
-        if (!idle(timer.interest_id)) continue;
+        if (!idle(timer.interest_id) || runner.checkedTimers.has(object))
+          continue;
         const io = sharedAttentionIO(this.host.community(agent)?.session);
         if (!io) continue;
-        const shared = await sharedTimerCandidate(
-          io,
-          timer,
-          now,
-          AbortSignal.any([
-            runner.controller.signal,
-            AbortSignal.timeout(10_000),
-          ]),
-        );
-        if (shared)
-          return {
-            trigger: {
-              type: "timer",
+        try {
+          const shared = await sharedTimerCandidate(
+            io,
+            timer,
+            now,
+            AbortSignal.any([
+              runner.controller.signal,
+              AbortSignal.timeout(10_000),
+            ]),
+          );
+          if (
+            shared &&
+            (!next ||
+              shared.progress.occurrence.scheduled_at < next.state.nextDue)
+          )
+            next = {
               slug: object.slug,
               timer,
-              occurrence: shared.progress.occurrence,
-              spent:
-                timer.max_occurrences !== null &&
-                shared.progress.used >= timer.max_occurrences,
-            },
-            ...(timer.cron_utc
-              ? { cronMinute: Math.floor(now / 60) * 60 }
-              : {}),
-            matched: { object, epoch: runner.epoch },
-          };
+              object,
+              shared,
+              state: {
+                armedAt: timer.armed_at,
+                nextDue: shared.progress.occurrence.scheduled_at,
+                used: shared.progress.used - 1,
+              },
+            };
+        } catch (error) {
+          runner.checkedTimers.add(object);
+          if (!runner.controller.signal.aborted)
+            console.error(
+              "Shared timer read fails",
+              agent.pubkey,
+              object.slug,
+              error,
+            );
+        }
         continue;
       }
       const saved = timers[object.slug];
@@ -1871,21 +1889,40 @@ export class AgentRunners {
       if (!next || state.nextDue < next.state.nextDue)
         next = { slug: object.slug, timer, object, state };
     }
-    const ran = next && {
-      ...next.state,
-      used: next.state.used + 1,
-      nextDue: next.timer.cron_utc
-        ? Math.floor(now / 60) * 60 + 60
-        : now + next.timer.interval_secs,
-    };
+    if (runner.transitioning) return;
+    const ran = next &&
+      !next.shared && {
+        ...next.state,
+        used: next.state.used + 1,
+        nextDue: next.timer.cron_utc
+          ? Math.floor(now / 60) * 60 + 60
+          : now + next.timer.interval_secs,
+      };
     if (next && ran)
       changed = {
         ...changed,
         [next.slug]: { seen: timers[next.slug], next: ran },
       };
     if (Object.keys(changed).length) this.host.progress(agent.pubkey, changed);
-    if (!next || !ran) return undefined;
+    if (!next) return;
     const { slug, timer, object } = next;
+    if (next.shared) {
+      runner.checkedTimers.add(object);
+      const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
+      return {
+        trigger: {
+          type: "timer",
+          slug,
+          timer,
+          occurrence: next.shared.progress.occurrence,
+          ...(interest?.type === "interest" ? { interest } : {}),
+          spent: false,
+        },
+        ...(timer.cron_utc ? { cronMinute: Math.floor(now / 60) * 60 } : {}),
+        matched: { object, epoch: runner.epoch },
+      };
+    }
+    if (!ran) return;
     const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
     return {
       trigger: {
@@ -2020,6 +2057,11 @@ export class AgentRunners {
         for (const queued of runner.queues.mention)
           this.showWork(runner, queued);
         const next = await this.next(runner, agent);
+        if (runner.transitioning) {
+          if (next?.job && next.job.trigger.type !== "timer")
+            runner.queues[laneOf(next.job.trigger)].unshift(next.job);
+          break;
+        }
         const current = this.host.ready(runner.pubkey);
         if (!current || runner.type !== type) continue;
         if (!next) {
@@ -2133,8 +2175,30 @@ export class AgentRunners {
             !(await this.claim(runner, true))
           )
             break;
-          const event = await admitShared(io, candidate, signal, job.requestId);
-          if (event) admitted.push({ candidate, event });
+          try {
+            const event = await admitShared(
+              io,
+              candidate,
+              signal,
+              job.requestId,
+            );
+            if (event)
+              admitted.push({
+                candidate: {
+                  ...candidate,
+                  progress: JSON.parse(event.content),
+                },
+                event,
+              });
+          } catch (error) {
+            console.error(
+              "Shared occurrence admission is uncertain",
+              agent.pubkey,
+              candidate.progress.occurrence.id,
+              error,
+            );
+            if (signal.aborted) break;
+          }
         }
         if (!admitted.length) return;
         if (
@@ -2142,8 +2206,18 @@ export class AgentRunners {
           !(await sharedDefinitionCurrent(io, watch.shared, signal)) ||
           !this.stillCurrent(runner, job)
         ) {
-          for (const { candidate, event } of admitted)
-            await finishShared(io, candidate, event, "cancelled", signal);
+          const results = await Promise.allSettled(
+            admitted.map(({ candidate, event }) =>
+              finishShared(io, candidate, event, "cancelled", signal),
+            ),
+          );
+          for (const result of results)
+            if (result.status === "rejected")
+              console.error(
+                "Shared cancellation is uncertain",
+                agent.pubkey,
+                result.reason,
+              );
           return;
         }
         const occurrences = admitted.map(
@@ -2151,7 +2225,20 @@ export class AgentRunners {
         );
         const [first] = occurrences;
         if (!first) throw new Error("Shared admission has no occurrence");
-        if (sharedTrigger.type === "timer" || sharedTrigger.type === "watch")
+        if (sharedTrigger.type === "timer") {
+          const progress = admitted[0]?.candidate.progress;
+          if (!progress)
+            throw new Error("Shared timer admission has no progress");
+          job.trigger = {
+            ...sharedTrigger,
+            occurrence: first,
+            spent:
+              (sharedTrigger.timer.max_occurrences !== null &&
+                progress.used >= sharedTrigger.timer.max_occurrences) ||
+              (sharedTrigger.timer.expires_at !== null &&
+                progress.next_due >= sharedTrigger.timer.expires_at),
+          };
+        } else if (sharedTrigger.type === "watch")
           job.trigger = { ...sharedTrigger, occurrence: first };
         else if (sharedTrigger.type === "catch-up")
           job.trigger = {
@@ -2164,14 +2251,24 @@ export class AgentRunners {
         void working.settled
           .then(async () => {
             if (lifetime.aborted) return;
-            for (const { candidate, event } of admitted)
-              await finishShared(
-                io,
-                candidate,
-                event,
-                working.outcome().ok ? "completed" : "failed",
-                AbortSignal.timeout(10_000),
-              );
+            const results = await Promise.allSettled(
+              admitted.map(({ candidate, event }) =>
+                finishShared(
+                  io,
+                  candidate,
+                  event,
+                  working.outcome().ok ? "completed" : "failed",
+                  AbortSignal.timeout(10_000),
+                ),
+              ),
+            );
+            for (const result of results)
+              if (result.status === "rejected")
+                console.error(
+                  "Shared attention result is uncertain",
+                  agent.pubkey,
+                  result.reason,
+                );
           })
           .catch((error) =>
             console.error(
@@ -2513,6 +2610,18 @@ export class AgentRunners {
         value: AttentionValue | null,
         options: WriteOptions,
       ) => {
+        if (options.rearm && value?.type === "timer" && value.shared) {
+          const prior = record().attention[slug]?.value;
+          if (
+            prior?.type === "timer" &&
+            prior.armed_at === value.armed_at &&
+            prior.shared?.definition_revision ===
+              value.shared.definition_revision
+          )
+            throw new Error(
+              "A shared timer rearm needs a new arm time or definition revision",
+            );
+        }
         // The token is checked against the newest saved record, in turn
         // with the other changes to it, so no change lands between.
         if (
