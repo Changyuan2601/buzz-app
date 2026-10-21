@@ -1,3 +1,4 @@
+import { registerArtifactDelivery } from "./artifact-delivery";
 import type { LocalAgentSource } from "../agents/local-activity";
 import { registerManagedDelivery } from "./managed-delivery";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
@@ -212,6 +213,7 @@ export function createRelaySession(
               ? { timeoutMs: options.deliveryTimeoutMs }
               : {}),
             profiling,
+            deliveryScope: transportPartition(transport),
             clock,
             notifyListener: notify,
             onAccepted: (event) => {
@@ -1862,7 +1864,13 @@ export function createRelaySession(
     delivery: writes
       ? {
           ...writes.delivery,
-          async submit(input: Parameters<Outbox["send"]>[0]) {
+          async submit(
+            input: Parameters<Outbox["send"]>[0],
+            options?: {
+              operationKey?: string;
+              collection?: { owner: string; name: string };
+            },
+          ) {
             if (input.kind !== 45010)
               throw new Error("Use message commands for managed messages");
             const homes = input.tags.filter(([name]) => name === "h");
@@ -1877,7 +1885,7 @@ export function createRelaySession(
               throw new Error(
                 "Reconnect and confirm channel access before saving an artifact",
               );
-            return writes.delivery.submit(input);
+            return writes.delivery.submit(input, undefined, options);
           },
         }
       : undefined,
@@ -2997,6 +3005,7 @@ export function createRelaySession(
   updateInterests();
   refreshChannelActivity();
 
+  if (writes) registerArtifactDelivery(session, writes.artifactDelivery);
   return {
     session,
     async restore() {

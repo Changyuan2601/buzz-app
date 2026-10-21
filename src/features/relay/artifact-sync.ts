@@ -5,10 +5,9 @@ import type {
 } from "../artifact-storage/service";
 import { hasEventProof } from "./events";
 import type { RelaySession } from "./session";
-import {
-  reconcileArtifactSnapshot,
-  receivedArtifact,
-} from "./artifact-reconcile";
+import { reconcileArtifactSnapshot } from "./artifact-reconcile";
+import { ArtifactSnapshotError } from "./artifact-snapshot";
+import { captureArtifactDelivery } from "./artifact-delivery";
 import { transportPartition } from "./partition";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 
@@ -102,9 +101,9 @@ export function provideArtifactSync(
     let settled = Promise.resolve();
     let requested = true;
     let retry = 0;
+    let notBefore = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let batch: AbortController | undefined;
-    let liveWrites = Promise.resolve();
     const active = () => {
       const now = ctx.relay.snapshot();
       return (
@@ -126,6 +125,10 @@ export function provideArtifactSync(
     const request = () => {
       requested = true;
       if (!running) {
+        if (Date.now() < notBefore) {
+          schedule(notBefore - Date.now());
+          return;
+        }
         clearTimeout(timer);
         timer = undefined;
         void pump();
@@ -150,15 +153,25 @@ export function provideArtifactSync(
         for (const entry of [...group.entries].slice(0, 1)) {
           if (entry.signal.aborted) continue;
           const operation = AbortSignal.any([signal, entry.signal]);
+          const completeDelivery = await captureArtifactDelivery(
+            current,
+            entry.definition.type,
+            JSON.stringify([entry.owner, entry.definition.name]),
+          );
+          operation.throwIfAborted();
           await reconcileArtifactSnapshot(
             reader,
             entry.collection,
             entry.definition.type,
             operation,
-            () => liveWrites,
+            {
+              reportFailure: retry >= 3,
+              onComplete: () => completeDelivery(operation),
+            },
           );
         }
         retry = 0;
+        notBefore = 0;
       } catch (error) {
         if (
           error instanceof Error &&
@@ -169,9 +182,18 @@ export function provideArtifactSync(
         }
         if (!signal.aborted) {
           retry++;
-          if (retry <= 3) {
+          const permanent =
+            error instanceof ArtifactSnapshotError &&
+            [
+              "snapshot_limit",
+              "snapshot_unsupported_scope",
+              "snapshot_invalid",
+            ].includes(error.code);
+          if (retry <= 3 && !permanent) {
             requested = true;
             schedule(RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS);
+          } else {
+            notBefore = Date.now() + REPAIR_MS;
           }
         }
       } finally {
@@ -236,53 +258,18 @@ export function provideArtifactSync(
           const receive = (
             events: readonly import("./events").RelayEvent[],
           ) => {
-            for (const entry of [...group.entries].slice(0, 1)) {
-              const records = events.filter(
+            if (
+              events.some(
                 (event) =>
                   hasEventProof(event) &&
-                  event.kind === 45010 &&
-                  event.tags.some(
-                    ([name, value]) =>
-                      name === "type" && value === entry.definition.type,
-                  ),
-              );
-              if (!records.length) continue;
-              const source = JSON.stringify({
-                artifact: "current",
-                kinds: [45010],
-                "#type": [entry.definition.type],
-              });
-              liveWrites = liveWrites
-                .then(async () => {
-                  if (entry.signal.aborted || group.lifetime.signal.aborted)
-                    return;
-                  const received = records.map((event) =>
-                    receivedArtifact(event, entry.definition.type),
-                  );
-                  await entry.collection.applyBatch({
-                    source,
-                    records: received,
-                    availability: received.map((record) => ({
-                      id: record.id,
-                      expectedRevision: record.revision.id,
-                      value: {
-                        state: record.revision.event?.tags.some(
+                  ([45011, 9005, 44100, 44101].includes(event.kind) ||
+                    (event.kind === 45010 &&
+                      [...group.entries].some((entry) =>
+                        event.tags.some(
                           ([name, value]) =>
-                            name === "op" && value === "delete",
-                        )
-                          ? ("deleted" as const)
-                          : ("available" as const),
-                      },
-                    })),
-                  });
-                })
-                .catch(() => {
-                  request();
-                });
-            }
-            if (
-              events.some((event) =>
-                [45011, 9005, 44100, 44101].includes(event.kind),
+                            name === "type" && value === entry.definition.type,
+                        ),
+                      ))),
               )
             )
               request();
@@ -323,7 +310,6 @@ export function provideArtifactSync(
       stopRoster();
       group.request = () => {};
       await settled;
-      await liveWrites;
     }
   }
   ctx.effect(() => () => {

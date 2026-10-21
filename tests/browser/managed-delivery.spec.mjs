@@ -170,3 +170,49 @@ test("syncs a follower-only collection and transfers a shared collection on wind
       .preference,
   ).toEqual({ pinned: false });
 });
+
+test("serializes caller keys across windows and saves capture confirmation", async ({
+  page,
+  context,
+  deliveryUrl,
+}) => {
+  const scope = "artifact-operation-key";
+  await open(page, deliveryUrl, scope);
+  const second = await context.newPage();
+  await open(second, deliveryUrl, scope);
+  const [first, duplicate] = await Promise.all([
+    page.evaluate(() => window.deliveryTest.submitArtifact()),
+    second.evaluate(() => window.deliveryTest.submitArtifact()),
+  ]);
+  expect(duplicate).toEqual(first);
+  await expect
+    .poll(() => page.evaluate(() => window.deliveryTest.artifact()))
+    .toMatchObject([{ confirmed: false, state: { relayAccepted: true } }]);
+  const captured = await page.evaluate(() =>
+    window.deliveryTest.captureArtifact(),
+  );
+  expect(captured).toEqual([first.eventId]);
+  await second.evaluate(async (scope) => {
+    window.staleStorage = window.deliveryTest.storage(scope);
+    window.staleRecords = await window.staleStorage.load();
+  }, scope);
+  await page.evaluate(
+    (ids) => window.deliveryTest.completeArtifact(ids),
+    captured,
+  );
+  await second.evaluate(() => window.staleStorage.save(window.staleRecords));
+  expect(
+    await second.evaluate(() => window.deliveryTest.artifact()),
+  ).toMatchObject([{ confirmed: true }]);
+  await second.reload();
+  await second.waitForFunction(() => !!window.deliveryTest);
+  await second.evaluate((scope) => window.deliveryTest.open(scope), scope);
+  expect(
+    await second.evaluate(() => window.deliveryTest.artifact()),
+  ).toMatchObject([
+    { confirmed: true, template: { content: '{"title":"Pending"}' } },
+  ]);
+  expect(await page.evaluate(() => window.deliveryTest.publications)).toEqual([
+    first.eventId,
+  ]);
+});

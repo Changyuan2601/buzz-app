@@ -33,10 +33,10 @@ function setup() {
   const snapshot = {
     source: "source",
     generation: "generation",
-    captureSequence: 4,
   };
   const collection = {
     checkpoint: vi.fn(async () => "old"),
+    setRefreshError: vi.fn(async () => {}),
     beginSnapshot: vi.fn(async (source: string) => ({ ...snapshot, source })),
     get: vi.fn(
       async (_id: string) =>
@@ -66,13 +66,12 @@ function setup() {
     complete: vi.fn(async () => {}),
   };
   const controller = new AbortController();
-  const run = (beforeComplete?: () => Promise<void>) =>
+  const run = () =>
     reconcileArtifactSnapshot(
       reader,
       collection as unknown as HostArtifactCollection,
       "test.task",
       controller.signal,
-      beforeComplete,
     );
   return { events, entries, collection, reader, controller, run };
 }
@@ -92,7 +91,7 @@ it("commits each page before validated completion and advances the captured chec
     h.collection.completeSnapshot.mock.invocationCallOrder[0] as number,
   );
   expect(h.collection.completeSnapshot).toHaveBeenCalledWith(
-    expect.objectContaining({ captureSequence: 4 }),
+    expect.objectContaining({ generation: "generation" }),
     { expected: "old", next: "token" },
     h.controller.signal,
   );
@@ -105,12 +104,9 @@ it("reuses a verified cached body and marks its captured revision seen", async (
       ? {
           record: {
             id,
-            conflicts: [],
-            unresolved: false,
             availability: { state: "available" },
             current: {
               id: first.id,
-              parents: [],
               content: first.content,
               event: first,
             },
@@ -124,6 +120,7 @@ it("reuses a verified cached body and marks its captured revision seen", async (
     expect.objectContaining({
       seen: [{ id: h.entries[0]?.artifactId, revisionId: first?.id }],
     }),
+    h.controller.signal,
   );
 });
 it("keeps received pages after an interrupted read without reconciling absence", async () => {
@@ -144,27 +141,13 @@ it.each(["snapshot_reset", "snapshot_limit"] as const)(
     expect(h.collection.completeSnapshot).not.toHaveBeenCalled();
   },
 );
-it("waits for queued live commits before local completion", async () => {
-  const h = setup();
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const before = vi.fn(() => gate);
-  const work = h.run(before);
-  await vi.waitFor(() => expect(before).toHaveBeenCalledOnce());
-  expect(h.collection.completeSnapshot).not.toHaveBeenCalled();
-  release();
-  await work;
-  expect(h.collection.completeSnapshot).toHaveBeenCalledOnce();
-});
+
 it("rejects local completion when the live interval is lost after server completion", async () => {
   const h = setup();
-  await expect(
-    h.run(async () => {
-      h.controller.abort();
-    }),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  h.reader.complete.mockImplementation(async () => {
+    h.controller.abort();
+  });
+  await expect(h.run()).rejects.toMatchObject({ name: "AbortError" });
   expect(h.collection.completeSnapshot).not.toHaveBeenCalled();
 });
 it("rejects repeated identities across pages", async () => {
@@ -193,4 +176,19 @@ it("reduces a body batch on a byte limit and rejects an unsatisfiable single bod
   h.collection.completeSnapshot.mockClear();
   await expect(h.run()).rejects.toMatchObject({ code: "snapshot_limit" });
   expect(h.collection.completeSnapshot).not.toHaveBeenCalled();
+});
+
+it("saves an admission error without changing records or establishing absence", async () => {
+  const h = setup();
+  h.reader.start.mockRejectedValue(
+    new ArtifactSnapshotError("snapshot_limit", "Too many memberships"),
+  );
+  await expect(h.run()).rejects.toMatchObject({ code: "snapshot_limit" });
+  expect(h.collection.applyBatch).not.toHaveBeenCalled();
+  expect(h.collection.completeSnapshot).not.toHaveBeenCalled();
+  expect(h.collection.setRefreshError).toHaveBeenCalledWith(
+    expect.objectContaining({ generation: "generation" }),
+    "The relay limit prevents a refresh of saved data",
+    h.controller.signal,
+  );
 });

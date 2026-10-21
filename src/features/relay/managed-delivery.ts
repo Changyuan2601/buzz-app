@@ -1,6 +1,10 @@
 export type ManagedRecipient = Readonly<{ channelId: string; agentId: string }>;
 export type ManagedDelivery = Readonly<{
   version: 1;
+  operationKey?: string;
+  collection?: string;
+  artifactConfirmed?: boolean;
+  submittedAt?: number;
   recipient?: ManagedRecipient;
   round: number;
   attempts: number;
@@ -8,7 +12,7 @@ export type ManagedDelivery = Readonly<{
   agentReceived: boolean;
   nextAttemptAt: number;
   receiptDeadline: number;
-  error?: "send" | "receipt" | "receipt-save" | undefined;
+  error?: "send" | "receipt" | "receipt-save" | "artifact-save" | undefined;
 }>;
 export type DeliveryState = Readonly<{
   operationId: string;
@@ -114,10 +118,22 @@ export function managedDelivery(value: unknown): ManagedDelivery {
     ![raw.round, raw.attempts, raw.nextAttemptAt, raw.receiptDeadline].every(
       (value) => Number.isSafeInteger(value) && value >= 0,
     ) ||
+    (raw.operationKey !== undefined &&
+      (typeof raw.operationKey !== "string" ||
+        !raw.operationKey.length ||
+        raw.operationKey.length > 200)) ||
+    (raw.collection !== undefined &&
+      (typeof raw.collection !== "string" || raw.collection.length > 500)) ||
+    (raw.artifactConfirmed !== undefined &&
+      typeof raw.artifactConfirmed !== "boolean") ||
+    (raw.submittedAt !== undefined &&
+      (!Number.isSafeInteger(raw.submittedAt) || raw.submittedAt < 0)) ||
     typeof raw.relayAccepted !== "boolean" ||
     typeof raw.agentReceived !== "boolean" ||
     (raw.error !== undefined &&
-      !["send", "receipt", "receipt-save"].includes(raw.error)) ||
+      !["send", "receipt", "receipt-save", "artifact-save"].includes(
+        raw.error,
+      )) ||
     (raw.recipient &&
       (!/^[0-9a-f]{64}$/.test(raw.recipient.agentId) ||
         !/^[a-zA-Z0-9_-]{1,128}$/.test(raw.recipient.channelId)))
@@ -137,10 +153,16 @@ export function mergeManagedDelivery(
 ): ManagedDelivery {
   if (JSON.stringify(old.recipient) !== JSON.stringify(next.recipient))
     throw new Error("Managed recipient changed");
+  if (
+    old.collection !== next.collection ||
+    old.operationKey !== next.operationKey ||
+    old.submittedAt !== next.submittedAt
+  )
+    throw new Error("Managed operation identity changed");
   const current = old.round > next.round ? old : next;
   const sameRound = old.round === next.round;
   const error = sameRound
-    ? (["receipt-save", "receipt", "send"] as const).find(
+    ? (["artifact-save", "receipt-save", "receipt", "send"] as const).find(
         (error) => old.error === error || next.error === error,
       )
     : current.error;
@@ -150,6 +172,13 @@ export function mergeManagedDelivery(
     ...current,
     relayAccepted,
     agentReceived,
+    ...(old.artifactConfirmed !== undefined ||
+    next.artifactConfirmed !== undefined
+      ? {
+          artifactConfirmed:
+            old.artifactConfirmed === true || next.artifactConfirmed === true,
+        }
+      : {}),
     attempts: sameRound
       ? Math.max(old.attempts, next.attempts)
       : current.attempts,
@@ -160,7 +189,12 @@ export function mergeManagedDelivery(
       ? Math.max(old.receiptDeadline, next.receiptDeadline)
       : current.receiptDeadline,
     error,
-    ...(agentReceived || (!current.recipient && relayAccepted)
+    ...(agentReceived ||
+    (!current.recipient &&
+      relayAccepted &&
+      (error !== "artifact-save" ||
+        old.artifactConfirmed ||
+        next.artifactConfirmed))
       ? { error: undefined }
       : relayAccepted && error === "send"
         ? { error: undefined }

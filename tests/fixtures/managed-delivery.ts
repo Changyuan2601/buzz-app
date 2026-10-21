@@ -28,6 +28,7 @@ const open = async (scope: string) => {
       },
     },
     browserOutboxStorage(scope),
+    { deliveryScope: scope },
   );
   await owner.ready;
   let acquired!: () => void;
@@ -146,6 +147,33 @@ Object.assign(window, {
         delivery: item.delivery,
         managed: item.managed,
       })),
+    submitArtifact: () =>
+      owner.delivery.submit(
+        {
+          kind: 45010,
+          content: '{"title":"Pending"}',
+          tags: [
+            ["ar", "1"],
+            ["d", "task"],
+            ["h", "task"],
+            ["type", "test.delivery"],
+            ["op", "create"],
+          ],
+        },
+        undefined,
+        {
+          operationKey: "setup/task",
+          collection: { owner: "test.plugin", name: "main" },
+        },
+      ),
+    artifact: () => owner.delivery.artifact("task"),
+    captureArtifact: () =>
+      owner.artifactDelivery.capture(
+        "test.delivery",
+        JSON.stringify(["test.plugin", "main"]),
+      ),
+    completeArtifact: (ids: string[]) =>
+      owner.artifactDelivery.complete(ids, new AbortController().signal),
     get: (id: string) => owner.delivery.get(id),
     receive: (id: string) =>
       owner.receiveManaged(recipient.channelId, recipient.agentId, [id]),

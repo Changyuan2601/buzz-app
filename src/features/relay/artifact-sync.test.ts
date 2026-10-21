@@ -5,6 +5,8 @@ import type {
   OpenArtifactCollection,
 } from "../artifact-storage/service";
 import { provideArtifactSync } from "./artifact-sync";
+import { ArtifactSnapshotError } from "./artifact-snapshot";
+import { registerArtifactDelivery } from "./artifact-delivery";
 import { reconcileArtifactSnapshot } from "./artifact-reconcile";
 import { keypair, signed } from "./testing";
 import { eventDto, type RelayEvent } from "./events";
@@ -106,6 +108,7 @@ function setup() {
     for (const listener of listeners) listener();
   };
   return {
+    session,
     add,
     confirmed: (event: RelayEvent) => confirmed([event]),
     connection,
@@ -145,7 +148,7 @@ it("aborts reconciliation on disconnect and starts a new capture on reconnect", 
   await vi.advanceTimersByTimeAsync(0);
   expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
 });
-it("commits proven local acceptance through the same revision path as live records", async () => {
+it("refreshes after proven acceptance without writing raw revisions", async () => {
   const h = setup();
   const entry = h.add();
   await vi.advanceTimersByTimeAsync(0);
@@ -162,16 +165,8 @@ it("commits proven local acceptance through the same revision path as live recor
   });
   h.confirmed(eventDto(event));
   await vi.advanceTimersByTimeAsync(0);
-  expect(entry.collection.applyBatch).toHaveBeenCalledWith(
-    expect.objectContaining({
-      records: [
-        expect.objectContaining({
-          id: "task",
-          revision: expect.objectContaining({ id: event.id }),
-        }),
-      ],
-    }),
-  );
+  expect(entry.collection.applyBatch).not.toHaveBeenCalled();
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
 });
 
 it("ignores channel activity but repairs when roster membership changes", async () => {
@@ -202,4 +197,80 @@ it("releases an expired version so a current collection can own sync", async () 
   h.add();
   await vi.advanceTimersByTimeAsync(0);
   expect(navigator.locks.request).toHaveBeenCalledTimes(2);
+});
+
+it("coalesces live invalidations during a capture into one later refresh", async () => {
+  const h = setup();
+  let release = () => {};
+  vi.mocked(reconcileArtifactSnapshot).mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  });
+  const entry = h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [["type", "test.task"]],
+    }),
+  );
+  for (let i = 0; i < 50; i++) h.confirmed(event);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledOnce();
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
+  expect(entry.collection.applyBatch).not.toHaveBeenCalled();
+});
+
+it("keeps capture admission failures on the repair interval despite live traffic", async () => {
+  const h = setup();
+  vi.mocked(reconcileArtifactSnapshot).mockRejectedValue(
+    new ArtifactSnapshotError("snapshot_limit", "Too many memberships"),
+  );
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [["type", "test.task"]],
+    }),
+  );
+  for (let i = 0; i < 20; i++) {
+    h.confirmed(event);
+    await vi.advanceTimersByTimeAsync(1);
+  }
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
+});
+it("captures accepted delivery before starting a snapshot and confirms only after completion", async () => {
+  const h = setup();
+  const capture = vi.fn(async () => ["accepted-before-start"]);
+  const complete = vi.fn(async () => {});
+  registerArtifactDelivery(h.session, { capture, complete });
+  let finish = () => {};
+  vi.mocked(reconcileArtifactSnapshot).mockImplementationOnce(
+    async (_reader, _collection, _type, _signal, options) => {
+      expect(capture).toHaveBeenCalledWith(
+        "test.task",
+        JSON.stringify(["test.plugin", "tasks"]),
+      );
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      await options?.onComplete?.();
+    },
+  );
+  h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(complete).not.toHaveBeenCalled();
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(complete).toHaveBeenCalledWith(
+    ["accepted-before-start"],
+    expect.any(AbortSignal),
+  );
 });

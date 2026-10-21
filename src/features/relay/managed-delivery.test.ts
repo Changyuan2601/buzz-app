@@ -444,3 +444,185 @@ it("keeps retry backoff when a stale journal record has no attempt delay", async
   await ticks(1000);
   expect(h.publish).toHaveBeenCalledTimes(2);
 });
+
+const artifactCollection = { owner: "nexus", name: "tasks" };
+const artifactCollectionKey = JSON.stringify(["nexus", "tasks"]);
+const artifactInput = {
+  kind: 45010,
+  content: '{"title":"Attempted title"}',
+  tags: [
+    ["ar", "1"],
+    ["d", "task-id"],
+    ["h", recipient.channelId],
+    ["type", "test.task"],
+    ["op", "create"],
+  ],
+};
+it("keeps accepted edits until a capture starts after acceptance and preserves later pending edits", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const h = setup(storage);
+  const first = await h.delivery.submit(artifactInput, undefined, {
+    operationKey: "first",
+    collection: artifactCollection,
+  });
+  const beforeAcceptance = await h.artifactDelivery.capture(
+    "test.task",
+    artifactCollectionKey,
+  );
+  await h.managedOwner(true);
+  await ticks(1);
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: false, state: { relayAccepted: true } },
+  ]);
+  await h.artifactDelivery.complete(
+    beforeAcceptance,
+    new AbortController().signal,
+  );
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: false },
+  ]);
+  expect(
+    await h.artifactDelivery.capture(
+      "test.task",
+      JSON.stringify(["other", "tasks"]),
+    ),
+  ).toEqual([]);
+  const captured = await h.artifactDelivery.capture(
+    "test.task",
+    artifactCollectionKey,
+  );
+  expect(captured).toEqual([first.eventId]);
+  const second = await h.delivery.submit(
+    { ...artifactInput, content: '{"title":"Later edit"}' },
+    undefined,
+    { operationKey: "second", collection: artifactCollection },
+  );
+  await ticks(1);
+  await h.artifactDelivery.complete(captured, new AbortController().signal);
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    {
+      confirmed: false,
+      template: { content: '{"title":"Later edit"}' },
+      state: { eventId: second.eventId },
+    },
+    { confirmed: true, state: { eventId: first.eventId } },
+  ]);
+  h.dispose();
+  const restarted = setup(storage);
+  expect(await restarted.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: false },
+    { confirmed: true },
+  ]);
+  await restarted.managedOwner(true);
+  await ticks(60_000);
+  expect(restarted.publish).not.toHaveBeenCalled();
+  expect(await restarted.delivery.get(second.eventId)).toMatchObject({
+    phase: "received",
+    relayAccepted: true,
+  });
+});
+it("recovers a retained caller key after restart and rejects different content", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const h = setup(storage);
+  const options = {
+    operationKey: "setup/task-id",
+    collection: artifactCollection,
+  };
+  const first = await h.delivery.submit(artifactInput, undefined, options);
+  h.dispose();
+  await ticks(2_000);
+  const restarted = setup(storage);
+  expect(await restarted.delivery.lookup(options.operationKey)).toMatchObject({
+    operationId: first.operationId,
+  });
+  expect(
+    await restarted.delivery.submit(artifactInput, undefined, options),
+  ).toEqual(first);
+  await expect(
+    restarted.delivery.submit(
+      { ...artifactInput, content: "changed" },
+      undefined,
+      options,
+    ),
+  ).rejects.toThrow("different artifact content");
+  expect(restarted.outbox.snapshot()).toHaveLength(1);
+});
+it("retains a refused artifact value and the relay error without automatic resubmission", async () => {
+  vi.useFakeTimers();
+  const h = setup(memory(), async () => {
+    throw new PublishRejected("Artifact conflict");
+  });
+  await h.delivery.submit(artifactInput);
+  await h.managedOwner(true);
+  await ticks(60_000);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    {
+      confirmed: false,
+      template: { content: artifactInput.content },
+      state: { phase: "failed", error: "Retry blocked: Artifact conflict" },
+    },
+  ]);
+});
+it("does not reconcile a pending edit after capture cancellation", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  await h.delivery.submit(artifactInput);
+  await h.managedOwner(true);
+  await ticks(1);
+  const ids = await h.artifactDelivery.capture(
+    "test.task",
+    artifactCollectionKey,
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    h.artifactDelivery.complete(ids, controller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: false },
+  ]);
+});
+
+it("keeps acceptance and the attempted value when saving capture confirmation fails", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  let fail = false;
+  const h = setup({
+    ...storage,
+    save: (records) => {
+      if (fail) throw new Error("Disk full");
+      storage.save(records);
+    },
+  });
+  await h.delivery.submit(artifactInput);
+  await h.managedOwner(true);
+  await ticks(1);
+  const ids = await h.artifactDelivery.capture(
+    "test.task",
+    artifactCollectionKey,
+  );
+  fail = true;
+  await expect(
+    h.artifactDelivery.complete(ids, new AbortController().signal),
+  ).rejects.toThrow("Disk full");
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    {
+      confirmed: false,
+      state: {
+        phase: "failed",
+        relayAccepted: true,
+        error: "Could not confirm saved data",
+      },
+    },
+  ]);
+  fail = false;
+  await h.artifactDelivery.complete(ids, new AbortController().signal);
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: true, state: { phase: "received" } },
+  ]);
+  await ticks(60_000);
+  expect(h.publish).toHaveBeenCalledOnce();
+});

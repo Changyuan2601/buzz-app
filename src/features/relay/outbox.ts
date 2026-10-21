@@ -71,7 +71,11 @@ export interface Outbox {
     },
     recovery?: OutboxRecovery,
     active?: () => boolean,
-    managed?: Readonly<{ recipient?: ManagedRecipient }>,
+    managed?: Readonly<{
+      recipient?: ManagedRecipient;
+      operationKey?: string;
+      collection?: string;
+    }>,
   ): string;
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
@@ -129,9 +133,11 @@ export function createOutbox(
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
     clock = new MessageClock(),
+    deliveryScope,
   }: {
     /** The session's send clock, shared with its rendered views. */
     clock?: MessageClock;
+    deliveryScope?: string;
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
@@ -270,7 +276,7 @@ export function createOutbox(
   };
   const persist = (
     id: string,
-    action?: "acknowledge" | "dismiss" | "receipt",
+    action?: "acknowledge" | "dismiss" | "receipt" | "artifact",
   ) => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
@@ -285,32 +291,45 @@ export function createOutbox(
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
         const records =
-          action === "dismiss"
-            ? visible.filter((item) => item.event.id !== id)
-            : action === "receipt"
-              ? visible.map((item) =>
-                  item.event.id === id && item.managed
-                    ? {
-                        ...item,
-                        managed: {
-                          ...item.managed,
-                          agentReceived: true,
-                          error: undefined,
-                        },
-                      }
-                    : item,
-                )
-              : action === "acknowledge"
+          action === "artifact"
+            ? visible.map((item) =>
+                item.event.id === id && item.managed?.relayAccepted
+                  ? {
+                      ...item,
+                      managed: {
+                        ...item.managed,
+                        artifactConfirmed: true,
+                        error: undefined,
+                      },
+                    }
+                  : item,
+              )
+            : action === "dismiss"
+              ? visible.filter((item) => item.event.id !== id)
+              : action === "receipt"
                 ? visible.map((item) =>
-                    item.event.id === id
+                    item.event.id === id && item.managed
                       ? {
                           ...item,
-                          recovery: undefined,
-                          acknowledged: true as const,
+                          managed: {
+                            ...item.managed,
+                            agentReceived: true,
+                            error: undefined,
+                          },
                         }
                       : item,
                   )
-                : visible;
+                : action === "acknowledge"
+                  ? visible.map((item) =>
+                      item.event.id === id
+                        ? {
+                            ...item,
+                            recovery: undefined,
+                            acknowledged: true as const,
+                          }
+                        : item,
+                    )
+                  : visible;
         const bytes =
           action === "dismiss"
             ? byteSize(snapshot.filter((item) => item.event.id !== id))
@@ -320,6 +339,19 @@ export function createOutbox(
             throw new Error("Outbox storage is full");
           await storage.save(records);
           for (const item of records) unsavedManaged.delete(item.event.id);
+          if (action === "artifact") {
+            const current = find(id);
+            if (current?.managed?.relayAccepted)
+              replace({
+                ...current,
+                managed: {
+                  ...current.managed,
+                  artifactConfirmed: true,
+                  error: undefined,
+                },
+              });
+            wakeManaged();
+          }
           if (action === "receipt") {
             const current = find(id);
             if (current?.managed)
@@ -390,7 +422,9 @@ export function createOutbox(
     if (item.managed) wakeManaged();
   }
   const managedDone = (state: ManagedDelivery) =>
-    state.relayAccepted && (!state.recipient || state.agentReceived);
+    state.relayAccepted &&
+    (!state.recipient || state.agentReceived) &&
+    state.artifactConfirmed !== false;
   function refreshManaged() {
     const work = durable
       .catch(() => {})
@@ -478,6 +512,7 @@ export function createOutbox(
       }
       if (state.error) continue;
       if (state.relayAccepted) {
+        if (!state.recipient) continue;
         if (state.receiptDeadline <= Date.now())
           saveStatus({ ...item, managed: { ...state, error: "receipt" } });
         else delay = Math.min(delay, state.receiptDeadline - Date.now());
@@ -914,7 +949,11 @@ export function createOutbox(
       },
       recovery?: OutboxRecovery,
       active?: () => boolean,
-      managed?: Readonly<{ recipient?: ManagedRecipient }>,
+      managed?: Readonly<{
+        recipient?: ManagedRecipient;
+        operationKey?: string;
+        collection?: string;
+      }>,
     ) {
       if (active && !active())
         throw new DOMException("Channel addition cancelled", "AbortError");
@@ -1038,11 +1077,13 @@ export function createOutbox(
         const prior = visible.find((item) => item.event.id === event.id);
         if (prior) {
           if (
+            prior.managed?.collection !== managed?.collection ||
+            prior.managed?.operationKey !== managed?.operationKey ||
             !!prior.managed !== !!managed ||
             JSON.stringify(prior.managed?.recipient) !==
               JSON.stringify(managed?.recipient)
           )
-            throw new Error("Artifact delivery recipient changed");
+            throw new Error("Artifact delivery identity changed");
           return event.id;
         }
       }
@@ -1062,6 +1103,17 @@ export function createOutbox(
                   managed: managedDelivery({
                     version: 1,
                     ...managed,
+                    ...(input.kind === 45010
+                      ? {
+                          artifactConfirmed: false,
+                          submittedAt: Math.max(
+                            Date.now(),
+                            ...visible.map(
+                              (item) => (item.managed?.submittedAt ?? 0) + 1,
+                            ),
+                          ),
+                        }
+                      : {}),
                     round: 0,
                     attempts: 0,
                     relayAccepted: false,
@@ -1188,16 +1240,156 @@ export function createOutbox(
         outbox.retry(id);
         await persist(id);
       },
+      async lookup(operationKey: string) {
+        await refreshManaged();
+        const item = visible.find(
+          (item) => item.managed?.operationKey === operationKey,
+        );
+        return item?.managed
+          ? deliveryState(item.event.id, item.managed)
+          : undefined;
+      },
+      async artifact(id: string) {
+        await refreshManaged();
+        return visible
+          .filter(
+            (item) =>
+              item.managed &&
+              item.event.kind === 45010 &&
+              item.event.tags.some(
+                ([name, value]) => name === "d" && value === id,
+              ),
+          )
+          .sort(
+            (a, b) =>
+              (b.managed?.submittedAt ?? 0) - (a.managed?.submittedAt ?? 0),
+          )
+          .map((item) => ({
+            template: {
+              kind: item.event.kind,
+              content: item.event.content,
+              tags: item.event.tags.map((tag) => [...tag]),
+            },
+            state: {
+              ...deliveryState(item.event.id, managedDelivery(item.managed)),
+              ...(item.error && !item.managed?.relayAccepted
+                ? { error: item.error }
+                : {}),
+              ...(item.managed?.error === "artifact-save"
+                ? {
+                    phase: "failed" as const,
+                    error: "Could not confirm saved data",
+                  }
+                : {}),
+            },
+            confirmed: item.managed?.artifactConfirmed === true,
+          }));
+      },
       async submit(
         input: Parameters<Outbox["send"]>[0],
         recipient?: ManagedRecipient,
+        options?: {
+          operationKey?: string;
+          collection?: { owner: string; name: string };
+        },
       ) {
-        await outbox.ready();
-        const id = outbox.send(input, undefined, undefined, {
-          ...(recipient ? { recipient } : {}),
-        });
-        await persist(id);
-        return { operationId: id, eventId: id };
+        const submit = async () => {
+          await outbox.ready();
+          await refreshManaged();
+          if (options?.operationKey !== undefined) {
+            managedDelivery({
+              version: 1,
+              round: 0,
+              attempts: 0,
+              relayAccepted: false,
+              agentReceived: false,
+              nextAttemptAt: 0,
+              receiptDeadline: 0,
+              operationKey: options.operationKey,
+            });
+            const prior = visible.find(
+              (item) => item.managed?.operationKey === options.operationKey,
+            );
+            if (prior) {
+              if (
+                prior.event.kind !== input.kind ||
+                prior.event.content !== input.content ||
+                JSON.stringify(prior.event.tags) !==
+                  JSON.stringify(input.tags) ||
+                prior.managed?.collection !==
+                  (options.collection
+                    ? JSON.stringify([
+                        options.collection.owner,
+                        options.collection.name,
+                      ])
+                    : undefined)
+              )
+                throw new Error("Operation key has different artifact content");
+              return { operationId: prior.event.id, eventId: prior.event.id };
+            }
+          }
+          const id = outbox.send(input, undefined, undefined, {
+            ...(recipient ? { recipient } : {}),
+            ...(options?.operationKey
+              ? { operationKey: options.operationKey }
+              : {}),
+            ...(options?.collection
+              ? {
+                  collection: JSON.stringify([
+                    options.collection.owner,
+                    options.collection.name,
+                  ]),
+                }
+              : {}),
+          });
+          await persist(id);
+          return { operationId: id, eventId: id };
+        };
+        if (input.kind === 45010 && deliveryScope) {
+          if (!globalThis.navigator?.locks)
+            throw new Error("Artifact delivery requires Web Locks");
+          return navigator.locks.request(
+            `buzz-artifact-submit:${deliveryScope}`,
+            submit,
+          );
+        }
+        if (options && input.kind !== 45010)
+          throw new Error("Operation keys require an artifact");
+        return submit();
+      },
+    },
+    artifactDelivery: {
+      async capture(type: string, collection: string) {
+        await refreshManaged();
+        return visible
+          .filter(
+            (item) =>
+              item.event.kind === 45010 &&
+              item.managed?.relayAccepted &&
+              item.managed.artifactConfirmed !== true &&
+              (!item.managed.collection ||
+                item.managed.collection === collection) &&
+              item.event.tags.some(
+                ([name, value]) => name === "type" && value === type,
+              ),
+          )
+          .map((item) => item.event.id);
+      },
+      async complete(ids: readonly string[], signal: AbortSignal) {
+        for (const id of ids) {
+          signal.throwIfAborted();
+          try {
+            await persist(id, "artifact");
+          } catch (error) {
+            const item = find(id);
+            if (item?.managed)
+              replace({
+                ...item,
+                managed: { ...item.managed, error: "artifact-save" },
+              });
+            throw error;
+          }
+        }
       },
     },
     async managedOwner(owned: boolean) {
