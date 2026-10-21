@@ -170,13 +170,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (isTauri() && spawn && serve && ctx.agents) {
     const agents = ctx.agents;
     const memoryReads = new MemoryReads();
-    const readMemory = async (agent: string, signal: AbortSignal) => {
+    const readMemory = async (
+      agent: string,
+      signal: AbortSignal,
+      slug?: string,
+    ) => {
       const snapshot = agents.relay(agent)?.snapshot();
       if (snapshot?.status !== "ready")
         throw new Error("Buzz is not connected to this community");
       const source = ownerReads(agents.relay(agent), agent);
       if (!source) throw new Error("Buzz is not connected to this community");
-      const listing = await memoryReads.read(source, agent, signal);
+      const listing = await memoryReads.read(source, agent, signal, slug);
       if (agents.relay(agent)?.snapshot() !== snapshot)
         throw new Error("Community changed during memory read");
       return listing;

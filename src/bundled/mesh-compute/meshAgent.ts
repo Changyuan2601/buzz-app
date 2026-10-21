@@ -104,7 +104,11 @@ export type MeshAgentDeps = Readonly<{
     signal: AbortSignal,
   ): Promise<boolean>;
   /** The agent's memory listing, with `partial` when some may be missing. */
-  memories?(agent: string, signal: AbortSignal): Promise<Memories>;
+  memories?(
+    agent: string,
+    signal: AbortSignal,
+    slug?: string,
+  ): Promise<Memories>;
   coreMemory?(
     agent: string,
     signal: AbortSignal,

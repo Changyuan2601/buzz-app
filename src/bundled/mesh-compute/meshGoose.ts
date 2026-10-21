@@ -5,7 +5,7 @@
 // lease route; the Buzz tools are the same in-process handlers the Goose plugin
 // serves over a loopback MCP server. No Buzz key reaches goose.
 import type { AgentHandle } from "../../features/agents/service";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { errorText, respond } from "../../buzz-mcp/rpc";
 import {
   GooseProcess,
@@ -13,8 +13,11 @@ import {
   type ServeMcp,
   type ToolServer,
 } from "../goose/goose";
-import { absolute } from "../goose/sessions";
-import type { InlineTurn, MeshAgentDeps } from "./meshAgent";
+import {
+  type InlineTurn,
+  type MeshAgentDeps,
+  resolveWorkspace,
+} from "./meshAgent";
 import {
   gooseTurns,
   type GooseTranscript,
@@ -110,15 +113,14 @@ export class MeshGoose {
       },
     };
     const client = appClient(guarded, {
-      spawn: this.deps.spawn,
-      cwd,
+      read: (path) => readFile(this.deps.spawn, cwd, path, signal),
       signal,
       check: () => {
         if (delivery.current && !delivery.current())
           throw new Error("Agent turn ended");
       },
-      memories: () =>
-        this.deps.memories?.(delivery.agent.pubkey, signal) ??
+      memories: (slug) =>
+        this.deps.memories?.(delivery.agent.pubkey, signal, slug) ??
         Promise.resolve({ entries: [], partial: false }),
       remembered: () => this.deps.remembered?.(delivery.agent.pubkey),
     });
@@ -148,7 +150,7 @@ export class MeshGoose {
     let goose: GooseProcess | undefined;
     try {
       await check();
-      const root = `${await absolute(this.deps.spawn, "~")}/${GOOSE_ROOT}`;
+      const root = `${await resolveWorkspace(this.deps, "~")}/${GOOSE_ROOT}`;
       goose = await GooseProcess.start(this.deps.spawn, {
         cwd,
         env: meshGooseEnv(inference.baseUrl, root),
