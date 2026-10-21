@@ -339,7 +339,9 @@ function fixture(direct = false) {
     },
     async ready() {
       owner.session.channels.ensureList();
-      await waitFor(() => expect(channel()?.channelType).toBe("solo"));
+      await waitFor(() => expect(channel()?.channelType).toBe("solo"), {
+        interval: 1,
+      });
     },
     mount(
       props: {
