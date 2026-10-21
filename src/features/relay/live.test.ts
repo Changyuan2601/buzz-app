@@ -2649,3 +2649,125 @@ it("fills retained groups as joined homes arrive in separate roster updates", as
   ).toBe(true);
   h.owner.dispose();
 });
+
+it("replays only added homes when an established large group grows", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from({ length: 1023 }, (_, i) => `growth-${i}`);
+  const h = setup([]);
+  h.owner.update(ids, ids);
+  await h.first.auth();
+  let cursor = 0;
+  const replayed = new Set<string>();
+  async function drain() {
+    while (cursor < h.first.sent.length) {
+      const frame = h.first.sent[cursor++];
+      if (frame?.[0] !== "REQ") continue;
+      const req = frame as WireRequest;
+      if (filtersOf(req)[0]?.limit !== 0)
+        for (const id of scopeOf(req)) {
+          expect(replayed.has(id)).toBe(false);
+          replayed.add(id);
+        }
+      await h.first.receive(["EOSE", req[1]]);
+    }
+  }
+  await drain();
+  expect(replayed.size).toBe(1023);
+  for (let i = 0; i < 20; i++) {
+    ids.push(`added-${i}`);
+    h.owner.update(ids, ids);
+    await drain();
+  }
+  expect(replayed.size).toBe(1043);
+  expect(
+    h.callbacks.state.mock.lastCall?.[0].routes.every(
+      (route) => route.status === "live",
+    ),
+  ).toBe(true);
+  h.owner.dispose();
+});
+it("keeps the established subset live after expansion timeout and recovers automatically", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from({ length: 1100 }, (_, i) => `timeout-${i}`);
+  const h = setup([]);
+  h.owner.update(ids, ids);
+  await h.first.auth();
+  let cursor = 0;
+  while (cursor < h.first.sent.length) {
+    const frame = h.first.sent[cursor++];
+    if (frame?.[0] === "REQ") await h.first.receive(["EOSE", frame[1]]);
+  }
+  const old = h.first
+    .requests()
+    .find(
+      (req) =>
+        filtersOf(req)[0]?.limit === 0 && scopeOf(req).includes("timeout-1000"),
+    );
+  assert.exists(old);
+  ids.push("added-timeout");
+  h.owner.update(ids, ids);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(
+    h.first.sent.some((frame) => frame[0] === "CLOSE" && frame[1] === old[1]),
+  ).toBe(false);
+  const state = h.callbacks.state.mock.lastCall?.[0];
+  expect(
+    state?.routes.find((route) => route.channelId === "timeout-1000")?.status,
+  ).toBe("live");
+  expect(
+    state?.routes.find((route) => route.channelId === "added-timeout")?.status,
+  ).toBe("error");
+  await h.first.receive([
+    "EVENT",
+    old[1],
+    message(h.key, "timeout-1000", "During recovery", 1700000000),
+  ]);
+  expect(h.callbacks.receive).toHaveBeenCalledOnce();
+  const before = h.first.requests().length;
+  await vi.advanceTimersByTimeAsync(50_000);
+  const retry = h.first
+    .requests()
+    .slice(before)
+    .find((req) => scopeOf(req).includes("added-timeout"));
+  assert.exists(retry);
+  await h.first.receive(["EOSE", retry[1]]);
+  expect(
+    h.callbacks.state.mock.lastCall?.[0].routes.find(
+      (route) => route.channelId === "added-timeout",
+    )?.status,
+  ).toBe("live");
+  h.owner.dispose();
+});
+it("reserves a wire for group expansion near subscription capacity", async () => {
+  vi.useFakeTimers();
+  const previews = Array.from({ length: 1021 }, (_, i) => `preview-${i}`);
+  const h = setup([]);
+  h.owner.update(["joined-a", ...previews], ["joined-a"]);
+  await h.first.auth();
+  let cursor = 0;
+  const open = new Set<string>();
+  let maximum = 0;
+  async function drain() {
+    while (cursor < h.first.sent.length) {
+      const frame = h.first.sent[cursor++];
+      if (frame?.[0] === "CLOSE") open.delete(frame[1] as string);
+      if (frame?.[0] !== "REQ") continue;
+      open.add(frame[1] as string);
+      maximum = Math.max(maximum, open.size);
+      await h.first.receive(["EOSE", frame[1]]);
+    }
+  }
+  await drain();
+  h.owner.update(
+    ["joined-a", "joined-b", ...previews],
+    ["joined-a", "joined-b"],
+  );
+  await drain();
+  expect(maximum).toBeLessThanOrEqual(1024);
+  expect(
+    h.callbacks.state.mock.lastCall?.[0].routes.find(
+      (route) => route.channelId === "joined-b",
+    )?.status,
+  ).toBe("live");
+  h.owner.dispose();
+});

@@ -116,6 +116,7 @@ export class PublishNotSent extends PublishRejected {}
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
+const MAX_PENDING_BYTES = 2 * 1024 * 1024;
 const MAX_CONFIRMED = 2048;
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
@@ -170,7 +171,6 @@ export function createOutbox(
   let finalVisible: readonly OutgoingEvent[] | undefined;
   const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, 8 * 1024 * 1024);
   const sizes = new WeakMap<OutgoingEvent, number>();
-  let pendingBytes = 0;
   const listeners = new Set<() => void>();
   const localListeners = new Set<() => void>();
   const dismissListeners = new Set<(item: OutgoingEvent) => void>();
@@ -255,18 +255,23 @@ export function createOutbox(
   let managedOwner = false;
   let managedTimer: ReturnType<typeof setTimeout> | undefined;
   let durable = Promise.resolve();
+  const pendingSize = (rows: readonly OutgoingEvent[]) => {
+    const totals = [2, 2];
+    for (const item of rows) {
+      let size = sizes.get(item);
+      if (size === undefined) {
+        size = byteSize(item);
+        sizes.set(item, size);
+      }
+      const domain = item.event.kind === 45010 ? 1 : 0;
+      totals[domain] = (totals[domain] ?? 2) + size + 1;
+    }
+    return totals;
+  };
+  const pendingCount = (rows: readonly OutgoingEvent[], kind: number) =>
+    rows.filter((item) => (item.event.kind === 45010) === (kind === 45010))
+      .length;
   const notify = () => {
-    pendingBytes = snapshot.reduce(
-      (sum, item) => {
-        let size = sizes.get(item);
-        if (size === undefined) {
-          size = byteSize(item);
-          sizes.set(item, size);
-        }
-        return sum + size;
-      },
-      2 + Math.max(0, snapshot.length - 1),
-    );
     visible = Object.freeze([
       ...completed.entries().map(([, item]) => item),
       ...snapshot,
@@ -290,7 +295,7 @@ export function createOutbox(
         queued();
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records =
+        const records = () =>
           action === "artifact"
             ? visible.map((item) =>
                 item.event.id === id && item.managed?.relayAccepted
@@ -330,15 +335,55 @@ export function createOutbox(
                         : item,
                     )
                   : visible;
-        const bytes =
+        const bytes = pendingSize(
           action === "dismiss"
-            ? byteSize(snapshot.filter((item) => item.event.id !== id))
-            : pendingBytes;
+            ? snapshot.filter((item) => item.event.id !== id)
+            : snapshot,
+        );
         return profiling.measureAsync("outbox.persist", id, async () => {
-          if (bytes > 2 * 1024 * 1024)
+          const target = visible.find((item) => item.event.id === id);
+          const domain = target
+            ? target.event.kind === 45010
+              ? 1
+              : 0
+            : undefined;
+          if (
+            domain === undefined
+              ? bytes.some((size) => size > MAX_PENDING_BYTES)
+              : (bytes[domain] ?? 0) > MAX_PENDING_BYTES
+          )
             throw new Error("Outbox storage is full");
-          await storage.save(records);
-          for (const item of records) unsavedManaged.delete(item.event.id);
+          let saved = records();
+          if (
+            domain !== undefined &&
+            (bytes[1 - domain] ?? 0) > MAX_PENDING_BYTES
+          ) {
+            const prior = await storage.load({ refresh: true });
+            validateSaved(prior);
+            // A failed status save in the other class must not join this commit.
+            const currentRecords = records();
+            const retained = new Set(
+              currentRecords.map((item) => item.event.id),
+            );
+            const priorById = new Map(
+              prior.map((item) => [item.event.id, item]),
+            );
+            saved = currentRecords.flatMap((item) => {
+              if ((item.event.kind === 45010 ? 1 : 0) === domain) return [item];
+              const durable = priorById.get(item.event.id);
+              return durable ? [durable] : [];
+            });
+            saved.push(
+              ...prior.filter(
+                (item) =>
+                  (item.event.kind === 45010 ? 1 : 0) !== domain &&
+                  pendingOperation(item) &&
+                  !retained.has(item.event.id),
+              ),
+            );
+          }
+          await storage.save(saved);
+          for (const item of saved) unsavedManaged.delete(item.event.id);
           if (action === "artifact") {
             const current = find(id);
             if (current?.managed?.relayAccepted)
@@ -425,6 +470,12 @@ export function createOutbox(
     state.relayAccepted &&
     (!state.recipient || state.agentReceived) &&
     state.artifactConfirmed !== false;
+  const pendingOperation = (item: OutgoingEvent) =>
+    !!item.recovery ||
+    (item.managed
+      ? !managedDone(item.managed)
+      : !(item.event.kind === 9000 && item.acknowledged) &&
+        item.delivery !== "seen");
   function refreshManaged() {
     const work = durable
       .catch(() => {})
@@ -530,8 +581,8 @@ export function createOutbox(
   function validateSaved(loaded: readonly OutgoingEvent[]) {
     if (
       !Array.isArray(loaded) ||
-      loaded.length > MAX_PENDING + MAX_CONFIRMED ||
-      byteSize(loaded) > 10 * 1024 * 1024
+      loaded.length > 2 * MAX_PENDING + MAX_CONFIRMED ||
+      byteSize(loaded) > 2 * MAX_PENDING_BYTES + 8 * 1024 * 1024
     )
       throw new Error("Saved outbox exceeds its budget");
   }
@@ -566,16 +617,12 @@ export function createOutbox(
     });
   }
   function restore(restored: readonly OutgoingEvent[]) {
-    const pending = restored.filter(
-      (item) =>
-        (item.managed
-          ? !managedDone(item.managed)
-          : !(item.event.kind === 9000 && item.acknowledged) &&
-            item.delivery !== "seen") ||
-        !!item.recovery ||
-        (!!item.managed && !managedDone(item.managed)),
-    );
-    if (pending.length > MAX_PENDING)
+    const pending = restored.filter(pendingOperation);
+    if (
+      pendingCount(pending, 45010) > MAX_PENDING ||
+      pendingCount(pending, 9) > MAX_PENDING ||
+      pendingSize(pending).some((size) => size > MAX_PENDING_BYTES)
+    )
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
       if (
@@ -734,7 +781,16 @@ export function createOutbox(
         throw new Error("Signer changed the outgoing event");
       const current = find(id);
       if (!current) return; // A verified echo already completed delivery.
-      replace({ ...current, signed });
+      const signedOperation = { ...current, signed };
+      if (
+        (pendingSize(
+          snapshot.map((item) =>
+            item.event.id === id ? signedOperation : item,
+          ),
+        )[current.event.kind === 45010 ? 1 : 0] ?? 0) > MAX_PENDING_BYTES
+      )
+        throw new Error("Outbox storage is full");
+      replace(signedOperation);
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
       const hold = holdPublish?.(signed);
@@ -905,7 +961,7 @@ export function createOutbox(
         )
       )
         throw new Error("Recover the earlier message before sending another");
-      if (!find(id) && snapshot.length >= MAX_PENDING)
+      if (!find(id) && pendingCount(snapshot, item.event.kind) >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve a pending operation",
         );
@@ -999,7 +1055,7 @@ export function createOutbox(
               : OUTBOX_INPUT_MAX_BYTES))
       )
         throw new Error("Message is empty or too large");
-      if (snapshot.length >= MAX_PENDING)
+      if (pendingCount(snapshot, input.kind) >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
@@ -1087,44 +1143,53 @@ export function createOutbox(
           return event.id;
         }
       }
+      const operation = Object.freeze({
+        event,
+        delivery: "sending" as const,
+        ...(savedRecovery ? { recovery: savedRecovery } : {}),
+        ...(active ? { guarded: true } : {}),
+        ...(managed
+          ? {
+              managed: managedDelivery({
+                version: 1,
+                ...managed,
+                ...(input.kind === 45010
+                  ? {
+                      artifactConfirmed: false,
+                      submittedAt: Math.max(
+                        Date.now(),
+                        ...visible.map(
+                          (item) => (item.managed?.submittedAt ?? 0) + 1,
+                        ),
+                      ),
+                    }
+                  : {}),
+                round: 0,
+                attempts: 0,
+                relayAccepted: false,
+                agentReceived: false,
+                nextAttemptAt: 0,
+                receiptDeadline: 0,
+              }),
+            }
+          : {}),
+      });
+      const signedBudget = byteSize({
+        ...operation,
+        signed: { ...event, sig: "0".repeat(128) },
+      });
+      if (
+        (pendingSize(snapshot)[input.kind === 45010 ? 1 : 0] ?? 0) +
+          signedBudget +
+          1 >
+        MAX_PENDING_BYTES
+      )
+        throw new Error("Outbox storage is full");
       if (managed) unsavedManaged.add(event.id);
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
       profiling.measure("send.local", event.id, () => {
-        snapshot = Object.freeze([
-          ...snapshot,
-          Object.freeze({
-            event,
-            delivery: "sending" as const,
-            ...(savedRecovery ? { recovery: savedRecovery } : {}),
-            ...(active ? { guarded: true } : {}),
-            ...(managed
-              ? {
-                  managed: managedDelivery({
-                    version: 1,
-                    ...managed,
-                    ...(input.kind === 45010
-                      ? {
-                          artifactConfirmed: false,
-                          submittedAt: Math.max(
-                            Date.now(),
-                            ...visible.map(
-                              (item) => (item.managed?.submittedAt ?? 0) + 1,
-                            ),
-                          ),
-                        }
-                      : {}),
-                    round: 0,
-                    attempts: 0,
-                    relayAccepted: false,
-                    agentReceived: false,
-                    nextAttemptAt: 0,
-                    receiptDeadline: 0,
-                  }),
-                }
-              : {}),
-          }),
-        ]);
+        snapshot = Object.freeze([...snapshot, operation]);
         notify();
       });
       const intent = ready.then(() => {
@@ -1325,6 +1390,7 @@ export function createOutbox(
                     : undefined)
               )
                 throw new Error("Operation key has different artifact content");
+              await persist(prior.event.id);
               return { operationId: prior.event.id, eventId: prior.event.id };
             }
           }

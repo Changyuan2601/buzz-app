@@ -1,3 +1,4 @@
+import { getEventHash } from "nostr-tools";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import {
   createOutbox,
@@ -5,6 +6,8 @@ import {
   type OutboxStorage,
   type OutgoingEvent,
 } from "./outbox";
+import { createRelaySession } from "./session";
+import { scriptedTransport } from "./testing";
 import { MANAGED_RECEIPT_MS } from "./managed-delivery";
 import { keypair, signed } from "./testing";
 import type { RelayWriter } from "./transport";
@@ -660,4 +663,357 @@ it("keeps newest-first enqueue order when the clock does not advance, including 
       (entry) => entry.state.eventId,
     ),
   ).toEqual([third.eventId, second.eventId, first.eventId]);
+});
+
+it("saves retained keyed intent after storage recovers before returning its original ID", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  let fail = true;
+  const follower = setup({
+    ...storage,
+    save: (records) => {
+      if (fail) throw new Error("Disk full");
+      storage.save(records);
+    },
+  });
+  const options = {
+    operationKey: "unsaved-key",
+    collection: artifactCollection,
+  };
+  await expect(
+    follower.delivery.submit(artifactInput, undefined, options),
+  ).rejects.toThrow("Disk full");
+  expect(storage.load()).toHaveLength(0);
+  fail = false;
+  const recovered = await follower.delivery.submit(
+    artifactInput,
+    undefined,
+    options,
+  );
+  const otherWindow = setup(storage);
+  expect(await otherWindow.delivery.lookup(options.operationKey)).toMatchObject(
+    { operationId: recovered.operationId },
+  );
+  expect(storage.load()).toHaveLength(1);
+});
+it("rejects unsupported artifact writes before saving intent", async () => {
+  const storage = memory();
+  const t = scriptedTransport(viewer.pubkey, "relay");
+  const h = createRelaySession(
+    {
+      ...t.transport,
+      writer: {
+        sign: async (template) => signed(viewer, template),
+        publish: async () => {},
+      },
+    },
+    { outboxStorage: storage },
+  );
+  try {
+    await expect(h.session.delivery?.submit(artifactInput)).rejects.toThrow(
+      "requires relay snapshot support",
+    );
+    expect(storage.load()).toHaveLength(0);
+  } finally {
+    h.dispose();
+  }
+});
+it("restores a full artifact journal without blocking normal chat admission", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const first = setup(storage);
+  for (let i = 0; i < 256; i++)
+    await first.delivery.submit({
+      ...artifactInput,
+      content: String(i),
+      tags: artifactInput.tags.map((tag) =>
+        tag[0] === "d" ? ["d", `task-${i}`] : tag,
+      ),
+    });
+  first.dispose();
+  const restored = setup(storage);
+  await restored.outbox.ready();
+  await expect(
+    restored.delivery.submit({ ...artifactInput, content: "over capacity" }),
+  ).rejects.toThrow("Too many outstanding");
+  const id = restored.outbox.send(input);
+  expect(restored.outbox.snapshot()).toHaveLength(257);
+  await ticks(1);
+  expect(storage.load().some((item) => item.event.id === id)).toBe(true);
+  expect(
+    storage.load().filter((item) => item.event.kind === 45010),
+  ).toHaveLength(256);
+});
+
+it.each([45010, 9])(
+  "isolates byte exhaustion in kind %s from the other class",
+  async (kind) => {
+    vi.useFakeTimers();
+    const storage = memory();
+    const h = setup(storage);
+    const template = kind === 45010 ? artifactInput : input;
+    const content = "x".repeat(kind === 45010 ? 400_000 : 30_000);
+    let count = 0;
+    for (; count < 256; count++) {
+      try {
+        await h.delivery.submit({
+          ...template,
+          content: content + String(count),
+        });
+      } catch (error) {
+        expect(String(error)).toContain("Outbox storage is full");
+        break;
+      }
+    }
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThan(256);
+    expect(storage.load()).toHaveLength(count);
+    const other = await h.delivery.submit(
+      kind === 45010 ? input : artifactInput,
+    );
+    expect(storage.load()).toHaveLength(count + 1);
+    expect(storage.load().some((item) => item.event.id === other.eventId)).toBe(
+      true,
+    );
+    h.dispose();
+    const restored = setup(storage);
+    await restored.outbox.ready();
+    expect(restored.local.snapshot()).toHaveLength(count + 1);
+  },
+);
+it("preserves artifact intent while completed message retention is full", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const records: OutgoingEvent[] = Array.from({ length: 2048 }, (_, i) => {
+    const event = {
+      kind: 9,
+      content: `Complete ${i}`,
+      tags: [["h", recipient.channelId]],
+      pubkey: viewer.pubkey,
+      created_at: 1,
+    };
+    return {
+      event: { ...event, id: getEventHash(event) },
+      delivery: "accepted",
+      managed: {
+        version: 1,
+        round: 0,
+        attempts: 1,
+        relayAccepted: true,
+        agentReceived: false,
+        nextAttemptAt: 0,
+        receiptDeadline: 0,
+      },
+    };
+  });
+  storage.save(records);
+  const h = setup(storage);
+  const artifact = await h.delivery.submit(artifactInput);
+  const message = await h.delivery.submit(input, recipient);
+  await h.managedOwner(true);
+  await ticks(1);
+  await h.receiveManaged(recipient.channelId, recipient.agentId, [
+    message.eventId,
+  ]);
+  await ticks(1);
+  expect(await h.delivery.artifact("task-id")).toMatchObject([
+    { confirmed: false, state: { eventId: artifact.eventId } },
+  ]);
+  expect(
+    h.local.snapshot().filter((item) => item.event.kind === 9),
+  ).toHaveLength(2048);
+  expect(
+    h.local.snapshot().some((item) => item.event.id === artifact.eventId),
+  ).toBe(true);
+});
+
+it("restores legacy unsigned artifact bodies and preserves them if a signature exceeds the class budget", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  storage.save(
+    Array.from({ length: 4 }, (_, i) => {
+      const event = {
+        kind: 45010,
+        content: "x".repeat(400_000),
+        tags: [["d", `legacy-${i}`]],
+        pubkey: viewer.pubkey,
+        created_at: 1,
+      };
+      return {
+        event: { ...event, id: getEventHash(event) },
+        delivery: "unknown" as const,
+        managed: {
+          version: 1 as const,
+          round: 0,
+          attempts: 0,
+          relayAccepted: false,
+          agentReceived: false,
+          nextAttemptAt: 0,
+          receiptDeadline: 0,
+          artifactConfirmed: false,
+        },
+      };
+    }),
+  );
+  const h = setup(storage);
+  await h.outbox.ready();
+  expect(h.outbox.snapshot()).toHaveLength(4);
+  await h.managedOwner(true);
+  await ticks(8_000);
+  const chat = await h.delivery.submit(input, recipient);
+  await ticks(1);
+  expect(storage.load().some((item) => item.event.id === chat.eventId)).toBe(
+    true,
+  );
+  expect(
+    storage.load().filter((item) => item.event.kind === 45010),
+  ).toHaveLength(4);
+  h.dispose();
+  const restarted = setup(storage);
+  await restarted.outbox.ready();
+  expect(
+    restarted.local.snapshot().filter((item) => item.event.kind === 45010),
+  ).toHaveLength(4);
+});
+
+it("keeps chat durable when retry metadata exceeds a restored artifact byte budget", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const rows: OutgoingEvent[] = Array.from({ length: 5 }, (_, i) => {
+    const event = {
+      kind: 45010,
+      content: "x".repeat(400_000),
+      tags: [["d", `boundary-${i}`]],
+      pubkey: viewer.pubkey,
+      created_at: 1,
+    };
+    return {
+      event: { ...event, id: getEventHash(event) },
+      delivery: "unknown",
+      managed: {
+        version: 1,
+        round: 0,
+        attempts: 0,
+        relayAccepted: false,
+        agentReceived: false,
+        nextAttemptAt: 0,
+        receiptDeadline: 0,
+        artifactConfirmed: false,
+      },
+    };
+  });
+  const last = rows[4];
+  assert.exists(last);
+  const event = {
+    ...last.event,
+    content:
+      last.event.content + "x".repeat(2_097_127 - JSON.stringify(rows).length),
+  };
+  rows[4] = { ...last, event: { ...event, id: getEventHash(event) } };
+  expect(JSON.stringify(rows).length).toBe(2_097_127);
+  storage.save(rows);
+  const h = setup(storage);
+  await h.outbox.ready();
+  await h.managedOwner(true);
+  await ticks(1);
+  const chat = await h.delivery.submit(input, recipient);
+  await ticks(1);
+  expect(storage.load().some((item) => item.event.id === chat.eventId)).toBe(
+    true,
+  );
+  expect(storage.load().filter((item) => item.event.kind === 45010)).toEqual(
+    rows,
+  );
+  h.dispose();
+  const restarted = setup(storage);
+  await restarted.outbox.ready();
+  expect(
+    restarted.local.snapshot().some((item) => item.event.id === chat.eventId),
+  ).toBe(true);
+});
+
+it("honors completed retention while preserving a full prior artifact class", async () => {
+  vi.useFakeTimers();
+  const storage = memory();
+  const pending: OutgoingEvent[] = Array.from({ length: 5 }, (_, i) => {
+    const event = {
+      kind: 45010,
+      content: "x".repeat(400_000),
+      tags: [["d", `retention-${i}`]],
+      pubkey: viewer.pubkey,
+      created_at: 1,
+    };
+    return {
+      event: { ...event, id: getEventHash(event) },
+      delivery: "unknown",
+      managed: {
+        version: 1,
+        round: 0,
+        attempts: 0,
+        relayAccepted: false,
+        agentReceived: false,
+        nextAttemptAt: 0,
+        receiptDeadline: 0,
+        artifactConfirmed: false,
+      },
+    };
+  });
+  const last = pending[4];
+  assert.exists(last);
+  const event = {
+    ...last.event,
+    content:
+      last.event.content +
+      "x".repeat(2_097_127 - JSON.stringify(pending).length),
+  };
+  pending[4] = { ...last, event: { ...event, id: getEventHash(event) } };
+  const completed: OutgoingEvent[] = Array.from({ length: 2048 }, (_, i) => {
+    const event = {
+      kind: 45010,
+      content: String(i),
+      tags: [["d", `complete-${i}`]],
+      pubkey: viewer.pubkey,
+      created_at: 1,
+    };
+    return {
+      event: { ...event, id: getEventHash(event) },
+      delivery: "accepted",
+      managed: {
+        version: 1,
+        round: 0,
+        attempts: 1,
+        relayAccepted: true,
+        agentReceived: false,
+        nextAttemptAt: 0,
+        receiptDeadline: 0,
+        artifactConfirmed: true,
+      },
+    };
+  });
+  storage.save([...completed, ...pending]);
+  const h = setup(storage);
+  await h.managedOwner(true);
+  await ticks(1);
+  const chat = h.outbox.send(input);
+  await ticks(1);
+  const published = h.publish.mock.calls.find(
+    ([event]) => event.id === chat,
+  )?.[0];
+  assert.exists(published);
+  h.observe([published]);
+  await ticks(1);
+  expect(storage.load()).toHaveLength(2053);
+  expect(
+    storage
+      .load()
+      .filter(
+        (item) =>
+          item.event.kind === 45010 &&
+          item.managed?.artifactConfirmed === false,
+      ),
+  ).toEqual(pending);
+  h.dispose();
+  const restarted = setup(storage);
+  await restarted.outbox.ready();
+  expect(restarted.local.snapshot()).toHaveLength(2053);
 });

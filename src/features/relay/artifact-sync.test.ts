@@ -90,14 +90,14 @@ function setup() {
     ctx as unknown as Context,
     storage as unknown as ArtifactStorageService,
   );
-  const add = () => {
+  const add = (version = 1) => {
     const controller = new AbortController();
     const collection = { applyBatch: vi.fn(async () => {}) };
     opened({
       viewer: "viewer",
       relay: "https://relay.test",
       owner: "test.plugin",
-      definition: { name: "tasks", type: "test.task" },
+      definition: { name: "tasks", type: "test.task", version },
       collection,
       signal: controller.signal,
     } as unknown as OpenArtifactCollection);
@@ -273,4 +273,27 @@ it("captures accepted delivery before starting a snapshot and confirms only afte
     ["accepted-before-start"],
     expect.any(AbortSignal),
   );
+});
+
+it("keeps a current handle when an older in-flight version fails", async () => {
+  const h = setup();
+  let fail = () => {};
+  vi.mocked(reconcileArtifactSnapshot).mockImplementationOnce(async () => {
+    await new Promise<void>((_resolve, reject) => {
+      fail = () => reject(new Error("Artifact collection version changed"));
+    });
+  });
+  const old = h.add(1);
+  await vi.advanceTimersByTimeAsync(0);
+  const current = h.add(2);
+  fail();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(reconcileArtifactSnapshot).mock.calls[1]?.[1]).toBe(
+    current.collection,
+  );
+  old.controller.abort();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(reconcileArtifactSnapshot).toHaveBeenCalledTimes(3);
+  expect(navigator.locks.request).toHaveBeenCalledOnce();
 });

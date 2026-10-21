@@ -1873,6 +1873,10 @@ export function createRelaySession(
           ) {
             if (input.kind !== 45010)
               throw new Error("Use message commands for managed messages");
+            if (!transport?.artifactSnapshots)
+              throw new Error(
+                "Artifact saving requires relay snapshot support",
+              );
             const homes = input.tags.filter(([name]) => name === "h");
             const id = homes[0]?.[1];
             if (

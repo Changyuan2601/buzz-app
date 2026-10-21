@@ -149,9 +149,11 @@ export function provideArtifactSync(
       requested = false;
       batch = new AbortController();
       const signal = AbortSignal.any([group.lifetime.signal, batch.signal]);
+      let syncing: OpenArtifactCollection | undefined;
       try {
         for (const entry of [...group.entries].slice(0, 1)) {
           if (entry.signal.aborted) continue;
+          syncing = entry;
           const operation = AbortSignal.any([signal, entry.signal]);
           const completeDelivery = await captureArtifactDelivery(
             current,
@@ -177,10 +179,15 @@ export function provideArtifactSync(
           error instanceof Error &&
           error.message === "Artifact collection version changed"
         ) {
-          group.lifetime.abort();
-          if (groups.get(group.key) === group) groups.delete(group.key);
-        }
-        if (!signal.aborted) {
+          if (syncing) group.entries.delete(syncing);
+          if (!group.entries.size) {
+            group.lifetime.abort();
+            if (groups.get(group.key) === group) groups.delete(group.key);
+          } else {
+            retry = 0;
+            requested = true;
+          }
+        } else if (!signal.aborted) {
           retry++;
           const permanent =
             error instanceof ArtifactSnapshotError &&
