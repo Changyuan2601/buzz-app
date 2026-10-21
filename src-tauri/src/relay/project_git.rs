@@ -119,34 +119,43 @@ pub(crate) async fn relay_project_git(
     else {
         return Ok(failure(CANCELLED));
     };
-    let operation = async {
-        let assertion = super::evidence(
-            host.inner(),
-            Some(fi.inner()),
-            &url::Url::parse(&url).map_err(|_| "Invalid repository")?,
-        )
-        .await?;
-        let lease = assertion
-            .as_ref()
-            .map(|authorization| (fi.inner().clone(), authorization.clone()));
-        let proof = async {
-            let mut header = sign(host.inner(), &url).await?;
-            super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
-            if let Some(header_value) = assertion
-                .as_ref()
-                .and_then(|authorization| authorization.header())
-            {
-                header.push_str(&format!("\n{}: {}", super::HEADER, header_value));
-            }
-            Ok(header)
-        };
-        let response = serve(&url, &read, cancelled, proof, lease).await;
-        super::admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
-        response
-    }
-    .await;
+    let operation = read_repository(host.inner(), fi.inner(), &url, &read, cancelled).await;
     cancels().finish(id);
     operation
+}
+
+/// One read of the repository at `url`, its Git requests carrying the
+/// community's assertion when it requires NIP-FI.
+async fn read_repository(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    url: &str,
+    read: &GitRead,
+    cancelled: oneshot::Receiver<()>,
+) -> Result<RelayResponse> {
+    let assertion = super::evidence(
+        host,
+        Some(fi),
+        &url::Url::parse(url).map_err(|_| "Invalid repository")?,
+    )
+    .await?;
+    let lease = assertion
+        .as_ref()
+        .map(|authorization| (fi.clone(), authorization.clone()));
+    let proof = async {
+        let mut header = sign(host, url).await?;
+        super::admit(host, Some(fi), assertion.as_ref()).await?;
+        if let Some(header_value) = assertion
+            .as_ref()
+            .and_then(|authorization| authorization.header())
+        {
+            header.push_str(&format!("\n{}: {}", super::HEADER, header_value));
+        }
+        Ok(header)
+    };
+    let response = serve(url, read, cancelled, proof, lease).await;
+    super::admit(host, Some(fi), assertion.as_ref()).await?;
+    response
 }
 
 #[tauri::command]
@@ -352,6 +361,13 @@ impl Git {
         for header in header.lines() {
             settings.push((format!("http.{repository}.extraHeader"), header.into()));
         }
+        #[cfg(test)]
+        settings.push((
+            "http.sslCAInfo".into(),
+            crate::federated_identity::testing::trusted_root_file()
+                .to_string_lossy()
+                .into(),
+        ));
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
             .filter(|(name, _)| !name.to_string_lossy().starts_with("GIT_"))
             .filter(|(name, _)| !name.eq_ignore_ascii_case("PATH"))

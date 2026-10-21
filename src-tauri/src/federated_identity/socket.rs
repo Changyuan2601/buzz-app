@@ -84,56 +84,13 @@ pub(crate) async fn relay_socket_connect(
             },
         );
     }
-    let connect = async {
-        let url = url::Url::parse(&relay).map_err(|_| "Invalid relay")?;
-        let assertion = fi
-            .assertion_for_socket(identity.inner(), &url, id.clone(), stop.clone())
-            .await?;
-        let Some(assertion) = assertion else {
-            return Ok(None);
-        };
-        let cancel = fi.cancellation_for(&assertion.revision)?;
-        fi.admit_assertion(identity.inner(), &assertion).await?;
-        let mut request = relay
-            .as_str()
-            .into_client_request()
-            .map_err(|_| "Invalid native socket request")?;
-        request.headers_mut().insert(
-            super::assertion::HEADER,
-            assertion
-                .header
-                .as_str()
-                .parse()
-                .map_err(|_| "Invalid federated authorization")?,
-        );
-        let config = WebSocketConfig::default()
-            .max_message_size(Some(1024 * 1024))
-            .max_frame_size(Some(1024 * 1024));
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let (socket, _) = tokio::select! {
-            _ = cancel.cancelled() => return Err("Federated session changed".into()),
-            result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async_with_config(request, Some(config), false)) => match result.map_err(|_| "Native socket timed out")? {
-                Ok(connection) => connection,
-                Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
-                    // NIP-FI's fixed refusal classes: 401 wants fresh evidence,
-                    // 403 is a decision to stop, 503 is a temporary outage.
-                    return Err(match response.status().as_u16() {
-                        401 => {
-                            fi.reject_assertion(&assertion).await;
-                            "relay-unauthorized"
-                        }
-                        403 => "relay-forbidden",
-                        503 => "relay-unavailable",
-                        _ => "Native socket upgrade refused",
-                    }
-                    .into());
-                }
-                Err(_) => return Err("Native socket upgrade refused".into()),
-            },
-        };
-        fi.admit_assertion(identity.inner(), &assertion).await?;
-        Ok::<_, String>(Some((socket, assertion, cancel)))
-    };
+    let connect = upgrade(
+        fi.inner(),
+        identity.inner(),
+        &relay,
+        id.clone(),
+        stop.clone(),
+    );
     let result = tokio::select! { _ = stop.cancelled() => Err("Native socket canceled".into()), result = connect => result };
     let (mut socket, assertion, cancel) = match result {
         Ok(Some(connection)) => connection,
@@ -262,5 +219,127 @@ pub(crate) fn relay_socket_close(
         .remove(&id)
     {
         entry.stop.cancel();
+    }
+}
+
+type Upgraded = (
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    super::assertion::Assertion,
+    CancellationToken,
+);
+/// The native upgrade to `relay` with its assertion, or `None` when the
+/// community does not require NIP-FI and the renderer connects instead.
+async fn upgrade(
+    fi: &FederatedIdentity,
+    identity: &IdentityHost,
+    relay: &str,
+    id: String,
+    stop: CancellationToken,
+) -> Result<Option<Upgraded>, String> {
+    let url = url::Url::parse(relay).map_err(|_| "Invalid relay")?;
+    let assertion = fi.assertion_for_socket(identity, &url, id, stop).await?;
+    let Some(assertion) = assertion else {
+        return Ok(None);
+    };
+    let cancel = fi.cancellation_for(&assertion.revision)?;
+    fi.admit_assertion(identity, &assertion).await?;
+    let mut request = relay
+        .into_client_request()
+        .map_err(|_| "Invalid native socket request")?;
+    request.headers_mut().insert(
+        super::assertion::HEADER,
+        assertion
+            .header
+            .as_str()
+            .parse()
+            .map_err(|_| "Invalid federated authorization")?,
+    );
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(1024 * 1024))
+        .max_frame_size(Some(1024 * 1024));
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (socket, _) = tokio::select! {
+        _ = cancel.cancelled() => return Err("Federated session changed".into()),
+        result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async_tls_with_config(request, Some(config), false, connector())) => match result.map_err(|_| "Native socket timed out")? {
+            Ok(connection) => connection,
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                // NIP-FI's fixed refusal classes: 401 wants fresh evidence,
+                // 403 is a decision to stop, 503 is a temporary outage.
+                return Err(match response.status().as_u16() {
+                    401 => {
+                        fi.reject_assertion(&assertion).await;
+                        "relay-unauthorized"
+                    }
+                    403 => "relay-forbidden",
+                    503 => "relay-unavailable",
+                    _ => "Native socket upgrade refused",
+                }
+                .into());
+            }
+            Err(_) => return Err("Native socket upgrade refused".into()),
+        },
+    };
+    fi.admit_assertion(identity, &assertion).await?;
+    Ok(Some((socket, assertion, cancel)))
+}
+
+/// Tests' loopback communities use one self-signed root.
+fn connector() -> Option<tokio_tungstenite::Connector> {
+    #[cfg(test)]
+    return Some(super::testing::trusted_connector());
+    #[cfg(not(test))]
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::federated_identity::testing::{community, reply};
+
+    fn relay(community: &super::super::testing::Community) -> String {
+        format!("wss://{}", community.origin.authority())
+    }
+
+    /// The upgrade request carries exactly the issued assertion; the relay's
+    /// refusal ends the attempt after it is captured.
+    #[tokio::test]
+    async fn upgrade_attaches_for_required_discovery() {
+        let community = community(true).await;
+        let server = community.serve(vec![reply("403 Forbidden", "{}")]);
+        let result = upgrade(
+            &community.fi,
+            &community.host,
+            &relay(&community),
+            uuid::Uuid::new_v4().to_string(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(result.err().as_deref(), Some("relay-forbidden"));
+        let heads = server.await.unwrap();
+        assert!(
+            heads[0].to_ascii_lowercase().contains("upgrade: websocket"),
+            "{}",
+            heads[0]
+        );
+        community.assert_carried(&heads[0]);
+    }
+
+    /// Ordinary discovery leaves the socket public: no native upgrade, so no
+    /// request that could carry an assertion.
+    #[tokio::test]
+    async fn upgrade_omits_for_ordinary_discovery() {
+        let community = community(false).await;
+        let server = community.serve(vec![reply("403 Forbidden", "{}")]);
+        let result = upgrade(
+            &community.fi,
+            &community.host,
+            &relay(&community),
+            uuid::Uuid::new_v4().to_string(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(matches!(result, Ok(None)));
+        assert!(!server.is_finished());
+        server.abort();
     }
 }
