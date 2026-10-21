@@ -101,6 +101,12 @@ it("opens a registered Markdown preview from the real message row and restores d
           attachment,
           {
             ...attachment,
+            url: "https://relay.test/media/large",
+            name: "large.md",
+            size: 100_001,
+          },
+          {
+            ...attachment,
             url: "https://relay.test/media/pdf",
             name: "report.pdf",
             mime: "application/pdf",
@@ -119,6 +125,8 @@ it("opens a registered Markdown preview from the real message row and restores d
   expect(
     screen.getByRole("link", { name: "Download report.pdf" }),
   ).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Download large.md" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Preview large.md" })).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
   await userEvent.click(
     screen.getByRole("button", { name: "Preview notes.md" }),

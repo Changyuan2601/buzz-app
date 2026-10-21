@@ -3767,3 +3767,51 @@ fn media_cors_allows_only_the_window_origin() {
         );
     }
 }
+
+#[test]
+fn preview_media_requests_preserve_blob_admission_and_refuse_ranges() {
+    let source = format!(
+        "buzz-media://localhost/{}?preview",
+        percent_encoding::utf8_percent_encode(
+            &format!("https://relay.test/media/{}.md", "a".repeat(64)),
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+    );
+    let request = tauri::http::Request::builder()
+        .uri(&source)
+        .body(Vec::new())
+        .unwrap();
+    let (url, range) = media_request(&request).unwrap();
+    assert_eq!(url.path(), format!("/media/{}.md", "a".repeat(64)));
+    assert_eq!(url.query(), None);
+    assert_eq!(range, None);
+    let request = tauri::http::Request::builder()
+        .uri(&source)
+        .header("Range", "bytes=0-100000")
+        .body(Vec::new())
+        .unwrap();
+    assert_eq!(media_request(&request), Err(416));
+}
+
+#[tokio::test]
+async fn native_preview_bounds_declared_and_chunked_bodies_with_authenticated_access() {
+    for (size, chunked) in [(100_000, false), (100_001, false), (100_001, true)] {
+        let body = "a".repeat(size);
+        let response = if chunked {
+            format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{size:x}\r\n{body}\r\n0\r\n\r\n")
+        } else {
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n{body}")
+        };
+        let (base, task) = fixture_server(response);
+        let url = base.join(&format!("/media/{}.md", "a".repeat(64))).unwrap();
+        let response = fetch_preview_media(&IdentityHost::fixture(), url.clone()).await;
+        if size == 100_000 {
+            assert_eq!(response.unwrap().body(), body.as_bytes());
+        } else {
+            assert_eq!(response.unwrap_err(), 413);
+        }
+        let (headers, _) = task.join().unwrap();
+        let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+        assert_strict(&blossom_event(&headers), "get", server);
+    }
+}

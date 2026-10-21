@@ -76,3 +76,14 @@ it("decodes UTF-8 across stream chunks at the size limit", async () => {
     loadPreview("/api/relay/media", new AbortController().signal),
   ).resolves.toBe(`${"a".repeat(99_996)}📝`);
 });
+
+it("uses the capped native preview request and explains a host size rejection", async () => {
+  const source = `buzz-media://localhost/${encodeURIComponent(`https://relay.test/media/${"a".repeat(64)}.md`)}`;
+  const fetch = vi.fn(async () => new Response(null, { status: 413 }));
+  vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+  await expect(loadPreview(source, signal)).rejects.toThrow(
+    "100 KB preview limit",
+  );
+  expect(fetch).toHaveBeenCalledWith(`${source}?preview`, { signal });
+});

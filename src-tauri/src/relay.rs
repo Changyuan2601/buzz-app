@@ -1286,6 +1286,9 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         .and_then(|url| window_origin(&url));
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
+            Ok((url, None)) if request.uri().query() == Some("preview") => {
+                fetch_preview_media(&host, url).await
+            }
             Ok((url, Some((start, end)))) => {
                 media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
             }
@@ -1703,6 +1706,9 @@ fn media_request(
     if request.method() != tauri::http::Method::GET {
         return Err(405);
     }
+    if request.uri().query() == Some("preview") && request.headers().contains_key("range") {
+        return Err(416);
+    }
     let encoded = request.uri().path().strip_prefix('/').ok_or(400u16)?;
     let target = percent_encoding::percent_decode_str(encoded)
         .decode_utf8()
@@ -1756,6 +1762,18 @@ async fn fetch_media(
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     fetch_media_bounded(host, url, range, MAX_MEDIA).await
+}
+
+async fn fetch_preview_media(
+    host: &IdentityHost,
+    url: Url,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        fetch_media_bounded(host, url, None, 100_000),
+    )
+    .await
+    .unwrap_or(Err(504))
 }
 
 async fn fetch_media_bounded(

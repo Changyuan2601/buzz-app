@@ -11,7 +11,11 @@ const TOO_LARGE =
   "This file exceeds the 100 KB preview limit. Download it instead.";
 
 export function previewFormat(attachment: Attachment) {
-  if (attachment.kind !== "file" || !safeMessageUrl(attachment.url))
+  if (
+    attachment.kind !== "file" ||
+    !safeMessageUrl(attachment.url) ||
+    (attachment.size !== undefined && attachment.size > MAX_BYTES)
+  )
     return undefined;
   const mime = attachment.mime?.split(";")[0]?.trim().toLowerCase();
   if (
@@ -62,7 +66,11 @@ export function parsePreviewTarget(target: string) {
 }
 
 export async function loadPreview(source: string, signal: AbortSignal) {
-  const response = await fetch(source, { signal });
+  const response = await fetch(
+    isNativeMediaSource(source) ? `${source}?preview` : source,
+    { signal },
+  );
+  if (response.status === 413) throw new Error(TOO_LARGE);
   if (!response.ok) throw new Error("The file could not be loaded. Try again.");
   if (Number(response.headers.get("content-length")) > MAX_BYTES) {
     await response.body?.cancel();
