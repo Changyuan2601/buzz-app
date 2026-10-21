@@ -6698,6 +6698,7 @@ it("starts Welcome through the claimed runner with app input, target-only signed
       // The last answer's turn saves the instructions, only in this chat, once.
       let saving: Promise<unknown> | undefined;
       run.mockImplementationOnce(async (delivery) => {
+        seenGuidance.push(delivery.guidance);
         await expect(
           delivery.agent.saveInstructions?.(written, "elsewhere"),
         ).rejects.toThrow("Get started");
@@ -6716,12 +6717,11 @@ it("starts Welcome through the claimed runner with app input, target-only signed
         instructions: written,
       });
       expect(readWelcome(setupScope)?.instructions).toBe("saved");
-      // After setup, a first thing to try gets the guide; other words none.
+      // The last answer's turn introduces Buzz from the guide; after setup
+      // it is a regular chat.
+      expect(seenGuidance.at(-1)).toContain("Buzz quick guide");
       await session.messages.send(channel, "Create a channel", [bot]);
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
-      expect(seenGuidance.at(-1)).toContain("Buzz quick guide");
-      await session.messages.send(channel, "Thanks!", [bot]);
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
       expect(seenGuidance.at(-1)).toBeUndefined();
     } finally {
       outbox.dispose();

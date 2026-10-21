@@ -287,10 +287,13 @@ next turn. Codex's binding schema version is v8 so resumed older threads gain th
 tool. Standalone clients without the capability get a clear unavailable response.
 
 The agent then says it is crafting the instructions, notes they can be edited in
-agent settings, and offers three first steps: **Start a new chat**, **Create a
-channel** and **Create another agent**. Choosing one gives the agent the bundled
-draft `features/agents/buzz-help.md` guide to explain it. The guide is not
-approved product documentation and needs human review.
+agent settings, and in the same message introduces Buzz's core pieces and how to
+get started, written in the style the owner chose. It asks no further question
+and attaches no options. The setup guidance includes the bundled draft
+`features/agents/buzz-help.md` guide for that introduction, so editing the guide
+changes what the agent explains in the next app release. The guide is not
+approved product documentation and needs human review. After that, the chat gets
+no special guidance.
 
 ## Team-testing snapshot
 

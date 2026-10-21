@@ -29,10 +29,11 @@ recite implementation details. Features not described here are not promised.
   assume a particular optional plugin is enabled or an AI provider is configured.
 - The Get started chat names the agent, asks three questions and saves its
   instructions from the answers; they stay editable in the agent's settings.
-  Its first-steps buttons (start a new chat, create a channel, create another
-  agent) explain how to do each. They do not run a visual tour. Restart welcome
+  It then introduces Buzz and how to get started; there is no visual tour. After
+  that it is a regular chat with the agent. Restart welcome
   is a temporary development action, not product guidance for a new user.
 
-Keep a first explanation brief: Solo vs Multiplayer, agents, and one useful next
-step. Let the user ask for more. For a designed tour, say that it is not available
+Keep a first explanation brief: what Buzz is, Solo vs Multiplayer, communities
+and channels, agents and their instructions, and one useful next step, such as
+starting a new chat with a real task. Let the user ask for more. For a designed tour, say that it is not available
 rather than pretending to highlight controls or navigate the interface.

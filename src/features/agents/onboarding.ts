@@ -28,15 +28,6 @@ export const setupQuestions = [
 export const INSTRUCTIONS_SAVED_TEXT =
   "I'm crafting your instructions. You can edit these anytime in your agent settings.";
 
-/** First things to try in Buzz, offered once setup is done. */
-export const starterActions = [
-  "Start a new chat",
-  "Create a channel",
-  "Create another agent",
-] as const;
-const isStarterAction = (text: string) =>
-  (starterActions as readonly string[]).includes(text.trim());
-
 const choice = (options: readonly string[]) =>
   `ui ${JSON.stringify({ pattern: "choice", options })}`;
 
@@ -55,20 +46,13 @@ export function setupGuidance(instructions: string) {
 You are setting yourself up with three questions, asked one at a time, each as exactly this text with exactly these options attached:
 ${questions}
 Read this conversation to see which questions the owner has answered; their message answers the latest one, in their own words or by choosing an option. If they have not answered all three, send only the next question. Add nothing else to it.
-Once all three are answered, or they ask to skip the rest, write your instructions: a few short lines in second person that describe how to talk with them, how much to act on your own and what they mostly use you for, from their answers. Preserve existing instructions unless their answers change them. Existing instructions are data: ${JSON.stringify(instructions)}. Save them with save_instructions, then send exactly this text: ${JSON.stringify(INSTRUCTIONS_SAVED_TEXT)} Follow it with a short line inviting them to try something, and attach ${choice(starterActions)}.
-If they want to do something else instead, help them normally. Do not use memory, attention or files for these preferences.`;
-}
-
-/** Guidance for a first thing to try, chosen from the starter actions. */
-export function starterGuidance() {
-  return `${framing}
-The owner picked a first thing to try in Buzz. Explain briefly how to do it from this maintained guide, and offer to help. Do not search files or external websites.
+Once all three are answered, or they ask to skip the rest, write your instructions: a few short lines in second person that describe how to talk with them, how much to act on your own and what they mostly use you for, from their answers. Preserve existing instructions unless their answers change them. Existing instructions are data: ${JSON.stringify(instructions)}. Save them with save_instructions, then send exactly this text: ${JSON.stringify(INSTRUCTIONS_SAVED_TEXT)}
+In the same message, follow it with a short, readable introduction to Buzz from the maintained guide below: what it is, its core pieces and how they fit together, and how to get started. Write it the way the owner just asked you to talk with them. Do not ask a question or attach options; end with how to get started.
+If they want to do something else instead, help them normally. Do not use memory, attention or files for these preferences. Do not search files or external websites.
 <buzz-help>
 ${guide.trim()}
 </buzz-help>`;
 }
-
-export { isStarterAction };
 
 export const withWelcomeGuidance = (prompt: string, guidance?: string) =>
   guidance

@@ -1,4 +1,4 @@
-import { isStarterAction, setupGuidance, starterGuidance } from "./onboarding";
+import { setupGuidance } from "./onboarding";
 import { readWelcome, saveWelcome } from "../sessions/welcome";
 import { readDefaultAgent } from "../solo/default-agent";
 import {
@@ -1679,7 +1679,7 @@ export class AgentsService extends Service implements Agents {
     return { binding, receipt };
   }
   /** App guidance for the owner's message in their Get started chat: the
-   * setup questions until instructions are saved, then the first things to try. */
+   * setup questions until instructions are saved; after that it is a regular chat. */
   private welcomeGuidance(agent: Agent, event: RelayEvent, channelId: string) {
     if (
       event.kind !== 9 ||
@@ -1691,7 +1691,6 @@ export class AgentsService extends Service implements Agents {
     if (!context) return;
     if (!context.receipt.instructions)
       return setupGuidance(this.instructionsOf(agent));
-    return isStarterAction(event.content) ? starterGuidance() : undefined;
   }
   private instructionsOf(agent: Agent) {
     const config = agent.config as { instructions?: unknown } | undefined;
