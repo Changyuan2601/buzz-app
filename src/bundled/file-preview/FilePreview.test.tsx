@@ -204,6 +204,7 @@ it("opens a registered Markdown preview from the real message row and restores d
 it.each([
   ["TEXT/PLAIN; charset=utf-8", "Plain text"],
   [" text/markdown ", "Markdown"],
+  ["APPLICATION/JSON; charset=utf-8", "Plain text"],
 ])(
   "uses the resolved format for %s file and panel labels",
   async (mime, label) => {
@@ -282,14 +283,19 @@ it("keeps uploaded composer attachments inside their existing modal without a se
 });
 
 it("retries a failed read and leaves plain text literal", async () => {
+  const text =
+    '# This stays plain text\n<script>alert("preview")</script>\n<img src="https://example.com/tracker.png">';
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockRejectedValueOnce(new Error("File unavailable"))
-    .mockResolvedValueOnce(new Response("# This stays plain text"));
+    .mockResolvedValueOnce(new Response(text));
   vi.stubGlobal("fetch", fetch);
   render(
     <FilePreviewPanel
-      target={previewTarget({ ...attachment, name: "notes.txt" }, source)}
+      target={previewTarget(
+        { ...attachment, name: "notes.html", mime: "text/html" },
+        source,
+      )}
       close={() => {}}
     />,
   );
@@ -297,12 +303,12 @@ it("retries a failed read and leaves plain text literal", async () => {
     "File unavailable",
   );
   expect(
-    screen.getByRole("link", { name: "Download notes.txt" }),
+    screen.getByRole("link", { name: "Download notes.html" }),
   ).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(
-    await screen.findByText("# This stays plain text"),
-  ).toBeInTheDocument();
+  const content = await screen.findByText(/# This stays plain text/);
+  expect(content.textContent).toBe(text);
+  expect(content.querySelector("script, img")).toBeNull();
   expect(screen.queryByRole("heading")).toBeNull();
 });
 

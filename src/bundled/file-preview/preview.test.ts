@@ -1,7 +1,34 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { loadPreview } from "./preview";
+import type { Attachment } from "../../features/relay/contracts";
+import { loadPreview, previewFormat } from "./preview";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it.each([
+  { name: "report.csv", mime: undefined, format: "text" },
+  { name: "settings.YAML", mime: "application/octet-stream", format: "text" },
+  { name: "query.sql", mime: undefined, format: "text" },
+  { name: "component.tsx", mime: undefined, format: "text" },
+  { name: "server", mime: "text/x-log; charset=utf-8", format: "text" },
+  { name: "response", mime: "application/problem+json", format: "text" },
+  { name: "feed", mime: "application/atom+xml", format: "text" },
+  { name: "config", mime: "application/toml", format: "text" },
+  { name: "script", mime: "application/javascript", format: "text" },
+  { name: "report.pdf", mime: "application/pdf", format: undefined },
+  { name: "report.docx", mime: "application/octet-stream", format: undefined },
+  { name: "archive.zip", mime: "application/zip", format: undefined },
+])(
+  "classifies $name ($mime) for text preview eligibility",
+  ({ name, mime, format }) => {
+    const attachment: Attachment = {
+      kind: "file",
+      url: "https://relay.test/media/file",
+      name,
+      ...(mime ? { mime } : {}),
+    };
+    expect(previewFormat(attachment)).toBe(format);
+  },
+);
 
 it.each([true, false])(
   "bounds actual streamed bytes even when Content-Length is misleading (declared=%s)",

@@ -7,6 +7,17 @@ import {
 
 const PREFIX = "buzz-file-preview:";
 const MAX_BYTES = 100_000;
+const TEXT_MIME_TYPES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/ecmascript",
+  "application/yaml",
+  "application/x-yaml",
+  "application/toml",
+  "application/x-toml",
+  "application/x-ndjson",
+]);
 const TOO_LARGE =
   "This file exceeds the 100 KB preview limit. Download it instead.";
 
@@ -24,7 +35,14 @@ export function previewFormat(attachment: Attachment) {
     mime === "text/x-markdown"
   )
     return "markdown";
-  if (/\.txt$/i.test(attachment.name ?? "") || mime === "text/plain")
+  if (
+    /\.(txt|text|json|jsonl|ndjson|csv|tsv|log|yaml|yml|toml|ini|conf|cfg|properties|xml|html|htm|css|js|jsx|mjs|cjs|ts|tsx|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|sql|diff|patch)$/i.test(
+      attachment.name ?? "",
+    ) ||
+    mime?.startsWith("text/") ||
+    TEXT_MIME_TYPES.has(mime ?? "") ||
+    /^application\/[^/]+\+(json|xml)$/.test(mime ?? "")
+  )
     return "text";
   return undefined;
 }

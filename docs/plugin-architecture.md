@@ -295,12 +295,13 @@ Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
 
 The optional, default-on **File Preview** plugin makes the file area open a preview for sent
-Markdown (`.md`, `.markdown`, or Markdown MIME type) and plain text (`.txt` or
-`text/plain`) attachments served through Buzz's authenticated media source.
+Markdown, common text/data formats, and source-code attachments served through
+Buzz's authenticated media source. JSON, CSV/TSV, logs, YAML/TOML/configuration,
+XML/HTML/CSS, source code, and diff/patch files display as literal text.
 It opens a conversation panel with a compact file summary. A separate trailing
 Download action saves the file directly. Disable
 it in Settings → Plugins to restore ordinary file cards. Previews accept UTF-8
-text up to 100 KB; other formats and larger files retain download. Markdown
+text up to 100 KB; PDFs, Office documents, archives, and larger files retain download. Markdown
 uses GFM with raw HTML and embedded images omitted. Relative links remain inert.
 Files on external hosts retain their ordinary Open action.
 Attachment renderers receive optional `placement: "message" | "composer"`
