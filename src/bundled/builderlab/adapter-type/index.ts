@@ -7,7 +7,8 @@ import {
   clearRegistration,
   type RegistrationIntent,
 } from "../agents/registration";
-import type { BuilderlabSession } from "../session";
+import { oauthTarget } from "../oauth/browser";
+import type { OAuthSession } from "../oauth/session";
 
 const PREFIX = "buzz.builderlab.adapter-identity.v1:";
 type Identity = {
@@ -20,11 +21,11 @@ type Identity = {
 /** Bridge Agents' lifecycle and provider settings to Beekeeper. */
 export function builderlabType(
   client: AgentClient,
-  session: BuilderlabSession,
+  session: OAuthSession,
   relay: RelayData,
 ): AgentType {
   const scope = () => ({
-    target: session.credential().origin,
+    target: oauthTarget(),
     subject: session.credential().account.subject,
   });
   function remember(

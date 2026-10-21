@@ -6,7 +6,6 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { Login } from "./Login";
 import { federatedFixture } from "./testing";
-import { deferred } from "../../bundled/builderlab/test-helpers";
 import type { SessionSnapshot } from "./service";
 
 afterEach(cleanup);
@@ -95,3 +94,13 @@ it("shows failures and permits retry; inactive contributions cannot start sign-i
   ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+function deferred<T>() {
+  let resolve: (value: T | PromiseLike<T>) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}

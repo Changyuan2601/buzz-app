@@ -52,8 +52,6 @@ pub struct Discovery {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostGrants {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub federated_identity: Option<FederatedIdentityGrant>,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -71,19 +69,6 @@ pub struct HostGrants {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub files: bool,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct FederatedIdentityGrant {
-    pub authority: String,
-    pub operations: Vec<AuthenticatedOperation>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct AuthenticatedOperation {
-    pub method: String,
-    pub path: String,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HostCommand {
@@ -174,33 +159,6 @@ impl Manifest {
             {
                 return Err("Too many host declarations".into());
             }
-            if let Some(grant) = &host.federated_identity {
-                if grant.authority.is_empty()
-                    || grant.authority.len() > 64
-                    || !grant
-                        .authority
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                {
-                    return Err("Invalid authenticated authority".into());
-                }
-                if grant.operations.is_empty()
-                    || grant.operations.len() > 64
-                    || grant.operations.iter().any(|op| {
-                        !matches!(
-                            op.method.as_str(),
-                            "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE"
-                        ) || op.path.len() > 2048
-                            || !op.path.starts_with('/')
-                            || op.path.contains(['%', '\\', '?', '#'])
-                            || op.path.contains("//")
-                            || op.path.chars().any(char::is_whitespace)
-                            || op.path.split('/').any(|part| matches!(part, "." | ".."))
-                    })
-                {
-                    return Err("Invalid authenticated authority operations".into());
-                }
-            }
             let mut command_ids = std::collections::HashSet::new();
             for command in &host.commands {
                 valid_id(&command.id)?;
@@ -270,7 +228,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         },
         ..HostGrants::default()
     });
-    let mut manifests = vec![
+    vec![
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
         builderlab,
@@ -344,65 +302,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
-    ];
-    let descriptor = env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG");
-    if !descriptor.is_empty() {
-        let config: serde_json::Value =
-            serde_json::from_str(descriptor).expect("validated FI descriptor");
-        let authority = config["id"].as_str().expect("authority");
-        let base = config["apiBasePath"].as_str().expect("API base");
-        for manifest in &mut manifests {
-            let routes: &[&str] = match manifest.id.as_str() {
-                "block.builderlab" => &[
-                    "v3/beekeeper/register-agent",
-                    "v3/beekeeper/delete-agent",
-                    "v3/beekeeper/update-agent",
-                    "v3/beekeeper/attest-agent",
-                    "v3/beekeeper/list-agents",
-                    "v3/beekeeper/cancel-agent-turn",
-                    // The account's `capabilities.can_use_remote_agents`.
-                    "GET v1/auth/me",
-                    // Attestation requires this device's key to be bound first.
-                    "v1/buzz/nostr-identities/current",
-                    "v1/buzz/nostr-identities/challenge",
-                    "v1/buzz/nostr-identities/verify",
-                ],
-                "block.hosted-communities" => &[
-                    "v1/buzz/nostr-identities/current",
-                    "v1/buzz/nostr-identities/delete",
-                    "v1/buzz/nostr-identities/challenge",
-                    "v1/buzz/nostr-identities/verify",
-                    "v1/buzz/communities/list",
-                    "v1/buzz/communities/availability",
-                    "v1/buzz/communities",
-                    "v1/buzz/communities/archive",
-                    "v1/buzz/communities/unarchive",
-                    "v1/buzz/communities/delete",
-                    "v1/buzz/communities/transfer",
-                ],
-                _ => continue,
-            };
-            let host = manifest.host.get_or_insert_with(HostGrants::default);
-            // FI API access replaces these bundles' renderer network access.
-            // Preserve unrelated command/process grants on the same manifest.
-            host.network_origins.clear();
-            host.federated_identity = Some(FederatedIdentityGrant {
-                authority: authority.into(),
-                operations: routes
-                    .iter()
-                    .map(|route| {
-                        // Routes are POST unless they name another method.
-                        let (method, route) = route.split_once(' ').unwrap_or(("POST", route));
-                        AuthenticatedOperation {
-                            method: method.into(),
-                            path: format!("{base}{route}"),
-                        }
-                    })
-                    .collect(),
-            });
-        }
-    }
-    manifests
+    ]
 }
 /// New bundles must opt in to the default-on policy.
 fn enabled_by_default(id: &str) -> bool {

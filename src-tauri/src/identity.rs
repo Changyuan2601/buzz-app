@@ -1065,7 +1065,7 @@ pub struct BuilderlabChallenge {
 }
 impl BuilderlabChallenge {
     /// block/buzz's `nostr_bind` checks and kind 24243 tags, pinned to production
-    /// Builderlab or the configured (NIP-FI or `BUZZ_BUILDERLAB_URL`) origin; never another origin.
+    /// Builderlab or the `BUZZ_BUILDERLAB_URL` build origin; never another origin.
     fn template(self, now: u64, configured: &str) -> Result<EventTemplate> {
         let nonce_ok = self.nonce.len() == 43
             && self
@@ -1109,18 +1109,14 @@ impl BuilderlabChallenge {
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
-    federated: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     challenge: BuilderlabChallenge,
 ) -> Result<serde_json::Value> {
-    // A NIP-FI build binds against its validated identity origin; legacy builds keep theirs.
-    let configured = federated
-        .identity_origin()
-        .unwrap_or(buzzodz_plugins::BUILDERLAB_ORIGIN);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    host.sign(challenge.template(now, configured)?).await
+    host.sign(challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?)
+        .await
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {

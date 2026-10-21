@@ -3,5 +3,8 @@
   "name": "Hosted communities",
   "apiVersion": 1,
   "description": "Create and manage Builderlab-hosted communities.",
-  "discovery": { "category": "people-and-communities", "tags": ["builderlab"] }
+  "discovery": { "category": "people-and-communities", "tags": ["builderlab"] },
+  "host": {
+    "networkOrigins": ["https://app.builderlab.xyz"]
+  }
 }

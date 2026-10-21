@@ -50,13 +50,15 @@ the normal connection error/retry flow applies. No legacy preferences are copied
 
 ## Builderlab URL build input
 
-This legacy public URL input remains accepted by the existing frontend/native
-build loaders during transition. Process presence overrides repository-root
-`.env.local`, including an empty value. It grants the old exact network origin
-when FI is absent, but the migrated bundled plugins no longer use it for native
-sign-in or authenticated API calls. Use the FI descriptor below for native
-sign-in, and remove this input when configuring FI; nonempty conflicts fail the
-build. No deployment default is supplied.
+Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
+the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+
+```sh
+BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
+```
+
+The bundled Builderlab and Hosted Communities plugins keep their own login
+against this origin, with or without the federated identity input below.
 
 ## Federated identity build input
 
@@ -82,8 +84,7 @@ so both stages receive it. Vite's additional `.env` and mode-specific files do
 not configure native grants. Process values take precedence, including an
 explicit empty value. When unset or empty, login is unconfigured and no network
 origin is granted. Local builds have no deployment default. The desktop release
-workflow supplies the production URL by default, and an empty value when FI is
-configured; see [release configuration](releases.md#builderlab-url).
+workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
 
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.

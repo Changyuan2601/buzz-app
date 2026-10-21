@@ -233,8 +233,8 @@ the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
 with the same key finds it. Native federated sessions are removed by the same
-sign-out owner across indexed profiles and configurations. Builderlab and hosted
-communities sign in through that same native session and hold no credential of their own. Kept agents start only while the signed-in key
+sign-out owner across indexed profiles and configurations. Builderlab and hosted-community
+logins live only in memory and end with the restart. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
 ## Automatic backup consent hooks
@@ -288,10 +288,9 @@ secure-store access, so that revision cannot restore until cleanup succeeds.
 Sign out of Buzz removes indexed FI records across profiles/configurations in
 its debug/release namespace before deleting the human key or opening a WebView.
 
-The shared `federatedIdentity` SDK exposes this public state and scoped requests.
-Builderlab settings and native Hosted Communities share its session; unloading a
-plugin retires only its request registration. Session record revision survives
-restore and scopes account caches without inventing a NIP-FA subject.
+The app's `federatedIdentity` service exposes this public state to the shared
+sign-in UI. Session record revision survives restore and scopes account caches
+without inventing a NIP-FA subject.
 
 NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
 false FI flags retain ordinary Nostr transport. A true flag requires the supported
@@ -302,18 +301,13 @@ upgrades attach the assertion beside their existing possession proof. Protected
 socket workers stop by assertion expiry; the existing live owner reconnects and
 performs fresh NIP-42. Retirement fences protected reads and results.
 
-Builderlab remote-agent and hosted-community calls go through the native SDK.
-It checks distinct authority/operation grants, enabled artifact revision, and
-live registration, then sends the adapter session as `Authorization: Bearer`
-only to the adapter origin on the allowlisted routes. It never forwards the
-credential under a legacy header, and a 401 from those routes fails that call
-without ending the session. No Buzz-managed
+No Buzz-managed
 CLI listener or provisioning is advertised without the companion CLI contract.
 The Node development host retains its supported broker flow.
 
 Fake secure-store tests and a loopback HTTP adapter fixture exercise native
 exchange, cryptographic assertion proof, expiry agreement, persistence/restart,
-stale-result fencing, and request grant enforcement. They do not establish OS
+and stale-result fencing. They do not establish OS
 consent, deployed adapter compatibility, TLS socket upgrade, or all protected
 transport paths. Use a configured staging build in a disposable OS account for
 attended browser/adapter, restart/sign-out, HTTP/write, WSS/NIP-42, media/range,

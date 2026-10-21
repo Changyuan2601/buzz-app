@@ -27,14 +27,6 @@ export type PluginManifest = Readonly<{
       maxOutputBytes?: number;
     }>[];
     networkOrigins?: readonly string[];
-    /** Separate authority access; ordinary HTTPS grants never authorize a session. */
-    federatedIdentity?: Readonly<{
-      authority: string;
-      operations: readonly Readonly<{
-        method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
-        path: string;
-      }>[];
-    }>;
     /** Programs the plugin may start with `host.spawn`; the caller's
      * arguments follow the declared ones. */
     processes?: readonly Readonly<{
@@ -66,9 +58,3 @@ declare module "@deepseek-ai/cordis" {
     readonly pluginOwner?: Readonly<{ id: string; revision: string }>;
   }
 }
-
-export type {
-  FederatedIdentity,
-  SessionSnapshot,
-  AuthenticatedRequest,
-} from "../features/federated-identity/service";

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
@@ -12,7 +12,7 @@ import {
   type AgentClient,
   type RemoteAgent,
 } from "../agents/client";
-import type { BuilderlabSession } from "../session";
+import type { OAuthSession } from "../oauth/session";
 
 const message = (reason: unknown) =>
   reason instanceof Error
@@ -20,10 +20,7 @@ const message = (reason: unknown) =>
     : "Could not update Builderlab instructions.";
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
-export function createSettingsTab(
-  client: AgentClient,
-  session: BuilderlabSession,
-) {
+export function createSettingsTab(client: AgentClient, session: OAuthSession) {
   function Editor({ pubkey, retry }: { pubkey: string; retry(): void }) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
@@ -151,7 +148,6 @@ export function createSettingsTab(
     settingsContent,
   }: AgentViewProps) {
     const [revision, setRevision] = useState(0);
-    const origin = useSyncExternalStore(session.subscribe, session.origin);
     return (
       <div className="grid gap-4">
         <div hidden={settingsSection === "runtime"}>
@@ -176,19 +172,17 @@ export function createSettingsTab(
             {settingsContent}
           </>
         )}
-        {origin && (
-          <p className="m-0 text-body-sm text-secondary">
-            Remote runtime managed via{" "}
-            <a
-              className={inlineStyles.link}
-              href={origin}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Builderlab
-            </a>
-          </p>
-        )}
+        <p className="m-0 text-body-sm text-secondary">
+          Remote runtime managed via{" "}
+          <a
+            className={inlineStyles.link}
+            href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Builderlab
+          </a>
+        </p>
       </div>
     );
   };

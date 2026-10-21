@@ -11,7 +11,7 @@ const UUID =
 export type Account = {
   email?: string;
   name?: string;
-  expiresAt?: string;
+  expiresAt: string;
   capabilities?: { can_delete_buzz_communities?: boolean };
 };
 export type ApiError = {

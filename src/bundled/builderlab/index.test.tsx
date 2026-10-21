@@ -12,7 +12,6 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService, type HostResponse } from "../../features/host/service";
-import { FederatedIdentityService } from "../../features/federated-identity/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import {
   AgentsService,
@@ -24,72 +23,13 @@ import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
+import type { OAuthCallback } from "./oauth/browser";
 import { deferred } from "./test-helpers";
 import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
-vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
-const ORIGIN = "https://builderlab.example";
-/**
- * Plays the native NIP-FI session: sign-in, then forwarded requests. Each
- * forwarded request is also given its destination `url`, so handlers can
- * route on it the way the native proxy does.
- */
-type Invoke = Parameters<typeof native.invoke.mockImplementation>[0];
-/** `GET /v1/auth/me` with the account's remote-agent permission. */
-const account = (canUseRemoteAgents: boolean) => ({
-  status: 200,
-  headers: {},
-  body: JSON.stringify({
-    email: "a@example.com",
-    capabilities: { can_use_remote_agents: canUseRemoteAgents },
-  }),
-});
-function nativeSession(
-  handler: Invoke,
-  login: () => unknown = () => undefined,
-  me: () => unknown = () => account(true),
-) {
-  let revision = 0;
-  let signedIn = false;
-  const snapshot = () => ({
-    status: signedIn ? "signed-in" : "signed-out",
-    authority: {
-      id: "test",
-      identityOrigin: ORIGIN,
-      apiBasePath: "/api/goose/",
-    },
-    revision: `r${revision}`,
-    email: signedIn ? "a@example.com" : null,
-    failure: null,
-  });
-  const play: Invoke = async (command, input) => {
-    switch (command) {
-      case "federated_identity_snapshot":
-        return snapshot();
-      case "federated_identity_sign_in":
-        await login();
-        signedIn = true;
-        revision++;
-        return snapshot();
-      case "federated_identity_sign_out":
-      case "federated_identity_cancel_sign_in":
-        signedIn = false;
-        revision++;
-        return snapshot();
-      case "federated_identity_register":
-      case "federated_identity_unregister":
-        return;
-      case "federated_identity_request":
-        input.request = { ...input.request, url: ORIGIN + input.request.path };
-        if (input.request.path.endsWith("/v1/auth/me")) return me();
-    }
-    return handler(command, input);
-  };
-  return play;
-}
 stubAvatarBrowserApis();
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
@@ -144,24 +84,13 @@ function provideAgents(
   });
 }
 
-it.each(["unconfigured", "unavailable"])(
-  "an %s NIP-FI build shows setup guidance without login or an agent type",
-  async (status) => {
-    native.invoke.mockImplementation(async (command) =>
-      command === "federated_identity_snapshot"
-        ? {
-            status,
-            authority: null,
-            revision: "r0",
-            email: null,
-            failure: null,
-          }
-        : undefined,
-    );
+it.each([undefined, "", "http://builderlab.example"])(
+  "an unavailable desktop build (%s) shows setup guidance without login or an agent type",
+  async (url) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
-    new FederatedIdentityService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -187,12 +116,10 @@ it.each(["unconfigured", "unavailable"])(
         /not configured|does not support/,
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
-      // Agents reads its own classifier key; Builderlab only reads the session.
+      // Agents reads its own classifier key; Builderlab makes no native call.
       expect(
         native.invoke.mock.calls.filter(
-          ([command]) =>
-            command !== "jev_classifier_status" &&
-            command !== "federated_identity_snapshot",
+          ([command]) => command !== "jev_classifier_status",
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
@@ -211,29 +138,39 @@ it.each(["unconfigured", "unavailable"])(
   },
 );
 
-it.each([false, true])(
-  "gates remote agents on the account permission (allowed=%s) and re-checks it on sign-in",
+it.each([undefined, false, true])(
+  "gates remote agents on the login capability %s and refreshes it on sign-in",
   async (initialCapability) => {
     let capability = initialCapability;
-    // Beekeeper answers normally; only the permission decides.
-    native.invoke.mockImplementation(
-      nativeSession(
-        async (command) =>
-          command === "federated_identity_request"
-            ? {
-                status: 200,
-                headers: {},
-                body: JSON.stringify({ status: 1, agents: [] }),
-              }
-            : undefined,
-        undefined,
-        () => account(capability),
-      ),
-    );
+    native.invoke.mockImplementation(async (command, input) => {
+      if (command === "oauth_callback_begin")
+        return {
+          id: "attempt",
+          callbackUrl: "http://127.0.0.1:12345/callback",
+        };
+      if (command === "oauth_callback_wait")
+        return { parameters: [["code", "one-time"]] };
+      if (command === "oauth_callback_cancel") return;
+      if (command !== "plugin_host_request") return;
+      const { url } = input.request;
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify(
+          url.endsWith("/exchange")
+            ? { session_credential: "private-token" }
+            : url.endsWith("/me")
+              ? {
+                  subject: "user",
+                  capabilities: { can_use_remote_agents: capability },
+                }
+              : { status: 1, agents: [] },
+        ),
+      };
+    });
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
-    new FederatedIdentityService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -267,7 +204,7 @@ it.each([false, true])(
       await screen.findByRole("button", { name: "Sign out" });
       const type = agents.types()[0];
       if (!type?.remote) throw new Error("Missing Builderlab agent type");
-      if (capability) {
+      if (capability === true) {
         expect(
           await screen.findByText("No remote agents yet."),
         ).toBeInTheDocument();
@@ -286,12 +223,13 @@ it.each([false, true])(
             signal: new AbortController().signal,
           }),
         ).rejects.toThrow("coming soon");
-        // Blocked before any Beekeeper request: only the permission was read.
         expect(
-          native.invoke.mock.calls
-            .filter(([command]) => command === "federated_identity_request")
-            .map(([, input]) => input.request.path),
-        ).toEqual(["/api/goose/v1/auth/me"]);
+          native.invoke.mock.calls.filter(
+            ([command, input]) =>
+              command === "plugin_host_request" &&
+              !/\/(exchange|me)$/.test(input.request.url),
+          ),
+        ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
         await user.click(
           screen.getByRole("button", { name: "Coming soon, attention" }),
@@ -302,7 +240,7 @@ it.each([false, true])(
         ).toBeVisible();
         await user.keyboard("{Escape}");
       }
-      capability = !capability;
+      capability = capability !== true;
       await user.click(screen.getByRole("button", { name: "Sign out" }));
       await user.click(
         screen.getByRole("button", { name: "Sign in with Builderlab" }),
@@ -328,192 +266,6 @@ it.each([false, true])(
   },
 );
 
-it("retries a failed permission read from the Agents provider dialog", async () => {
-  let reply = deferred<unknown>();
-  native.invoke.mockImplementation(
-    nativeSession(
-      async (command) =>
-        command === "federated_identity_request"
-          ? {
-              status: 200,
-              headers: {},
-              body: JSON.stringify({ status: 1, agents: [] }),
-            }
-          : undefined,
-      undefined,
-      () => reply.promise,
-    ),
-  );
-  const root = new Context();
-  const runtime = new PluginRuntime(root, async () => builderlab);
-  new HostService(root);
-  new FederatedIdentityService(root);
-  new SettingsCardsService(root);
-  const community = communityFixture(null);
-  root.provide("relay", community.relay as never);
-  const agents = provideAgents(root, community);
-  const reads = () =>
-    native.invoke.mock.calls.filter(
-      ([command, input]) =>
-        command === "federated_identity_request" &&
-        input.request.path.includes("auth/me"),
-    ).length;
-  try {
-    runtime.reconcile([
-      {
-        manifest: { ...manifest, apiVersion: 1 },
-        source: "bundled",
-        revision: "bundled",
-        enabled: true,
-        previous: null,
-        reloadable: false,
-        error: null,
-      },
-    ]);
-    await waitFor(() => expect(agents.types()).toHaveLength(1));
-    const type = agents.types()[0];
-    render(<AgentDefaults agents={agents} />);
-    const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("button", {
-        name: "Log in to Builderlab, attention",
-      }),
-    );
-    const signIn = await screen.findByRole("dialog", { name: "Builderlab" });
-    await user.click(
-      within(signIn).getByRole("button", { name: "Sign in with Builderlab" }),
-    );
-    await waitFor(() => expect(reads()).toBe(1));
-    await act(async () =>
-      reply.resolve({ status: 401, headers: {}, body: "{}" }),
-    );
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: "Retry Builderlab access, attention",
-      }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "Builderlab" });
-    expect(
-      within(dialog).getByText("Could not check Builderlab access."),
-    ).toBeInTheDocument();
-    reply = deferred();
-    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
-    expect(reads()).toBe(2);
-    expect(type?.provider?.snapshot().readiness).toBe("checking");
-    await act(async () => reply.resolve(account(true)));
-    await waitFor(() =>
-      expect(type?.provider?.snapshot().readiness).toBe("ready"),
-    );
-    expect(
-      within(dialog).getByRole("button", { name: "Sign out" }),
-    ).toBeEnabled();
-  } finally {
-    cleanup();
-    await runtime.dispose();
-    await root.fiber.dispose();
-    await community.dispose();
-  }
-});
-
-it("shows checking while the permission loads and offers a retry when it fails", async () => {
-  let reply = deferred<unknown>();
-  native.invoke.mockImplementation(
-    nativeSession(
-      async (command) =>
-        command === "federated_identity_request"
-          ? {
-              status: 200,
-              headers: {},
-              body: JSON.stringify({ status: 1, agents: [] }),
-            }
-          : undefined,
-      undefined,
-      () => reply.promise,
-    ),
-  );
-  const root = new Context();
-  const runtime = new PluginRuntime(root, async () => builderlab);
-  new HostService(root);
-  new FederatedIdentityService(root);
-  const cards = new SettingsCardsService(root);
-  const community = communityFixture(null);
-  root.provide("relay", community.relay as never);
-  const agents = provideAgents(root, community);
-  try {
-    runtime.reconcile([
-      {
-        manifest: { ...manifest, apiVersion: 1 },
-        source: "bundled",
-        revision: "bundled",
-        enabled: true,
-        previous: null,
-        reloadable: false,
-        error: null,
-      },
-    ]);
-    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    const card = cards.snapshot()[0];
-    if (!card) throw new Error("Missing Builderlab card");
-    const Card = card.component;
-    render(<Card active={() => true} />);
-    const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
-    );
-    await screen.findByText("Checking Builderlab access…");
-    const type = agents.types()[0];
-    if (!type?.remote) throw new Error("Missing Builderlab agent type");
-    expect(type.provider?.snapshot().readiness).toBe("checking");
-    // Creation waits for the answer instead of reaching Beekeeper.
-    const refused = expect(
-      type.remote.provision({
-        name: "Helper",
-        community: "wss://community.example",
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("Could not check");
-    const beekeeper = () =>
-      native.invoke.mock.calls.filter(
-        ([command, input]) =>
-          command === "federated_identity_request" &&
-          input.request.path.includes("beekeeper"),
-      );
-    expect(beekeeper()).toEqual([]);
-
-    // A failed read is never ready, and a 401 here is that call's error only.
-    await act(async () =>
-      reply.resolve({ status: 401, headers: {}, body: "{}" }),
-    );
-    await refused;
-    expect(beekeeper()).toEqual([]);
-    await screen.findByText("Could not check Builderlab access.");
-    expect(type.provider?.snapshot()).toMatchObject({
-      readiness: "attention",
-      attentionLabel: "Retry Builderlab access",
-    });
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
-
-    reply = deferred();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(type.provider?.snapshot().readiness).toBe("checking");
-    await act(async () => reply.resolve(account(true)));
-    expect(
-      await screen.findByText("No remote agents yet."),
-    ).toBeInTheDocument();
-    expect(type.provider?.snapshot().readiness).toBe("ready");
-  } finally {
-    cleanup();
-    await runtime.dispose();
-    await root.fiber.dispose();
-    await community.dispose();
-  }
-});
-
 it.each([
   ["1", true],
   ["0", true],
@@ -524,31 +276,39 @@ it.each([
     vi.stubEnv("VITE_BUZZ_LIVE", live);
     const viewer = "01".repeat(32);
     const linkFinished = deferred<void>();
-    native.invoke.mockImplementation(
-      nativeSession(
-        async (command, input) => {
-          if (command === "nsec_backup_retry") return;
-          if (command === "identity_restore") return viewer;
-          if (command !== "federated_identity_request")
-            throw new Error(`Unexpected command ${command}`);
-          const { url } = input.request;
-          let result: unknown;
-          if (url.endsWith("/list-agents")) {
-            result = { status: 1, agents: [] };
-          } else if (url.endsWith("/nostr-identities/current")) {
-            result = { identity: { pubkey_hex: viewer } };
-            linkFinished.resolve();
-          } else throw new Error(`Unexpected request ${url}`);
-          return { status: 200, headers: {}, body: JSON.stringify(result) };
-        },
-        undefined,
-        () => account(canUseRemoteAgents),
-      ),
-    );
+    native.invoke.mockImplementation(async (command, input) => {
+      if (command === "nsec_backup_session" || command === "nsec_backup_retry")
+        return;
+      if (command === "identity_restore") return viewer;
+      if (command === "oauth_callback_begin")
+        return {
+          id: "synthetic-attempt",
+          callbackUrl: "http://127.0.0.1:12345/callback",
+        };
+      if (command === "oauth_callback_wait")
+        return { parameters: [["code", "synthetic-code"]] };
+      if (command === "oauth_callback_cancel") return;
+      if (command !== "plugin_host_request")
+        throw new Error(`Unexpected command ${command}`);
+      const { url } = input.request;
+      let result: unknown;
+      if (url.endsWith("/exchange"))
+        result = { session_credential: "synthetic-credential" };
+      else if (url.endsWith("/me"))
+        result = {
+          subject: "synthetic-account",
+          capabilities: { can_use_remote_agents: canUseRemoteAgents },
+        };
+      else if (url.endsWith("/list-agents")) result = { status: 1, agents: [] };
+      else if (url.endsWith("/nostr-identities/current")) {
+        result = { identity: { pubkey_hex: viewer } };
+        linkFinished.resolve();
+      } else throw new Error(`Unexpected request ${url}`);
+      return { status: 200, headers: {}, body: JSON.stringify(result) };
+    });
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
-    new FederatedIdentityService(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -574,18 +334,6 @@ it.each([
       if (!card) throw new Error("Missing Builderlab login card");
       const Card = card.component;
       render(<Card active={() => true} />);
-      if (live === "1") {
-        // Without native identity there is no NIP-FI session to sign in to.
-        expect(screen.getByRole("status")).toHaveTextContent("desktop app");
-        expect(
-          native.invoke.mock.calls.filter(([command]) =>
-            /^(identity_restore|nsec_backup_|federated_identity_)/.test(
-              command,
-            ),
-          ),
-        ).toEqual([]);
-        return;
-      }
       const user = userEvent.setup();
       await user.click(
         screen.getByRole("button", { name: "Sign in with Builderlab" }),
@@ -598,20 +346,35 @@ it.each([
           canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
         ),
       ).toBeInTheDocument();
-      await linkFinished.promise;
-      await waitFor(() =>
-        expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
+      if (live === "0") {
+        await linkFinished.promise;
+        await waitFor(() =>
+          expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
+            source: "builderlab",
+          }),
+        );
+        expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
           source: "builderlab",
-        }),
-      );
-      // The native side owns the session; the renderer never hands it off.
-      expect(backupCalls().map(([command]) => command)).not.toContain(
-        "nsec_backup_session",
-      );
+          generation: expect.any(Number),
+          credential: "synthetic-credential",
+        });
+      }
       await user.click(screen.getByRole("button", { name: "Sign out" }));
       expect(
         await screen.findByRole("button", { name: "Sign in with Builderlab" }),
       ).toBeEnabled();
+      if (live === "0")
+        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
+      await runtime.dispose();
+      if (live === "1") {
+        expect(backupCalls()).toEqual([]);
+        expect(
+          native.invoke.mock.calls.filter(
+            ([command]) => command === "identity_restore",
+          ),
+        ).toEqual([]);
+      } else
+        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
     } finally {
       cleanup();
       await runtime.dispose();
@@ -621,60 +384,18 @@ it.each([
   },
 );
 
-it("registers the agent type once when native discovery finishes after the plugin starts", async () => {
-  const discovered = deferred<unknown>();
-  const play = nativeSession(async () => undefined);
-  native.invoke.mockImplementation(async (command, input) =>
-    command === "federated_identity_snapshot"
-      ? discovered.promise
-      : play(command, input),
-  );
-  const root = new Context();
-  const runtime = new PluginRuntime(root, async () => builderlab);
-  new HostService(root);
-  const identity = new FederatedIdentityService(root);
-  const cards = new SettingsCardsService(root);
-  const community = communityFixture(null);
-  root.provide("relay", community.relay as never);
-  const agents = provideAgents(root, community);
-  try {
-    runtime.reconcile([
-      {
-        manifest: { ...manifest, apiVersion: 1 },
-        source: "bundled",
-        revision: "bundled",
-        enabled: true,
-        previous: null,
-        reloadable: false,
-        error: null,
-      },
-    ]);
-    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    expect(agents.types()).toHaveLength(0);
-    discovered.resolve(await play("federated_identity_snapshot", {}));
-    await waitFor(() => expect(agents.types()).toHaveLength(1));
-    await identity.signIn();
-    expect(agents.types().map((type) => type.id)).toEqual(["builderlab"]);
-    await runtime.dispose();
-    expect(agents.types()).toHaveLength(0);
-  } finally {
-    await runtime.dispose();
-    await root.fiber.dispose();
-    await community.dispose();
-  }
-});
-
-it("shares plugin login with Settings and hosted Agents, replays failed setup writes, and keeps the native session across re-enable", async () => {
+it("shares plugin login with Settings and hosted Agents, replays failed setup writes, and clears login on re-enable", async () => {
   const user = userEvent.setup();
   const hostedKey = "de".repeat(32);
   const browserKey = "09".repeat(32);
   let browserCreated = false;
   let browserInstructions = "Be concise.";
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
-  let loginCallback: ReturnType<typeof deferred<void>> | undefined;
+  let loginCallback: ReturnType<typeof deferred<OAuthCallback>> | undefined;
+  const backupHandoff = deferred<void>();
   const hostRequests = () =>
     native.invoke.mock.calls
-      .filter(([command]) => command === "federated_identity_request")
+      .filter(([command]) => command === "plugin_host_request")
       .map(([, input]) => input);
   const requestsTo = (endpoint: string) =>
     hostRequests().filter((input) =>
@@ -682,65 +403,76 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     );
   const loginWaits = () =>
     native.invoke.mock.calls.filter(
-      ([command]) => command === "federated_identity_sign_in",
+      ([command]) => command === "oauth_callback_wait",
     );
-  native.invoke.mockImplementation(
-    nativeSession(
-      async (command, input) => {
-        if (command === "nsec_backup_retry") return;
-        if (command === "identity_restore") return community.viewer;
-        if (command === "identity_prepare_remote_agent_authorization")
-          return ["auth", community.viewer, "", "ef".repeat(64)];
-        if (command !== "federated_identity_request")
-          throw new Error(`Unexpected command ${command}`);
-        const { url, body } = input.request;
-        let result: unknown;
-        if (url.endsWith("/list-agents")) {
-          result = {
-            status: 1,
-            agents: browserCreated
-              ? [
-                  {
-                    agent_id: "browser",
-                    agent_name: "Browser",
-                    agent_pubkey: browserKey,
-                    status: 2,
-                    agent_instructions: browserInstructions,
-                  },
-                ]
-              : [],
-          };
-        } else if (url.endsWith("/register-agent")) {
-          const name = JSON.parse(body).agent_name;
-          const hosted = name === "Hosted";
-          if (name === "Browser") browserCreated = true;
-          result = {
-            status: 1,
-            agent_id: hosted ? "hosted" : "browser",
-            agent_pubkey: hosted ? hostedKey : browserKey,
-          };
-        } else if (url.endsWith("/nostr-identities/current")) {
-          result = { identity: { pubkey_hex: community.viewer } };
-        } else if (url.endsWith("/attest-agent")) {
-          result = { status: 1 };
-        } else if (url.endsWith("/update-agent")) {
-          if (instructionsSave) return instructionsSave.promise;
-          browserInstructions = JSON.parse(body).agent_instructions;
-          result = { status: 1 };
-        } else if (url.endsWith("/delete-agent")) {
-          result = { status: 1 };
-        } else {
-          throw new Error(`Unexpected Builderlab request ${url}`);
-        }
-        return { status: 200, headers: {}, body: JSON.stringify(result) };
-      },
-      () => loginCallback?.promise,
-    ),
-  );
+  native.invoke.mockImplementation(async (command, input) => {
+    if (command === "nsec_backup_session") return backupHandoff.promise;
+    if (command === "nsec_backup_retry") return;
+    if (command === "oauth_callback_begin")
+      return {
+        id: "native-attempt-id",
+        callbackUrl: `http://127.0.0.1:12345${input.callbackPath}`,
+      };
+    if (command === "oauth_callback_wait")
+      return loginCallback?.promise ?? { parameters: [["code", "one-time"]] };
+    if (command === "oauth_callback_cancel") return;
+    if (command === "identity_restore") return community.viewer;
+    if (command === "identity_prepare_remote_agent_authorization")
+      return ["auth", community.viewer, "", "ef".repeat(64)];
+    if (command !== "plugin_host_request")
+      throw new Error(`Unexpected command ${command}`);
+    const { url, body } = input.request;
+    let result: unknown;
+    if (url.endsWith("/exchange")) {
+      result = { session_credential: "private-token" };
+    } else if (url.endsWith("/me")) {
+      result = {
+        subject: "user",
+        email: "a@example.com",
+        capabilities: { can_use_remote_agents: true },
+      };
+    } else if (url.endsWith("/list-agents")) {
+      result = {
+        status: 1,
+        agents: browserCreated
+          ? [
+              {
+                agent_id: "browser",
+                agent_name: "Browser",
+                agent_pubkey: browserKey,
+                status: 2,
+                agent_instructions: browserInstructions,
+              },
+            ]
+          : [],
+      };
+    } else if (url.endsWith("/register-agent")) {
+      const name = JSON.parse(body).agent_name;
+      const hosted = name === "Hosted";
+      if (name === "Browser") browserCreated = true;
+      result = {
+        status: 1,
+        agent_id: hosted ? "hosted" : "browser",
+        agent_pubkey: hosted ? hostedKey : browserKey,
+      };
+    } else if (url.endsWith("/nostr-identities/current")) {
+      result = { identity: { pubkey_hex: community.viewer } };
+    } else if (url.endsWith("/attest-agent")) {
+      result = { status: 1 };
+    } else if (url.endsWith("/update-agent")) {
+      if (instructionsSave) return instructionsSave.promise;
+      browserInstructions = JSON.parse(body).agent_instructions;
+      result = { status: 1 };
+    } else if (url.endsWith("/delete-agent")) {
+      result = { status: 1 };
+    } else {
+      throw new Error(`Unexpected Builderlab request ${url}`);
+    }
+    return { status: 200, headers: {}, body: JSON.stringify(result) };
+  });
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
-  new FederatedIdentityService(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
@@ -779,6 +511,11 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       await within(providerDialog).findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();
+    expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
+      source: "builderlab",
+      generation: expect.any(Number),
+      credential: "private-token",
+    });
     picker.unmount();
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Plugins");
@@ -794,14 +531,17 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(screen.getByRole("status")).toHaveTextContent(
       "Signed in as a@example.com.",
     );
-    expect(loginWaits()).toHaveLength(1);
-    // Sign-in also reads the permission and checks the linked Buzz identity.
+    expect(document.body).not.toHaveTextContent("private-token");
+    expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
+      id: "native-attempt-id",
+    });
+    // Sign-in also checks the account's linked Buzz identity.
     await waitFor(() =>
       expect(
         hostRequests()
           .map((input) => input.request.url.split("/").at(-1))
           .sort(),
-      ).toEqual(["current", "list-agents", "me"]),
+      ).toEqual(["current", "exchange", "list-agents", "me"]),
     );
     const requests = hostRequests();
     expect(
@@ -810,12 +550,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
           input.id === "block.builderlab" && input.revision === "bundled",
       ),
     ).toBe(true);
-    // The renderer never holds a credential; the native proxy adds it.
-    expect(
-      requests.every(
-        (input) => !("X-BB-Session-Credential" in input.request.headers),
-      ),
-    ).toBe(true);
+    // Prove the account login supplies this consumer's credential through the real plugin wiring.
+    expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
+      "private-token",
+    );
     // Both writes happen after Beekeeper has returned the identity. Neither
     // failure may turn a retry into a second backend creation.
     for (const failedKey of [
@@ -900,10 +638,9 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     });
     expect(cards.snapshot()).toHaveLength(0);
     expect(agents.types()).toHaveLength(0);
-    // A disabled plugin's card no longer offers the shared session.
     expect(
-      screen.queryByRole("button", { name: "Sign out" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Sign in with Builderlab" }),
+    ).toBeEnabled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
@@ -911,11 +648,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     if (!fresh) throw new Error("Missing reactivated Builderlab login card");
     const FreshCard = fresh.component;
     render(<FreshCard active={() => true} />);
-    // The native session outlives the plugin; re-enabling keeps it.
-    expect(
-      await screen.findByRole("button", { name: "Sign out" }),
-    ).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
     expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
     // Creating while signed out starts the same browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
@@ -956,7 +688,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
         ),
       ).toHaveLength(0);
     } finally {
-      loginCallback.resolve();
+      loginCallback.resolve({ parameters: [["code", "one-time"]] });
       loginCallback = undefined;
     }
     await user.click(create);
@@ -1031,7 +763,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       expect(agents.find(browserKey)).toBeDefined();
     } finally {
       await act(async () => {
-        loginCallback?.resolve();
+        loginCallback?.resolve({ parameters: [["code", "one-time"]] });
         await loginCallback?.promise;
       });
       loginCallback = undefined;
@@ -1039,6 +771,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     await waitFor(() => expect(agents.find(browserKey)).toBeUndefined());
     expect(requestsTo("delete-agent")).toHaveLength(beforeDelete + 1);
   } finally {
+    backupHandoff.resolve();
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();

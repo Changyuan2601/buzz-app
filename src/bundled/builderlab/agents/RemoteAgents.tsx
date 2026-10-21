@@ -8,7 +8,7 @@ import { RobotIcon } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
-import type { BuilderlabSession } from "../session";
+import type { OAuthSession } from "../oauth/session";
 import type { AgentClient, RemoteAgent } from "./client";
 
 export function RemoteAgents({
@@ -17,28 +17,12 @@ export function RemoteAgents({
   active,
 }: {
   client: AgentClient;
-  session: BuilderlabSession;
+  session: OAuthSession;
   active(): boolean;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const [revision, setRevision] = useState(0);
-  const access = login.account?.remoteAgents;
-  if (login.status === "signed-in" && access === "checking")
-    return (
-      <p role="status" className="text-body-sm text-secondary">
-        Checking Builderlab access…
-      </p>
-    );
-  if (login.status === "signed-in" && access === "failed")
-    return (
-      <div role="alert" className="grid justify-items-start gap-2">
-        <p className="text-body-sm">Could not check Builderlab access.</p>
-        <Button variant="outline" onClick={session.retryRemoteAgents}>
-          Retry
-        </Button>
-      </div>
-    );
-  if (login.status === "signed-in" && access !== "allowed")
+  if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (
       <EmptyState
         icon={<RobotIcon />}

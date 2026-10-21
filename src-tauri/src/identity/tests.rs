@@ -482,7 +482,6 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::federated_identity::FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();

@@ -1,30 +1,41 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { Login } from "./Login";
-import { federatedFixture } from "../../../features/federated-identity/testing";
-import { createBuilderlabSession } from "../session";
+import { createOAuthSession } from "../oauth/session";
+import type { Credential } from "../oauth/browser";
+import { deferred } from "../test-helpers";
 
 afterEach(cleanup);
-function fixture(email: string | null = "a@example.com") {
-  const federated = federatedFixture("user", email);
-  return { ...federated, session: createBuilderlabSession(federated.session) };
-}
+const credential: Credential = {
+  value: "private-token",
+  account: {
+    subject: "user",
+    email: "a@example.com",
+    canUseRemoteAgents: true,
+  },
+};
 it("shows a desktop requirement in the browser", () => {
-  const h = fixture();
-  render(<Login session={h.session} available={false} active={() => true} />);
+  const acquire = vi.fn();
+  render(
+    <Login
+      session={createOAuthSession(acquire)}
+      available={false}
+      active={() => true}
+    />,
+  );
   expect(screen.getByRole("status")).toHaveTextContent("desktop app");
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  expect(h.service.signIn).not.toHaveBeenCalled();
+  expect(acquire).not.toHaveBeenCalled();
 });
-it("signs in and out through the native session", async () => {
-  const h = fixture();
+it("sign-out clears the credential and restores the sign-in action", async () => {
+  const session = createOAuthSession(async () => credential);
   render(
     <StrictMode>
-      <Login session={h.session} available active={() => true} />
+      <Login session={session} available active={() => true} />
     </StrictMode>,
   );
   const user = userEvent.setup();
@@ -32,18 +43,18 @@ it("signs in and out through the native session", async () => {
     screen.getByRole("button", { name: "Sign in with Builderlab" }),
   );
   expect(await screen.findByRole("button", { name: "Sign out" })).toBeEnabled();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Signed in as a@example.com.",
-  );
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   expect(
-    await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
   ).toBeEnabled();
-  expect(() => h.session.credential()).toThrow("Sign in");
+  expect(() => session.credential()).toThrow("Sign in");
 });
 it("shows a signed-in confirmation when email is unavailable", async () => {
-  const h = fixture(null);
-  render(<Login session={h.session} available active={() => true} />);
+  const session = createOAuthSession(async () => ({
+    value: "private-token",
+    account: { subject: "user", email: "", canUseRemoteAgents: true },
+  }));
+  render(<Login session={session} available active={() => true} />);
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Sign in with Builderlab" }));
@@ -53,41 +64,63 @@ it("shows a signed-in confirmation when email is unavailable", async () => {
   );
 });
 it.each(["cancel", "unmount"])(
-  "%s cancels a pending native sign-in",
+  "%s cancels a pending sign-in",
   async (action) => {
-    const h = fixture();
-    vi.mocked(h.service.signIn).mockImplementationOnce(async () => {
-      h.publish({ status: "signing-in" });
-      return h.service.snapshot();
+    const release = deferred<Credential>();
+    let signal: AbortSignal | undefined;
+    const acquire = vi.fn(async (current: AbortSignal) => {
+      signal = current;
+      return release.promise;
     });
+    const session = createOAuthSession(acquire);
     const mounted = render(
-      <Login session={h.session} available active={() => true} />,
+      <StrictMode>
+        <Login session={session} available active={() => true} />
+      </StrictMode>,
     );
     const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Finish sign-in in your browser",
-    );
+    try {
+      await user.click(
+        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      );
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Finish sign-in in your browser",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+      ).not.toBeInTheDocument();
+      if (action === "cancel")
+        await user.click(
+          screen.getByRole("button", { name: "Cancel sign-in" }),
+        );
+      else mounted.unmount();
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      await act(async () => {
+        release.resolve(credential);
+        await release.promise;
+      });
+    }
     if (action === "cancel")
-      await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
-    else mounted.unmount();
-    expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+      expect(
+        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      ).toBeEnabled();
   },
 );
 it("shows failures and permits retry; inactive contributions cannot start sign-in", async () => {
-  const h = fixture();
-  vi.mocked(h.service.signIn).mockRejectedValueOnce(
-    new Error("Browser could not open."),
-  );
+  const acquire = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Browser could not open."))
+    .mockResolvedValueOnce(credential);
+  const session = createOAuthSession(acquire);
   let active = false;
-  render(<Login session={h.session} available active={() => active} />);
+  render(<Login session={session} available active={() => active} />);
   const user = userEvent.setup();
   await user.click(
     screen.getByRole("button", { name: "Sign in with Builderlab" }),
   );
-  expect(h.service.signIn).not.toHaveBeenCalled();
+  expect(acquire).not.toHaveBeenCalled();
   active = true;
   await user.click(
     screen.getByRole("button", { name: "Sign in with Builderlab" }),

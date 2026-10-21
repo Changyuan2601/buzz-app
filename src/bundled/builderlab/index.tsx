@@ -1,32 +1,56 @@
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
-import { createFederatedSession } from "../../features/federated-identity/session";
+import { handoffBackupSession } from "../../features/identity/backup";
+import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
-import { createBuilderlabSession } from "./session";
+import {
+  browserCredential,
+  browserLoginAvailable,
+  oauthTarget,
+} from "./oauth/browser";
+import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import { Button } from "../../shared/design-system/ui/Button";
 
-export const inject = ["federatedIdentity", "settingsCards", "agents", "relay"];
+export const inject = ["host", "settingsCards", "agents", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  const session = createBuilderlabSession(
-    createFederatedSession(ctx.federatedIdentity),
-  );
+  let unavailable = "";
+  try {
+    oauthTarget();
+  } catch (error) {
+    unavailable =
+      error instanceof Error
+        ? error.message
+        : "Builderlab sign-in is unavailable.";
+  }
+  const session = createOAuthSession((signal) => {
+    if (!browserLoginAvailable())
+      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
+    return browserCredential(ctx.host, signal);
+  });
   ctx.effect(() => () => session.dispose());
-  const agents = createAgentClient(session);
-  const unavailable = ctx.federatedIdentity.apiAvailable
-    ? ""
-    : "Open the Buzz desktop app to sign in with Builderlab.";
-  const loginAvailable = !unavailable;
-  // Native discovery can finish after apply. Register once the authority is
-  // known; the registration is owned by ctx, so disposal removes it.
-  let registered = false;
-  const registerType = () => {
-    if (registered || !session.available()) return;
-    registered = true;
+  const backupSession = () => {
+    if (!nativeIdentityEnabled()) return;
+    handoffBackupSession(
+      "builderlab",
+      session.snapshot().status === "signed-in"
+        ? session.credential().value
+        : null,
+    );
+  };
+  ctx.effect(() => {
+    const stop = session.subscribe(backupSession);
+    return () => {
+      stop();
+      if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
+    };
+  });
+  const agents = createAgentClient(ctx.host, session);
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
       attentionLabel: "Log in to Builderlab",
@@ -36,20 +60,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const state = session.snapshot();
       providerState = Object.freeze(
         state.status === "signed-in"
-          ? (
-              {
-                allowed: { readiness: "ready" },
-                checking: { readiness: "checking", blocking: true },
-                failed: {
-                  readiness: "attention",
-                  attentionLabel: "Retry Builderlab access",
-                },
-                denied: {
-                  readiness: "attention",
-                  attentionLabel: "Coming soon",
-                },
-              } as const
-            )[state.account?.remoteAgents ?? "checking"]
+          ? state.account?.canUseRemoteAgents
+            ? { readiness: "ready" }
+            : { readiness: "attention", attentionLabel: "Coming soon" }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -72,21 +85,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
             showHeading={false}
           />
           {state.status === "signed-in" &&
-            state.account?.remoteAgents === "denied" && (
+            !state.account?.canUseRemoteAgents && (
               <p role="status" className="text-body-sm text-secondary">
                 Builderlab remote agents are coming soon for your account.
               </p>
-            )}
-          {state.status === "signed-in" &&
-            state.account?.remoteAgents === "failed" && (
-              <div className="grid justify-items-start gap-2">
-                <p role="alert" className="text-body-sm text-secondary">
-                  Could not check Builderlab access.
-                </p>
-                <Button onClick={() => session.retryRemoteAgents()}>
-                  Retry
-                </Button>
-              </div>
             )}
         </div>
       );
@@ -99,17 +101,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           providerListeners.add(listener);
           return () => providerListeners.delete(listener);
         },
-        check: () => {
-          session.retryRemoteAgents();
-          updateProvider();
-        },
+        check: updateProvider,
         DialogBody: ProviderDialogBody,
       },
     });
     ctx.effect(() => () => stopProvider());
-  };
-  registerType();
-  ctx.effect(() => ctx.federatedIdentity.subscribe(registerType));
+  }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
   let linked: unknown;
@@ -134,8 +131,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
           session={session}
           available={loginAvailable}
           unavailableReason={
-            unavailable ||
-            "Builderlab sign-in is not configured for this Buzz build."
+            browserLoginAvailable()
+              ? unavailable
+              : "Open the Buzz desktop app to sign in with Builderlab."
           }
           active={active}
         />

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { HostResponse } from "../../../features/host/service";
-import { deferred, signedInBuilderlab } from "../test-helpers";
+import type { Host, HostResponse } from "../../../features/host/service";
+import { createOAuthSession } from "../oauth/session";
+import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 
 beforeEach(() => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -28,16 +30,18 @@ const response = (value: unknown, status = 200): HostResponse => ({
 });
 const viewer = "cd".repeat(32);
 const bound = (pubkey_hex = viewer) => response({ identity: { pubkey_hex } });
-async function fixture(email = "a@example.com", canUseRemoteAgents = true) {
-  const { session, request } = await signedInBuilderlab(
-    email,
-    canUseRemoteAgents,
-  );
-  request.mockImplementation(async () =>
-    response({ status: "LIST_AGENTS_STATUS_SUCCESS", agents: [row] }),
-  );
-  // The native proxy is the only transport; it adds the Bearer session.
-  const host = { request };
+async function fixture(subject = "user", canUseRemoteAgents = true) {
+  const session = createOAuthSession(async () => ({
+    value: "secret",
+    account: { subject, email: "a@example.com", canUseRemoteAgents },
+  }));
+  await session.signIn();
+  const host: Host = {
+    runCommand: vi.fn(),
+    request: vi.fn(async () =>
+      response({ status: "LIST_AGENTS_STATUS_SUCCESS", agents: [row] }),
+    ),
+  };
   const owner = {
     key: vi.fn(async (): Promise<string | null> => viewer),
     signBinding: vi.fn(async () => ({ id: "signed-binding" })),
@@ -46,13 +50,13 @@ async function fixture(email = "a@example.com", canUseRemoteAgents = true) {
     session,
     host,
     owner,
-    client: createAgentClient(session, owner),
+    client: createAgentClient(host, session, owner),
     retain: vi.fn(),
     signal: new AbortController().signal,
   };
 }
 it("refuses remote reads and creation before sending requests or retaining replay state", async () => {
-  const h = await fixture("a@example.com", false);
+  const h = await fixture("user", false);
   await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
   await expect(h.client.register("Helper", h.signal, h.retain)).rejects.toThrow(
     "coming soon",
@@ -78,11 +82,12 @@ it("lists the authenticated account through the configured native host", async (
     },
   ]);
   expect(h.host.request).toHaveBeenCalledWith({
-    path: "/api/goose/v3/beekeeper/list-agents",
+    url: "https://builderlab.example/api/goose/v3/beekeeper/list-agents",
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({ include_instructions: true }),
   });
@@ -116,6 +121,7 @@ it.each([
 );
 it.each([
   null,
+  { status: 2 },
   { status: 1, agents: {} },
   { status: 1, agents: [null] },
   { status: 1, agents: [{ ...row, agent_pubkey: "bad" }] },
@@ -137,40 +143,11 @@ it.each([401, 403, 500])(
     const error = await h.client.list(h.signal).catch((error: Error) => error);
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).not.toContain("private-secret");
-    // A 401 refuses this call only; the native session decides expiry.
-    expect(h.session.snapshot().status).toBe("signed-in");
+    expect(h.session.snapshot().status).toBe(
+      status === 401 ? "signed-out" : "signed-in",
+    );
   },
 );
-it.each([
-  ["list", "LIST_AGENTS_STATUS_FEATURE_DISABLED"],
-  ["register", "REGISTER_AGENT_STATUS_FEATURE_DISABLED"],
-  ["register", 2],
-] as const)(
-  "a typed feature-disabled reply from %s (%s) denies remote agents for this sign-in",
-  async (operation, status) => {
-    const h = await fixture();
-    vi.mocked(h.host.request).mockResolvedValue(response({ status }));
-    const attempt =
-      operation === "list"
-        ? h.client.list(h.signal)
-        : h.client.register("Helper", h.signal, h.retain);
-    await expect(attempt).rejects.toThrow("coming soon");
-    expect(h.session.snapshot().account?.remoteAgents).toBe("denied");
-    expect(h.retain).not.toHaveBeenCalled();
-    // Denied: no further Beekeeper request is sent.
-    await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
-    expect(h.host.request).toHaveBeenCalledTimes(1);
-  },
-);
-it("an unrelated 403 still denies remote agents as a fallback", async () => {
-  const h = await fixture();
-  vi.mocked(h.host.request).mockResolvedValue(response({}, 403));
-  await expect(h.client.list(h.signal)).rejects.toThrow(
-    "cannot manage remote agents",
-  );
-  expect(h.session.snapshot().account?.remoteAgents).toBe("denied");
-  expect(h.session.snapshot().status).toBe("signed-in");
-});
 it.each(["sign-out", "new-login", "cancel", "dispose"])(
   "discards a held result after %s",
   async (action) => {
@@ -221,11 +198,12 @@ it("replaces instructions verbatim through the authenticated host", async () => 
   vi.mocked(h.host.request).mockResolvedValue(response({}));
   await h.client.updateInstructions(remoteAgent, instructions, h.signal);
   expect(h.host.request).toHaveBeenCalledWith({
-    path: "/api/goose/v3/beekeeper/update-agent",
+    url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent",
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({
       agent_pubkey: row.agent_pubkey,
@@ -280,11 +258,12 @@ it("deletes through the configured authenticated host", async () => {
   );
   await h.client.delete(remoteAgent, h.signal);
   expect(h.host.request).toHaveBeenCalledWith({
-    path: "/api/goose/v3/beekeeper/delete-agent",
+    url: "https://builderlab.example/api/goose/v3/beekeeper/delete-agent",
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({ agent_id: row.agent_id }),
   });
@@ -311,7 +290,7 @@ it("asks Builderlab to cancel the agent's turn in one conversation by its commun
   await h.client.cancelTurn(remoteAgent, turn, h.signal);
   expect(h.host.request).toHaveBeenCalledWith(
     expect.objectContaining({
-      path: "/api/goose/v3/beekeeper/cancel-agent-turn",
+      url: "https://builderlab.example/api/goose/v3/beekeeper/cancel-agent-turn",
       method: "POST",
       body: JSON.stringify({
         agent_id: row.agent_id,
@@ -367,7 +346,7 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
   expect(agent).toMatchObject({ name: "Helper", status: "Unattested" });
   const input = vi.mocked(h.host.request).mock.calls[0]?.[0];
   expect(input).toMatchObject({
-    path: "/api/goose/v3/beekeeper/register-agent",
+    url: "https://builderlab.example/api/goose/v3/beekeeper/register-agent",
     method: "POST",
   });
   expect(JSON.parse(input?.body ?? "{}")).toEqual({
@@ -377,7 +356,7 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
   await h.client.activate(agent.pubkey, proof, undefined, h.signal);
   expect(h.host.request).toHaveBeenLastCalledWith(
     expect.objectContaining({
-      path: expect.stringContaining("/attest-agent"),
+      url: expect.stringContaining("/attest-agent"),
       body: JSON.stringify({
         agent_pubkey: row.agent_pubkey,
         owner_auth_tag_json: JSON.stringify(proof),
@@ -406,7 +385,11 @@ it.each(["network", "server", "malformed", "cancel"])(
       }),
     );
     // A fresh consumer after navigation/restart reuses the persisted intent.
-    await createAgentClient(h.session).register("Helper", h.signal, h.retain);
+    await createAgentClient(h.host, h.session).register(
+      "Helper",
+      h.signal,
+      h.retain,
+    );
     const bodies = vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
@@ -437,7 +420,7 @@ it("does not reuse a pending creation for another verified account with the same
   );
   expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
 });
-it.each([3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
+it.each([2, 3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
   "reports a terminal registration status %s and allows a fresh retry",
   async (status) => {
     const h = await fixture();
@@ -500,15 +483,16 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     .mockResolvedValueOnce(response({ status: "ATTEST_AGENT_STATUS_ACTIVE" }));
   await h.client.activate(row.agent_pubkey, proof, undefined, h.signal);
   const calls = vi.mocked(h.host.request).mock.calls.map(([input]) => input);
-  expect(calls.map((input) => input.path)).toEqual([
-    "/api/goose/v1/buzz/nostr-identities/current",
-    "/api/goose/v1/buzz/nostr-identities/challenge",
-    "/api/goose/v1/buzz/nostr-identities/verify",
-    "/api/goose/v3/beekeeper/attest-agent",
+  expect(calls.map((input) => input.url)).toEqual([
+    "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
+    "https://builderlab.example/api/goose/v1/buzz/nostr-identities/challenge",
+    "https://builderlab.example/api/goose/v1/buzz/nostr-identities/verify",
+    "https://builderlab.example/api/goose/v3/beekeeper/attest-agent",
   ]);
   expect(calls[1]?.headers).toEqual({
     Accept: "application/json",
     "Content-Type": "application/json",
+    "X-BB-Session-Credential": "secret",
     Origin: "https://builderlab.example",
   });
   expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
@@ -563,7 +547,7 @@ it.each([
   expect(
     vi
       .mocked(h.host.request)
-      .mock.calls.some(([input]) => input.path.endsWith("/attest-agent")),
+      .mock.calls.some(([input]) => input.url.endsWith("/attest-agent")),
   ).toBe(false);
 });
 it("refuses to link without a local Buzz identity", async () => {
@@ -574,26 +558,26 @@ it("refuses to link without a local Buzz identity", async () => {
   );
   expect(h.host.request).not.toHaveBeenCalled();
 });
-it("keeps the session when the identity check is refused with 401", async () => {
+it("signs out when the identity check finds the session expired", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({}, 401));
   await expect(
     h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
-  ).rejects.toThrow("authorization was refused");
-  expect(h.session.snapshot().status).toBe("signed-in");
+  ).rejects.toThrow("session expired");
+  expect(h.session.snapshot().status).toBe("signed-out");
   expect(h.host.request).toHaveBeenCalledTimes(1);
 });
 it("attests without linking when there is no native identity", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({ status: 1 }));
-  await createAgentClient(h.session, null).activate(
+  await createAgentClient(h.host, h.session, null).activate(
     row.agent_pubkey,
     proof,
     undefined,
     h.signal,
   );
   expect(h.host.request).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].path).toMatch(
+  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toMatch(
     /\/attest-agent$/,
   );
 });
@@ -640,6 +624,6 @@ it("shares one binding attempt between overlapping links", async () => {
   expect(
     vi
       .mocked(h.host.request)
-      .mock.calls.map(([input]) => input.path.split("/").at(-1)),
+      .mock.calls.map(([input]) => input.url.split("/").at(-1)),
   ).toEqual(["current", "attest-agent"]);
 });

@@ -3,8 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type { HostResponse } from "../../../features/host/service";
-import { signedInBuilderlab } from "../test-helpers";
+import type { HostRequest, HostResponse } from "../../../features/host/service";
+import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 import { RemoteAgents } from "./RemoteAgents";
@@ -26,9 +26,18 @@ const response = (agents: unknown[], status = 200): HostResponse => ({
   body: JSON.stringify({ status: 1, agents }),
 });
 async function fixture() {
-  const { session, request } = await signedInBuilderlab();
-  request.mockImplementation(async () => response([row]));
-  const client = createAgentClient(session);
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const session = createOAuthSession(async () => ({
+    value: "secret",
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+    },
+  }));
+  await session.signIn();
+  const request = vi.fn(async (_input: HostRequest) => response([row]));
+  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   return { session, client, request };
 }
 it("loads automatically, refreshes and hides account data on sign-out", async () => {
@@ -42,9 +51,7 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     .setup()
     .click(screen.getByRole("button", { name: "Refresh agents" }));
   expect(await screen.findByText("No remote agents yet.")).toBeInTheDocument();
-  act(() => {
-    void h.session.signOut();
-  });
+  act(() => h.session.signOut());
   expect(
     screen.queryByRole("region", { name: "Remote agents" }),
   ).not.toBeInTheDocument();
@@ -71,10 +78,7 @@ it.each(["sign-out", "unmount"])(
     const held = deferred<HostResponse>();
     h.request.mockReturnValue(held.promise);
     const mounted = render(<RemoteAgents {...h} active={() => true} />);
-    if (action === "sign-out")
-      act(() => {
-        void h.session.signOut();
-      });
+    if (action === "sign-out") act(() => h.session.signOut());
     else mounted.unmount();
     await act(async () => held.resolve(response([row])));
     expect(screen.queryByText("Helper · Active")).not.toBeInTheDocument();

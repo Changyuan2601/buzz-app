@@ -777,23 +777,10 @@ require the plugin to be enabled in the native catalog. External grants require 
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
 
-Configured Builderlab and native Hosted Communities derive distinct
-`host.federatedIdentity` authority/operation grants from the validated
-[FI descriptor](configuration.md#federated-identity-build-input), removing their
-ordinary network grant in that mode. External authenticated declarations remain
-fixed in installed artifacts. An ordinary network origin is never authority to
-use a native session.
-
-The `federatedIdentity` SDK shares public session status and scopes requests to
-the caller's enabled current artifact and a native live registration. Unload,
-replacement, page reload and shutdown retire registrations. Granted operations
-are forwarded natively to the identity origin with `Authorization: Bearer` set
-to the adapter session; caller credentials, cookies and `X-BB-*` headers are
-refused, and the session credential never enters the renderer. A refusal from an
-API route, including 401, fails only that call: only the adapter's session and
-assertion endpoints end a session. Builderlab and
-native Hosted Communities consume this shared sign-in state. Generic `host.request`
-retains its separate unauthenticated-to-FI behavior below.
+Builderlab's effective manifest derives its exact origin from the validated
+[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
+Its source manifest contains no deployment origins; external plugin declarations
+remain fixed in their installed artifacts.
 
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
@@ -920,10 +907,6 @@ submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inheri
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
 SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
-Native community Git imports use host-issued, repository-scoped authorization.
-Caller-supplied authorization is rejected for other repositories and is replaced
-by native authorization for community repositories; plugins cannot forward a token
-to an arbitrary Git destination.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
 

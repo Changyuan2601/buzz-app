@@ -13,7 +13,7 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 # Builderlab
 
 The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
-In a build with a NIP-FI identity configuration, it also registers
+With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the
 agent, activation submits the owner proof and community supplied by Agents, and
@@ -29,7 +29,7 @@ Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
 Builderlab account. After sign-in, and again before each activation, the plugin
 checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this
 device's key through the native kind 24243 signer, which accepts only
-production Builderlab or this build's validated NIP-FI identity origin. An account
+production Builderlab or this build's `BUZZ_BUILDERLAB_URL` origin. An account
 bound to another key is reported and never unbound.
 The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
@@ -42,7 +42,7 @@ open, for the conversation it was opened from or all of them. It needs the Agent
 Activity plugin, which owns the feed.
 Profile updates remain TODO and report an unsupported-operation error.
 
-The adapter retains the provider agent ID, identity origin, account email and
+The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.
 No credentials or owner proofs are saved. These records survive restart and
 deletion so retries can confirm an already-missing runtime without assuming
@@ -52,28 +52,39 @@ is confirmed. On another device, removal resolves the ID from the signed-in
 account's list; an unknown key is refused. Existing Settings-created
 agents are not migrated into this type.
 
-- `session.ts` projects the shared native NIP-FI session (`federatedIdentity`).
-  The native side holds the session token in OS secure storage and adds it as
-  `Authorization: Bearer` only to this plugin's granted Beekeeper and
-  nostr-identity routes; the renderer never sees it. A 401 from those routes
-  refuses that call only. The native session decides when it has ended.
-  `credential()` names the signed-in account for one session revision, with
-  its email as the subject that scopes saved agents.
+- `oauth/` owns browser handoff, code exchange, account verification, and the
+  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
+  `session.credential()` provides access to it. The session handles cancellation,
+  sign-out, and disposal.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
   refresh and retry. Settings directs people to the **Agents** tab to create,
   edit instructions and delete agents. Listing does not activate agents or
-  publish community registrations. Sign-out and navigation discard late results.
+  publish community registrations. Requests reuse the OAuth credential through
+  native host HTTP; sign-out and navigation discard late results.
   The client also supplies the hosted adapter's Beekeeper operations. Pending
-  registration UUIDs survive restart, scoped to identity origin, account and
+  registration UUIDs survive restart, scoped to server, verified account and
   name. Retry the same name after an uncertain failure within the server's
   seven-day replay window. Instructions are limited to 20,000 characters,
   affect newly accepted tasks and are never published to the relay.
 
-Each sign-in reads `capabilities.can_use_remote_agents` from `GET /v1/auth/me`.
-While it loads, the Agents provider shows checking and creation waits. Only
-`true` makes remote agents ready; `false` shows “Coming soon”, and a failed read
-offers Retry. A typed `*_FEATURE_DISABLED` status from listing or creation also
-shows “Coming soon” (a 403 does too, as a fallback). No further Beekeeper
-requests are sent for that sign-in.
+The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
+as its server address and appends `/api/goose`.
+
+On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
+`product=builderlab` to the shared native
+[`oauth_callback` module](../../../src-tauri/src/oauth_callback/README.md).
+Native code inserts a loopback `redirect_uri` address, opens the browser, and returns
+callback parameters to the plugin. Native code generates and validates OAuth
+state; the plugin also uses a random callback path.
+
+Each attempt generates a random PKCE verifier held only in memory, sending its
+SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
+posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
+verifies the returned session credential with `/v1/auth/me` using the
+`X-BB-Session-Credential` header. These requests use the shared host transport.
+The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
+`true` enables remote agents. Otherwise, Settings and the Agents provider show
+“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
+this capability.

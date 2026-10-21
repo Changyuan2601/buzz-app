@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { nativeIdentityEnabled } from "../../../features/identity/service";
 import type {
+  Host,
   HostResponse,
   NipOaAuthorization,
 } from "../../../features/host/service";
-import type { BuilderlabSession, Credential } from "../session";
+import { oauthTarget, type Credential } from "../oauth/browser";
+import type { OAuthSession } from "../oauth/session";
 import {
   clearRegistration,
   registrationIntent,
@@ -58,8 +60,6 @@ const nativeOwner: OwnerIdentity = {
     invoke("identity_sign_builderlab_binding", { challenge }),
 };
 
-const COMING_SOON =
-  "Builderlab remote agents are coming soon for your account.";
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
     "This Builderlab account is linked to a different Buzz identity.",
@@ -68,29 +68,19 @@ const LINK_ERRORS: Record<string, string> = {
 };
 
 export function createAgentClient(
-  session: BuilderlabSession,
+  host: Host,
+  session: OAuthSession,
   // Without native identity (the dev viewer), owner proofs come from the
   // dev broker, which has no binding signer, so linking is skipped.
   owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
-  /** Waits for the account's permission; only "allowed" reaches Beekeeper. */
-  async function remoteCredential(signal: AbortSignal) {
+  function remoteCredential() {
     const credential = session.credential();
-    const access = await session.remoteAgents();
-    check(credential, signal);
-    if (access !== "allowed")
+    if (!credential.account.canUseRemoteAgents)
       throw new Error(
-        access === "failed"
-          ? "Could not check Builderlab access. Retry."
-          : COMING_SOON,
+        "Builderlab remote agents are coming soon for your account.",
       );
     return credential;
-  }
-  /** Beekeeper's typed `*_FEATURE_DISABLED` answer denies this sign-in. */
-  function featureDisabled(status: string | number) {
-    if (status !== 2 && status !== "DISABLED") return;
-    session.refuseRemoteAgents(session.credential());
-    throw new Error(COMING_SOON);
   }
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -100,12 +90,13 @@ export function createAgentClient(
     )
       throw new DOMException("Builderlab session changed.", "AbortError");
   }
-  // A 401 refuses this call only; the native session decides when it ended.
-  function refusedIfUnauthorized(response: HostResponse) {
-    if (response.status === 401)
-      throw Object.assign(new Error("Builderlab authorization was refused."), {
-        status: 401,
-      });
+  function signOutIfExpired(response: HostResponse) {
+    if (response.status !== 401) return;
+    session.signOut();
+    throw Object.assign(
+      new Error("Your Builderlab session expired. Sign in again."),
+      { status: 401 },
+    );
   }
   async function request(
     path: string,
@@ -113,15 +104,16 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = await remoteCredential(signal);
+    const credential = remoteCredential();
     let response: HostResponse;
     try {
-      response = await session.request({
-        path: `${credential.apiBasePath}v3/beekeeper/${path}`,
+      response = await host.request({
+        url: `${oauthTarget()}/v3/beekeeper/${path}`,
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
+          "X-BB-Session-Credential": credential.value,
         },
         body: JSON.stringify(body),
       });
@@ -130,15 +122,12 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    refusedIfUnauthorized(response);
-    // Fallback only: the permission check and typed status are the gate.
-    if (response.status === 403) {
-      session.refuseRemoteAgents(credential);
+    signOutIfExpired(response);
+    if (response.status === 403)
       throw Object.assign(
         new Error("This Builderlab account cannot manage remote agents."),
         { status: 403 },
       );
-    }
     if (response.status < 200 || response.status >= 300)
       throw Object.assign(
         new Error(`Builderlab request failed (HTTP ${response.status}).`),
@@ -161,16 +150,18 @@ export function createAgentClient(
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
     const credential = session.credential();
+    const target = oauthTarget();
     let response: HostResponse;
     try {
-      response = await session.request({
-        path: `${credential.apiBasePath}v1/buzz/nostr-identities/${path}`,
+      response = await host.request({
+        url: `${target}/v1/buzz/nostr-identities/${path}`,
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
+          "X-BB-Session-Credential": credential.value,
           // Binding requires the challenge origin to match this header.
-          Origin: credential.origin,
+          Origin: new URL(target).origin,
         },
         body: JSON.stringify(body),
       });
@@ -179,7 +170,7 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    refusedIfUnauthorized(response);
+    signOutIfExpired(response);
     let result: Record<string, unknown> | undefined;
     try {
       const parsed = JSON.parse(response.body);
@@ -241,7 +232,7 @@ export function createAgentClient(
     if (bound) throw new Error(LINK_ERRORS.identity_already_bound);
     const challenge = await identityRequest(
       "challenge",
-      { origin: session.credential().origin },
+      { origin: new URL(oauthTarget()).origin },
       signal,
     );
     const { challenge_id, nonce, verification_code, origin, expires_at } =
@@ -388,10 +379,10 @@ export function createAgentClient(
         throw new Error(
           "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
         );
-      const credential = await remoteCredential(signal);
+      const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
-        credential.origin,
+        oauthTarget(),
         account.subject,
         agentName,
       );
@@ -417,9 +408,9 @@ export function createAgentClient(
         throw error;
       }
       const status = resultStatus(result.status);
-      if ([2, "DISABLED"].includes(status)) clearRegistration(intent);
-      featureDisabled(status);
       const rejected = new Map<string | number, string>([
+        [2, "Agent creation is disabled on this server."],
+        ["DISABLED", "Agent creation is disabled on this server."],
         [3, "Finish setup for an existing agent before creating another."],
         [
           "REGISTRATIONS",
@@ -464,9 +455,7 @@ export function createAgentClient(
         { include_instructions: true },
         signal,
       );
-      const status = resultStatus(result.status);
-      featureDisabled(status);
-      if (![1, "SUCCESS"].includes(status))
+      if (![1, "SUCCESS"].includes(resultStatus(result.status)))
         throw new Error("Builderlab did not return an agent list.");
       // Protobuf JSON can omit an empty repeated field.
       const agents = result.agents ?? [];

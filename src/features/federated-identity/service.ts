@@ -2,7 +2,6 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { nativeIdentityEnabled } from "../identity/service";
-import type { HostResponse } from "../host/service";
 
 export type SessionSnapshot = Readonly<{
   status:
@@ -22,21 +21,12 @@ export type SessionSnapshot = Readonly<{
   email: string | null;
   failure: string | null;
 }>;
-export type AuthenticatedRequest = Readonly<{
-  path: string;
-  method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
-  headers?: Readonly<Record<string, string>>;
-  body?: string;
-}>;
 export interface FederatedIdentity {
-  /** Granted routes are forwarded natively with the session as a Bearer token. */
-  readonly apiAvailable: boolean;
   snapshot(): SessionSnapshot;
   subscribe(listener: () => void): () => void;
   signIn(): Promise<SessionSnapshot>;
   cancelSignIn(): Promise<void>;
   signOut(): Promise<void>;
-  request(input: AuthenticatedRequest): Promise<HostResponse>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -48,7 +38,6 @@ export class FederatedIdentityService
   extends Service
   implements FederatedIdentity
 {
-  readonly apiAvailable = nativeIdentityEnabled();
   private readonly shared = {
     snapshot: Object.freeze({
       status: nativeIdentityEnabled() ? "restoring" : "unavailable",
@@ -60,7 +49,6 @@ export class FederatedIdentityService
     listeners: new Set<() => void>(),
     epoch: 0,
     closed: false,
-    registrations: new WeakMap<Context, Promise<string>>(),
   };
   constructor(ctx: Context) {
     super(ctx, "federatedIdentity");
@@ -148,52 +136,5 @@ export class FederatedIdentityService
       throw new Error("Federated identity requires Buzz desktop");
     await invoke("federated_identity_cancel_sign_in");
     await this.operation("federated_identity_snapshot");
-  }
-  async request(request: AuthenticatedRequest): Promise<HostResponse> {
-    const owner = this.ctx.pluginOwner;
-    if (!owner || !nativeIdentityEnabled() || this.shared.closed)
-      throw new Error(
-        "Authenticated requests require an active desktop plugin",
-      );
-    let registration = this.shared.registrations.get(this.ctx);
-    if (!registration) {
-      const token = crypto.randomUUID();
-      let active = true;
-      this.ctx.effect(() => () => {
-        active = false;
-        void invoke("federated_identity_unregister", {
-          registration: token,
-        }).catch(() => {});
-      });
-      registration = invoke<void>("federated_identity_register", {
-        id: owner.id,
-        revision: owner.revision,
-        registration: token,
-      })
-        .then(() => {
-          if (!active) {
-            void invoke("federated_identity_unregister", {
-              registration: token,
-            }).catch(() => {});
-            throw new Error("Plugin registration retired");
-          }
-          return token;
-        })
-        .catch((error) => {
-          this.shared.registrations.delete(this.ctx);
-          throw error;
-        });
-      this.shared.registrations.set(this.ctx, registration);
-    }
-    try {
-      return await invoke<HostResponse>("federated_identity_request", {
-        id: owner.id,
-        revision: owner.revision,
-        registration: await registration,
-        request,
-      });
-    } catch (error) {
-      throw typeof error === "string" ? new Error(error) : error;
-    }
   }
 }
