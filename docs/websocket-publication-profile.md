@@ -9,8 +9,8 @@ removed. Existing concurrency bounds, explicit server cooldowns, deadlines and
 reconnect backoff remain. There is no new socket, outbox, automatic publication
 replay or HTTP fallback for uncertain writes.
 
-**This is development-host integration, not packaged-desktop support.** Both
-`just web` and `just desktop` use the development broker; packaged builds do not
+**This is development-host integration, not packaged-desktop support.** `just web`
+uses the development broker (`just desktop` uses the native host); packaged builds do not
 include it ([live relay development](contributing.md#live-relay-development)). Frontend and broker must be
 updated together. Finite reads/history/search, presence semantics, profile setup,
 media and external/local services are not migrated by this PR. See the

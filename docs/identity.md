@@ -361,16 +361,14 @@ acquisition is not implemented, so deployments enforcing it are outside acceptan
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 
-Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
-(Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
-native private-key controls. `just desktop` passes Vite's effective public pin
-(including an explicitly empty shell override) to the native app. The public pin
-alone is not authorization. Packaged builds always use native identity, ignoring
-the pin. This reuses the broker's trusted-local-process boundary; it does not copy
+Browser development with a public `BUZZ_DEV_VIEWER` pin enables the legacy
+broker (Vite derives `VITE_BUZZ_LIVE=1`) and does not offer native private-key
+controls. The public pin alone is not authorization. `just desktop` passes an
+empty pin to its Vite server and native app, so desktop development, like
+packaged builds, always uses native identity. This reuses the broker's trusted-local-process boundary; it does not copy
 keys or introduce another signing protocol.
 
-Without the pin, supported desktop development uses
-the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
+Supported desktop development uses the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
 synchronize copies automatically; neither operation is in this scope. Sign out
 does not touch that old blob.

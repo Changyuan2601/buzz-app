@@ -159,9 +159,10 @@ ports must be integers from 1 to 65535. Browser dev
 prints its selected URL and can use a later port when the requested port is
 occupied. Port selection does not isolate credentials or native plugin data;
 use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
-A public `BUZZ_DEV_VIEWER` pin enables the legacy development broker for either
-command. Without it, browser development has no live broker identity, while
-supported desktop development can use native identity and relay access. See
+A public `BUZZ_DEV_VIEWER` pin enables the legacy development broker for
+`just web`. Without it, browser development has no live broker identity.
+`just desktop` ignores the pin and always uses native identity and relay access,
+the same code path as packaged builds. See
 [host modes below](#shared-logic-and-host-boundaries) and
 [the broker setup requirements](#live-relay-development).
 
@@ -318,9 +319,9 @@ per-platform steps and limits.
 
 ## Live relay development
 
-For manual testing of shipped behavior, use `BUZZ_DEV_VIEWER= just desktop` to
-exercise the native path, even if `.env.local` contains a public viewer pin.
-Broker-backed runs do not prove native acceptance. Browser capabilities remain
+For manual testing of shipped behavior, use `just desktop`. It always exercises
+the native path, even if `.env.local` contains a public viewer pin.
+Broker-backed `just web` runs do not prove native acceptance. Browser capabilities remain
 supported; consolidate shared policy rather than maintain parallel feature logic.
 See [host boundaries and testing guidance](#shared-logic-and-host-boundaries).
 
@@ -328,11 +329,11 @@ Live **browser/broker development** requires an existing Buzz account in the OS 
 store: the `buzz-desktop` / `secrets` Keychain entry on macOS, or the same entry in
 the freedesktop secret service on Linux (read with libsecret's `secret-tool`, so
 install `libsecret-tools` and run inside an unlocked desktop session). This development broker is not native
-sign-in and is not included in packaged builds. `just web` and `just desktop` run
-it automatically once `BUZZ_DEV_VIEWER` is configured, including inside the native
-window. Without that pin, web stays in shell/fixture mode and supported desktop
-uses its separate [native identity path](identity.md). Removing the pin can
-change the active identity; it does not migrate the legacy key.
+sign-in and is not included in packaged builds. `just web` runs it automatically
+once `BUZZ_DEV_VIEWER` is configured. Without that pin, web stays in
+shell/fixture mode. `just desktop` never runs it: it uses its separate
+[native identity path](identity.md), which can be a different identity from
+the pin. The pin does not migrate the legacy key.
 
 1. Copy your existing Buzz account's **public key** (npub or 64-character hex).
 2. Add it to the git-ignored `.env.local` at this repository's root. The optional
@@ -437,22 +438,22 @@ owner of feature logic. **Preserve supported browser capabilities:** reduce
 duplicate implementations, not available workflows. Reuse shared feature owners
 rather than add parallel Node feature logic; native-only capabilities do not
 require speculative browser parity. Develop and test those with
-`BUZZ_DEV_VIEWER= just desktop`. Node code does not run in a browser merely because
+`just desktop`. Node code does not run in a browser merely because
 it serves one, and packaged desktop has no Node backend.
 
 | Mode | Identity and relay host |
 | --- | --- |
 | `just web`, public `BUZZ_DEV_VIEWER` pin | Node broker using the pinned existing legacy identity (macOS/Linux) |
 | `just web`, no pin | Shell/fixtures; no live broker identity |
-| `just desktop`, public pin | Legacy broker identity/relay access inside the native window; native identity is disabled (not an acceptance mode) |
-| `just desktop`, no pin | Native identity/relay access on supported macOS, Windows and Linux |
+| `just desktop`, with or without a pin | Native identity/relay access on supported macOS, Windows and Linux; the pin is ignored |
 | Packaged desktop | Native host; production builds exclude the dev broker regardless of the pin |
 
 A static frontend build does not supply a standalone browser login/backend.
 The public pin does not migrate keys. Native debug worktrees share a credential
 namespace distinct from release and legacy broker credentials; ports and plugin
 profiles do not isolate those keys. Removing the pin may change the active
-identity, not just the transport. Do not change defaults, credentials or a running
+identity, not just the transport; so can moving between `just web` and
+`just desktop`. Do not change defaults, credentials or a running
 app as incidental cleanup. See [identity custody and acceptance](identity.md).
 
 ### Where behavior belongs

@@ -3,8 +3,9 @@
 ## Run the integration
 
 Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
-[development setup](contributing.md#live-relay-development), then run `just web` or
-`just desktop` (one at a time); the development broker starts with the dev server.
+[development setup](contributing.md#live-relay-development), then run `just web`;
+the development broker starts with the dev server. `just desktop` uses native
+sign-in instead and needs no pin.
 Join a community using the community picker, open Messages and click a supported GitHub URL in a message to open its object
 in a side panel. Pull requests show their change summary and a one-page checklist
 of checks, reviews, unresolved threads and merge state; issues, commits, and
@@ -50,8 +51,8 @@ Keychain, Linux secret service) and
 signs authenticated reads and channel messages in Node. In this broker mode no
 private key reaches browser JavaScript; there is a bounded message-signing and
 publishing endpoint. The broker is restricted to loopback hosts, same-origin
-POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured
-`BUZZ_DEV_VIEWER` pin, native macOS offers [identity setup](identity.md); web and
+POSTs, valid Nostr kinds/event IDs, and bounded filters. Desktop development and
+packaged builds offer [identity setup](identity.md) on native macOS; web and
 unsupported native platforms retain the unavailable shell. The separate native
 import/reveal/copy UI deliberately passes private strings through JavaScript.
 Packaged builds do not include the development broker. A saved native identity

@@ -66,15 +66,20 @@ if (!help)
 forwarded.unshift("--config", JSON.stringify(config));
 // Runner/application arguments after -- belong to Tauri, including any --port.
 forwarded.push(...rest);
-// Vite normally reads .env.local only in its own process. Give Rust the same
-// effective public pin (including an explicit empty override), so native agent
-// starts select the signer that the development frontend actually uses.
-const viewer =
-  loadEnv("development", process.cwd(), "BUZZ_DEV_VIEWER").BUZZ_DEV_VIEWER ??
-  "";
+// Desktop development runs the packaged code path: native identity, relay
+// access, media and downloads. An empty process value outranks a .env.local
+// pin, so Tauri's Vite server never starts the development broker and Rust
+// never sees a pin. The pin still selects the broker for `just web`.
+if (
+  !help &&
+  loadEnv("development", process.cwd(), "BUZZ_DEV_VIEWER").BUZZ_DEV_VIEWER
+)
+  console.log(
+    "BUZZ_DEV_VIEWER applies only to `just web`; desktop uses native sign-in.",
+  );
 const result = spawnSync("pnpm", ["tauri", "dev", ...forwarded], {
   stdio: "inherit",
-  env: { ...process.env, BUZZ_DEV_VIEWER: viewer },
+  env: { ...process.env, BUZZ_DEV_VIEWER: "" },
 });
 if (result.error) console.error(result.error.message);
 if (result.signal) process.kill(process.pid, result.signal);
