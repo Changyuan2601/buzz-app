@@ -2215,11 +2215,16 @@ it("makes another agent the default from its actions menu", async () => {
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
   await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
   let menu = await screen.findByRole("menu");
-  expect(within(menu).getByText("Default agent")).toBeVisible();
-  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+  expect(within(menu).queryByText(/default agent/i)).toBeNull();
   await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Actions for Bob" }));
   menu = await screen.findByRole("menu");
+  expect(
+    within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent)
+      .slice(-2),
+  ).toEqual(["Make default agent", "Delete agent"]);
   await user.click(
     within(menu).getByRole("menuitem", { name: "Make default agent" }),
   );

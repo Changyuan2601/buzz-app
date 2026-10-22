@@ -67,7 +67,6 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
-  MenuNote,
   MenuPopup,
   MenuItem,
   MenuRoot,
@@ -809,18 +808,6 @@ function InventoryCard({
         }
       />
       <MenuPopup align="end">
-        {defaultChoice?.isDefault ? (
-          <MenuNote>Default agent</MenuNote>
-        ) : (
-          defaultChoice && (
-            <MenuItem
-              disabled={!defaultChoice.available}
-              onClick={defaultChoice.onMake}
-            >
-              Make default agent
-            </MenuItem>
-          )
-        )}
         {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
         <MenuItem
           onClick={() => {
@@ -831,6 +818,14 @@ function InventoryCard({
         >
           Copy public key
         </MenuItem>
+        {defaultChoice && !defaultChoice.isDefault && (
+          <MenuItem
+            disabled={!defaultChoice.available}
+            onClick={defaultChoice.onMake}
+          >
+            Make default agent
+          </MenuItem>
+        )}
         {remove && (
           <MenuItem tone="danger" onClick={remove}>
             Delete agent
