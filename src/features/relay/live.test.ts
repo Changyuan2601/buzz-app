@@ -2836,3 +2836,33 @@ it.each(["transient failure", "removal"])(
     }
   },
 );
+
+it("prioritizes a growing initial batch over healthy renewals", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    const ids = Array.from(
+      { length: 320 },
+      (_, i) => `c${String(i).padStart(3, "0")}`,
+    );
+    h.owner.update(ids, ids);
+    await h.first.auth();
+    for (let i = 0; i < h.first.requests().length; i++)
+      await h.first.receive(["EOSE", h.first.requests()[i]?.[1]]);
+    const start = h.first.requests().length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    h.owner.update([...ids, "new-a"], [...ids, "new-a"]);
+    const renewal = h.first.requests()[start];
+    assert.exists(renewal);
+    await h.first.receive(["EOSE", renewal[1]]);
+    const initial = h.first.requests().at(-1);
+    assert.exists(initial);
+    expect(scopeOf(initial)).toEqual(["new-a"]);
+    h.owner.update([...ids, "new-a", "new-b"], [...ids, "new-a", "new-b"]);
+    const expanded = h.first.requests().at(-1);
+    assert.exists(expanded);
+    expect(scopeOf(expanded)).toEqual(["new-a", "new-b"]);
+  } finally {
+    h.owner.dispose();
+  }
+});

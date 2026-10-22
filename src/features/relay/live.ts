@@ -580,7 +580,8 @@ export function subscribeRelayTraffic(
           );
     for (const route of [...routes.values()].sort(
       (a, b) =>
-        Number(!!a.previous) - Number(!!b.previous) || rank(a) - rank(b),
+        Number(a.previous?.status === "live") -
+          Number(b.previous?.status === "live") || rank(a) - rank(b),
     )) {
       if (active >= setupConcurrency) break;
       if (route.status !== "pending" || route.wire) continue;
