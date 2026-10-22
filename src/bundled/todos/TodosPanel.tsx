@@ -175,6 +175,38 @@ export function TodosPanel({
   const dirty = draft.content !== draft.original;
   const update = useCallback(
     (next: Draft) => {
+      const before = latestDraft.current.content;
+      if (before !== next.content) {
+        let start = 0,
+          end = before.length,
+          nextEnd = next.content.length;
+        while (
+          start < end &&
+          start < nextEnd &&
+          before[start] === next.content[start]
+        )
+          start++;
+        while (
+          end > start &&
+          nextEnd > start &&
+          before[end - 1] === next.content[nextEnd - 1]
+        ) {
+          end--;
+          nextEnd--;
+        }
+        setCollapsed(
+          (current) =>
+            new Set(
+              [...current].flatMap((offset) =>
+                offset <= start
+                  ? [offset]
+                  : offset >= end
+                    ? [offset + nextEnd - end]
+                    : [],
+              ),
+            ),
+        );
+      }
       latestDraft.current = next;
       setDraft(next);
       writeView(
@@ -209,6 +241,7 @@ export function TodosPanel({
           );
         else if (!replace && savedDirty && !alreadySaved)
           setError("Recovered unsaved changes. Retry to save them to Canvas.");
+        if (replace) setCollapsed(new Set());
         if (replace || !savedDirty || alreadySaved)
           update({
             ...empty,

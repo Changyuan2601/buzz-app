@@ -1002,3 +1002,85 @@ it("uses rendered Markdown and the displayed assignee in accessible names", asyn
     screen.getByRole("button", { name: "Assignee for Build release: John" }),
   ).toHaveTextContent("John");
 });
+it("keeps a later subtree collapsed after adding and assigning an earlier task", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const content =
+    "## Todos\n\n- [ ] Earlier · Assignee: John\n- [ ] Parent\n    - [ ] Child\n";
+  f.canvas.read.mockResolvedValue({ ...head, content });
+  render(<TodosPanel {...f.props} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Collapse Parent" }),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "New todo" }),
+    "Inserted{Enter}",
+  );
+  await saved();
+  expect(
+    screen.getByRole("button", { name: "Expand Parent" }),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: /^Assignee for Earlier/ }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Unassigned" }),
+  );
+  await saved();
+  expect(
+    screen.getByRole("button", { name: "Expand Parent" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Child" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps a later subtree collapsed when removing an earlier assignment", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content:
+      "## Todos\n\n- [ ] Earlier · Assignee: John\n- [ ] Parent\n    - [ ] Child\n",
+  });
+  render(<TodosPanel {...f.props} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Collapse Parent" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: /^Assignee for Earlier/ }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Unassigned" }),
+  );
+  await saved();
+  expect(
+    screen.getByRole("button", { name: "Expand Parent" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Child" }),
+  ).not.toBeInTheDocument();
+});
+it("clears collapsed positions when refreshing a changed Canvas", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content: "## Todos\n\n- [ ] Parent\n    - [ ] Child\n",
+  });
+  render(<TodosPanel {...f.props} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Collapse Parent" }),
+  );
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content: "## Todos\n\n- [ ] Other!\n    - [ ] New child\n",
+  });
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(
+    await screen.findByRole("checkbox", { name: "New child" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Collapse Other!" }),
+  ).toBeInTheDocument();
+});
