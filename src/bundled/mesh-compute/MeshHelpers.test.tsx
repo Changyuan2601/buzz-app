@@ -63,6 +63,12 @@ it("offers the retained prefabs and custom, disclosing tool access before creati
     screen.getAllByText(/shell and files on this machine, plus Buzz access/),
   ).toHaveLength(2);
   expect(screen.getAllByText(/Chat: no tools/)).toHaveLength(2);
+  expect(
+    screen.getByText(/Members serving its model can read/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getAllByText(/Tool output and core memory may be sent/),
+  ).toHaveLength(2);
   expect(create).not.toHaveBeenCalled();
 });
 it.each(MESH_AGENT_PRESETS)(

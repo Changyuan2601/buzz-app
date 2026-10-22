@@ -186,8 +186,8 @@ export class MeshGoose {
           ],
         });
         await check();
-        // No text means a Buzz tool already answered in the conversation.
-        return { text, answered: !text };
+        // Empty model output alone is not evidence of a Buzz answer.
+        return { text, answered: settled.answered === true };
       } finally {
         signal.removeEventListener("abort", stop);
       }

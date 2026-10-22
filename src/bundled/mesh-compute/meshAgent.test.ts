@@ -84,6 +84,18 @@ function deferred<T>() {
 }
 
 describe("Mesh agent runtime", () => {
+  it("reports an empty model answer when no Buzz tool answered", async () => {
+    const { delivery, publish, inline, runtime } = setup();
+    inline.run.mockResolvedValueOnce({ text: "" });
+    await runtime.run(delivery());
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "⚠️ Mesh agent couldn't answer: The mesh model returned no text",
+      }),
+    );
+  });
+
   it("ignores plugin wakes rather than granting owner-only admission", async () => {
     const { delivery, publish, query, inline, runtime } = setup();
     await runtime.run({

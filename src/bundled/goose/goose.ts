@@ -43,6 +43,8 @@ export type Settled = Readonly<{
   text?: string;
   /** The message gave up before any turn took it in. */
   undelivered?: true;
+  /** A successful Buzz answer tool ran, rather than a merely empty response. */
+  answered?: true;
 }>;
 
 export type ActivityReceipt = Readonly<{
@@ -308,7 +310,7 @@ export class GooseProcess {
             ? {
                 sessionId,
                 mode: "set",
-                text: `{% raw %}${launch.systemPrompt.replaceAll("{% endraw %}", "")}{% endraw %}`,
+                text: `{% raw %}${launch.systemPrompt.replace(/{%-?\s*endraw\s*-?%}/g, "")}{% endraw %}`,
               }
             : {
                 sessionId,
@@ -597,7 +599,7 @@ export class GooseSession {
    * with one more model call, whose text nobody posts. */
   finished() {
     if (this.pending === 1 && !this.queue.length && !this.steering)
-      this.settle({ ok: true });
+      this.settle({ ok: true, answered: true });
   }
 
   /** Stops the work: the running turn, as ACP's `session/cancel` does, and
@@ -807,6 +809,7 @@ export class GooseSession {
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
       ...(text ? { text } : {}),
+      ...(this.acted ? { answered: true } : {}),
     });
   }
   /** Settles the work the owner stopped, leaving messages sent since. */

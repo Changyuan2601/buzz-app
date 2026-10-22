@@ -67,7 +67,7 @@ export function MeshHelpers({ agents }: { agents: Agents }) {
       <InlineHeader
         id={title}
         title="Helpers"
-        subtitle="Create a helper, then add it to a conversation. Find your helpers in Agents."
+        subtitle="Create a helper, then add it to a conversation. Members serving its model can read the prompts and conversation history sent to them. Find your helpers in Agents."
       />
       <SettingsGroup>
         {[...MESH_AGENT_PRESETS, null].map((preset) => {
@@ -78,7 +78,7 @@ export function MeshHelpers({ agents }: { agents: Agents }) {
             <PreferenceRow
               key={preset?.id ?? "custom"}
               title={made ? `${name} — Created` : name}
-              subtitle={`${preset?.summary ?? "Start with the default assistant instructions."} ${mode === "chat" ? "Chat: no tools." : "Agent: shell and files on this machine, plus Buzz access; workspace ~/.buzz."}`}
+              subtitle={`${preset?.summary ?? "Start with the default assistant instructions."} ${mode === "chat" ? "Chat: no tools." : "Agent: the serving member’s model directs shell and files on this machine, plus Buzz access; workspace ~/.buzz. Tool output and core memory may be sent to that member."}`}
               trailing={
                 <Button
                   size="sm"

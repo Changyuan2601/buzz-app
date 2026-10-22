@@ -129,6 +129,20 @@ describe("GooseProcess", () => {
     );
   });
 
+  it.each(["{% endraw %}", "{%endraw%}", "{%- endraw %}", "{% endraw -%}"])(
+    "keeps an embedded raw-block terminator %s from closing the prompt wrapper",
+    async (endraw) => {
+      const { open, process } = await start();
+      const session = await open({
+        systemPrompt: `Before ${endraw} {{literal}} after`,
+        replacePrompt: true,
+      });
+      expect(process.prompts.get(session.id)).toBe(
+        "{% raw %}Before  {{literal}} after{% endraw %}",
+      );
+    },
+  );
+
   it("gives each session its own server, closed with it", async () => {
     const { goose, open, fake } = await start();
     const first = await open();
@@ -234,7 +248,7 @@ describe("GooseProcess", () => {
       name: "send",
       arguments: { content: "hi", final: true },
     });
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, answered: true });
     expect(session.busy).toBe(false);
     expect(session.working).toBe(true);
     session.interrupt();
@@ -428,6 +442,12 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("does not claim a blank model turn answered in Buzz", async () => {
+    const { open } = await start();
+    const session = await open();
+    await expect(session.send("hello")).resolves.toEqual({ ok: true });
+  });
+
   it("ends work that acted in Buzz without its closing text", async () => {
     const { open, process } = await start();
     process.hold = true;
@@ -444,7 +464,7 @@ describe("GooseProcess", () => {
     });
     await flush();
     process.turns[0]?.finish();
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, answered: true });
   });
 
   it("ends work that only read or failed to send with what goose wrote", async () => {

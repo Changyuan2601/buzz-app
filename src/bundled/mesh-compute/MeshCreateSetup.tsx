@@ -52,6 +52,11 @@ export function MeshCreateSetup({
     phase !== "stopping";
   return (
     <section aria-label="Set up shared compute" className="grid gap-2">
+      <p className="m-0 text-body-sm text-secondary">
+        Members serving your model can read the prompts and conversation history
+        sent to them. In Agent mode, this includes tool output and core memory;
+        their model directs tools on this computer.
+      </p>
       {confirmed ? (
         <div className="grid gap-2">
           <p
