@@ -649,8 +649,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     const FreshCard = fresh.component;
     render(<FreshCard active={() => true} />);
     expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
-    // Creating while signed out starts the same browser login. A failed login
-    // preserves the draft and sends no provisioning request; retry completes it.
+    // The type remains registered for existing agents, but is not offered
+    // in new-agent creation, even when it is the only registered provider.
     render(<AgentsPage agents={agents} relay={community.relay} />);
     await user.click(
       screen.getByRole("button", { name: "Create your first agent" }),
@@ -658,30 +658,34 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     expect(
       within(createDialog).getByRole("combobox", { name: "Harness" }),
-    ).toHaveTextContent("Builderlab (hosted)");
+    ).not.toHaveTextContent("Builderlab");
     expect(
-      within(createDialog).getByText(/Its provider keeps its key and runs it/),
-    ).toBeInTheDocument();
-    const name = within(createDialog).getByRole("textbox", { name: "Name" });
-    const create = within(createDialog).getByRole("button", {
-      name: "Create agent",
-    });
-    await user.type(name, "Browser");
+      within(createDialog).getByRole("button", { name: "Create agent" }),
+    ).toBeDisabled();
+    await user.click(
+      within(createDialog).getByRole("button", { name: "Close" }),
+    );
+    await waitFor(() => expect(createDialog).not.toBeInTheDocument());
+
+    // Exercise retained provisioning directly: failed login sends no request,
+    // and retry creates an agent whose management UI remains available.
     const beforeCreateLogin = loginWaits().length;
     loginCallback = deferred();
     try {
-      await user.click(create);
+      const creation = agents.create({
+        type: "block.builderlab/builderlab",
+        name: "Browser",
+      });
+      const failure = expect(creation).rejects.toThrow(
+        "Browser could not open.",
+      );
       await waitFor(() =>
         expect(loginWaits()).toHaveLength(beforeCreateLogin + 1),
       );
-      expect(create).toBeDisabled();
-      expect(name).toHaveValue("Browser");
-      loginCallback.reject(new Error("Browser could not open."));
-      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
-        "Browser could not open.",
-      );
-      expect(create).toBeEnabled();
-      expect(name).toHaveValue("Browser");
+      await act(async () => {
+        loginCallback?.reject(new Error("Browser could not open."));
+        await failure;
+      });
       expect(
         requestsTo("register-agent").filter(
           (input) => JSON.parse(input.request.body).agent_name === "Browser",
@@ -691,18 +695,17 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       loginCallback.resolve({ parameters: [["code", "one-time"]] });
       loginCallback = undefined;
     }
-    await user.click(create);
-    await waitFor(() =>
-      expect(agents.find(browserKey)).toMatchObject({
+    await act(async () => {
+      await agents.create({
+        type: "block.builderlab/builderlab",
         name: "Browser",
-        place: "hosted",
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Create agent" }),
-      ).not.toBeInTheDocument(),
-    );
+      });
+    });
+    expect(agents.find(browserKey)).toMatchObject({
+      name: "Browser",
+      place: "hosted",
+    });
+    await user.click(await screen.findByRole("gridcell", { name: /Browser/ }));
     expect(agents.find(browserKey)?.unfinished).toBeUndefined();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
     expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
