@@ -425,7 +425,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
     "Larry · rcaj",
   );
   expect(screen.getByLabelText("DM label")).toHaveTextContent(
-    "Larry · rcaj, Larry · 04hu",
+    "Larry · 04hu, Larry · rcaj",
   );
   expect(
     screen.getByRole("button", {

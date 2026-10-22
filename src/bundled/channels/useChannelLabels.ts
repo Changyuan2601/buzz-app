@@ -84,6 +84,10 @@ export function useChannelLabels(
                   channel.participants,
                 ),
               )
+              // Alphabetical, so a conversation is findable by any member.
+              .sort((a, b) =>
+                a.localeCompare(b, undefined, { sensitivity: "base" }),
+              )
               .join(", ")
           : "Notes to self";
         const result =
