@@ -128,6 +128,8 @@ export type MessageRowProps = {
   stackPrevious?: boolean;
   stackNext?: boolean;
   alignViewer?: boolean;
+  /** Solo reads as a document: one author header per group, no own byline. */
+  chatPresentation?: boolean;
 
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
@@ -191,6 +193,7 @@ function MessageRowContent({
   stackPrevious = layout === "continuation",
   stackNext = false,
   alignViewer = true,
+  chatPresentation = false,
 
   mediaMode = "inline",
   mediaSeekTo,
@@ -303,8 +306,11 @@ function MessageRowContent({
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
       : "circle";
+  // Solo names each group's author once, above it, and leaves your own
+  // messages unlabelled; times stay available on hover and keyboard focus.
+  const solo = chatPresentation && !renderMessage;
   const presence = usePresenceStatus(
-    !row.workflowOwnerId && avatarShape === "squircle"
+    !row.workflowOwnerId && avatarShape === "squircle" && !solo
       ? session?.presence
       : undefined,
     row.authorId,
@@ -330,6 +336,21 @@ function MessageRowContent({
   // Own-message surface colours apply to a bubble, never to a shown thread root.
   const ownBubble =
     !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
+  const viewerRow =
+    alignViewer && !row.workflowOwnerId && row.authorId === viewer;
+  const timeOnDemand = stackPrevious || solo;
+  // A Solo reply that opens by naming you shows that name as plain text.
+  const opensWithViewer = useMemo(
+    () =>
+      solo &&
+      !viewerRow &&
+      !!viewer &&
+      addressedMessage(
+        displayRow,
+        profileMentionParts(displayRow, directory.profiles, directory.agents),
+      ).recipients[0] === viewer,
+    [solo, viewerRow, viewer, displayRow, directory],
+  );
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -491,15 +512,20 @@ function MessageRowContent({
       largeEmoji={emojiOnly}
     />
   );
+  const avatarSize = compactAvatar
+    ? "small"
+    : solo
+      ? "compact"
+      : layout === "timeline"
+        ? "large"
+        : "default";
   const avatar = row.workflowOwnerId ? (
     <Avatar
       alt="Workflow"
       fallback="Workflow"
       fallbackContent={<LightningIcon size={20} />}
       shape="squircle"
-      size={
-        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-      }
+      size={avatarSize}
     />
   ) : clickable ? (
     <ProfilePeek
@@ -516,7 +542,7 @@ function MessageRowContent({
       onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
-          size={layout === "timeline" ? "default" : "sm"}
+          size={solo ? "xs" : layout === "timeline" ? "default" : "sm"}
           shape="round"
           aria-label={`View ${name} profile`}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
@@ -552,9 +578,7 @@ function MessageRowContent({
               : `${name} avatar`
         }
         fallback={name}
-        size={
-          compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-        }
+        size={avatarSize}
         shape={avatarShape}
         statusBadge={presence === "unknown" ? undefined : presence}
       />
@@ -603,7 +627,7 @@ function MessageRowContent({
       }
       quickControls={
         <>
-          {stackPrevious && (
+          {timeOnDemand && (
             <span
               className={styles.keyboardMessageTime}
               data-message-keyboard-time
@@ -784,17 +808,15 @@ function MessageRowContent({
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
-        data-viewer-message={
-          alignViewer && !row.workflowOwnerId && row.authorId === viewer
-            ? ""
-            : undefined
-        }
+        data-viewer-message={viewerRow ? "" : undefined}
         data-own={
           (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
           undefined
         }
+        data-chat-presentation={solo || undefined}
+        data-opens-with-viewer={opensWithViewer || undefined}
       >
-        {!renderMessage && <span className={styles.messageGutter} />}
+        {!renderMessage && !solo && <span className={styles.messageGutter} />}
 
         <div className={styles.messageBody}>
           {!renderMessage && overlays}
@@ -806,9 +828,12 @@ function MessageRowContent({
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
-            {!renderMessage && (!stackNext || avatarFocused) && (
-              <div className={styles.messageAvatar}>{avatar}</div>
-            )}
+            {!renderMessage &&
+              (solo
+                ? !viewerRow && (!stackPrevious || avatarFocused)
+                : !stackNext || avatarFocused) && (
+                <div className={styles.messageAvatar}>{avatar}</div>
+              )}
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
@@ -818,7 +843,9 @@ function MessageRowContent({
                 what the reader saw, so a continuation copies without a byline. */}
               <div
                 className={
-                  stackPrevious ? "sr-only select-none" : styles.byline
+                  stackPrevious || (solo && viewerRow)
+                    ? "sr-only select-none"
+                    : styles.byline
                 }
               >
                 {row.workflowOwnerId && workflowOwnerName ? (
@@ -842,7 +869,7 @@ function MessageRowContent({
                     )}
                   </span>
                 )}
-                {!stackPrevious && (
+                {!timeOnDemand && (
                   <MessageTimestamp createdAt={row.createdAt} />
                 )}
                 {session &&
@@ -878,7 +905,7 @@ function MessageRowContent({
             )}
             <MessageTimestampHint
               createdAt={
-                !renderMessage && stackPrevious ? row.createdAt : undefined
+                !renderMessage && timeOnDemand ? row.createdAt : undefined
               }
               attachments={attachmentGroups.length > 0}
             >

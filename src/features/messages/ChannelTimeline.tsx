@@ -1235,6 +1235,7 @@ function Timeline({
                       retry={queries.outbox?.retry}
                       keepMounted={keepRowMounted}
                       day={day && !disclosure}
+                      chatPresentation={chatPresentation}
                     />
                   )}
                 </ActivityExpansion>

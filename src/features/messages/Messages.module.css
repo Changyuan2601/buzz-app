@@ -2864,6 +2864,63 @@ html[data-keyboard-navigation] .channelJoinSurface {
   align-self: flex-end;
   margin-inline: 0 var(--space-2);
 }
+/* Solo reads as a document: other authors' messages drop the bubble and open
+   each group with one header, avatar beside the name. Own messages keep their
+   bubble and carry no byline. */
+.message[data-chat-presentation]:not([data-viewer-message]) > .messageBody {
+  max-width: min(100%, 46rem);
+}
+.message[data-chat-presentation]:not([data-viewer-message])
+  > .messageBody
+  > .messageContent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  align-items: center;
+}
+.message[data-chat-presentation]:not([data-viewer-message])
+  > .messageBody
+  > .messageContent
+  > * {
+  grid-column: 1 / -1;
+}
+.message[data-chat-presentation]:not([data-viewer-message])
+  > .messageBody
+  > .messageContent
+  > .messageAvatar {
+  grid-column: 1;
+  position: static;
+}
+.message[data-chat-presentation]:not([data-viewer-message])
+  .messageAvatar
+  + .messageHeader {
+  grid-column: 2;
+}
+.message[data-chat-presentation]:not([data-viewer-message])
+  :is(.byline, .delivery, .sentFromThread) {
+  padding-inline-start: 0;
+}
+.message[data-chat-presentation]:not([data-viewer-message]) .reactions {
+  margin-inline-start: 0;
+}
+.message[data-chat-presentation] .messageBubble:not([data-own]) {
+  max-width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* A routine reply opens by naming you; keep that name as plain text. */
+.message[data-opens-with-viewer]
+  .messageBubble
+  > .text
+  > p:first-child
+  > :is(
+    [data-mention-self]:first-child,
+    span:empty:first-child + [data-mention-self]
+  ) {
+  --mention-fill: transparent;
+  --mention-text: var(--text-subtle);
+}
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
 }
