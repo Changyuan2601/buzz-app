@@ -76,6 +76,33 @@ promise. The access dialog loads roles and profiles on demand, without per-row r
 polling. Its device-local share history is display-only and does not drive the
 indicator. Clicking the indicator opens that same dialog.
 
+## Sending a copied chat link
+
+Pasting a recognized Solo chat link into a stream/forum composer stages its
+existing session card. Sending that card (at channel level or in a thread) asks
+**Share and send** or **Send link only**. Closing preserves the draft. Share uses
+the existing fresh destination roster and membership grant helpers, including
+channel agents, before the composer queues its original message. It does not
+post a second card or retarget a thread reply. Link-only leaves access unchanged.
+
+Consent covers the full chat history and future messages, not just a preview.
+An unsuccessful grant leaves the message unsent and keeps Retry in the dialog;
+that retry preserves its captured audience and existing operation receipts.
+Partial grants remain real access even if the user cancels or sends only the link.
+Leaving the composer cancels further grants and sending, not already dispatched
+writes. Outbox remains their recovery owner. A separate in-progress Share for the
+same chat must finish first. Channel audiences skip known-archived members, including
+ones archived before their grant starts on retry. Other grant failures remain
+visible; direct-person choices still reject archived identities. Sharing never
+unarchives anyone or removes them from the source channel. Existing audience
+bounds still apply.
+
+This first slice covers staged cards in channels and their threads, not ordinary
+message links, DMs, Solo destinations, editing an already-sent message, or new-chat
+creation. No implicit invitation, sidebar redesign, source-origin change, or new
+relay protocol is added. Cross-account/live and rendered interaction checks remain
+separate from the signed fixture tests.
+
 ## Retry and operation ownership
 
 `src/bundled/channels/SoloShare.tsx` owns presentation using shared Dialog,
