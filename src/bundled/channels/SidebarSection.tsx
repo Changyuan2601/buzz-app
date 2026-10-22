@@ -282,48 +282,48 @@ export function SidebarSection({
                         )}
                       </MenuRadioItem>
                     </MenuRadioGroup>
-                    {channels &&
-                      filter.value !== "all" &&
-                      channels.rows.length > 0 && (
-                        <>
-                          <MenuSeparator />
-                          <MenuGroup>
-                            <MenuGroupLabel emphasis="quiet">
-                              {filter.value === "unreads"
+                    {channels && channels.rows.length > 0 && (
+                      <>
+                        <MenuSeparator />
+                        <MenuGroup>
+                          <MenuGroupLabel emphasis="quiet">
+                            {filter.value === "all"
+                              ? "Older conversations"
+                              : filter.value === "unreads"
                                 ? "No unread messages"
                                 : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`}
-                            </MenuGroupLabel>
-                            {channels.rows.map((channel) => {
-                              const select = () => {
-                                onToggle(true);
-                                channels.select(channel.id);
-                                setMenuOpen(false);
-                              };
-                              return session ? (
-                                <ChannelSidebarMenuItem
-                                  key={channel.id}
-                                  channel={channel}
-                                  session={session}
-                                  selected={channels.selected === channel.id}
-                                  onSelect={select}
-                                />
-                              ) : (
-                                <MenuItem
-                                  key={channel.id}
-                                  aria-current={
-                                    channels.selected === channel.id
-                                      ? "page"
-                                      : undefined
-                                  }
-                                  onClick={select}
-                                >
-                                  {channel.name}
-                                </MenuItem>
-                              );
-                            })}
-                          </MenuGroup>
-                        </>
-                      )}
+                          </MenuGroupLabel>
+                          {channels.rows.map((channel) => {
+                            const select = () => {
+                              onToggle(true);
+                              channels.select(channel.id);
+                              setMenuOpen(false);
+                            };
+                            return session ? (
+                              <ChannelSidebarMenuItem
+                                key={channel.id}
+                                channel={channel}
+                                session={session}
+                                selected={channels.selected === channel.id}
+                                onSelect={select}
+                              />
+                            ) : (
+                              <MenuItem
+                                key={channel.id}
+                                aria-current={
+                                  channels.selected === channel.id
+                                    ? "page"
+                                    : undefined
+                                }
+                                onClick={select}
+                              >
+                                {channel.name}
+                              </MenuItem>
+                            );
+                          })}
+                        </MenuGroup>
+                      </>
+                    )}
                   </MenuSubmenuPopup>
                 </MenuSubmenu>
               )}

@@ -6,6 +6,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { sidebarSections } from "./sidebar-sections";
 import {
   SIDEBAR_ACTIVE_WINDOW,
+  SIDEBAR_DM_LIMIT,
   useSidebarFilters,
   type SidebarFilter,
 } from "./useSidebarFilters";
@@ -307,6 +308,65 @@ it("keeps known-inactive rows hidden through refreshes while new rows remain vis
   expect(result.current[0]?.rows.map(({ id }) => id)).toEqual(["new"]);
   rerender({ ready: false, current: "quiet" });
   expect(result.current[0]?.rows.map(({ id }) => id)).toEqual(["new", "quiet"]);
+  unmount();
+  owner.dispose();
+});
+
+it("shows up to the DM limit of recent conversations and lists the rest as older", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+  const owner = createRelaySession(null);
+  const now = Date.now() / 1000;
+  const window = SIDEBAR_ACTIVE_WINDOW / 1000;
+  const recent: ChannelSummary[] = Array.from(
+    { length: SIDEBAR_DM_LIMIT + 2 },
+    (_, index) => ({
+      id: `recent-${index}`,
+      name: `Recent ${String(index).padStart(2, "0")}`,
+      channelType: "dm",
+      lastActivityAt: now - index,
+    }),
+  );
+  const sections = sidebarSections([
+    ...recent,
+    {
+      id: "stale",
+      name: "Stale",
+      channelType: "dm",
+      lastActivityAt: now - window,
+    },
+    { id: "quiet", name: "Quiet", channelType: "dm", activityKnown: true },
+  ]);
+  const { result, rerender, unmount } = renderHook(
+    ({ current, filter }: { current?: string; filter?: SidebarFilter }) =>
+      useSidebarFilters(
+        sections,
+        filter ? { dms: filter } : {},
+        current,
+        owner.session.unread,
+      ),
+    { initialProps: {} },
+  );
+  const dms = () => result.current.find(({ key }) => key === "dms");
+  expect(dms()?.rows.map(({ id }) => id)).toEqual(
+    recent.slice(0, SIDEBAR_DM_LIMIT).map(({ id }) => id),
+  );
+  expect(
+    dms()
+      ?.hiddenRows.map(({ id }) => id)
+      .sort(),
+  ).toEqual(
+    [
+      `recent-${SIDEBAR_DM_LIMIT}`,
+      `recent-${SIDEBAR_DM_LIMIT + 1}`,
+      "stale",
+      "quiet",
+    ].sort(),
+  );
+  rerender({ current: "stale" });
+  expect(dms()?.rows.map(({ id }) => id)).toContain("stale");
+  rerender({ filter: "active" });
+  expect(dms()?.rows).toHaveLength(SIDEBAR_DM_LIMIT + 2);
   unmount();
   owner.dispose();
 });

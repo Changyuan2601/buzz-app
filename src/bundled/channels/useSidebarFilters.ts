@@ -12,6 +12,8 @@ import type { sidebarSections } from "./sidebar-sections";
 export type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
 import type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
 export const SIDEBAR_ACTIVE_WINDOW = DEFAULT_ACTIVE_WINDOW_SECONDS * 1000;
+/** Unfiltered DMs show only recent conversations; reopening a DM restores its history. */
+export const SIDEBAR_DM_LIMIT = 20;
 
 /** Filter only the existing section roster; the current destination always stays. */
 export function useSidebarFilters(
@@ -24,7 +26,8 @@ export function useSidebarFilters(
 ) {
   const ids = JSON.stringify(
     sections.flatMap((section) =>
-      filters[section.key] === "unreads"
+      filters[section.key] === "unreads" ||
+      (section.key === "dms" && (filters[section.key] ?? "all") === "all")
         ? section.rows.map((row) => row.id)
         : [],
     ),
@@ -35,6 +38,29 @@ export function useSidebarFilters(
   let nextExpiry = Infinity;
   // Unknown activity is not inactivity. Keep those rows during loading or a
   // failed read; a successful read can establish that a channel has no activity.
+  // Unfiltered DMs keep the current, unread, and up to SIDEBAR_DM_LIMIT
+  // conversations active within the default window, most recent first.
+  const recentDms = <T extends (typeof sections)[number]["rows"][number]>(
+    rows: readonly T[],
+  ) => {
+    const window = DEFAULT_ACTIVE_WINDOW_SECONDS * 1000;
+    const recent = new Set(
+      rows
+        .filter((channel) => {
+          if (channel.lastActivityAt === undefined)
+            return !channel.activityKnown && !activityReady;
+          const expiry = channel.lastActivityAt * 1000 + window;
+          if (expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
+          return expiry > now;
+        })
+        .sort((a, b) => (b.lastActivityAt ?? now) - (a.lastActivityAt ?? now))
+        .slice(0, SIDEBAR_DM_LIMIT)
+        .map(({ id }) => id),
+    );
+    return rows.filter(
+      ({ id }) => id === current || unreadSet.has(id) || recent.has(id),
+    );
+  };
   const visible = sections.map((section) => {
     const mode = filters[section.key] ?? "all";
     const activeWindow =
@@ -54,11 +80,13 @@ export function useSidebarFilters(
             : channel.lastActivityAt * 1000 + activeWindow > now))
       );
     });
-    const visibleIds = new Set(rows.map(({ id }) => id));
+    const shown =
+      section.key === "dms" && mode === "all" ? recentDms(rows) : rows;
+    const visibleIds = new Set(shown.map(({ id }) => id));
     return {
       ...section,
       allRows: section.rows,
-      rows,
+      rows: shown,
       hiddenRows: section.rows.filter(({ id }) => !visibleIds.has(id)),
     };
   });
