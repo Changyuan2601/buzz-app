@@ -1,4 +1,5 @@
 import { hoverMessage } from "./message-actions.mjs";
+import { opened } from "./menu-motion.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -456,6 +457,9 @@ test("destination previews yield to modals they are outside", async ({
   // A trigger inside the active modal keeps its preview above the backdrop.
   await page.mouse.move(0, 0);
   await page.getByRole("button", { name: "Open modal" }).click();
+  // A pointer-opened modal rises into place. hover() aims at the box it
+  // reads, and the motion can move the link before the pointer arrives.
+  await opened(dialog);
   await dialog.getByRole("link", { name: "Open Inside" }).hover();
   const inside = preview("Inside");
   await expect(inside).toBeVisible();
