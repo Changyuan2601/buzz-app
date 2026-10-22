@@ -341,3 +341,68 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(canvas).toHaveValue(head.content);
   await expect(canvas).toBeEditable();
 });
+
+// Browser-only boundary: the row menu returns focus as it closes, which must
+// not end the inline edit it just opened.
+test("edits, deletes and filters todos from the row controls", async ({
+  page,
+  app,
+}) => {
+  const original = "## Todos\n\n- [ ] First\n- [x] Second\n";
+  let head = app.sign({
+    kind: 40100,
+    content: original,
+    tags: [["h", "alpha"]],
+    created_at: 1700000000,
+  });
+  await page.route("**/api/relay/primary/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.every((f) => f.kinds?.includes(40100) || f.ids?.includes(head.id))
+    )
+      return route.fulfill({ json: [head] });
+    return route.continue();
+  });
+  await page.route("**/api/relay/primary/sign", async (route) =>
+    route.fulfill({ json: app.sign(route.request().postDataJSON()) }),
+  );
+  await page.route("**/api/relay/primary/publish", async (route) => {
+    head = route.request().postDataJSON();
+    await route.fulfill({ json: { accepted: true, event_id: head.id } });
+  });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  await pluginAction(page, "Todos").click();
+  await closeSettings(page);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("button", { name: "Toggle channel todos", exact: true })
+    .click();
+  const drawer = page.getByRole("region", { name: "Todos panel", exact: true });
+  const saved = () =>
+    expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
+  const menu = async (task, action) => {
+    await drawer
+      .getByRole("button", { name: `More for ${task}`, exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: action, exact: true }).click();
+  };
+  await menu("First", "Edit");
+  const edit = drawer.getByRole("textbox", { name: "Edit First", exact: true });
+  await expect(edit).toBeFocused();
+  await edit.fill("First edited");
+  await edit.press("Enter");
+  await saved();
+  expect(head.content).toBe(original.replace("First", "First edited"));
+  await expect(
+    drawer.getByRole("checkbox", { name: "First edited", exact: true }),
+  ).toBeFocused();
+  await drawer.getByRole("combobox", { name: "Filter by status" }).click();
+  await page.getByRole("option", { name: "Done", exact: true }).click();
+  await expect(drawer.getByRole("checkbox")).toHaveCount(1);
+  await menu("Second", "Delete");
+  await saved();
+  expect(head.content).toBe("## Todos\n\n- [ ] First edited\n");
+  await expect(drawer.getByText("No todos match these filters.")).toBeVisible();
+});

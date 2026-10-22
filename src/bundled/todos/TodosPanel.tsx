@@ -1054,7 +1054,7 @@ export function TodosPanel({
                   !(childrenByOffset.get(undefined) ?? []).some((item) =>
                     visible.has(item.offset),
                   ) && (
-                    <p role="status" className="text-body-sm text-secondary">
+                    <p className="text-body-sm text-secondary">
                       No todos match these filters.
                     </p>
                   )}
