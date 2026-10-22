@@ -1533,6 +1533,63 @@ it("manual message intent participates in shared counts and is cleared by explic
   expect(h.journal()?.localUnread[`msg:${row.id}`]).toBeUndefined();
 });
 
+it("agents-audience messages are never unread or Inbox attention unless marked unread", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const agents = ["audience", "agents"];
+  const root = message(h.viewer, "room", "My thread", 20);
+  const quiet = [
+    message(h.alice, "room", "top-level", 21, [agents]),
+    message(h.alice, "room", "mention", 22, [["p", h.viewer.pubkey], agents]),
+    message(h.alice, "room", "broadcast reply", 23, [
+      ["e", root.id, "", "reply"],
+      ["broadcast", "1"],
+      agents,
+    ]),
+    message(h.alice, "room", "my thread", 24, [
+      ["e", root.id, "", "reply"],
+      agents,
+    ]),
+    message(h.alice, "dm", "direct", 25, [agents]),
+  ];
+  h.emit([root, ...quiet]);
+  const unread = h.session.unread;
+  expect(h.snapshot()).toMatchObject({ observedCount: 0, attentionCount: 0 });
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "dm" }).observedCount,
+  ).toBe(0);
+  expect(unread.activity("room").items).toHaveLength(0);
+  expect(unread.inbox().items).toHaveLength(0);
+  for (const event of quiet) {
+    const channel = event.tags.find(([name]) => name === "h")?.[1];
+    assert(channel);
+    expect(unread.attention(channel, event.id).unread).toBe(false);
+  }
+
+  // The same message for everyone still counts.
+  const loud = message(h.alice, "room", "mention", 26, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([loud]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(unread.inbox().items).toHaveLength(1);
+
+  // Marking an agents-audience message unread is the person's own choice.
+  const [first] = quiet;
+  assert(first);
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: first.id,
+  });
+  expect(h.snapshot().observedCount).toBe(2);
+  expect(unread.attention("room", first.id).unread).toBe(true);
+  await unread.markMessageRead("room", first.id);
+  expect(h.snapshot().observedCount).toBe(1);
+});
+
 it("revocation rejects an unread action before its intent is saved", async () => {
   const h = setup();
   h.grant("room");

@@ -21,6 +21,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
+import { agentAudience } from "./audience";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -302,6 +303,8 @@ export function createUnread({
     threadRootId: string | undefined;
     mentioned: boolean;
     broadcast: boolean;
+    /** Signed for the agents audience: coordination between agents. */
+    quiet: boolean;
   };
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
@@ -443,6 +446,7 @@ export function createUnread({
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),
+        quiet: agentAudience(event),
       };
       rows.push(entry);
       byChannel.set(channel, rows);
@@ -527,6 +531,13 @@ export function createUnread({
       reads.localUnread(`msg:${event.id}`)
     )
       return true;
+    // People read coordination between agents quietly: only marking the
+    // message itself unread makes it unread.
+    if (entry.quiet)
+      return overrideActive(
+        state.overrides[`msg:${event.id}`],
+        effectiveFrontier(state, `msg:${event.id}`, channelId, entry.rootId),
+      );
     return relevant(entry, dm) && afterFrontier(entry, state, dm);
   }
   /** The read-state half of unread, before conversation relevance. */
@@ -930,7 +941,11 @@ export function createUnread({
         const session = channel.channelType === "solo";
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          return entry.event.pubkey !== viewer && !!category(entry, dm);
+          return (
+            entry.event.pubkey !== viewer &&
+            !entry.quiet &&
+            !!category(entry, dm)
+          );
         });
         // A session's top-level timeline is one conversation; its threads,
         // roots included, stay separate.
