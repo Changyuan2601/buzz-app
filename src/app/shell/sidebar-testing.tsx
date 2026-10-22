@@ -12,6 +12,7 @@ import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { SidebarPresentationProvider } from "../../features/channel-navigation/SidebarPresentation";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
 import type { ContributionReader } from "../../features/conversation/contracts";
@@ -33,6 +34,7 @@ export function fixture(
   /** Newer, read Solo chats ahead of Planning and Other; only Planning is unread. */
   newer = 0,
   chatIcons?: ContributionReader<ChatIcon>,
+  compact = false,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -193,35 +195,43 @@ export function fixture(
   const tree = () => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
-        {combined ? (
-          <>
-            <NewMenu relay={relay} navigator={navigator} agents={agents} />
-            {sidebarVisible && (
-              <PrimarySidebar
-                relay={relay}
-                navigator={navigator}
-                target={target}
-                chatIcons={chatIcons}
-              >
-                <button type="button">Inbox</button>
-              </PrimarySidebar>
-            )}
-          </>
-        ) : (
-          <SoloInventory
-            session={snapshot.session}
-            scope={scope}
-            navigator={navigator}
-            target={target}
-            chatIcons={chatIcons}
-          />
-        )}
+        <SidebarPresentationProvider
+          value={{ compact, visit: String(attempt) }}
+        >
+          {combined ? (
+            <>
+              <NewMenu relay={relay} navigator={navigator} agents={agents} />
+              {sidebarVisible && (
+                <PrimarySidebar
+                  relay={relay}
+                  navigator={navigator}
+                  target={target}
+                  chatIcons={chatIcons}
+                >
+                  <button type="button">Inbox</button>
+                </PrimarySidebar>
+              )}
+            </>
+          ) : (
+            <SoloInventory
+              session={snapshot.session}
+              scope={scope}
+              navigator={navigator}
+              target={target}
+              chatIcons={chatIcons}
+            />
+          )}
+        </SidebarPresentationProvider>
       </ChannelNavigationProvider>
     </ToastProvider>
   );
   const rendered = render(tree());
   return {
     session,
+    presentation(nextCompact: boolean) {
+      compact = nextCompact;
+      rendered.rerender(tree());
+    },
     navigate(next: OpenTarget) {
       target = next;
       rendered.rerender(tree());

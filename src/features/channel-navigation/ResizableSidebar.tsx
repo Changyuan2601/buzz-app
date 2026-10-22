@@ -6,6 +6,7 @@ import {
   writeView,
 } from "../../shared/view-state";
 import { ResizeHandle } from "../panels/ResizeHandle";
+import { useSidebarPresentation } from "./SidebarPresentation";
 import styles from "./ResizableSidebar.module.css";
 
 /** Pixel bounds coupled to `.shell-sidebar` in globals.css. */
@@ -71,6 +72,7 @@ export function ResizableSidebar({
   className?: string;
   children: ReactNode;
 }) {
+  const { compact } = useSidebarPresentation();
   // A workspace change reads that workspace's width without remounting the
   // sidebar contents (which would detach focus and in-flight interactions).
   const [view, setView] = useState(() => ({
@@ -100,18 +102,24 @@ export function ResizableSidebar({
   };
   return (
     <>
-      <div className={className} style={{ width }}>
+      <div
+        className={className}
+        style={compact ? undefined : { width }}
+        data-compact={compact || undefined}
+      >
         {children}
       </div>
-      <ResizeHandle
-        width={width}
-        setWidth={resize}
-        min={SIDEBAR_MIN_WIDTH}
-        max={SIDEBAR_MAX_WIDTH}
-        reset={() => resize(SIDEBAR_DEFAULT_WIDTH)}
-        label="Resize sidebar"
-        className={styles.handle}
-      />
+      {!compact && (
+        <ResizeHandle
+          width={width}
+          setWidth={resize}
+          min={SIDEBAR_MIN_WIDTH}
+          max={SIDEBAR_MAX_WIDTH}
+          reset={() => resize(SIDEBAR_DEFAULT_WIDTH)}
+          label="Resize sidebar"
+          className={styles.handle}
+        />
+      )}
     </>
   );
 }

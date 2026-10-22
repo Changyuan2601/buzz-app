@@ -438,6 +438,21 @@
     }
   }
 
+  .shell-navigation[data-compact] {
+    display: grid;
+    position: relative;
+    z-index: var(--layer-popover);
+  }
+  .shell-navigation[data-compact] .shell-sidebar,
+  .shell-navigation[data-compact] .shell-sidebar-default {
+    width: calc(var(--space-8) + var(--space-6));
+    min-width: calc(var(--space-8) + var(--space-6));
+    max-width: calc(var(--space-8) + var(--space-6));
+  }
+  .shell-navigation[data-compact] .shell-pages {
+    align-items: center;
+  }
+
   .muted {
     @apply text-body-sm text-muted;
   }

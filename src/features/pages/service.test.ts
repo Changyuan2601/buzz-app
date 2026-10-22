@@ -67,6 +67,24 @@ describe("page decoration validation", () => {
     return snapshot;
   }
 
+  it.each([undefined, "compact"])(
+    "preserves the optional sidebarPresentation hint %j",
+    async (sidebarPresentation) => {
+      const [page] = await registerMain({ sidebarPresentation });
+      expect(page?.sidebarPresentation).toBe(sidebarPresentation);
+    },
+  );
+
+  it("drops an unsupported sidebarPresentation hint without losing the page", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const [page] = await registerMain({ sidebarPresentation: "collapsed" });
+    expect(page?.key).toBe("example/main");
+    expect(page).not.toHaveProperty("sidebarPresentation");
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Ignoring page sidebarPresentation for example/main: expected compact",
+    );
+  });
+
   it.each([undefined, "sidebar", "topbar", "toolbar"])(
     "preserves placement %j without changing the primary opt-in",
     async (placement) => {

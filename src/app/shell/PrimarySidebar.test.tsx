@@ -585,3 +585,40 @@ it("keeps new Solo chats available when project creation is unavailable", async 
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
 });
+
+it("opens existing Solo rows from the compact workspace and dismisses on navigation", async () => {
+  const user = userEvent.setup();
+  const f = fixture(true, false, undefined, undefined, 0, undefined, true);
+  const trigger = screen.getByRole("button", { name: "Chats" });
+  expect(
+    screen.getByRole("button", { name: "All" }),
+  ).toHaveAccessibleDescription("2 conversations");
+  expect(trigger).toHaveAccessibleDescription("2 items");
+  expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const popup = await screen.findByRole("dialog", {
+    name: "Chats",
+  });
+  expect(
+    within(popup).getByRole("button", { name: /^Planning/ }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(trigger).toHaveFocus();
+  await user.click(trigger);
+  f.presentation(false);
+  f.presentation(true);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Chats" }));
+  await user.click(screen.getByRole("button", { name: /^Team$/ }));
+  await user.click(screen.getByRole("button", { name: /^All$/ }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Chats" }));
+  await user.click(await screen.findByRole("button", { name: /^Planning/ }));
+  expect(f.open).toHaveBeenCalledWith(
+    expect.objectContaining({ channelId: id }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});

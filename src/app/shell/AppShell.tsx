@@ -30,8 +30,25 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
+import { SidebarPresentationProvider } from "../../features/channel-navigation/SidebarPresentation";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../shared/design-system/ui/Menu";
 import { macTitleBarDragHandlers } from "./title-bar";
 import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
+
+type SidebarMode = "full" | "compact" | "collapsed";
+function readSidebarMode(): SidebarMode | undefined {
+  const saved = readView<unknown>("shell", "sidebar-presentation", undefined);
+  return saved === "full" || saved === "compact" || saved === "collapsed"
+    ? saved
+    : undefined;
+}
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
@@ -100,21 +117,45 @@ export function AppShell({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [savedMode, setSavedMode] = useState(readSidebarMode);
+  useEffect(
+    () => subscribeView("shell", () => setSavedMode(readSidebarMode())),
+    [],
+  );
+  const selectedPage = pages.find((page) => page.key === selected);
+  const mode =
+    savedMode ??
+    (selectedPage?.sidebarPresentation === "compact" ? "compact" : "full");
+  const compact = mode === "compact" && !selectedPage?.sidebar;
   const collapsibleSidebar =
+    savedMode !== undefined ||
+    compact ||
     channelsNavigation ||
     selected === "settings" ||
     pages.some(
       (page) => page.key === selected && (page.primary || !!page.sidebar),
     );
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarOpen = mode !== "collapsed";
+  const chooseMode = (mode: SidebarMode) => {
+    setModeMenuOpen(false);
+    setSavedMode(mode);
+    writeView("shell", "sidebar-presentation", mode);
+    setNavigationOpen(narrow && mode === "full");
+  };
+  const presentation = useMemo(
+    () => ({ compact, visit: navigationAttempt }),
+    [compact, navigationAttempt],
+  );
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  const visibleSidebar = narrow ? navigationOpen : sidebarOpen;
-  const toggleLabel = narrow
-    ? navigationOpen
-      ? "Hide navigation"
-      : "Show navigation"
-    : `${sidebarOpen ? "Hide" : "Show"} sidebar`;
+  const visibleSidebar = narrow && !compact ? navigationOpen : sidebarOpen;
+  const toggleLabel =
+    narrow && !compact
+      ? navigationOpen
+        ? "Hide navigation"
+        : "Show navigation"
+      : `${sidebarOpen ? "Hide" : "Show"} sidebar`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a navigation attempt closes the drawer.
   useEffect(() => {
     if (navigationOpen && navigationToggle.current?.getClientRects().length) {
@@ -300,12 +341,37 @@ export function AppShell({
               aria-controls="shell-navigation"
               title={toggleLabel}
               onClick={() => {
-                if (narrow) setNavigationOpen((open) => !open);
-                else setSidebarOpen((open) => !open);
+                if (narrow && !compact) {
+                  if (!navigationOpen && mode !== "compact") chooseMode("full");
+                  else setNavigationOpen(!navigationOpen);
+                } else chooseMode(sidebarOpen ? "collapsed" : "full");
               }}
               icon={<SidebarIcon aria-hidden="true" size={16} />}
             />
           )}
+          <MenuRoot open={modeMenuOpen} onOpenChange={setModeMenuOpen}>
+            <MenuTrigger
+              render={
+                <IconButton
+                  aria-label="Sidebar presentation"
+                  title="Sidebar presentation"
+                  icon={<DotsThreeIcon size={16} />}
+                />
+              }
+            />
+            <MenuPopup aria-label="Sidebar presentation">
+              <MenuRadioGroup
+                value={mode}
+                onValueChange={(value) => chooseMode(value as SidebarMode)}
+              >
+                <MenuRadioItem value="full">Full sidebar</MenuRadioItem>
+                <MenuRadioItem value="compact">Compact rail</MenuRadioItem>
+                <MenuRadioItem value="collapsed">
+                  Collapsed sidebar
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
           {navigationControls}
         </div>
         <div className="shell-center-capsule shell-capsule chrome-navigation">
@@ -449,6 +515,7 @@ export function AppShell({
               <div
                 id="shell-navigation"
                 className="shell-navigation"
+                data-compact={compact || undefined}
                 data-sidebar-collapsible={
                   (collapsibleSidebar && !narrow) || undefined
                 }
@@ -467,7 +534,11 @@ export function AppShell({
                   }
                 }}
               >
-                <div className="shell-navigation-content">{navigation}</div>
+                <div className="shell-navigation-content">
+                  <SidebarPresentationProvider value={presentation}>
+                    {navigation}
+                  </SidebarPresentationProvider>
+                </div>
               </div>
               <main
                 id="main-content"

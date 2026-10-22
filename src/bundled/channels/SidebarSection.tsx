@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type DOMAttributes,
   type ReactNode,
   type Ref,
@@ -47,9 +48,38 @@ import type { SidebarFilter } from "./useSidebarFilters";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { SidebarStarIcon } from "./SidebarStarIcon";
 import { ChannelSidebarMenuItem } from "./ChannelSidebarMenuItem";
+import {
+  SidebarFlyout,
+  useSidebarPresentation,
+} from "../../features/channel-navigation/SidebarPresentation";
 import styles from "./Channels.module.css";
 
-export function SidebarSection({
+export function SidebarSection(
+  props: ComponentProps<typeof SidebarSectionContent>,
+) {
+  const { compact } = useSidebarPresentation();
+  const [expanded, setExpanded] = useState(true);
+  const icon =
+    props.sectionKey === "starred" ? (
+      <SidebarStarIcon />
+    ) : props.icon && props.session ? (
+      <SidebarGroupIcon icon={props.icon} session={props.session} />
+    ) : (
+      <ChatsCircleIcon size={16} />
+    );
+  return (
+    <SidebarFlyout title={props.title} icon={icon} count={props.channelCount}>
+      <SidebarSectionContent
+        {...props}
+        hideTitle={!compact && !!props.hideTitle}
+        open={compact ? expanded : props.open}
+        onToggle={compact ? setExpanded : props.onToggle}
+      />
+    </SidebarFlyout>
+  );
+}
+
+function SidebarSectionContent({
   sectionKey,
   title,
   hideTitle = false,

@@ -1,0 +1,15 @@
+.entry {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.count {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  pointer-events: none;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}

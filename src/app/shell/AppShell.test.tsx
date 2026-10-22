@@ -41,6 +41,7 @@ beforeEach(() => {
 let services: AppServices | undefined;
 afterEach(async () => {
   cleanup();
+  localStorage.clear();
   await services?.dispose();
   services = undefined;
   vi.unstubAllGlobals();
@@ -313,69 +314,99 @@ it("lets a non-primary page-owned sidebar collapse without losing local state", 
   expect(
     within(contribution).getByRole("button", { name: "changed" }),
   ).toBeVisible();
-});
-
-it("keeps narrow contributed sidebars in the existing Escape-dismissed navigation drawer", async () => {
-  vi.stubGlobal("matchMedia", (media: string) => ({
-    media,
-    matches: true,
-    addEventListener() {},
-    removeEventListener() {},
-  }));
-  const current = createServices();
-  services = current;
-  const sidebar = () => (
-    <aside aria-label="Beacon sidebar" className="shell-sidebar">
-      <button type="button">Sidebar action</button>
-    </aside>
-  );
-  const pages: RegisteredPage[] = [
-    {
-      id: "main",
-      key: "example.plugin/main",
-      pluginId: "example.plugin",
-      revision: "1",
-      title: "Beacon",
-      component: () => null,
-      sidebar: () => null,
-    },
-  ];
-  const shell = (attempt: string) => (
-    <ToastProvider>
-      <AppShell
-        pages={pages}
-        selected="example.plugin/main"
-        navigationAttempt={attempt}
-        onSelect={() => {}}
-        tone="default"
-        sidebar={sidebar}
-        communities={current.communities}
-        accountActions={current.accountActions}
-        appearance={testAppearance}
-      >
-        content
-      </AppShell>
-    </ToastProvider>
-  );
-  const { rerender } = render(shell("first"));
-  const nav = document.getElementById("shell-navigation");
-  const toggle = screen.getByRole("button", { name: "Show navigation" });
-  expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await userEvent.click(toggle);
-  expect(nav).toHaveAttribute("aria-hidden", "false");
-  const action = screen.getByRole("button", { name: "Sidebar action" });
-  action.focus();
-  await userEvent.keyboard("{Escape}");
-  expect(nav).toHaveAttribute("aria-hidden", "true");
-  expect(screen.getByRole("button", { name: "Show navigation" })).toHaveFocus();
-
   await userEvent.click(
-    screen.getByRole("button", { name: "Show navigation" }),
+    screen.getByRole("button", { name: "Sidebar presentation" }),
   );
-  rerender(shell("second"));
-  expect(nav).toHaveAttribute("aria-hidden", "true");
-  expect(screen.getByRole("button", { name: "Show navigation" })).toBeVisible();
+  await userEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Compact rail" }),
+  );
+  expect(nav).not.toHaveAttribute("data-compact");
+  expect(
+    within(contribution).getByRole("button", { name: "changed" }),
+  ).toBeVisible();
 });
+
+it.each([false, true])(
+  "keeps narrow contributed sidebars in the existing drawer without replacing compact preference (%s)",
+  async (savedCompact) => {
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      media,
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const current = createServices();
+    services = current;
+    const sidebar = () => (
+      <aside aria-label="Beacon sidebar" className="shell-sidebar">
+        <button type="button">Sidebar action</button>
+      </aside>
+    );
+    const pages: RegisteredPage[] = [
+      {
+        id: "main",
+        key: "example.plugin/main",
+        pluginId: "example.plugin",
+        revision: "1",
+        title: "Beacon",
+        component: () => null,
+        sidebar: () => null,
+      },
+    ];
+    const shell = (attempt: string, selected = "example.plugin/main") => (
+      <ToastProvider>
+        <AppShell
+          pages={pages}
+          selected={selected}
+          navigationAttempt={attempt}
+          onSelect={() => {}}
+          tone="default"
+          sidebar={sidebar}
+          communities={current.communities}
+          accountActions={current.accountActions}
+          appearance={testAppearance}
+        >
+          content
+        </AppShell>
+      </ToastProvider>
+    );
+    const { rerender } = render(shell("first"));
+    if (savedCompact) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Sidebar presentation" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitemradio", { name: "Compact rail" }),
+      );
+    }
+    const nav = document.getElementById("shell-navigation");
+    const toggle = screen.getByRole("button", { name: "Show navigation" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    expect(nav).toHaveAttribute("aria-hidden", "false");
+    const action = screen.getByRole("button", { name: "Sidebar action" });
+    action.focus();
+    await userEvent.keyboard("{Escape}");
+    expect(nav).toHaveAttribute("aria-hidden", "true");
+    expect(
+      screen.getByRole("button", { name: "Show navigation" }),
+    ).toHaveFocus();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Show navigation" }),
+    );
+    rerender(shell("second"));
+    expect(nav).toHaveAttribute("aria-hidden", "true");
+    expect(
+      screen.getByRole("button", { name: "Show navigation" }),
+    ).toBeVisible();
+    if (savedCompact) {
+      rerender(shell("third", "buzz.channels/channels"));
+      expect(nav).toHaveAttribute("data-compact");
+      expect(nav).toHaveAttribute("aria-hidden", "false");
+    }
+  },
+);
 
 it("shows a primary plugin page's declared icon beside its nav label", () => {
   const current = createServices();
@@ -872,3 +903,70 @@ it.each([false, true])(
     ).not.toBeInTheDocument();
   },
 );
+
+it("uses a page's compact hint only until the user saves a presentation, including after remount", async () => {
+  const current = createServices();
+  services = current;
+  const pages: RegisteredPage[] = [
+    {
+      id: "main",
+      key: "example/main",
+      pluginId: "example",
+      revision: "one",
+      title: "Main",
+      component: () => null,
+      primary: true,
+      sidebarPresentation: "compact",
+    },
+    {
+      id: "other",
+      key: "example/other",
+      pluginId: "example",
+      revision: "one",
+      title: "Other",
+      component: () => null,
+      primary: true,
+    },
+  ];
+  const shell = (selected: string) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected={selected}
+        navigationAttempt={selected}
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const user = userEvent.setup();
+  const rendered = render(shell("example/main"));
+  const navigation = () => document.getElementById("shell-navigation");
+  expect(navigation()).toHaveAttribute("data-compact");
+  rendered.rerender(shell("example/other"));
+  expect(navigation()).not.toHaveAttribute("data-compact");
+  const choose = async (name: string) => {
+    await user.click(
+      screen.getByRole("button", { name: "Sidebar presentation" }),
+    );
+    await user.click(await screen.findByRole("menuitemradio", { name }));
+  };
+  await choose("Compact rail");
+  expect(navigation()).toHaveAttribute("data-compact");
+  rendered.unmount();
+  const remounted = render(shell("example/other"));
+  expect(navigation()).toHaveAttribute("data-compact");
+  await choose("Full sidebar");
+  remounted.rerender(shell("example/main"));
+  expect(navigation()).not.toHaveAttribute("data-compact");
+  expect(navigation()).toHaveAttribute("aria-hidden", "false");
+  await choose("Collapsed sidebar");
+  expect(navigation()).toHaveAttribute("aria-hidden", "true");
+  remounted.rerender(shell("example/other"));
+  expect(navigation()).toHaveAttribute("aria-hidden", "true");
+});

@@ -204,7 +204,7 @@ remaining acceptance work and historical evidence.
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar?, sidebarPresentation? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
@@ -315,6 +315,13 @@ navigation and `aria-current`, not companion-panel toggles. The wide topbar uses
 shared chrome tabs linked to retained page panels; manual selection leaves focus
 on the tab and suppresses destination autofocus. Every active page remains
 searchable, regardless of its placement.
+
+A page may prefer the host's compact sidebar with `sidebarPresentation: "compact"`. This is
+only a presentation hint while the page is active: a locally saved user choice
+of Full, Compact, or Collapsed always wins. The plugin does not replace the
+sidebar, its inventories, or its navigation behavior. Unsupported hints are
+ignored without failing activation. This hint affects only the host sidebar; a page-owned
+replacement retains its own sizing and the shell's existing drawer behavior.
 
 A primary page may also supply `badge`, a component the shell renders at the end
 of its navigation row, such as a count of due items. The plugin owns its data and

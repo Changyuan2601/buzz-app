@@ -70,6 +70,18 @@ semantic tokens, UI authoring rules and the local component reference.
   Switching pages preserves the desktop sidebar’s current visibility. The manual
   collapse toggle remains available across destinations.
   The conversation sidebar retains its saved width and resize behavior.
+  The header's Sidebar presentation menu chooses Full sidebar, Compact rail, or
+  Collapsed sidebar. The local shell view-state remembers an explicit choice
+  across pages and reloads; it does not publish an account preference. Compact
+  mode replaces page rows and All / Solo / Team filters with labelled icons.
+  Each channel section and Solo workspace opens its existing rows and actions in
+  a shared Popover on hover or activation. Escape dismisses the flyout; selecting
+  a destination closes it without taking focus back from the destination.
+  Counts describe inventory sizes, not exact unread totals. Full mode retains
+  the previous width, collapse state, and resize control. On narrow windows Full
+  retains the existing disclosure drawer, while Compact keeps its icon column.
+  A page may request `sidebarPresentation: "compact"` while active. That hint applies only
+  before the user has chosen a presentation and never overrides an explicit choice.
   Settings opens in the shared expanded Dialog with an integrated sidebar; the
   workspace remains mounted underneath. Its portal fills the shell's workspace
   frame (navigation, main content and companion panels); the popup centers inside

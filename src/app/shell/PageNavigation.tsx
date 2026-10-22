@@ -7,6 +7,7 @@ import {
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { useSidebarPresentation } from "../../features/channel-navigation/SidebarPresentation";
 import { PageIcon } from "./PageIcon";
 import { pagePresentation } from "./presentation";
 
@@ -23,6 +24,7 @@ export function PageNavigation({
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
+  const { compact } = useSidebarPresentation();
   if (placement === "topbar") {
     return (
       <Tabs
@@ -74,7 +76,7 @@ export function PageNavigation({
         strokeWidth={2.5}
       />
     );
-    return placement === "toolbar" ? (
+    return placement === "toolbar" || (placement === "sidebar" && compact) ? (
       <span className="shell-toolbar-page" key={page.key}>
         <IconButton
           aria-label={label}

@@ -39,6 +39,7 @@ import {
 import {
   CaretDownIcon,
   DotsThreeIcon,
+  FolderSimpleIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -48,6 +49,10 @@ import {
   SoloChatMenuItems,
   useChatCopy,
 } from "./SoloChatMenu";
+import {
+  SidebarFlyout,
+  useSidebarPresentation,
+} from "../../features/channel-navigation/SidebarPresentation";
 import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 
@@ -88,6 +93,8 @@ export function SoloWorkspaces({
   ) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
+  const { compact } = useSidebarPresentation();
+  const [compactCollapsed, setCompactCollapsed] = useState<string[]>([]);
   useChatConversions(session);
   const handoff = useChannelNavigation();
   const [copy, copyNotice] = useChatCopy();
@@ -386,20 +393,29 @@ export function SoloWorkspaces({
       >
         {visible.map((project) => (
           <DropProject
+            title={project.name}
+            count={project.rows.length}
             projectKey={DROP + project.id}
             key={project.id}
             className={`${styles.project} ${channelStyles.channelSection}`}
             data-project={project.id ? "" : undefined}
             open={
-              !collapsed.includes(project.id) || renamingProject === project.id
+              !(compact ? compactCollapsed : collapsed).includes(project.id) ||
+              renamingProject === project.id
             }
             onOpenChange={(open) =>
-              toggle(
-                project.id,
-                renamingProject === project.id
-                  ? collapsed.includes(project.id)
-                  : open,
-              )
+              compact
+                ? setCompactCollapsed((current) =>
+                    open
+                      ? current.filter((id) => id !== project.id)
+                      : [...current, project.id],
+                  )
+                : toggle(
+                    project.id,
+                    renamingProject === project.id
+                      ? collapsed.includes(project.id)
+                      : open,
+                  )
             }
             data-animate={animate || undefined}
           >
@@ -458,8 +474,9 @@ export function SoloWorkspaces({
                 type="button"
                 className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
                 aria-expanded={
-                  !collapsed.includes(project.id) ||
-                  renamingProject === project.id
+                  !(compact ? compactCollapsed : collapsed).includes(
+                    project.id,
+                  ) || renamingProject === project.id
                 }
                 onClick={(event) => setAnimate(event.detail > 0)}
               >
@@ -747,17 +764,30 @@ const DROP = "project:";
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
+  title,
+  count,
   ...props
-}: ComponentProps<typeof Collapsible.Root> & { projectKey: string }) {
+}: ComponentProps<typeof Collapsible.Root> & {
+  projectKey: string;
+  title: string;
+  count: number;
+}) {
   const { setNodeRef, isOver, active } = useDroppable({ id: projectKey });
   return (
-    <Collapsible.Root
-      {...props}
-      ref={setNodeRef}
-      data-drop-target={
-        (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
-      }
-    />
+    <SidebarFlyout
+      title={title}
+      count={count}
+      icon={<FolderSimpleIcon size={16} />}
+    >
+      <Collapsible.Root
+        {...props}
+        ref={setNodeRef}
+        data-drop-target={
+          (isOver && active?.data.current?.sectionKey !== projectKey) ||
+          undefined
+        }
+      />
+    </SidebarFlyout>
   );
 }
 

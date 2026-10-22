@@ -22,7 +22,10 @@ type PopoverPopupProps = Omit<
     | "collisionAvoidance"
     | "anchor"
     | "sticky"
+    | "positionMethod"
   > & {
+    /** Keep anchored content within a DOM owner that coordinates its rows. */
+    container?: ComponentProps<typeof BasePopover.Portal>["container"];
     /** Preserve an explicitly themed surface across the portal. */
     colorMode?: "light" | "dark" | undefined;
     /** Compact account/action surfaces use 8px corners as well as a narrower width. */
@@ -40,6 +43,8 @@ export function PopoverPopup({
   collisionAvoidance,
   anchor,
   sticky,
+  positionMethod,
+  container,
   size = "default",
   padding = "content",
   colorMode,
@@ -49,7 +54,7 @@ export function PopoverPopup({
 }: PopoverPopupProps) {
   const focus = useFinalFocusUnlessMoved(finalFocus, ref);
   return (
-    <BasePopover.Portal>
+    <BasePopover.Portal container={container}>
       <BasePopover.Positioner
         className="buzz-popover-positioner"
         side={side}
@@ -60,6 +65,7 @@ export function PopoverPopup({
         collisionAvoidance={collisionAvoidance}
         anchor={anchor}
         sticky={sticky}
+        positionMethod={positionMethod}
       >
         <BasePopover.Popup
           {...props}

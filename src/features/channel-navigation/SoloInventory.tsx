@@ -6,6 +6,7 @@ import {
   type ComponentProps,
   type RefObject,
 } from "react";
+import { useSidebarPresentation } from "./SidebarPresentation";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { ownSolo } from "../solo/labels";
 import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
@@ -66,6 +67,7 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
 }) {
+  const { compact } = useSidebarPresentation();
   const list = useChannelList(session.channels);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -165,7 +167,7 @@ export function SoloInventory({
         data-actions-visible={menuOpen || undefined}
       >
         <InlineHeader
-          title={<span className="text-standard">Solo</span>}
+          title={compact ? null : <span className="text-standard">Solo</span>}
           actions={
             <div className={creationStyles.actions}>
               <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>

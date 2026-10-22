@@ -19,6 +19,16 @@ import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  ChatsCircleIcon,
+  UserIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons";
+import {
+  SidebarPresentationProvider,
+  useSidebarPresentation,
+} from "../../features/channel-navigation/SidebarPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import styles from "./PrimarySidebar.module.css";
 
@@ -70,6 +80,8 @@ function ScopedSidebar({
   scope: string;
   connection: ReturnType<typeof useRelayConnection>;
 }) {
+  const presentation = useSidebarPresentation();
+  const { compact } = presentation;
   const attempt = useSyncExternalStore(
     props.navigator.subscribe,
     () => props.navigator.snapshot().attempt.id,
@@ -139,18 +151,63 @@ function ScopedSidebar({
   }, [scope, view]);
   const filter = view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
-  const panelId = `sidebar-${filter}`;
+  const panelId = compact ? undefined : `sidebar-${filter}`;
   const header = (
     <>
-      <div className={styles.sidebarControls}>
+      <div
+        className={styles.sidebarControls}
+        data-compact={compact || undefined}
+      >
         <div className={styles.sidebarScope}>
-          <Tabs
-            label="Navigation scope"
-            variant="segmented"
-            value={filter}
-            items={filters}
-            onValueChange={setFilter}
-          />
+          {compact ? (
+            filters.map((item) => {
+              const Icon =
+                item.value === "all"
+                  ? ChatsCircleIcon
+                  : item.value === "solo"
+                    ? UserIcon
+                    : UsersIcon;
+              const count = channelList?.channels.filter(
+                (channel) =>
+                  !channel.archived &&
+                  (item.value === "all" ||
+                    (channel.channelType === "solo" ? "solo" : "team") ===
+                      item.value),
+              ).length;
+              return (
+                <span key={item.value} className="shell-toolbar-page">
+                  <IconButton
+                    aria-label={item.label}
+                    title={`${item.label}${count === undefined ? "" : ` (${count})`}`}
+                    aria-pressed={filter === item.value}
+                    aria-describedby={
+                      count === undefined ? undefined : `${item.panelId}-count`
+                    }
+                    onClick={() => setFilter(item.value)}
+                    icon={<Icon size={16} />}
+                  />
+                  {count !== undefined && (
+                    <>
+                      <span className="shell-toolbar-badge" aria-hidden="true">
+                        {count}
+                      </span>
+                      <span id={`${item.panelId}-count`} className="sr-only">
+                        {count} conversations
+                      </span>
+                    </>
+                  )}
+                </span>
+              );
+            })
+          ) : (
+            <Tabs
+              label="Navigation scope"
+              variant="segmented"
+              value={filter}
+              items={filters}
+              onValueChange={setFilter}
+            />
+          )}
         </div>
       </div>
       {props.children && (
@@ -206,29 +263,38 @@ function ScopedSidebar({
                 )}
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
-                  <section
-                    aria-label="Solo"
-                    className={styles.sidebarGroup}
-                    hidden={filter === "team"}
+                  <SidebarPresentationProvider
+                    value={{
+                      ...presentation,
+                      visit: `${presentation.visit}:${filter}`,
+                    }}
                   >
-                    <SoloInventory
-                      key={`${scope}:${connection.generation}`}
-                      session={connection.session}
-                      scope={scope}
-                      navigator={props.navigator}
-                      target={props.target}
-                      chatIcons={props.chatIcons}
-                    />
-                  </section>
-                  <div
-                    className={styles.sidebarGroup}
-                    hidden={filter === "solo"}
-                  >
-                    {filter === "all" && (
-                      <div className={styles.teamHeading}>{label("Team")}</div>
-                    )}
-                    {content}
-                  </div>
+                    <section
+                      aria-label="Solo"
+                      className={styles.sidebarGroup}
+                      hidden={filter === "team"}
+                    >
+                      <SoloInventory
+                        key={`${scope}:${connection.generation}`}
+                        session={connection.session}
+                        scope={scope}
+                        navigator={props.navigator}
+                        target={props.target}
+                        chatIcons={props.chatIcons}
+                      />
+                    </section>
+                    <div
+                      className={styles.sidebarGroup}
+                      hidden={filter === "solo"}
+                    >
+                      {filter === "all" && !compact && (
+                        <div className={styles.teamHeading}>
+                          {label("Team")}
+                        </div>
+                      )}
+                      {content}
+                    </div>
+                  </SidebarPresentationProvider>
                 </SidebarUnread>
                 {after}
               </SidebarFrame>
@@ -237,7 +303,10 @@ function ScopedSidebar({
           )}
         />
       ) : (
-        <div className="shell-sidebar-default">
+        <div
+          className="shell-sidebar-default"
+          data-compact={compact || undefined}
+        >
           <SidebarFrame
             label="Sidebar"
             header={header}

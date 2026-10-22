@@ -45,6 +45,8 @@ export type Page = Readonly<{
    * The host may move header entries into an overflow menu when space is tight.
    */
   placement?: "sidebar" | "topbar" | "toolbar";
+  /** Prefer the compact host sidebar while active; a saved user choice always wins. */
+  sidebarPresentation?: "compact";
   /**
    * A `data:image/<subtype>[;params],<payload>` URL shown beside the page in
    * search and primary navigation. Any other value is dropped with a warning,
@@ -108,8 +110,19 @@ export class PagesService extends Service implements Pages {
       throw new Error("Invalid page route contract");
     this.contributions.register(
       this.ctx,
-      this.withAcceptedPlacement(this.withAcceptedIcon(page)),
+      this.withAcceptedSidebarPresentation(
+        this.withAcceptedPlacement(this.withAcceptedIcon(page)),
+      ),
     );
+  }
+  private withAcceptedSidebarPresentation(page: Page): Page {
+    const { sidebarPresentation, ...rest } = page;
+    if (sidebarPresentation === undefined || sidebarPresentation === "compact")
+      return page;
+    console.warn(
+      `Ignoring page sidebarPresentation for ${this.ctx.pluginOwner?.id}/${page.id}: expected compact`,
+    );
+    return rest;
   }
   private withAcceptedPlacement(page: Page): Page {
     const { placement, ...rest } = page;
