@@ -83,6 +83,8 @@ export const test = base.extend({
   olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
+  // Start the page clock at fixture time, so fixture DMs count as recent.
+  fixtureClock: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
   historyRowsPerSecond: [1, { option: true }],
@@ -144,6 +146,7 @@ export const test = base.extend({
       olderPageDelayMs,
       membershipActivity,
       launchAnimation,
+      fixtureClock,
       historyCounts,
       historyRowsPerSecond,
       channelIds: channels,
@@ -2266,6 +2269,7 @@ export const test = base.extend({
           });
         }
       });
+      if (fixtureClock) await page.clock.install({ time: 1700001000 * 1000 });
       // General feature journeys can hold startup data indefinitely. Keep the
       // launch view in dedicated startup journeys so those fixtures can still
       // exercise the feature under test.

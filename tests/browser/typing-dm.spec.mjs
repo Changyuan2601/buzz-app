@@ -88,94 +88,98 @@ test("DM receive lifecycle isolates participants, channels and threads and expir
 
 // This journey proves the actual app's retained composers and broker route each
 // edit to its conversation. The timer/input matrix lives in mounted hook tests.
-test("channel, thread and DM composers publish their own scope without publishing restored drafts", async ({
-  page,
-  app,
-}) => {
-  const typingSigns = [];
-  page.on("request", (request) => {
-    if (!request.url().endsWith("/sign")) return;
-    const template = request.postDataJSON();
-    if (template?.kind === 20002) typingSigns.push(template);
-  });
-  await open(page, app);
-  const pulses = () => app.report.typingPublications;
-  const type = async (input, text) => {
-    await input.click();
-    await page.keyboard.type(text);
-  };
-  expect(pulses()).toEqual([]);
-  await type(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-    "channel draft",
-  );
-  await expect.poll(() => pulses().length).toBe(1);
-  expect(pulses()[0].event.tags).toEqual([["h", "alpha"]]);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((event) => event.content === "Thread root 0");
-  await page
-    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
-  await type(
-    page.getByRole("textbox", { name: "Reply to thread", exact: true }),
-    "thread draft",
-  );
-  await expect.poll(() => pulses().length).toBe(2);
-  expect(pulses()[1].event.tags).toEqual([
-    ["h", "alpha"],
-    ["e", root.id, "", "reply"],
-  ]);
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
-    .click();
-  await type(
-    page.getByRole("textbox", { name: /^Message / }).last(),
-    "private draft",
-  );
-  await expect.poll(() => pulses().length).toBe(3);
-  expect(pulses()[2].event.tags).toEqual([["h", "dm-peer"]]);
-  const dmRoot = app.append("primary", "dm-peer", "Typing barrier root");
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Beta", exact: true })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-  ).toBeVisible();
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: /^Message / }).last(),
-  ).toHaveText("private draft");
-  // Keep the restored composer mounted while a concurrent thread completes its
-  // pulse. Count signing attempts too, including a delayed or cancelled restore.
-  const dmComposer = page.getByRole("textbox", { name: /^Message / }).last();
-  const mounted = await dmComposer.elementHandle();
-  const row = page.locator(
-    `[data-channel-timeline] [data-message-id="${dmRoot.id}"]`,
-  );
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
-  await type(
-    page.getByRole("textbox", { name: "Reply to thread", exact: true }),
-    "publication barrier",
-  );
-  await expect
-    .poll(() => pulses().at(-1)?.event.tags)
-    .toEqual([
-      ["h", "dm-peer"],
-      ["e", dmRoot.id, "", "reply"],
+// Fixture DMs are dated at fixture time; keep them within the recent-DM window.
+test.describe(() => {
+  test.use({ fixtureClock: true });
+  test("channel, thread and DM composers publish their own scope without publishing restored drafts", async ({
+    page,
+    app,
+  }) => {
+    const typingSigns = [];
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/sign")) return;
+      const template = request.postDataJSON();
+      if (template?.kind === 20002) typingSigns.push(template);
+    });
+    await open(page, app);
+    const pulses = () => app.report.typingPublications;
+    const type = async (input, text) => {
+      await input.click();
+      await page.keyboard.type(text);
+    };
+    expect(pulses()).toEqual([]);
+    await type(
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      "channel draft",
+    );
+    await expect.poll(() => pulses().length).toBe(1);
+    expect(pulses()[0].event.tags).toEqual([["h", "alpha"]]);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 0");
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await type(
+      page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      "thread draft",
+    );
+    await expect.poll(() => pulses().length).toBe(2);
+    expect(pulses()[1].event.tags).toEqual([
+      ["h", "alpha"],
+      ["e", root.id, "", "reply"],
     ]);
-  expect(await mounted.evaluate((node) => node.isConnected)).toBe(true);
-  await expect(dmComposer).toHaveText("private draft");
-  expect(typingSigns).toHaveLength(4);
-  expect(pulses()).toHaveLength(4);
-  expect(pulses().every(({ event }) => event.content === "")).toBe(true);
-  await expect(
-    page.getByRole("status", { name: "Conversation activity" }),
-  ).toHaveText(["", ""]);
-  expect(app.report.publications).toEqual([]);
+    await page
+      .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
+      .click();
+    await type(
+      page.getByRole("textbox", { name: /^Message / }).last(),
+      "private draft",
+    );
+    await expect.poll(() => pulses().length).toBe(3);
+    expect(pulses()[2].event.tags).toEqual([["h", "dm-peer"]]);
+    const dmRoot = app.append("primary", "dm-peer", "Typing barrier root");
+    await page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Beta", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await page
+      .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: /^Message / }).last(),
+    ).toHaveText("private draft");
+    // Keep the restored composer mounted while a concurrent thread completes its
+    // pulse. Count signing attempts too, including a delayed or cancelled restore.
+    const dmComposer = page.getByRole("textbox", { name: /^Message / }).last();
+    const mounted = await dmComposer.elementHandle();
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${dmRoot.id}"]`,
+    );
+    await hoverMessage(row);
+    await row.getByRole("button", { name: "Reply", exact: true }).click();
+    await type(
+      page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      "publication barrier",
+    );
+    await expect
+      .poll(() => pulses().at(-1)?.event.tags)
+      .toEqual([
+        ["h", "dm-peer"],
+        ["e", dmRoot.id, "", "reply"],
+      ]);
+    expect(await mounted.evaluate((node) => node.isConnected)).toBe(true);
+    await expect(dmComposer).toHaveText("private draft");
+    expect(typingSigns).toHaveLength(4);
+    expect(pulses()).toHaveLength(4);
+    expect(pulses().every(({ event }) => event.content === "")).toBe(true);
+    await expect(
+      page.getByRole("status", { name: "Conversation activity" }),
+    ).toHaveText(["", ""]);
+    expect(app.report.publications).toEqual([]);
+  });
 });

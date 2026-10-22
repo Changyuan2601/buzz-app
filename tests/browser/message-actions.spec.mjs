@@ -445,52 +445,56 @@ test("message actions reveal, copy, restore focus and reply across responsive la
 
 // Browser-only: clipboard -> rendered Markdown -> cross-conversation navigation
 // must finish with the actual virtual row visible and focused.
-test("copied Buzz links and the desktop alias reveal their destination from a conversation", async ({
-  page,
-  app,
-}) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: async (text) => {
-          window.copiedMessageLink = text;
+// Fixture DMs are dated at fixture time; keep them within the recent-DM window.
+test.describe(() => {
+  test.use({ fixtureClock: true });
+  test("copied Buzz links and the desktop alias reveal their destination from a conversation", async ({
+    page,
+    app,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text) => {
+            window.copiedMessageLink = text;
+          },
         },
-      },
+      });
     });
-  });
-  await open(page, app);
-  const event = app.append("primary", "alpha", "Shared destination");
-  const row = page.locator(
-    `[data-channel-timeline] [data-message-id="${event.id}"]`,
-  );
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Copy link", exact: true }).click();
-  await expect(
-    page
-      .getByRole("region", { name: "App notifications" })
-      .getByText("Link copied", { exact: true }),
-  ).toBeVisible();
-  const copiedLink = await page.evaluate(() => window.copiedMessageLink);
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
-  const sharedConversation = page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true });
-  await sharedConversation.click();
-  const sharedChannel = await page
-    .locator("[data-channel-timeline]")
-    .getAttribute("data-channel-timeline");
-  app.append(
-    "primary",
-    sharedChannel,
-    `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
-  );
-  for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+    await open(page, app);
+    const event = app.append("primary", "alpha", "Shared destination");
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"]`,
+    );
+    await hoverMessage(row);
+    await row.getByRole("button", { name: "Copy link", exact: true }).click();
+    await expect(
+      page
+        .getByRole("region", { name: "App notifications" })
+        .getByText("Link copied", { exact: true }),
+    ).toBeVisible();
+    const copiedLink = await page.evaluate(() => window.copiedMessageLink);
+    expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+    const sharedConversation = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Alice Fixture", exact: true });
     await sharedConversation.click();
-    await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
-    await expect(row).toBeVisible();
-    await expect(row).toBeFocused();
-  }
+    const sharedChannel = await page
+      .locator("[data-channel-timeline]")
+      .getAttribute("data-channel-timeline");
+    app.append(
+      "primary",
+      sharedChannel,
+      `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
+    );
+    for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+      await sharedConversation.click();
+      await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
+      await expect(row).toBeVisible();
+      await expect(row).toBeFocused();
+    }
+  });
 });
 
 test("DM actions open the correct reply thread", async ({ page, app }) => {

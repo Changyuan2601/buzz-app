@@ -421,3 +421,32 @@ it("shows the most recent DMs up to the limit, plus open, unread and unknown one
   unmount();
   owner.dispose();
 });
+
+it("keeps every DM when saved preferences, and so the Filter menu, are unavailable", () => {
+  const owner = createRelaySession(null);
+  const now = Date.now() / 1000;
+  const sections = sidebarSections(
+    Array.from({ length: SIDEBAR_DM_LIMIT + 1 }, (_, index) => ({
+      id: `dm-${index}`,
+      name: `DM ${index}`,
+      channelType: "dm" as const,
+      lastActivityAt: index ? now - index : 1,
+    })),
+  );
+  const { result, unmount } = renderHook(() =>
+    useSidebarFilters(
+      sections,
+      {},
+      undefined,
+      owner.session.unread,
+      {},
+      true,
+      false,
+    ),
+  );
+  const dms = result.current.find(({ key }) => key === "dms");
+  expect(dms?.rows).toHaveLength(SIDEBAR_DM_LIMIT + 1);
+  expect(dms?.hiddenRows).toEqual([]);
+  unmount();
+  owner.dispose();
+});

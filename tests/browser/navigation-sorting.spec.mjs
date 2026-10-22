@@ -446,6 +446,7 @@ test.describe("sorting with lifecycle visibility", () => {
   test.use({
     channelLifecycle: true,
     initialSidebarSort: { channels: "recent", dms: "recent" },
+    fixtureClock: true,
   });
   test("archive and DM hide preserve Recent ordering through reload", async ({
     page,

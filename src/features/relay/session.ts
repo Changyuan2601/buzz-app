@@ -2887,20 +2887,31 @@ export function createRelaySession(
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
-    if (
-      !Object.values(preferences?.sort ?? {}).includes("recent") &&
-      !Object.values(preferences?.filters ?? {}).includes("active")
-    ) {
+    const everyChannel =
+      Object.values(preferences?.sort ?? {}).includes("recent") ||
+      Object.values(preferences?.filters ?? {}).includes("active");
+    // Unfiltered DMs show only recent conversations, so they need activity.
+    const recentDms =
+      !!preferences && (preferences.filters?.dms ?? "all") === "all";
+    const roster = channels.queries.list();
+    if (!everyChannel && !recentDms) {
       channelActivity.cancel();
       activityRosterKey = undefined;
       return;
     }
-    const roster = channels.queries.list();
     if (roster.status !== "ready") return;
     const ids = roster.channels
-      .filter((channel) => !channel.cached)
+      .filter(
+        (channel) =>
+          !channel.cached && (everyChannel || channel.channelType === "dm"),
+      )
       .map((channel) => channel.id)
       .sort();
+    if (!ids.length) {
+      channelActivity.cancel();
+      activityRosterKey = undefined;
+      return;
+    }
     const key = ids.join("\0");
     if (key === activityRosterKey) return;
     activityRosterKey = key;

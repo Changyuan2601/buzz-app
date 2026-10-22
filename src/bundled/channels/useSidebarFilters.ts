@@ -23,11 +23,15 @@ export function useSidebarFilters(
   unread: UnreadCapability,
   windows: Readonly<Record<string, number>> = {},
   activityReady = true,
+  // Without saved preferences there is no Filter menu to reach older DMs.
+  limitDms = true,
 ) {
   const ids = JSON.stringify(
     sections.flatMap((section) =>
       filters[section.key] === "unreads" ||
-      (section.key === "dms" && (filters[section.key] ?? "all") === "all")
+      (limitDms &&
+        section.key === "dms" &&
+        (filters[section.key] ?? "all") === "all")
         ? section.rows.map((row) => row.id)
         : [],
     ),
@@ -86,7 +90,9 @@ export function useSidebarFilters(
       );
     });
     const shown =
-      section.key === "dms" && mode === "all" ? recentDms(rows) : rows;
+      limitDms && section.key === "dms" && mode === "all"
+        ? recentDms(rows)
+        : rows;
     const visibleIds = new Set(shown.map(({ id }) => id));
     return {
       ...section,

@@ -58,7 +58,7 @@ function setup() {
   });
   const channels = owner.session.channels;
   const preferences = owner.session.sidebarPreferences;
-  async function initial() {
+  async function initial(extra: RelayEvent[] = []) {
     channels.ensureList();
     wire
       .next()
@@ -67,6 +67,7 @@ function setup() {
         roster(relay, "beta", [viewer.pubkey]),
         metadata(relay, "alpha", "Alpha"),
         metadata(relay, "beta", "Beta"),
+        ...extra,
       ]);
     await flush();
     const reading = preferences.ensure();
@@ -384,6 +385,38 @@ it("projects authoritative empty activity through later loading and failed refre
     await flush();
     expect(h.channels.list().activityStatus).toBe("error");
     expect(quiet()?.activityKnown).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("reads only DM activity for the default recent-DM limit until DMs are filtered", async () => {
+  const h = setup();
+  try {
+    await h.initial([
+      roster(h.relay, "dm", [h.viewer.pubkey, h.peer.pubkey]),
+      signed(h.relay, {
+        kind: 39000,
+        content: "",
+        tags: [
+          ["d", "dm"],
+          ["t", "dm"],
+        ],
+      }),
+    ]);
+    expect(h.activity).toHaveBeenCalledOnce();
+    const reading = take(h.pending);
+    expect(reading.ids).toEqual(["dm"]);
+    reading.resolve([message(h.peer, "dm", "hello", 100)]);
+    await flush();
+    expect(
+      h.channels.list().channels.find((c) => c.id === "dm")?.lastActivityAt,
+    ).toBe(100);
+    await h.preferences.setSort("channels", "recent", []);
+    expect(take(h.pending).ids).toEqual(["alpha", "beta", "dm"]);
+    await h.preferences.setSort("channels", "alpha", []);
+    await h.preferences.setFilter("dms", "unreads", []);
+    expect(h.channels.list().activityStatus).toBe("idle");
   } finally {
     h.owner.dispose();
   }
