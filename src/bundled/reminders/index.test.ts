@@ -380,8 +380,8 @@ it("seeds a first launch to now and keeps communities apart", async () => {
 });
 
 // Roster pages per launch shape: "two" puts the channel on page two of 501,
-// "capped" overflows discovery's retained cap on the third page.
-const ROSTERS = { one: 1, empty: 1, two: 2, capped: 3 } as const;
+// "capped" overflows discovery's retained cap on page 21.
+const ROSTERS = { one: 1, empty: 1, two: 2, capped: 21 } as const;
 
 type Launch = Readonly<{
   /** Which loads first at startup: reminder history or the channel list. */
@@ -562,7 +562,7 @@ async function launch(options: Launch) {
         : shape === "capped"
           ? page === 0
             ? [room(2e6), ...filler(0, 499)]
-            : filler(page, page === 1 ? 500 : 25)
+            : filler(page, page < 20 ? 500 : 1)
           : [room(1e6)];
   let served = 0;
   return {
@@ -698,6 +698,8 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
     };
     app.seed();
     at(5_000);
+    // Polling advances timers without changing this case's checkpoint time.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(5_000_000);
     try {
       if (first === "history") {
         await app.start();
@@ -736,9 +738,11 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
       await app.refresh();
       expect(app.show).toHaveBeenCalledTimes(banners);
     } finally {
+      clock.mockRestore();
       await app.close();
     }
   },
+  60_000,
 );
 
 it("does not replay a caught-up reminder after closing and reopening", async () => {
