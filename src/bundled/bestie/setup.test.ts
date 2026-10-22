@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
-import { bestieInstructions, PROMPT_VERSION } from "./prompt";
+import { bestieInstructions, promptVersion } from "./prompt";
 import { BUILDERLAB_TYPE } from "./setup";
 import { bestieFixture, cleanups, HOME } from "./testing";
 
@@ -54,7 +54,8 @@ it("keeps the kernel within Builderlab's instruction limit", () => {
   const kernel = bestieInstructions("ab".repeat(32), HOME);
   expect(kernel.length).toBeLessThanOrEqual(MAX_INSTRUCTIONS_LENGTH);
   expect(kernel).toContain(HOME);
-  expect(kernel).toContain(PROMPT_VERSION);
+  expect(promptVersion(kernel)).toBe(promptVersion(kernel));
+  expect(promptVersion(kernel)).not.toBe(promptVersion(`${kernel} `));
 });
 
 it("creates hosted Bestie through Agents, then instructs, homes and introduces it", async () => {
@@ -121,6 +122,40 @@ it("reopens a finished setup after restart without another agent, channel or int
   expect(h.bestie.snapshot().status).toBe("ready");
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.requests("update-agent")).toHaveLength(1);
+  expect(h.events).toHaveLength(published);
+});
+
+it("offers to update a set-up Bestie whose instructions changed, and changes nothing else", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  const published = h.events.length;
+  // As if prompt.ts changed after this Bestie was set up.
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  if (!key) throw new Error("Missing Bestie record");
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      ...JSON.parse(localStorage.getItem(key) ?? "{}"),
+      promptVersion: "remote-bestie-1",
+    }),
+  );
+  await h.restart();
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    instructionsChanged: true,
+  });
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().status).toBe("ready");
+  expect(h.bestie.snapshot().instructionsChanged).toBeFalsy();
+  const updates = h.requests("update-agent");
+  expect(updates).toHaveLength(2);
+  const last = updates.at(-1)?.[1] as { request: { body: string } };
+  expect(JSON.parse(last.request.body).agent_instructions).toBe(
+    bestieInstructions(h.viewer, HOME),
+  );
+  expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.events).toHaveLength(published);
 });
 
