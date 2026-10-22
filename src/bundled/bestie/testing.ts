@@ -283,6 +283,7 @@ export async function bestieFixture(invoke: Mock) {
       upload: vi.fn(),
       media: vi.fn(),
       remember: vi.fn(),
+      gitAuth: vi.fn(),
       claim: async () => true,
       release: vi.fn(),
     },
