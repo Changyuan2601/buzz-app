@@ -104,14 +104,14 @@ export function useSessionLinkSharing(
     }
   }
   return {
-    prepare(
+    async prepare(
       sources: readonly string[],
       signal: AbortSignal,
       current: () => boolean,
     ): Promise<boolean> {
       signal.throwIfAborted();
       // Detached composers have no membership-grant capability. Keep their existing link-only path.
-      if (!session) return Promise.resolve(true);
+      if (!session) return true;
       const destination = session.channels
         .list()
         .channels.find((channel) => channel.id === channelId);
@@ -120,7 +120,19 @@ export function useSessionLinkSharing(
         !sources.length ||
         !["stream", "forum"].includes(destination?.channelType ?? "")
       )
-        return Promise.resolve(true);
+        return true;
+      // Capture the audience before asking so consent names who gets access,
+      // and skip asking when everyone already has access. Share grants exactly
+      // this audience; a failed read falls back to Share's own capture.
+      const audience = await destinationShareAudience(
+        session,
+        channelId,
+        signal,
+      ).catch(() => undefined);
+      signal.throwIfAborted();
+      if (audience && (await everyoneHasAccess(session, sources, audience)))
+        return true;
+      signal.throwIfAborted();
       return new Promise((resolve) => {
         const grants = new Map(
           sources.map((id) => [id, new Map<string, MemberAdditionIntent>()]),
@@ -146,19 +158,9 @@ export function useSessionLinkSharing(
           finish,
           grants,
           channelName: destination?.name ?? "",
+          ...(audience ? { audience } : {}),
           busy: false,
         });
-        // Capture the audience on open so consent names who gets access.
-        // Share grants exactly this audience; a failed read falls back to Share's capture.
-        destinationShareAudience(session, channelId, signal).then(
-          (audience) =>
-            setPending((current) =>
-              current?.finish === finish && !current.audience
-                ? { ...current, audience }
-                : current,
-            ),
-          () => {},
-        );
       });
     },
     dialog: (
@@ -190,7 +192,7 @@ export function useSessionLinkSharing(
             </Button>
             <Button
               variant="prominent"
-              disabled={pending?.busy || pending?.audience?.length === 0}
+              disabled={pending?.busy}
               onClick={() => void share()}
             >
               {pending?.busy
@@ -218,11 +220,26 @@ function consentDescription(pending: Pending | undefined) {
     ? `#${pending.channelName}`
     : "this channel";
   const count = pending?.audience?.length;
-  if (count === 0)
-    return `No one else is in ${channel} yet, so there’s no one to share with. Sending only the link leaves access unchanged.`;
   const audience =
     count === undefined
       ? `the current members of ${channel}`
       : `the ${count} other ${count === 1 ? "member" : "members"} of ${channel}`;
   return `Share gives ${audience}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`;
+}
+
+/** Every captured member is already in every source chat, so Share would grant nothing. */
+async function everyoneHasAccess(
+  session: RelaySession,
+  sources: readonly string[],
+  audience: readonly string[],
+) {
+  try {
+    for (const id of sources) {
+      const source = await session.channelWrites.refreshMembership(id);
+      if (!audience.every((key) => source.members?.includes(key))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -25,7 +25,7 @@ afterEach(() => {
 });
 async function fixture(
   thread = false,
-  options: { destinationType?: string; alone?: boolean } = {},
+  options: { destinationType?: string; alone?: boolean; shared?: boolean } = {},
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -33,7 +33,7 @@ async function fixture(
     late = keypair();
   let clock = Math.floor(Date.now() / 1000);
   const members = new Map([
-    [source, [viewer.pubkey]],
+    [source, options.shared ? [viewer.pubkey, person.pubkey] : [viewer.pubkey]],
     [
       destination,
       options.alone ? [viewer.pubkey] : [viewer.pubkey, person.pubkey],
@@ -281,12 +281,13 @@ it("grants nothing and sends nothing when the draft changes while consent is ope
   expect(f.publish).not.toHaveBeenCalled();
 });
 
-it("offers only link-only when no one else is in the channel", async () => {
-  await fixture(false, { alone: true });
+it.each([
+  ["no one else is in the channel", { alone: true }],
+  ["everyone in the channel already has access", { shared: true }],
+])("sends without asking when %s", async (_, options) => {
+  const f = await fixture(false, options);
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  const dialog = await screen.findByRole("dialog");
-  await waitFor(() =>
-    expect(dialog).toHaveTextContent("No one else is in #Team yet"),
-  );
-  expect(screen.getByRole("button", { name: "Share and send" })).toBeDisabled();
+  await waitFor(() => expect(f.published).toHaveLength(1));
+  expect(f.published[0]?.kind).toBe(9);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
