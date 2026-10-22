@@ -549,9 +549,6 @@ function Timeline({
   // break same-second ties by id, rows by send time: a page can land below the
   // first row, or around the reader, who is then scrolled back to their row.
   const previous = edges.current.order;
-  const reading = previous.slice(
-    handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
-  );
   const retained =
     heldReader.current?.intent === intent.current
       ? heldReader.current
@@ -564,6 +561,11 @@ function Timeline({
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
   };
+  // The reader's row can sit across the top edge, where Virtua's offsets can
+  // lag the DOM by a few pixels and find a first item below it. Start from the
+  // reader's row when it is earlier, so shift cannot move it.
+  const first = handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0;
+  const reading = previous.slice(held < 0 ? first : Math.min(first, held));
   const prepend =
     !!previous.length &&
     (previous[0] !== rows[0]?.id || rows.length !== previous.length) &&

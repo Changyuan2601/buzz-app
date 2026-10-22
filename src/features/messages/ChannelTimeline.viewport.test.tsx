@@ -66,7 +66,11 @@ vi.mock("./MessageRow", () => ({
     stackNext: boolean;
     keepMounted: (id: string) => () => void;
   }) => (
-    <li data-stacked={stackPrevious} data-stack-next={stackNext}>
+    <li
+      data-message-id={row.id}
+      data-stacked={stackPrevious}
+      data-stack-next={stackNext}
+    >
       {row.content}
       <button type="button" onClick={() => keepMounted(row.id)}>
         Retain {row.id}
@@ -734,6 +738,44 @@ it.each([
       ),
     );
     expect(boundary).toHaveAttribute("data-shift", shift);
+    view.unmount();
+  } finally {
+    viewport.start = 0;
+    owner.dispose();
+  }
+});
+
+it("rows added between the reader's row and Virtua's first item do not shift", () => {
+  viewport.size = 600;
+  // Virtua's offsets can find a first item below a row across the top edge.
+  viewport.start = 3;
+  const { owner, updates, content } = activityFixture();
+  const rows = updates(6);
+  const loaded = rows.slice(0, 4);
+  const reader = loaded[2]?.id;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const top = this.dataset.messageId === reader ? -5 : 0;
+      return DOMRect.fromRect({ y: top, height: top ? 45 : 0 });
+    },
+  );
+  try {
+    const view = render(content(loaded, undefined, false));
+    const boundary = screen.getByRole("list", {
+      name: "Virtualized messages",
+    });
+    const timeline = view.container.querySelector("[data-channel-timeline]");
+    if (!timeline) throw new Error("Missing timeline");
+    // The reader's gesture saves their row, partly above the viewport.
+    fireEvent.wheel(timeline, { deltaY: 80 });
+    view.rerender(
+      content(
+        [...loaded.slice(0, 3), ...rows.slice(4), ...loaded.slice(3)],
+        undefined,
+        false,
+      ),
+    );
+    expect(boundary).toHaveAttribute("data-shift", "false");
     view.unmount();
   } finally {
     viewport.start = 0;
