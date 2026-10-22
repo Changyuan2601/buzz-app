@@ -25,7 +25,7 @@ afterEach(() => {
 });
 async function fixture(
   thread = false,
-  options: { destinationType?: string } = {},
+  options: { destinationType?: string; alone?: boolean } = {},
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -34,7 +34,10 @@ async function fixture(
   let clock = Math.floor(Date.now() / 1000);
   const members = new Map([
     [source, [viewer.pubkey]],
-    [destination, [viewer.pubkey, person.pubkey]],
+    [
+      destination,
+      options.alone ? [viewer.pubkey] : [viewer.pubkey, person.pubkey],
+    ],
   ]);
   const published: RelayEvent[] = [];
   let reject = false;
@@ -276,4 +279,14 @@ it("grants nothing and sends nothing when the draft changes while consent is ope
     "The draft changed.",
   );
   expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("offers only link-only when no one else is in the channel", async () => {
+  await fixture(false, { alone: true });
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() =>
+    expect(dialog).toHaveTextContent("No one else is in #Team yet"),
+  );
+  expect(screen.getByRole("button", { name: "Share and send" })).toBeDisabled();
 });

@@ -169,7 +169,7 @@ export function useSessionLinkSharing(
             ? "Share access to this chat?"
             : "Share access to these chats?"
         }
-        description={`Share gives ${audienceLabel(pending)}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`}
+        description={consentDescription(pending)}
         onOpenChange={(open) => {
           if (!open) pending?.finish(false);
         }}
@@ -190,7 +190,7 @@ export function useSessionLinkSharing(
             </Button>
             <Button
               variant="prominent"
-              disabled={pending?.busy}
+              disabled={pending?.busy || pending?.audience?.length === 0}
               onClick={() => void share()}
             >
               {pending?.busy
@@ -213,11 +213,16 @@ export function useSessionLinkSharing(
   };
 }
 
-function audienceLabel(pending: Pending | undefined) {
+function consentDescription(pending: Pending | undefined) {
   const channel = pending?.channelName
     ? `#${pending.channelName}`
     : "this channel";
   const count = pending?.audience?.length;
-  if (count === undefined) return `the current members of ${channel}`;
-  return `the ${count} other ${count === 1 ? "member" : "members"} of ${channel}`;
+  if (count === 0)
+    return `No one else is in ${channel} yet, so there’s no one to share with. Sending only the link leaves access unchanged.`;
+  const audience =
+    count === undefined
+      ? `the current members of ${channel}`
+      : `the ${count} other ${count === 1 ? "member" : "members"} of ${channel}`;
+  return `Share gives ${audience}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`;
 }
