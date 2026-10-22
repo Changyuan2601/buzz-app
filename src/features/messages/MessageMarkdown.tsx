@@ -54,6 +54,10 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
 import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
+import {
+  assistantDisplayContent,
+  citationDisplaySeams,
+} from "./assistant-citations";
 import { profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
@@ -415,8 +419,11 @@ export function MessageMarkdown({
   largeEmoji = false,
   interactive = true,
   staticMentions = false,
+  assistant = false,
 }: {
   row: ChannelMessage;
+  /** Established by the message author, never inferred from body text. */
+  assistant?: boolean;
   directory?: typeof emptyReferenceDirectory;
   session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
@@ -431,12 +438,36 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const display = useMemo(
+    () =>
+      assistant
+        ? assistantDisplayContent(row.content)
+        : { content: row.content, removed: [] },
+    [row.content, assistant],
+  );
+  const displayRow = useMemo(
+    () =>
+      display.removed.length
+        ? {
+            ...row,
+            content: display.content,
+            attachmentSeams: citationDisplaySeams(
+              row.attachmentSeams ?? [],
+              display.removed,
+            ),
+          }
+        : row,
+    [row, display],
+  );
+  const prepared = useMemo(
+    () => prepareMarkdown(display.content),
+    [display.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
     <PreparedMessageMarkdown
-      row={row}
+      row={displayRow}
       prepared={prepared}
       directory={directory}
       session={session}

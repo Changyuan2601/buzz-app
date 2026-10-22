@@ -27,6 +27,7 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import * as citations from "./assistant-citations";
 import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -1388,4 +1389,28 @@ it("marks only a mention of the viewer as a mention of you", () => {
   expect(
     view.getByRole("button", { name: "View Mic profile" }),
   ).not.toHaveAttribute("data-mention-self");
+});
+
+it("memoizes citation scanning by content and established authorship", () => {
+  const scan = vi.spyOn(citations, "assistantDisplayContent");
+  const content =
+    "Before\n<oai-mem-citation><citation_entries>metadata</citation_entries></oai-mem-citation>\nAfter";
+  const initial = props(content, { assistant: true });
+  const view = renderDom(<MessageMarkdown {...initial} />);
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(view.container).not.toHaveTextContent("metadata");
+  view.rerender(
+    <MessageMarkdown {...initial} row={{ ...initial.row, replyCount: 10 }} />,
+  );
+  expect(scan).toHaveBeenCalledTimes(1);
+  view.rerender(<MessageMarkdown {...initial} assistant={false} />);
+  expect(view.container).toHaveTextContent("metadata");
+  expect(scan).toHaveBeenCalledTimes(1);
+  view.rerender(
+    <MessageMarkdown
+      {...initial}
+      row={{ ...initial.row, content: content + " changed" }}
+    />,
+  );
+  expect(scan).toHaveBeenCalledTimes(2);
 });

@@ -72,6 +72,7 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { assistantDisplayContent } from "./assistant-citations";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -478,6 +479,7 @@ function MessageRowContent({
     </div>
   ) : (
     <MessageMarkdown
+      assistant={avatarShape === "squircle"}
       directory={directory}
       session={session}
       scope={scope}
@@ -890,6 +892,7 @@ function MessageRowContent({
                 >
                   {sessionCards.map((card) => (
                     <MessageMarkdown
+                      assistant={avatarShape === "squircle"}
                       key={card.start}
                       directory={directory}
                       session={session}
@@ -1258,7 +1261,16 @@ function AgentsMessageRow(props: MessageRowProps) {
   const to = recipients.map((pubkey) =>
     person(pubkey, directory.profiles.get(pubkey)),
   );
-  const preview = messagePreviewText(body.content);
+  const assistant = !!row.agentEnvelope || author.shape === "squircle";
+  const preview = useMemo(
+    () =>
+      messagePreviewText(
+        assistant
+          ? assistantDisplayContent(body.content).content
+          : body.content,
+      ),
+    [body.content, assistant],
+  );
   const avatar = (who: typeof author) => (
     <span key={who.pubkey} className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar

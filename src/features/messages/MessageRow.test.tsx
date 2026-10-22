@@ -3509,3 +3509,60 @@ it("keeps a failed card's attachments listed under StrictMode", () => {
     error.mockRestore();
   }
 });
+
+it.each(["human", "envelope", "profile", "directory"] as const)(
+  "filters citations only for established assistant authorship: %s",
+  (kind) => {
+    const content =
+      "Start\n<oai-mem-citation>\n<citation_entries>Private provider metadata</citation_entries>\n</oai-mem-citation>\nEnd";
+    const source = Object.freeze({
+      ...row,
+      content,
+      ...(kind === "envelope" ? { agentEnvelope: true as const } : {}),
+    });
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={source}
+        profile={{
+          name: "Author",
+          ...(kind === "profile" ? { isAgent: true as const } : {}),
+        }}
+        agentPubkeys={
+          kind === "directory" ? new Set([row.authorId]) : undefined
+        }
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html.includes("Private provider metadata")).toBe(kind === "human");
+    expect(html).toContain("Start");
+    expect(html).toContain("End");
+    expect(source.content).toBe(content);
+    expect(messageCopyText(source, new Map(), [])).toContain(
+      "Private provider metadata",
+    );
+  },
+);
+
+it("uses the filtered assistant body for collapsed preview and accessible label", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        audience: "agents",
+        agentEnvelope: true,
+        content:
+          "<oai-mem-citation>\n<citation_entries>Hidden metadata</citation_entries>\n</oai-mem-citation>\nVisible answer",
+      }}
+      profile={{ name: "Agent", isAgent: true }}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).not.toContain("Hidden metadata");
+  expect(html).toContain("Visible answer");
+});
