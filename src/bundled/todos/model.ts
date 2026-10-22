@@ -14,6 +14,9 @@ export type Todo = {
   parents: string[];
   status: Status;
   end: number;
+  /** Where the label text starts, and the list item's whole source, subtasks included. */
+  labelStart: number;
+  span: { start: number; end: number };
   namedAssignee?: { name: string; start: number };
   assignee?: (Assignee & { start: number }) | undefined;
 };
@@ -45,7 +48,8 @@ export function readTodos(content: string) {
     for (const item of children) {
       const before = items.length;
       const offset = item.position?.start.offset;
-      if (offset === undefined) continue;
+      const itemEnd = item.position?.end.offset;
+      if (offset === undefined || itemEnd === undefined) continue;
       const match = /^([-+*][ \t]+\[)([ xX/])\][ \t]+([^\r\n]+)/.exec(
         content.slice(offset),
       );
@@ -99,14 +103,14 @@ export function readTodos(content: string) {
           named?.[1] && namedText
             ? { name: named[1].trim(), start: offset + named.index }
             : undefined;
+        const labelStart = offset + match[0].length - match[3].length;
         items.push({
           offset: offset + match[1].length,
           label: content
-            .slice(
-              offset + match[0].length - match[3].length,
-              assignee?.start ?? namedAssignee?.start ?? end,
-            )
+            .slice(labelStart, assignee?.start ?? namedAssignee?.start ?? end)
             .trim(),
+          labelStart,
+          span: { start: offset, end: itemEnd },
           status:
             match[2] === " " ? "todo" : match[2] === "/" ? "doing" : "done",
           end,
@@ -177,6 +181,58 @@ export function assignTodo(
   )
     throw new Error(
       "Could not assign safely. Check this todo’s Markdown in Canvas.",
+    );
+  return next;
+}
+
+function find(content: string, offset: number) {
+  const { items } = readTodos(content);
+  const item = items.find((item) => item.offset === offset);
+  if (!item)
+    throw new Error("This todo changed. Reload the Canvas before editing it.");
+  return { items, item };
+}
+
+/** Replace only the label, keeping the checkbox, assignment and subtasks. */
+export function editTodo(content: string, offset: number, label: string) {
+  const text = label.trim();
+  if (!text || /[\r\n]/.test(text))
+    throw new Error("Use a single line for your todo.");
+  const { items, item } = find(content, offset);
+  const end = item.assignee?.start ?? item.namedAssignee?.start ?? item.end;
+  const next = content.slice(0, item.labelStart) + text + content.slice(end);
+  const parsed = readTodos(next).items;
+  const edited = parsed.find((value) => value.offset === offset);
+  if (
+    parsed.length !== items.length ||
+    edited?.label !== text ||
+    edited.status !== item.status ||
+    edited.assignee?.pubkey !== item.assignee?.pubkey ||
+    edited.namedAssignee?.name !== item.namedAssignee?.name
+  )
+    throw new Error(
+      "Could not edit safely. Check this todo’s Markdown in Canvas.",
+    );
+  return next;
+}
+
+/** Remove the todo's lines, with its subtasks, and nothing else. */
+export function deleteTodo(content: string, offset: number) {
+  const { items, item } = find(content, offset);
+  const start = content.lastIndexOf("\n", item.span.start - 1) + 1;
+  if (content.slice(start, item.span.start).trim())
+    throw new Error(
+      "Could not delete safely. Check this todo’s Markdown in Canvas.",
+    );
+  const newline = /^\r?\n/.exec(content.slice(item.span.end))?.[0] ?? "";
+  const next =
+    content.slice(0, start) + content.slice(item.span.end + newline.length);
+  const removed = items.filter(
+    (value) => value.offset >= item.span.start && value.offset < item.span.end,
+  ).length;
+  if (readTodos(next).items.length !== items.length - removed)
+    throw new Error(
+      "Could not delete safely. Check this todo’s Markdown in Canvas.",
     );
   return next;
 }

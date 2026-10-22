@@ -33,7 +33,18 @@ import {
   CircleIcon,
   CircleHalfIcon,
   CheckCircleIcon,
+  DotsThreeIcon,
+  PencilSimpleIcon,
+  TrashIcon,
 } from "../../shared/design-system/icons/index";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import { Select } from "../../shared/design-system/ui/Select";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -58,6 +69,8 @@ import {
   todoLabelText,
   addTodo,
   assignTodo,
+  deleteTodo,
+  editTodo,
   readTodos,
   setStatus,
   type Status,
@@ -157,6 +170,20 @@ export function TodosPanel({
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const [confirmRefresh, setConfirmRefresh] = useState(false);
+  const [editing, setEditingState] = useState<{
+    offset: number;
+    text: string;
+  }>();
+  // Escape and blur can both end an edit; the ref lets only the first one count.
+  const editingRef = useRef(editing);
+  const setEditing = (next: typeof editing) => {
+    editingRef.current = next;
+    setEditingState(next);
+  };
+  const [deleting, setDeleting] = useState<number>();
+  // An assignee filter is a pubkey, "none", or "name:" plus a Canvas name.
+  const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
   const refreshRef = useRef<HTMLButtonElement>(null);
   const operation = useRef(0);
   const saving = useRef(false);
@@ -424,9 +451,70 @@ export function TodosPanel({
     childrenByOffset.set(parent, children);
     ancestors.push(item);
   }
+  const assigneeKey = (item: (typeof items)[number]) =>
+    item.assignee
+      ? item.assignee.pubkey
+      : item.namedAssignee
+        ? `name:${item.namedAssignee.name}`
+        : "none";
+  const assigneeFilters = [
+    ...new Map(
+      items.map((item) => [
+        assigneeKey(item),
+        item.assignee
+          ? resolveName(item.assignee.pubkey, item.assignee.name) ||
+            keyLabels.get(item.assignee.pubkey) ||
+            item.assignee.pubkey
+          : (item.namedAssignee?.name ?? "Unassigned"),
+      ]),
+    ),
+  ].sort(([a, x], [b, y]) =>
+    a === "none" ? -1 : b === "none" ? 1 : x.localeCompare(y),
+  );
+  // A filter for an assignee no longer in the list falls back to everyone.
+  const assignee = assigneeFilters.some(([key]) => key === assigneeFilter)
+    ? assigneeFilter
+    : "all";
+  const filtering = statusFilter !== "all" || assignee !== "all";
+  // A parent stays visible, for context, when any of its subtasks match.
+  const visible = new Set<number>();
+  for (const item of [...items].reverse())
+    if (
+      ((statusFilter === "all" || item.status === statusFilter) &&
+        (assignee === "all" || assigneeKey(item) === assignee)) ||
+      (childrenByOffset.get(item.offset) ?? []).some((child) =>
+        visible.has(child.offset),
+      )
+    )
+      visible.add(item.offset);
+  const finishEdit = (save: boolean) => {
+    if (!editingRef.current) return;
+    const { offset, text } = editingRef.current;
+    setEditing(undefined);
+    focusAfterToggle.current = `${prefix}-${offset}`;
+    const item = items.find((item) => item.offset === offset);
+    if (save && item && text.trim() !== item.label)
+      change(() => editTodo(draft.content, offset, text));
+  };
+  const remove = (offset: number) => {
+    setDeleting(undefined);
+    focusAfterToggle.current = `${prefix}-new`;
+    change(() => deleteTodo(draft.content, offset));
+  };
+  const deletingItem = items.find((item) => item.offset === deleting);
+  const deletingSubtasks = deletingItem
+    ? items.filter(
+        (item) =>
+          item.offset !== deletingItem.offset &&
+          item.offset > deletingItem.span.start &&
+          item.offset < deletingItem.span.end,
+      ).length
+    : 0;
   const renderItems = (group: typeof items): ReactNode =>
     group.map((item) => {
-      const children = childrenByOffset.get(item.offset) ?? [];
+      const children = (childrenByOffset.get(item.offset) ?? []).filter(
+        (child) => visible.has(child.offset),
+      );
       const taskLabel = todoLabelText(item.label);
       const assigneeName = item.assignee
         ? resolveName(item.assignee.pubkey, item.assignee.name) ||
@@ -479,48 +567,73 @@ export function TodosPanel({
               aria-label={taskLabel}
               label=""
             />
-            <div
-              className={`${styles.label} text-body-sm ${item.status === "done" ? "text-secondary" : ""}`}
-              data-completed={item.status === "done" || undefined}
-            >
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                urlTransform={(value) =>
-                  parseBuzzLink(value) || profileKey(value)
-                    ? value
-                    : safeLinkUrl(value)
-                }
-                allowedElements={[
-                  "p",
-                  "a",
-                  "strong",
-                  "em",
-                  "del",
-                  "code",
-                  "br",
-                  "img",
-                ]}
-                unwrapDisallowed
-                components={{
-                  p: ({ children }) => <span>{children}</span>,
-                  a: ({ href, children }) =>
-                    href ? (
-                      <MessageLink
-                        url={href}
-                        registry={undefined}
-                        onOpenLink={(url) => active() && onOpenLink(url)}
-                      >
-                        {children}
-                      </MessageLink>
-                    ) : (
-                      <span>{children}</span>
-                    ),
-                  img: ({ alt }) => <span>{alt}</span>,
+            {editing?.offset === item.offset ? (
+              <form
+                className={styles.edit}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  finishEdit(true);
                 }}
               >
-                {item.label}
-              </Markdown>
-            </div>
+                <Input
+                  autoFocus
+                  aria-label={`Edit ${taskLabel}`}
+                  value={editing.text}
+                  onChange={(event) =>
+                    setEditing({ ...editing, text: event.target.value })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.preventDefault();
+                    finishEdit(false);
+                  }}
+                  onBlur={() => finishEdit(true)}
+                />
+              </form>
+            ) : (
+              <div
+                className={`${styles.label} text-body-sm ${item.status === "done" ? "text-secondary" : ""}`}
+                data-completed={item.status === "done" || undefined}
+              >
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  urlTransform={(value) =>
+                    parseBuzzLink(value) || profileKey(value)
+                      ? value
+                      : safeLinkUrl(value)
+                  }
+                  allowedElements={[
+                    "p",
+                    "a",
+                    "strong",
+                    "em",
+                    "del",
+                    "code",
+                    "br",
+                    "img",
+                  ]}
+                  unwrapDisallowed
+                  components={{
+                    p: ({ children }) => <span>{children}</span>,
+                    a: ({ href, children }) =>
+                      href ? (
+                        <MessageLink
+                          url={href}
+                          registry={undefined}
+                          onOpenLink={(url) => active() && onOpenLink(url)}
+                        >
+                          {children}
+                        </MessageLink>
+                      ) : (
+                        <span>{children}</span>
+                      ),
+                    img: ({ alt }) => <span>{alt}</span>,
+                  }}
+                >
+                  {item.label}
+                </Markdown>
+              </div>
+            )}
             <div className={styles.rowDetails}>
               <div
                 id={`${prefix}-${item.offset}-status`}
@@ -661,6 +774,46 @@ export function TodosPanel({
                   }}
                 />
               </fieldset>
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      id={`${prefix}-${item.offset}-more`}
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`More for ${taskLabel}`}
+                      title="More"
+                      icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                      disabled={disabled}
+                    />
+                  }
+                />
+                <MenuPopup align="end">
+                  <MenuItem
+                    onClick={() =>
+                      setEditing({ offset: item.offset, text: item.label })
+                    }
+                  >
+                    <MenuIcon>
+                      <PencilSimpleIcon size="1rem" />
+                    </MenuIcon>
+                    Edit
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    onClick={() =>
+                      childrenByOffset.has(item.offset)
+                        ? setDeleting(item.offset)
+                        : remove(item.offset)
+                    }
+                  >
+                    <MenuIcon>
+                      <TrashIcon size="1rem" />
+                    </MenuIcon>
+                    Delete
+                  </MenuItem>
+                </MenuPopup>
+              </MenuRoot>
             </div>
           </div>
           {children.length > 0 && (
@@ -853,9 +1006,62 @@ export function TodosPanel({
                     description="Add a todo above to track work with this channel. Changes save automatically."
                   />
                 )}
+                {items.length > 0 && (
+                  <div className={styles.filters}>
+                    <Select
+                      label="Filter by status"
+                      variant="compact"
+                      value={statusFilter}
+                      onValueChange={(value) =>
+                        setStatusFilter(value as Status | "all")
+                      }
+                      groups={[
+                        {
+                          label: "",
+                          options: [
+                            { value: "all", label: "All statuses" },
+                            ...statuses.map(([value, label]) => ({
+                              value,
+                              label,
+                              leading: <StatusIcon status={value} />,
+                            })),
+                          ],
+                        },
+                      ]}
+                    />
+                    <Select
+                      label="Filter by assignee"
+                      variant="compact"
+                      value={assignee}
+                      onValueChange={setAssigneeFilter}
+                      groups={[
+                        {
+                          label: "",
+                          options: [
+                            { value: "all", label: "Anyone" },
+                            ...assigneeFilters.map(([value, label]) => ({
+                              value,
+                              label,
+                            })),
+                          ],
+                        },
+                      ]}
+                    />
+                  </div>
+                )}
+                {filtering &&
+                  items.length > 0 &&
+                  !(childrenByOffset.get(undefined) ?? []).some((item) =>
+                    visible.has(item.offset),
+                  ) && (
+                    <p role="status" className="text-body-sm text-secondary">
+                      No todos match these filters.
+                    </p>
+                  )}
                 {statuses.map(([status, title]) => {
                   const group = (childrenByOffset.get(undefined) ?? []).filter(
-                    (item) => item.status === status,
+                    (item) =>
+                      item.status === status && visible.has(item.offset),
                   );
                   return (
                     group.length > 0 && (
@@ -880,6 +1086,24 @@ export function TodosPanel({
           )}
         </div>
       </div>
+      {deletingItem && (
+        <AlertDialog
+          title={`Delete “${todoLabelText(deletingItem.label)}”?`}
+          description={`Its ${deletingSubtasks} ${deletingSubtasks === 1 ? "subtask is" : "subtasks are"} deleted too.`}
+          onClose={() => setDeleting(undefined)}
+          actions={
+            <>
+              <Button onClick={() => setDeleting(undefined)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                onClick={() => remove(deletingItem.offset)}
+              >
+                Delete
+              </Button>
+            </>
+          }
+        />
+      )}
       {confirmRefresh && (
         <AlertDialog
           title="Discard unsaved changes?"

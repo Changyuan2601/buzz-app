@@ -1084,3 +1084,99 @@ it("clears collapsed positions when refreshing a changed Canvas", async () => {
     screen.getByRole("button", { name: "Collapse Other!" }),
   ).toBeInTheDocument();
 });
+
+it("edits a task's label from its menu, keeping its marker and assignee", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  render(<TodosPanel {...f.props} />);
+  await screen.findByRole("checkbox", { name: "First" });
+  await user.click(screen.getByRole("button", { name: "More for First" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const input = screen.getByRole("textbox", { name: "Edit First" });
+  expect(input).toHaveFocus();
+  await user.clear(input);
+  await user.type(input, "First *draft*{Escape}");
+  expect(f.canvas.save).not.toHaveBeenCalled();
+  expect(screen.getByRole("checkbox", { name: "First" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "More for First" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const again = screen.getByRole("textbox", { name: "Edit First" });
+  await user.clear(again);
+  await user.type(again, "First *draft*{Enter}");
+  await saved();
+  expect(f.canvas.save).toHaveBeenCalledTimes(1);
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
+    context.channelId,
+    original.replace("- [ ] First", "- [ ] First *draft*"),
+    head.id,
+  );
+  expect(screen.getByRole("checkbox", { name: "First draft" })).toHaveFocus();
+});
+it("deletes a task at once, and confirms before deleting one with subtasks", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const content = "## Todos\n\n- [ ] Ship\n    - [ ] Build\n- [ ] Next\n";
+  f.canvas.read.mockResolvedValue({ ...head, content });
+  render(<TodosPanel {...f.props} />);
+  const remove = async (name: string) => {
+    await user.click(screen.getByRole("button", { name: `More for ${name}` }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  };
+  await screen.findByRole("checkbox", { name: "Next" });
+  await remove("Next");
+  await saved();
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
+    context.channelId,
+    "## Todos\n\n- [ ] Ship\n    - [ ] Build\n",
+    head.id,
+  );
+  await remove("Ship");
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete “Ship”?",
+  });
+  expect(dialog).toHaveTextContent("Its 1 subtask is deleted too.");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(f.canvas.save).toHaveBeenCalledTimes(1);
+  await remove("Ship");
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Delete “Ship”?" }),
+    ).getByRole("button", { name: "Delete" }),
+  );
+  await saved();
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
+    context.channelId,
+    "## Todos\n\n",
+    "b".repeat(64),
+  );
+  expect(await screen.findByText("No todos yet")).toBeInTheDocument();
+});
+it("filters by status and assignee, keeping matching subtasks' parents", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const content =
+    "## Todos\n\n- [/] Ship · Assignee: Sam\n    - [x] Build · Assignee: Alex\n    - [ ] Publish\n- [ ] Plan\n- [x] Done\n";
+  f.canvas.read.mockResolvedValue({ ...head, content });
+  render(<TodosPanel {...f.props} />);
+  await screen.findByRole("checkbox", { name: "Plan" });
+  const shown = () =>
+    screen
+      .getAllByRole("checkbox")
+      .map((box) => box.getAttribute("aria-label"));
+  const choose = async (filter: string, name: string) => {
+    await user.click(screen.getByRole("combobox", { name: filter }));
+    await user.click(await screen.findByRole("option", { name }));
+  };
+  await choose("Filter by status", "Done");
+  expect(shown()).toEqual(["Ship", "Build", "Done"]);
+  await choose("Filter by assignee", "Alex");
+  expect(shown()).toEqual(["Ship", "Build"]);
+  await choose("Filter by status", "To do");
+  expect(screen.getByText("No todos match these filters.")).toBeInTheDocument();
+  await choose("Filter by assignee", "Unassigned");
+  expect(shown()).toEqual(["Plan", "Ship", "Publish"]);
+  await choose("Filter by status", "All statuses");
+  await choose("Filter by assignee", "Anyone");
+  expect(shown()).toEqual(["Plan", "Ship", "Build", "Publish", "Done"]);
+  expect(f.canvas.save).not.toHaveBeenCalled();
+});

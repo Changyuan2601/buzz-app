@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { profileTarget } from "../../features/profiles/target";
-import { addTodo, assignTodo, readTodos, setStatus } from "./model";
+import {
+  addTodo,
+  assignTodo,
+  deleteTodo,
+  editTodo,
+  readTodos,
+  setStatus,
+} from "./model";
 
 describe("Canvas todo source edits", () => {
   it("changes only the selected checkbox byte, including duplicate labels and CRLF", () => {
@@ -215,4 +222,50 @@ it("does not clear a named assignment lookalike inside multiline code", () => {
   expect(item.namedAssignee).toBeUndefined();
   expect(assignTodo(before, item.offset)).toBe(before);
   expect(() => assignTodo(before, item.offset, sam)).toThrow(/safely/);
+});
+
+it("edits only a label, keeping status, assignee, subtasks and CRLF", () => {
+  const target = `[Alex](${profileTarget(alex.pubkey)})`;
+  const before = `# Notes\r\n\r\n## Todos\r\n\r\n- [/] Ship **it** · Assignee: ${target}\r\n    - [ ] Test\r\n- [ ] Ship **it**\r\n`;
+  const item = first(before);
+  const edited = editTodo(before, item.offset, "  Ship *v2*  ");
+  expect(edited).toBe(before.replace("[/] Ship **it**", "[/] Ship *v2*"));
+  expect(readTodos(edited).items.map((i) => [i.label, i.status])).toEqual([
+    ["Ship *v2*", "doing"],
+    ["Test", "todo"],
+    ["Ship **it**", "todo"],
+  ]);
+  const named = "## Todos\n- [ ] Plan · Assignee: John\n";
+  expect(editTodo(named, first(named).offset, "Plan more")).toBe(
+    "## Todos\n- [ ] Plan more · Assignee: John\n",
+  );
+});
+it("rejects edits that are empty, multiline, stale or change the todo's structure", () => {
+  const before = "## Todos\n- [ ] First\n- [ ] Second\n";
+  const { offset } = first(before);
+  expect(() => editTodo(before, offset, " ")).toThrow(/single line/);
+  expect(() => editTodo(before, offset, "a\nb")).toThrow(/single line/);
+  expect(() => editTodo(before, 0, "New")).toThrow(/changed/);
+  expect(() => editTodo(before, offset, "Mine · Assignee: Sam")).toThrow(
+    /safely/,
+  );
+  expect(() => editTodo(before, offset, "`open")).not.toThrow();
+});
+it("deletes a todo with its subtasks and leaves every other line", () => {
+  const before =
+    "## Todos\r\n\r\n- [ ] Ship\r\n    - [ ] Build\r\n        - [x] Test\r\n    - [ ] Publish\r\n- [ ] Next\r\n\r\n## Keep\r\n- [ ] Not a todo\r\n";
+  const [ship, build, , publish] = readTodos(before).items;
+  if (!ship || !build || !publish) throw new Error("Expected fixture todos");
+  expect(deleteTodo(before, build.offset)).toBe(
+    before.replace("    - [ ] Build\r\n        - [x] Test\r\n", ""),
+  );
+  expect(deleteTodo(before, publish.offset)).toBe(
+    before.replace("    - [ ] Publish\r\n", ""),
+  );
+  expect(deleteTodo(before, ship.offset)).toBe(
+    "## Todos\r\n\r\n- [ ] Next\r\n\r\n## Keep\r\n- [ ] Not a todo\r\n",
+  );
+  const last = "## Todos\n- [ ] Only";
+  expect(deleteTodo(last, first(last).offset)).toBe("## Todos\n");
+  expect(() => deleteTodo(before, 0)).toThrow(/changed/);
 });
