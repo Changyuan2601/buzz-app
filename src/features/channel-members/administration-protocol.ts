@@ -154,13 +154,21 @@ export function authorizeMemberChange(
     );
 }
 
+/**
+ * The relay stores an ordinary role as `bot` for a key with a recorded agent
+ * owner, even when the request says `member`. Both are the same ordinary
+ * permission level, so either one confirms a requested `member`. Other roles
+ * must match exactly.
+ */
 export function memberChangeConfirmed(
   state: MemberAuthority,
   change: MemberChange,
 ) {
-  return change.role === "remove"
-    ? !(change.pubkey in state.roles)
-    : state.roles[change.pubkey] === change.role;
+  if (change.role === "remove") return !(change.pubkey in state.roles);
+  const stored = state.roles[change.pubkey];
+  return (
+    stored === change.role || (change.role === "member" && stored === "bot")
+  );
 }
 
 export function memberAdministrationTemplate(

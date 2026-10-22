@@ -146,7 +146,7 @@ function harness(
   }
   return { ...owner, live, wire, publish, Controls };
 }
-it("shows one emoji per person and three shortcuts while removing all own duplicates", async () => {
+it("groups matching emoji by unique people and removes all my duplicate events", async () => {
   const mine = react(),
     duplicate = react(viewer, 3),
     theirs = react(other);
@@ -157,11 +157,17 @@ it("shows one emoji per person and three shortcuts while removing all own duplic
   ).toHaveLength(3);
   expect(
     screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]"),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   const own = screen.getByRole("button", {
     name: "👍: You",
   });
   expect(own.getAttribute("aria-pressed")).toBe("true");
+  expect(own.textContent).toBe("👍2");
+  expect(own.getAttribute("aria-description")).toContain("2 reactions");
+  fireEvent.mouseEnter(own);
+  const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+  expect(preview.textContent).toContain("You");
+  expect(preview.textContent).toContain(other.pubkey.slice(0, 10));
   fireEvent.click(own);
   const operation = h.session.outbox?.snapshot()[0];
   expect(operation?.event).toMatchObject({
@@ -263,9 +269,10 @@ it("keeps emojis visually active but rejects another click while delivery is pen
     await flush();
     await flush();
   });
-  const failedPill = within(failedView.container).getByRole("button", {
-    name: `👍: ${other.pubkey.slice(0, 10)}`,
-  });
+  const failedPill = within(failedView.container)
+    .getByTestId("reaction-row")
+    .querySelector("button[data-reaction]");
+  if (!failedPill) throw new Error("Reaction missing");
   expect(failedPill.getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(failedPill);
   expect(failed.session.outbox?.snapshot()).toHaveLength(1);
@@ -515,8 +522,27 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("hands focus back when my emoji is removed while another person's remains", async () => {
+it("keeps focus on the counted chip while another person's reaction remains", async () => {
   const h = harness([react(), react(other)]);
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const own = screen.getByRole("button", { name: "👍: You" });
+  act(() => own.focus());
+  fireEvent.click(own);
+  expect(onFocusedRemoval).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(own);
+  expect(own.textContent).toBe("👍1");
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  ).toBeTruthy();
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+it("hands focus back when the last counted reaction is removed", async () => {
+  const h = harness([react()]);
   const onFocusedRemoval = vi.fn();
   render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
   const own = screen.getByRole("button", { name: "👍: You" });
@@ -524,9 +550,6 @@ it("hands focus back when my emoji is removed while another person's remains", a
   fireEvent.click(own);
   expect(onFocusedRemoval).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
-  ).toBeTruthy();
   await act(async () => {
     await flush();
     await flush();

@@ -134,7 +134,7 @@ for (const kind of ["image", "video"]) {
     );
     const dialog = page.getByRole("dialog");
     const heading = dialog.getByRole("heading", {
-      name: kind === "image" ? "Image" : "Review clip.mp4",
+      name: kind === "image" ? "Photo preview" : "Review clip.mp4",
       exact: true,
     });
     await expect(heading).toBeVisible();

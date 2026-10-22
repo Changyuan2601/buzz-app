@@ -88,6 +88,7 @@ export type ThreadPanelProps = {
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
     hasComments?: boolean,
+    attachments?: ChannelMessage["attachments"],
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -827,9 +828,17 @@ function ThreadMessages({
       _rowId: string,
       attachment: ChannelMessage["attachments"][number],
       seconds: number,
+      _hasComments?: boolean,
+      attachments?: ChannelMessage["attachments"],
     ) => {
       if (rootId)
-        onOpenMediaReview?.(_rowId, attachment, seconds, hasMediaComments);
+        onOpenMediaReview?.(
+          _rowId,
+          attachment,
+          seconds,
+          hasMediaComments,
+          attachments,
+        );
     },
     [rootId, onOpenMediaReview, hasMediaComments],
   );

@@ -9,7 +9,7 @@
   color: var(--link-text);
   /* Chips set a resting fill here, so the hover rule below still wins. */
   background: var(--link-fill, transparent);
-  text-decoration: none;
+  text-decoration: underline;
   overflow-wrap: anywhere;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
@@ -29,6 +29,7 @@ html[data-keyboard-navigation] .link:focus-visible {
    bubbles) set the --mention-* trio, which wins over both.
    Channel hosts reset ordinary buttons, so the color is restated here. */
 [data-mention-kind].link {
+  text-decoration: none;
   --link-text: var(--mention-text, var(--text-mention));
   --link-hover: var(--mention-hover, var(--affordance-mention-hover));
   /* A resting fill must not swallow the neighbouring word spaces, so the chip

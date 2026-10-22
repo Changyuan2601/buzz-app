@@ -252,6 +252,12 @@ function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
 }
 
+function scrollport(element: Element) {
+  for (let node = element.parentElement; node; node = node.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
+  return null;
+}
+
 function pluginToggleDisabled(
   plugin: PluginInfo,
   access: AdminAccessState,
@@ -776,6 +782,15 @@ export function Settings({
   const pluginSection = useRef<HTMLElement>(null);
   const layout = useRef<HTMLDivElement>(null);
   const detailsClose = useRef<HTMLButtonElement>(null);
+  // Opening or closing details can resize the catalog column and reflow rows
+  // above the chosen one. Browser scroll anchoring does not reliably hold it
+  // (it can jump on close), so keep the chosen row where the user saw it.
+  const heldPluginRow = useRef<{ row: Element; top: number }>(undefined);
+  const holdPluginRow = (row: Element | null) => {
+    heldPluginRow.current = row
+      ? { row, top: row.getBoundingClientRect().top }
+      : undefined;
+  };
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
   );
@@ -812,10 +827,23 @@ export function Settings({
     }
   }, [catalog, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
+    holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
   };
+  useLayoutEffect(() => {
+    const held = heldPluginRow.current;
+    heldPluginRow.current = undefined;
+    const port = held?.row.isConnected && scrollport(held.row);
+    // Whole pixels: WebKit truncates a fractional scrollTop, so a sub-pixel
+    // drift left after its own anchoring would otherwise move the row by 1px.
+    const shift =
+      held && port
+        ? Math.round(held.row.getBoundingClientRect().top - held.top)
+        : 0;
+    if (port && shift) port.scrollTop += shift;
+  });
   useLayoutEffect(() => {
     if (!selectedPlugin && restorePluginFocus.current) {
       restorePluginFocus.current = false;
@@ -949,6 +977,7 @@ export function Settings({
                       aria-controls={active ? "plugin-details" : undefined}
                       onClick={(event) => {
                         pluginTrigger.current = event.currentTarget;
+                        holdPluginRow(event.currentTarget);
                         if (!active) setActivationAttempt(undefined);
                         setSelectedPluginId(active ? undefined : id);
                       }}
@@ -1007,7 +1036,8 @@ export function Settings({
                           variant="prominent"
                           disabled={busy}
                           aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={() => {
+                          onClick={(event) => {
+                            holdPluginRow(event.currentTarget);
                             setActivationAttempt(undefined);
                             setSelectedPluginId(id);
                             setReviewPluginId(id);

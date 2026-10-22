@@ -113,6 +113,8 @@ need their own validation.
   defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
   and passes everything else to `tauri build`. The bundle uses `buzz`, as does
   release bundling with `pnpm tauri build`.
+- For opt-in automation of a disposable macOS native webview, see
+  [Native webview automation](native-mcp.md).
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port

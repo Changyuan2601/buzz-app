@@ -222,7 +222,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0;
+  gap: var(--space-1);
   margin: var(--space-1h) 0 0;
 }
 .reactions[data-populated],
@@ -231,28 +231,22 @@
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  padding-inline: var(--space-1);
-  border: 1.5px solid var(--surface-panel);
-  /* A capsule on one line; stable corners keep wrapped emoji inside the surface. */
-  border-radius: calc(var(--size-control-sm) / 2 + 1.5px);
-  background: var(--reaction-surface, var(--surface-message));
 }
 .message[data-own] > .messageBody {
   --reaction-surface: var(--surface-message-own);
   --reaction-ink: var(--text-message-own);
 }
-.messageContent[data-bubble] + .reactions[data-populated],
-.messageContent[data-bubble] + .reactionFallback {
-  margin-top: calc(-1 * var(--space-1));
-}
 .reactions:empty {
   margin-top: 0;
 }
 .reactionFallback > span:not([role]) {
-  display: grid;
-  place-items: center;
-  width: var(--size-control-sm);
-  height: var(--size-control-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-half);
+  min-width: var(--size-control-sm);
+  padding-inline: var(--space-2);
+  height: calc(var(--size-control-sm) - var(--space-1));
   font-size: var(--text-caption);
   --inline-emoji-size: 0.75rem;
   overflow: hidden;
@@ -262,6 +256,27 @@
 .reactionItem {
   display: inline-flex;
   max-width: 100%;
+}
+.reactionItem,
+.inlineReactionTool,
+.reactionFallback > span:not([role]) {
+  border-radius: var(--radius-capsule);
+  background: var(--affordance-backdrop-hover);
+}
+.reactionItem button {
+  min-width: var(--size-control-sm);
+  min-height: calc(var(--size-control-sm) - var(--space-1));
+}
+.reactionLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  padding-inline: var(--space-1);
+  color: var(--reaction-ink, var(--text-standard));
+}
+.reactionCount {
+  @apply text-caption;
+  font-variant-numeric: tabular-nums;
 }
 .reactionGlyph {
   display: inline-flex;
@@ -394,28 +409,33 @@
   }
 }
 .inlineReactionTool {
-  /* Avoid flattening the static SVG when neighboring emoji layers animate. */
+  /* Keep the filled pill and icon stable while neighboring emoji animate. */
+  transform: translateZ(0);
   transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: calc(var(--size-control-sm) + var(--space-2));
+  height: calc(var(--size-control-sm) - var(--space-1));
+}
+.inlineReactionTool:empty {
+  display: none;
 }
 /* Give the icon a stable backing layer across neighboring hover animations. */
 .inlineReactionTool svg {
   transform: translateZ(0);
+  opacity: 0.65;
 }
 .inlineReactionTool [data-icon-variant] {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 100%;
+  height: 100%;
   border: 1px solid transparent;
+  border-radius: inherit;
   background: transparent;
   color: var(--reaction-ink, var(--text-secondary));
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
-  border-color: var(--border);
-  background: var(--reaction-surface, var(--surface-control));
+  background: var(--affordance-backdrop-hover);
   color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
@@ -469,6 +489,7 @@
   background: var(--surface-inset);
 }
 .attachmentImage canvas,
+.attachmentImage video,
 .attachmentImage img {
   position: absolute;
   inset: 0;
@@ -479,6 +500,21 @@
 .attachmentImage img {
   object-fit: contain;
 }
+.attachmentImage video {
+  object-fit: contain;
+}
+.mediaGridBadge {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  inset-block-end: var(--space-2);
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
+}
 .attachmentImageUnavailable {
   @apply text-caption;
   display: grid;
@@ -486,6 +522,13 @@
   padding: var(--space-1);
   cursor: auto;
   color: var(--text-subtle);
+}
+.attachmentImageUnavailable > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
 }
 .imageGroup {
   min-width: 0;
@@ -497,6 +540,23 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-1);
+}
+.imageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  width: 22.5rem;
+  max-width: 100%;
+}
+.imageOverflow {
+  @apply text-heading;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
 }
 
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
@@ -2641,7 +2701,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
-  --message-link: var(--text-link);
+  --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
     var(--text-message) *
@@ -2734,6 +2794,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
+  padding-inline: var(--space-1h);
+  border-radius: calc(var(--radius-chip) / 2);
 }
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
@@ -2777,12 +2839,22 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .messageBubble[data-own] {
+  --selection-fill: var(--surface-text-selection-own);
+  --selection-text: var(--text-on-selection-own);
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+}
+/* Neutral content and unboxed renderers keep selection paired with their surface. */
+.messageBubble[data-emoji-only],
+.messageBubble[data-diff-only],
+.messageBubble .text :is(code, pre, .codeBlock, table),
+.messageBubble .spoiler[data-revealed="true"] {
+  --selection-fill: var(--surface-text-selection);
+  --selection-text: var(--text-on-selection);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;
@@ -2848,6 +2920,26 @@ html[data-keyboard-navigation] .channelJoinSurface {
   margin-inline-start: var(--space-2);
   max-width: calc(100% - var(--space-2));
 }
+.message .messageBubble > .reactions {
+  margin: var(--space-2) 0 0;
+  margin-inline-start: calc(-1 * var(--space-1));
+  /* Short prose still leaves room for a counted reaction and its add pill. */
+  min-inline-size: calc(3 * var(--size-control-sm));
+  max-width: 100%;
+  border: 0;
+}
+.message
+  .messageBubble
+  > .reactions:has(> .inlineReactionTool:not(:empty)):has(
+    > .reactionItem:first-child:nth-last-child(2)
+  ) {
+  min-inline-size: max-content;
+  flex-wrap: nowrap;
+}
+.message .messageBubble > .reactions:empty {
+  margin: 0;
+  min-inline-size: 0;
+}
 
 /* Outgoing metadata follows the bubble edge, even when media widens its body. */
 .message[data-viewer-message] > .messageBody > .messageContent .byline,
@@ -2885,7 +2977,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-viewer-message]
   > .messageBody
   > .messageContent
-  :is(.messageAttachments, .imageList) {
+  :is(.messageAttachments, .imageList:not(.imageGrid)) {
   align-items: flex-end;
 }
 

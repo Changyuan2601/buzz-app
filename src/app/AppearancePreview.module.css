@@ -39,7 +39,7 @@
   width: 1rem;
   height: 1rem;
   border-radius: var(--radius-pill);
-  background: var(--surface-message);
+  background: var(--affordance-subtle);
 }
 .workspace span {
   width: 65%;
@@ -52,8 +52,8 @@
   width: 70%;
 }
 .nav[data-selected] {
-  background: var(--surface-navigation-selected);
-  color: var(--text-navigation-selected);
+  background: var(--surface-sidebar-selected);
+  color: var(--text-sidebar-selected);
 }
 .conversation {
   min-width: 0;
@@ -91,7 +91,7 @@
   width: 60%;
 }
 .bubble .link {
-  color: var(--text-link);
+  color: var(--text-message-link);
   opacity: 0.8;
 }
 .bubble[data-own] {
@@ -117,5 +117,5 @@
   width: 1rem;
   height: 1rem;
   border-radius: var(--radius-pill);
-  background: var(--surface-message-own);
+  background: var(--affordance-accent-prominent);
 }

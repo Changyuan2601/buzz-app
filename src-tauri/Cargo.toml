@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
+native-mcp = ["dep:tauri-plugin-mcp-bridge"]
 
 [build-dependencies]
 url = "2"
@@ -87,6 +88,8 @@ portable-pty = "0.9"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Pin the small upstream Origin rejection fix; released versions accept browser clients.
+tauri-plugin-mcp-bridge = { git = "https://github.com/hypothesi/mcp-server-tauri", rev = "1d5105e72835b28ca05a75bcd612b9127c12fe94", optional = true }
 security-framework = "3.7"
 block2 = "=0.6.2"
 objc2 = "=0.6.4"

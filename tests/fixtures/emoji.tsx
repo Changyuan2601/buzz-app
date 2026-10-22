@@ -41,6 +41,9 @@ const viewer = keypair(),
   relay = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
+const singleReaction = new URLSearchParams(location.search).has(
+  "single-reaction",
+);
 const long = new URLSearchParams(location.search).has("long");
 const coordination = new URLSearchParams(location.search).has("coordination");
 const participantProfiles = new Map([
@@ -159,13 +162,15 @@ const sessions = ["a", "b"].map((community) => {
   const root = message(
     viewer,
     "c",
-    "Historic :unknown:party: and https://example.test/:party:",
+    singleReaction
+      ? "OK"
+      : "Historic :unknown:party: and https://example.test/:party:",
     1,
     [["emoji", "party", `${origin}/media/original.png`]],
   );
   const reaction = signed(member, {
     kind: 7,
-    content: ":party:",
+    content: singleReaction ? "👍" : ":party:",
     created_at: 2,
     tags: [
       ["e", root.id],

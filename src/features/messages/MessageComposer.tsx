@@ -1,3 +1,4 @@
+import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
@@ -2214,6 +2215,7 @@ function Composer({
               }
               size="toolbar"
               type="submit"
+              style={editing.target ? undefined : accentButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={
                 editing.target

@@ -222,7 +222,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "padded chrome",
       "search presentation",
       "integrated navigation",
-      "host container",
+      "host container (sectioned: bounded 72rem × 48rem)",
     ],
     status: "proposed",
     collection: "components",

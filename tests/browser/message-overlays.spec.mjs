@@ -31,7 +31,8 @@ test("reaction previews and the inline picker do not reveal message hover action
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("Fixture Member");
   await expectActionsClosed();
-  await body.hover();
+  // Enter prose below the toolbar overlap, away from the nested reactions.
+  await body.hover({ position: { x: 8, y: 32 } });
   await expect(actions).toHaveCSS("opacity", "1");
   // Finish the previous preview's exit before testing a fresh hover entry.
   await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
@@ -46,7 +47,7 @@ test("reaction previews and the inline picker do not reveal message hover action
   await expectActionsClosed();
   await picker.press("Escape");
   await expect(picker).toHaveCount(0);
-  await body.hover();
+  await body.hover({ position: { x: 8, y: 32 } });
   await expect(actions).toHaveCSS("opacity", "1");
   await actions.getByRole("button", { name: "More message actions" }).hover();
   await expect(actions).toHaveCSS("opacity", "1");
@@ -689,52 +690,44 @@ test("comment actions revealed while the drawer slides realign when it settles",
 });
 
 // Real pointer hit testing and preview transitions cannot be proved in jsdom.
-test("every repeated reaction toggles my reaction while its preview is open", async ({
+test("a counted reaction toggles my contribution while its preview is open", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&repeated");
   const row = page.locator("[data-message-id]").first();
-  const buttons = row.locator('button[data-reaction="😂"]');
-  await expect(buttons).toHaveCount(2);
-  const authors = await buttons.evaluateAll((nodes) =>
-    nodes.map((node) => node.dataset.reactionAuthor),
-  );
-  for (const author of authors) {
-    const button = row.locator(
-      `button[data-reaction="😂"][data-reaction-author="${author}"]`,
-    );
+  const button = row.locator('button[data-reaction="😂"]');
+  await expect(button).toHaveCount(1);
+  await expect(button).toContainText("2");
+  for (let cycle = 0; cycle < 2; cycle++) {
     await button.hover();
-    await expect(page.locator(".buzz-preview-card[data-open]")).toBeVisible();
+    const preview = page.locator(".buzz-preview-card[data-open]");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("Fixture Member");
     await button.click();
-    const mine = row.getByRole("button", { name: "😂: You", exact: true });
-    await expect(mine).toBeVisible();
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(button).toContainText("3");
     await expect(button).toHaveAttribute("aria-disabled", "false");
     await button.click();
-    await expect(mine).toHaveCount(0);
-    await expect(buttons).toHaveCount(2);
-    await button.click();
-    await expect(mine).toBeVisible();
-    await expect(mine).toHaveAttribute("aria-disabled", "false");
-    await mine.hover();
-    await expect(page.locator(".buzz-preview-card[data-open]")).toBeVisible();
-    await mine.click();
-    await expect(mine).toHaveCount(0);
+    await expect(button).toHaveAttribute("aria-pressed", "false");
+    await expect(button).toContainText("2");
+    await expect(button).toHaveCount(1);
+    await expect(button).toHaveAttribute("aria-disabled", "false");
   }
 });
 
 // A direct pointer click does not wait for preview handoff animations to settle.
-test("clicking the second reaction during preview handoff toggles it", async ({
+test("clicking a counted reaction during preview handoff toggles it", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/emoji.html?reactions&repeated&narrow");
+  await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated&narrow");
   const row = page.locator("[data-message-id]").first();
-  const buttons = row.locator('button[data-reaction="😂"]');
-  await expect(buttons).toHaveCount(2);
-  await buttons.first().hover();
+  const button = row.locator('button[data-reaction="😂"]');
+  await expect(button).toHaveCount(1);
+  await expect(button).toContainText("2");
+  await row.locator('button[data-reaction="👍"]').hover();
   await expect(page.locator(".buzz-preview-card[data-open]")).toBeVisible();
-  const box = await buttons.nth(1).boundingBox();
+  const box = await button.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(
-    row.getByRole("button", { name: "😂: You", exact: true }),
-  ).toBeVisible();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await expect(button).toContainText("3");
 });

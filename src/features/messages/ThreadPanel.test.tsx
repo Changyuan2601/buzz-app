@@ -933,7 +933,13 @@ it("routes media in replies through the resolved root review workspace", () => {
   ];
   h.render();
   fireEvent.click(screen.getByRole("button", { name: "Open media reply" }));
-  expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0, true);
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    "reply",
+    attachment,
+    0,
+    true,
+    undefined,
+  );
 });
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
@@ -1294,6 +1300,9 @@ it("observes a visible reply before its root resolves, then enables thread catch
   );
   h.render();
   screen.getByRole("button", { name: "Close thread" }).focus();
+  // Focus rerenders the rows, which measure again in the next frame.
+  await act(async () => {});
+  await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(299));
   expect(observe).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
@@ -1302,6 +1311,7 @@ it("observes a visible reply before its root resolves, then enables thread catch
 
   h.snapshot.root = row;
   h.render();
+  await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });

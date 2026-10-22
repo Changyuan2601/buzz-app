@@ -17,10 +17,10 @@ afterEach(() => {
 });
 function fixture() {
   let ids = ["existing"];
-  // This UI handoff provider consumes only the roster, never a command writer.
   const session = () =>
     ({
       channels: { list: () => ({ channels: ids.map((id) => ({ id })) }) },
+      sidebarPreferences: { setMute: async () => [] },
     }) as unknown as RelaySession;
   let snapshot: RelaySnapshot = {
     status: "ready",

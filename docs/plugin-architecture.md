@@ -76,11 +76,15 @@ bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes the conversation sidebar (Solo and Team inventories) beside
-independently mounted pages; Settings supplies its own sidebar. The sidebar reuses
-session-owned roster, unread, creation and preferences capabilities; it does not
+independently mounted pages. Settings supplies its own modal navigation; a selected
+page can replace the conversation sidebar through its optional `sidebar` contribution.
+The conversation sidebar reuses session-owned roster, unread, creation and
+preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
-have separate boundaries. Sidebar presentation helpers currently remain importable
-from `bundled/channels`; no public sidebar contribution contract is introduced.
+have separate boundaries. A page sidebar is isolated by the same owned-contribution
+boundary, so a failure falls back to a concise alert without taking down the page,
+Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
+the page owns its sidebar content and local interaction state.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -206,7 +210,7 @@ remaining acceptance work and historical evidence.
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
@@ -262,6 +266,52 @@ ctx.pages.register({
   primary: true,
   placement: "toolbar",
   component: Dashboard,
+});
+```
+
+A page may replace the conversation sidebar while selected. Its component receives
+the current read-only `OpenTarget` and, when present, shell-generated primary
+Pages navigation as `children`. It supplies only its sidebar contents within the
+existing sidebar slot. Wrap that content in the existing `shell-sidebar-default`
+layout role to receive the default sidebar width and shell sizing constraints
+(260px default width, 220px minimum, with the shell's available-width clamp). That
+role provides outer slot geometry and its divider; it does not provide an inner
+surface, frame, padding, or content layout. The contributor owns those details.
+External authors use this CSS role and their own markup; internal source components
+such as `SidebarFrame` are not part of the author SDK. The host owns the slot and
+collapse/drawer interaction. A page may manage its own width preference. Pages do
+not receive navigation completion authority or own routing. On wide layouts the
+shell keeps its generic Show/Hide sidebar toggle; on narrow layouts the existing
+Show/Hide navigation drawer, focus handoff, Escape, inert, and ARIA behavior remain
+shell-owned. Pages without `sidebar` continue to
+use the conversation sidebar. The host isolates sidebar rendering with
+`OwnedContribution`; a throwing sidebar shows a concise alert with scrollable page
+navigation inside the standard fallback frame while the selected page and shell
+remain usable. A new page navigation request retries a failed sidebar without
+remounting healthy sidebar state. The sidebar shares the page's admitted workspace
+target and stays mounted beneath Settings; invalid destinations are not delivered
+to it.
+
+```tsx
+import type { PageSidebarProps } from "@buzz/author";
+
+function ActivitySidebar({ target, children }: PageSidebarProps) {
+  return (
+    <div className="shell-sidebar-default">
+      <aside className="activity-sidebar" aria-label="Activity sidebar">
+        <header>Activity</header>
+        <p>Current destination: {target.kind}</p>
+        {children}
+      </aside>
+    </div>
+  );
+}
+
+ctx.pages.register({
+  id: "activity",
+  title: "Activity",
+  component: ActivityPage,
+  sidebar: ActivitySidebar,
 });
 ```
 

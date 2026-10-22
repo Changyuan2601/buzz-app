@@ -177,7 +177,7 @@
   background: var(--affordance-panel-hover);
 }
 .organizedRow:has([aria-current="page"])::before {
-  background: var(--surface-navigation-selected);
+  background: var(--surface-sidebar-selected);
 }
 /* Bold is Solo's only unread cue, as on Team rows. */
 .organizedRow [data-channel-unread-title="true"] {

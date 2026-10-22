@@ -1362,12 +1362,22 @@ and OS notifications are not enabled by this feature.
 
 ### Attachment layout and scrolling
 
-Message rows show every image and GIF in a full-frame preview, whether sent alone
-or alongside text. Multiple images form a vertical list in attachment order, with a
-count below the list. GIF URLs need no file extension or MIME metadata for this
-presentation. Pixels use `contain`, so the whole image stays visible without
-stretching or cropping.
-Inline video previews and their posters fill their bounded frames with `cover`.
+Message rows show images and GIFs in full-frame previews, whether sent alone
+or alongside text. Groups of four or more adjacent images use a two-column grid.
+Where the host supplies the media review, adjacent videos join these groups and
+the grid shows at most four tiles. If more items remain, the fourth displays `+N`,
+counting that tile and the hidden items. The overflow tile keeps every photo/video
+reachable in the viewer, including when its thumbnail is unavailable.
+Files and audio retain their order and separate layout. Surfaces
+without a gallery host keep all previews visible. GIF URLs need no file extension
+or MIME metadata for this presentation. Image and compact video pixels use
+`contain`, so the whole frame stays visible without stretching or cropping.
+Other inline video previews and their posters fill their bounded frames with `cover`.
+The media review header displays the selected file's name, falling back to Image
+or Video when unnamed, and updates as gallery selection changes. While a thread
+read is pending or fails, the viewer preserves the opener's known media and offers
+thread retry independently of media loading. Verified removal or invalidated access
+retires that fallback through retries until a fresh read re-admits the attachment.
 Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas. Large emoji retain their artwork size with the

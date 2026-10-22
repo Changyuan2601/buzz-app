@@ -1109,6 +1109,7 @@ function ChannelWorkspace({
     channelName: string;
     messageId: string;
     attachment: Attachment;
+    initialAttachments?: readonly Attachment[] | undefined;
     initialTime: number;
     hasComments: boolean;
     entryId?: string | undefined;
@@ -1133,6 +1134,7 @@ function ChannelWorkspace({
       attachment: Attachment,
       initialTime: number,
       hasComments = false,
+      initialAttachments?: readonly Attachment[],
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
@@ -1148,6 +1150,7 @@ function ChannelWorkspace({
         attachment,
         initialTime,
         hasComments,
+        initialAttachments,
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },

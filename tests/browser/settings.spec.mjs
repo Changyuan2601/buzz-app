@@ -1121,7 +1121,9 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
   }
 });
 
-// Browser-only: opening the inspector must retain the catalog's actual scrollport.
+// Browser-only: the inspector narrows the catalog beside it, which reflows the
+// rows above. The chosen row must stay where it was in the catalog's real
+// scrollport on open and close; browser scroll anchoring alone can move it.
 test("plugin details preserves the catalog scroll position on open and close", async ({
   page,
   app,
@@ -1129,22 +1131,24 @@ test("plugin details preserves the catalog scroll position on open and close", a
   await page.goto(app.origin);
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
-  const catalog = settingsDialog(page).locator(".buzz-settings-page");
   const trigger = button(page, "View Usage details");
   await trigger.scrollIntoViewIfNeeded();
-  const before = await catalog.evaluate((element) => element.scrollTop);
-  expect(before).toBeGreaterThan(0);
+  const place = () =>
+    trigger.evaluate((row) => {
+      const port = row.closest(".buzz-settings-page");
+      const offset =
+        row.getBoundingClientRect().top - port.getBoundingClientRect().top;
+      return { scrolled: port.scrollTop > 0, offset: Math.round(offset) };
+    });
+  const before = await place();
+  expect(before.scrolled).toBe(true);
   await trigger.click();
   const close = button(page, "Close plugin details");
   await expect(close).toBeFocused();
-  await expect
-    .poll(() => catalog.evaluate((element) => element.scrollTop))
-    .toBe(before);
+  await expect.poll(place).toEqual(before);
   await close.click();
   await expect(trigger).toBeFocused();
-  await expect
-    .poll(() => catalog.evaluate((element) => element.scrollTop))
-    .toBe(before);
+  await expect.poll(place).toEqual(before);
   await expect(button(page, "More actions for Usage")).toHaveCount(0);
 });
 

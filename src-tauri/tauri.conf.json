@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Buzz Foundation",
+  "productName": "Buzz",
   "version": "0.0.0",
   "identifier": "dev.local.buzz.foundation",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Buzz Foundation",
+        "title": "Buzz",
         "dragDropEnabled": false,
         "width": 1200,
         "height": 800,
