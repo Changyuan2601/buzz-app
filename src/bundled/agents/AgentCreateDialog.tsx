@@ -35,7 +35,7 @@ const startingConfig = (type: RegisteredAgentType | undefined) => {
 
 export function AgentCreateDialog({
   agents,
-  types,
+  types: registeredTypes,
   community,
   onClose,
   onCreated,
@@ -46,6 +46,10 @@ export function AgentCreateDialog({
   onClose(): void;
   onCreated(agent: Agent): void;
 }) {
+  // Keep Builderlab registered for existing agents, but hide new creation.
+  const types = registeredTypes.filter(
+    (type) => type.key !== "block.builderlab/builderlab",
+  );
   const [open, setOpen] = useState(true);
   const [name, setName] = useState("");
   const [picture, setPicture] = useState(() => randomAgentAvatar().url);

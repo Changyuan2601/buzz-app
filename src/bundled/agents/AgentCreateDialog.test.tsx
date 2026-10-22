@@ -151,6 +151,59 @@ function setup(
 
 const createButton = () => screen.getByRole("button", { name: "Create agent" });
 
+const builderlab = {
+  ...echo,
+  key: "block.builderlab/builderlab",
+  pluginId: "block.builderlab",
+  id: "builderlab",
+  title: "Builderlab",
+};
+
+it("hides Builderlab and creates with the first remaining harness's defaults", async () => {
+  const { agents, dialog, user } = setup([builderlab, notes]);
+  expect(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  ).toHaveTextContent("Notes");
+  expect(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  ).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledExactlyOnceWith({
+    type: notes.key,
+    name: "Nova",
+    picture: expect.stringMatching(/^https:\/\//),
+    config: { notes: "start", instructions: "Be brief." },
+  });
+});
+
+it("keeps Claude, Codex and Goose selectable without Builderlab", async () => {
+  const choices = ["Claude", "Codex", "Goose"].map((title) => ({
+    ...echo,
+    key: `test/${title.toLowerCase()}`,
+    title,
+  }));
+  const { agents, dialog, user } = setup([builderlab, ...choices]);
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Claude", "Codex", "Goose"]);
+  await user.click(screen.getByRole("option", { name: "Codex" }));
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "test/codex", config: { reply: "" } }),
+  );
+});
+
+it("cannot create when Builderlab is the only registered harness", async () => {
+  const { agents, dialog, user } = setup([builderlab]);
+  expect(createButton()).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.submit(within(dialog).getByRole("form", { name: "New agent" }));
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
 it("creates with the name, a pack picture and the config from the type's view", async () => {
   const { agents, onCreated, dialog, user } = setup([echo]);
   await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
