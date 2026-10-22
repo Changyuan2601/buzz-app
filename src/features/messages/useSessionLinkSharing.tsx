@@ -17,6 +17,7 @@ type Pending = {
   current(): boolean;
   finish(send: boolean): void;
   grants: Map<string, Map<string, MemberAdditionIntent>>;
+  channelName: string;
   audience?: readonly string[];
   busy: boolean;
   error?: string;
@@ -51,7 +52,9 @@ export function useSessionLinkSharing(
       );
       check();
       if (request.audience.length > 100)
-        throw new Error("Choose at most 100 distinct recipients.");
+        throw new Error(
+          "This channel has too many members to share with at once. Send the link only, or share with people directly.",
+        );
       // Check every source before starting any grant. A copied card is not authority.
       for (const id of request.sources) {
         const source = await session.channelWrites.refreshMembership(id);
@@ -136,7 +139,26 @@ export function useSessionLinkSharing(
         };
         const abort = () => finish(false);
         signal.addEventListener("abort", abort, { once: true });
-        setPending({ sources, signal, current, finish, grants, busy: false });
+        setPending({
+          sources,
+          signal,
+          current,
+          finish,
+          grants,
+          channelName: destination?.name ?? "",
+          busy: false,
+        });
+        // Capture the audience on open so consent names who gets access.
+        // Share grants exactly this audience; a failed read falls back to Share's capture.
+        destinationShareAudience(session, channelId, signal).then(
+          (audience) =>
+            setPending((current) =>
+              current?.finish === finish && !current.audience
+                ? { ...current, audience }
+                : current,
+            ),
+          () => {},
+        );
       });
     },
     dialog: (
@@ -147,7 +169,7 @@ export function useSessionLinkSharing(
             ? "Share access to this chat?"
             : "Share access to these chats?"
         }
-        description="Share gives this channel’s current members, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged."
+        description={`Share gives ${audienceLabel(pending)}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`}
         onOpenChange={(open) => {
           if (!open) pending?.finish(false);
         }}
@@ -189,4 +211,13 @@ export function useSessionLinkSharing(
       </Dialog>
     ),
   };
+}
+
+function audienceLabel(pending: Pending | undefined) {
+  const channel = pending?.channelName
+    ? `#${pending.channelName}`
+    : "this channel";
+  const count = pending?.audience?.length;
+  if (count === undefined) return `the current members of ${channel}`;
+  return `the ${count} other ${count === 1 ? "member" : "members"} of ${channel}`;
 }

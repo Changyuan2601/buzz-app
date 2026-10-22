@@ -23,7 +23,10 @@ afterEach(() => {
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
 });
-async function fixture(thread = false) {
+async function fixture(
+  thread = false,
+  options: { destinationType?: string } = {},
+) {
   const viewer = keypair(),
     relay = keypair(),
     person = keypair(),
@@ -64,7 +67,7 @@ async function fixture(thread = false) {
             ["P", viewer.pubkey],
           ]),
           metadata(relay, destination, "Team", clock, [
-            ["t", "stream"],
+            ["t", options.destinationType ?? "stream"],
             ["private"],
           ]),
           ...[source, destination].map((id) =>
@@ -107,6 +110,7 @@ async function fixture(thread = false) {
     members,
     person,
     late,
+    key,
     reject(value: boolean) {
       reject = value;
     },
@@ -238,4 +242,38 @@ it("does not send the link after leaving while an already-dispatched grant finis
     await f.session.outbox?.ready();
   });
   expect(f.published.map((event) => event.kind)).toEqual([9000]);
+});
+
+it("names the channel and how many members get access", async () => {
+  await fixture();
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  await waitFor(() =>
+    expect(dialog).toHaveTextContent(
+      "Share gives the 1 other member of #Team, including agents, access",
+    ),
+  );
+});
+
+it("sends a chat link into a DM without asking or granting access", async () => {
+  const f = await fixture(false, { destinationType: "dm" });
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(f.published).toHaveLength(1));
+  expect(f.published[0]?.kind).toBe(9);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.members.get(source)).not.toContain(f.person.pubkey);
+});
+
+it("grants nothing and sends nothing when the draft changes while consent is open", async () => {
+  const f = await fixture();
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByRole("dialog");
+  act(() => writeView(f.session.scope, f.key, "Something else"));
+  await userEvent.click(screen.getByRole("button", { name: "Share and send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The draft changed.",
+  );
+  expect(f.publish).not.toHaveBeenCalled();
 });

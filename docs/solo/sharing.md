@@ -84,6 +84,8 @@ existing session card. Sending that card (at channel level or in a thread) asks
 the existing fresh destination roster and membership grant helpers, including
 channel agents, before the composer queues its original message. It does not
 post a second card or retarget a thread reply. Link-only leaves access unchanged.
+The dialog names the channel and, once its fresh roster loads, how many other
+members Share will grant. Share grants exactly that captured audience.
 
 Consent covers the full chat history and future messages, not just a preview.
 An unsuccessful grant leaves the message unsent and keeps Retry in the dialog;
