@@ -13,7 +13,7 @@ import {
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { ownSolo } from "../solo/labels";
+import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -209,8 +209,7 @@ export function ChannelInventory({
     (channel) =>
       !channel.huddle &&
       !channel.metadataPending &&
-      // Solo lists the viewer's own Solo chats.
-      !ownSolo(channel, queries.viewer) &&
+      inTeamInventory(channel) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -1213,10 +1212,9 @@ export function ChannelInventory({
               {section.rows.map((channel) => {
                 const selected =
                   current?.id === channel.id ? current.id : undefined;
-                const actions = rowActions(channel, section.key);
-                const menuEnabled = actions.length > 0;
+                // Every row offers Copy link; build items only for the open
+                // menu. useChannelRowMenu closes a menu left with none.
                 const menuOpen =
-                  menuEnabled &&
                   rowMenu?.channelId === channel.id &&
                   rowMenu.sectionKey === section.key;
                 return (
@@ -1236,7 +1234,7 @@ export function ChannelInventory({
                     onOpenThread={openActivityThread}
                     onOpenWorkingAgent={openWorkingAgent}
                     onOpenAgentActivity={openAgentActivity}
-                    menuEnabled={menuEnabled}
+                    menuEnabled
                     sectionKey={section.key}
                     selectFrame={
                       channel.channelType !== "dm" &&
@@ -1250,7 +1248,7 @@ export function ChannelInventory({
                     menuContent={
                       menuOpen ? (
                         <>
-                          {actions}
+                          {rowActions(channel, section.key)}
                           {readWrite?.pending && <p role="status">Saving…</p>}
                           {readWrite?.error && (
                             <p role="alert">{readWrite.error}</p>

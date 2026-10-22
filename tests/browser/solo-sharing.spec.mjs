@@ -59,7 +59,7 @@ test("a Solo chat link card opens the same authorized conversation in the channe
   );
   const row = destination.locator(`[data-message-id="${link.id}"]`);
   const chip = row.getByRole("link", {
-    name: `Open Session: ${title}`,
+    name: `Open Chat: ${title}`,
     exact: true,
   });
   await expect(chip).toBeVisible();
@@ -74,7 +74,7 @@ test("a Solo chat link card opens the same authorized conversation in the channe
       );
     });
   await expect.poll(captionGap).toBe(2);
-  await expect(chip.locator("svg.tabler-icon-file-text")).toBeVisible();
+  await expect(chip.locator("svg.tabler-icon-message-circle")).toBeVisible();
   await chip.click();
   const panel = page.locator("[data-panel-workspace]");
   await expect(panel.getByRole("tab", { name: title })).toHaveAttribute(
@@ -87,8 +87,9 @@ test("a Solo chat link card opens the same authorized conversation in the channe
   await expect(
     conversation.getByRole("region", { name: "Channel message history" }),
   ).toBeVisible();
+  // Alice Fixture is in Beta too, so it is a conversation.
   await expect(
-    conversation.getByRole("textbox", { name: "Message your agents" }),
+    conversation.getByRole("textbox", { name: "Message this conversation" }),
   ).toBeVisible();
   await expect(
     destination.getByRole("textbox", { name: "Message #Alpha" }),
@@ -100,7 +101,7 @@ test("a Solo chat link card opens the same authorized conversation in the channe
       .getBoundingClientRect();
     const pane = element.getBoundingClientRect();
     const composer = element
-      .querySelector('[aria-label="Message your agents"]')
+      .querySelector('[aria-label="Message this conversation"]')
       .closest("form")
       .getBoundingClientRect();
     return {
@@ -387,7 +388,7 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   const links = app.report.publications.filter(({ event }) => event.kind === 9);
   expect(links).toHaveLength(1);
   expect(links[0].event.id).toBe(failedId);
-  expect(links[0].event.content).toBe("[Session: beta](buzz://channel/beta)");
+  expect(links[0].event.content).toBe("[Chat: Beta](buzz://channel/beta)");
   expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   // Reload proves real app wiring to this account/community's device-local history.

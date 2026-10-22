@@ -7,7 +7,8 @@ import {
   type RefObject,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { conversationTarget, soloDraftTarget } from "./routes";
+import { ownSolo } from "../solo/labels";
+import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
@@ -25,7 +26,6 @@ import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
 import { NewWorkspace } from "../solo/NewWorkspace";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -39,8 +39,17 @@ import {
 import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import type { ContributionReader } from "../conversation/contracts";
+import type { ChatIcon } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
+
+const noSubscription = () => () => {};
+const chatIcon = (
+  <span className={styles.conversationIcon} aria-hidden="true">
+    <ChatCircleIcon size={16} />
+  </span>
+);
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
@@ -48,11 +57,14 @@ export function SoloInventory({
   scope,
   navigator,
   target,
+  chatIcons,
 }: {
   session: RelaySession;
   scope: string;
   navigator: Navigation;
   target: OpenTarget;
+  /** Plugin icons that can stand in for a chat's own. */
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
 }) {
   const list = useChannelList(session.channels);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -68,11 +80,21 @@ export function SoloInventory({
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
+  const draft =
+    target.kind === "page" &&
+    target.pluginId === "buzz.channels" &&
+    target.pageId === "channels"
+      ? soloDraft(target.route?.params)
+      : undefined;
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
     session.agentActivity.workingSnapshot,
     session.agentActivity.workingSnapshot,
+  );
+  const ChatIcon = useSyncExternalStore(
+    chatIcons?.subscribe ?? noSubscription,
+    () => chatIcons?.snapshot()[0]?.component,
   );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
@@ -107,7 +129,14 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    .filter((item) => !item.archived && ownSolo(item, session.viewer))
+    // Solo chats the viewer belongs to: their own and those shared with them.
+    // Opening one from a link without membership adds nothing here.
+    .filter(
+      (item) =>
+        !item.archived &&
+        item.channelType === "solo" &&
+        (!item.readOnly || ownSolo(item, session.viewer)),
+    )
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
@@ -188,6 +217,28 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         navigator={navigator}
+        draft={
+          draft
+            ? {
+                projectId: draft.project,
+                content: (
+                  <NavigationItem
+                    label="New chat"
+                    selected
+                    icon={
+                      <span
+                        className={styles.conversationIcon}
+                        aria-hidden="true"
+                      >
+                        <ChatCircleIcon size={16} />
+                      </span>
+                    }
+                    onClick={() => void navigator.open(target)}
+                  />
+                ),
+              }
+            : undefined
+        }
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
@@ -224,6 +275,7 @@ export function SoloInventory({
             title={item.title}
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
+            Icon={ChatIcon}
             onSelect={() => void open(item.id)}
             onRename={rename}
             onOpenThread={(thread) =>
@@ -254,6 +306,7 @@ function SoloConversationRow({
   title,
   selected,
   working,
+  Icon,
   onSelect,
   onRename,
   onOpenThread,
@@ -268,6 +321,7 @@ function SoloConversationRow({
   title: string;
   selected: boolean;
   working: boolean;
+  Icon?: ChatIcon["component"] | undefined;
   onSelect: () => void;
   onRename: (() => boolean) | undefined;
 } & Pick<
@@ -333,9 +387,11 @@ function SoloConversationRow({
           }
           onContextMenu={() => clearTimeout(pendingClick.current)}
           icon={
-            <span className={styles.conversationIcon} aria-hidden="true">
-              <ChatCircleIcon size={16} />
-            </span>
+            Icon ? (
+              <Icon session={session} channelId={id} fallback={chatIcon} />
+            ) : (
+              chatIcon
+            )
           }
           label={
             <span className={styles.chatRow}>

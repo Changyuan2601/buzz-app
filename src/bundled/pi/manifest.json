@@ -1,0 +1,25 @@
+{
+  "id": "buzz.pi",
+  "name": "Pi",
+  "apiVersion": 1,
+  "description": "Run local Pi agents in Buzz.",
+  "discovery": {
+    "category": "agents",
+    "tags": ["code", "coding-agents"]
+  },
+  "host": {
+    "processes": [
+      {
+        "id": "pi-sh",
+        "program": "bash",
+        "args": ["-c"]
+      },
+      {
+        "id": "node",
+        "program": "node",
+        "args": ["--input-type=module", "-e"]
+      }
+    ],
+    "files": true
+  }
+}

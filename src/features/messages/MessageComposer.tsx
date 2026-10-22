@@ -33,10 +33,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { knownAgentPubkeys } from "../agents/known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
-import { soloRecipients } from "../solo/recipients";
+import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -280,9 +281,44 @@ export function MessageComposer(props: MessageComposerProps) {
 }
 
 function PersonalComposer(props: MessageComposerProps) {
-  const choices = useAgentChoices(props.session, true, true);
+  const { session, channelId, submission } = props;
+  const choices = useAgentChoices(session, true, true);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const members = list.channels.find((c) => c.id === channelId)?.members;
+  // A saved chat keeps its people; agents are only the owner's available ones.
+  const roster = useMemo(
+    () =>
+      submission
+        ? choices.selectable
+        : soloRoster(
+            members,
+            session.viewer,
+            profiles,
+            agentPubkeys,
+            choices.selectable,
+          ),
+    [
+      submission,
+      choices.selectable,
+      members,
+      agentPubkeys,
+      profiles,
+      session.viewer,
+    ],
+  );
+
   return (
-    <DraftMentionRoster.Provider value={choices.selectable}>
+    <DraftMentionRoster.Provider value={roster}>
       <Composer {...props} />
       {choices.error && (
         <p role="alert">
@@ -387,6 +423,8 @@ function Composer({
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
   const solo = !!soloConversation || ownSoloConversation;
+  // Only a saved Solo chat subscribes; other composers never read this.
+  const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
   const channel = list.channels.find((channel) => channel.id === channelId);
   const channelType = channel?.channelType;
   // A DM or Solo chat is one conversation; elsewhere a top-level message
@@ -409,6 +447,15 @@ function Composer({
     return pending;
   });
   const revision = useRef(viewRevision(scope, draftKey));
+  // Whether this mount seeded the shortcut's initial text, rather than
+  // restoring a saved draft that may already have had its tag removed.
+  const [seededKey] = useState(() =>
+    !accepted?.next &&
+    !submission?.recoveredDraft &&
+    (revision.current === null || revision.current === "null")
+      ? draftKey
+      : undefined,
+  );
   const dirty = useRef(false);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
@@ -1103,6 +1150,42 @@ function Composer({
     setError(undefined);
     return true;
   }
+  function replaceRecipients(recipients: readonly MentionRecipient[]) {
+    if (
+      !Array.isArray(recipients) ||
+      recipients.some(
+        (person) =>
+          !person ||
+          typeof person.pubkey !== "string" ||
+          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
+          typeof person.name !== "string" ||
+          !person.name.trim(),
+      ) ||
+      !permitted.current ||
+      editingDisabled ||
+      editing.target ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected ||
+      input.current.disabled ||
+      input.current.readOnly
+    )
+      return false;
+    const unique = [
+      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+    ];
+    const admits = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+    );
+    if (unique.length > 32 || unique.some((person) => !admits(person.pubkey)))
+      return false;
+    if (!input.current.replaceRecipients(unique)) return false;
+    completion.invalidate();
+    setError(undefined);
+    return true;
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -1173,7 +1256,14 @@ function Composer({
       autoTagged.current === draftKey
     )
       return;
-    if (value.recipients.length || draft.trim()) {
+    // A shortcut may seed an ordinary editable link. Still add the default
+    // agent once while that freshly seeded text is untouched; a restored draft
+    // keeps its recipients as saved, so a removed tag never returns.
+    const untouchedInitial =
+      seededKey === draftKey &&
+      typeof submission?.initialDraft === "string" &&
+      draft === submission.initialDraft;
+    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
       autoTagged.current = draftKey;
       return;
     }
@@ -1202,23 +1292,35 @@ function Composer({
       }
     }
   });
+  // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
+  const needsRecipient = (requireMention || solo) && !withPeople;
+  const recipientHint = submission
+    ? "Tag an agent to send"
+    : "Tag a person or agent to send";
   const untagged =
-    requireMention && !editing.target && !value.recipients.length;
+    needsRecipient && !editing.target && !value.recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = ownSoloConversation
-      ? [...explicit]
-      : [
-          ...soloRecipients(
-            channel,
-            session.profiles.snapshot(),
-            session.agentChoices.snapshot(),
-            session.viewer,
-            explicit,
-          ),
-        ];
+    const recipients = [...explicit];
+    if (!recipients.length) {
+      // An untagged send relies on a person being present; confirm it against
+      // the fresh roster and agent inventory, not the rendered snapshot.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const profiles = session.profiles.snapshot();
+      if (
+        !soloHasPeople(
+          channel.members,
+          session.viewer,
+          profiles,
+          knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+        )
+      )
+        throw new Error("Tag an agent to send.");
+    }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
       // Classification no longer depends on inventory; refresh before admission.
@@ -1226,7 +1328,6 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
       if (
-        ownSoloConversation &&
         missing.some(
           (key) =>
             !session.agentChoices
@@ -1235,7 +1336,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Solo chats.",
+          "Tag a person already in this chat or one of your available agents.",
         );
       await session.channelWrites.addAgents(
         channelId,
@@ -1291,8 +1392,8 @@ function Composer({
       !outbox
     )
       return;
-    if (requireMention && !valueRef.current.recipients.length) {
-      setError("Tag an agent to send");
+    if (needsRecipient && !valueRef.current.recipients.length) {
+      setError(recipientHint);
       return;
     }
     // A new conversation is named from its message, so files alone cannot start it.
@@ -1321,11 +1422,27 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
+    // A send is an agent follow-up unless it addresses a confirmed person
+    // (a loaded, non-agent profile). Those, and untagged conversation in a
+    // shared chat, go out now; recipients still being classified keep the
+    // owner's queue preference.
+    const profileSnapshot = session.profiles.snapshot();
+    const agentKeys = knownAgentPubkeys(
+      profileSnapshot,
+      session.agentChoices.snapshot(),
+    );
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
-      followUpBehaviorPreference() === "queue";
+      followUpBehaviorPreference() === "queue" &&
+      captured.recipients.length > 0 &&
+      !soloHasPeople(
+        captured.recipients.map(({ pubkey }) => pubkey),
+        session.viewer,
+        profileSnapshot,
+        agentKeys,
+      );
     try {
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
@@ -1333,6 +1450,7 @@ function Composer({
         );
       if (
         ownSoloConversation &&
+        submission &&
         captured.recipients.some(
           (person) =>
             !session.agentChoices
@@ -2061,6 +2179,7 @@ function Composer({
                     insertText={(text) => insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
+                    replaceRecipients={replaceRecipients}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />
@@ -2102,7 +2221,7 @@ function Composer({
                   : compacting
                     ? "Wait for compaction to finish, or interrupt it."
                     : untagged
-                      ? "Tag an agent to send"
+                      ? recipientHint
                       : "Send message"
               }
               focusableWhenDisabled={

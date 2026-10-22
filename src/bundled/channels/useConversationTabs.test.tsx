@@ -1235,3 +1235,70 @@ it.each([
     expect(h.result.current.state.tabs.map(tabPane)).toEqual([pane]);
   },
 );
+
+it("mounts a hidden thread tab when first shown and keeps it for the visit", () => {
+  setThreadPlacementPreference("side");
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(
+    ({ continuingVisit }) => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    },
+    { initialProps: { continuingVisit: true } },
+  );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  act(() => h.result.current.state.openThreadTab("alpha", "r2", "r2"));
+  expect(h.result.current.workspace.hosts).toHaveLength(2);
+  h.rerender({ continuingVisit: false });
+  expect(h.result.current.workspace.hosts).toHaveLength(1);
+  h.rerender({ continuingVisit: true });
+  act(() => h.result.current.state.select("thread:alpha:r1"));
+  expect(h.result.current.workspace.hosts).toHaveLength(2);
+  act(() => h.result.current.state.select("thread:alpha:r2"));
+  expect(h.result.current.workspace.hosts).toHaveLength(2);
+  const restored = (id: string) =>
+    (
+      h.result.current.workspace.hosts.find(
+        (host) => (host as { key?: string }).key === id,
+      ) as unknown as {
+        children: {
+          props: { children: { props: { restored?: unknown } } };
+        };
+      }
+    ).children.props.children.props.restored;
+  expect(restored("thread:alpha:r1")).toBeDefined();
+  // A closed tab reopened in the same visit asks afresh.
+  act(() =>
+    h.result.current.workspace.items
+      .find((item) => item.id === "thread:alpha:r1")
+      ?.close?.(),
+  );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  expect(restored("thread:alpha:r1")).toBeUndefined();
+});

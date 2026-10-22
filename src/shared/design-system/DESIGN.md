@@ -608,6 +608,12 @@ Opaque contrast checks do not validate translucent materials over arbitrary
 content. Inspect the actual background, text and interaction states wherever
 glass remains; the flat shell does not establish a general glass contrast guarantee.
 
+Proposed for profile artwork: `Button variant="glass"` uses the complete
+`glass-secondary` material, with a stronger fill on hover and an opaque pressed
+state. It retains shared focus, loading, and disabled behavior. Reduced
+transparency, forced colors, and missing backdrop-filter support use an opaque
+panel fill. Use it over artwork, not on ordinary neutral profile headers.
+
 ### Match controls to their surface
 
 The shell groups creation, page tabs, and search in one `chrome-navigation`
@@ -1310,11 +1316,13 @@ more and Show less: the base navigation item's type and padding with no fill, re
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 
-PreviewCard may expose one supplemental action through `actionRef`, such as copying
+PreviewCard may expose supplemental actions through `actionRef`, such as copying
 an identity's full npub. Action previews open without a delay so immediate Tab
-navigation reaches the action. They remain non-modal and never take focus on hover. Tab
-from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
-continues after the trigger. Escape dismisses the preview before restoring focus,
+navigation reaches the action. They remain non-modal and never take focus on hover. When no side has enough room,
+action previews shift within the viewport to keep their controls reachable. Tab
+from the trigger reaches the first focusable item, including a pausable status ticker.
+Tab moves through the supplemental actions in document order. Shift+Tab from the
+first item returns to the trigger; Tab from the last continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
 are no longer Tab destinations or pointer targets.
 Scrolling anything that contains the trigger dismisses a hover-opened preview when
@@ -1892,3 +1900,15 @@ and horizontal padding and 21px icons. Their 20px radius follows the modal radiu
 the 12px gutter, and their hover surfaces align with the input.
 
 Inline search settings use the search variant of PreferenceRow with a gear icon and the same title/subtitle hierarchy as destination rows. Results height transitions for 180ms, disabled with reduced motion. The clear control reserves space to keep input dimensions stable.
+
+### Conversation identity icons (proposed)
+
+Proposed pending designer sign-off, as a narrow exception to the chat and
+conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
+Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
+Reply actions. Keep private Team channels' lock icon; privacy alone does not
+replace a Solo chat's identity icon. Accessible chat cards end with a right
+chevron. Unavailable chat cards retain a lock and unavailable accessible text;
+unknown access does not earn a chevron. Display chat cards as **Chat:**, while
+accepting legacy **Session:** and **Session ·** authored links without rewriting
+historical messages or their receipts.

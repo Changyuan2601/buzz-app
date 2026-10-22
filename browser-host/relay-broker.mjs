@@ -240,7 +240,7 @@ function loadIdentity(authorizedViewer) {
   }
   if (!expected)
     throw new Error(
-      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
+      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See docs/contributing.md#live-relay-development.",
     );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,

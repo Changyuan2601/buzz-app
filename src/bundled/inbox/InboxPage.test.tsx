@@ -18,7 +18,7 @@ import { PageTabs } from "../channels/PageTabs";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { archiveKey, readArchives } from "./archive";
-import { viewRevision } from "../../shared/view-state";
+import { viewRevision, writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
@@ -3437,6 +3437,13 @@ it.each([true, false])(
   "Inbox activity replies preserve shared recipient policy (solo=%s)",
   async (soloChannel) => {
     const h = fixture({ withWriter: true, soloChannel, memberAgents: 1 });
+    if (soloChannel)
+      writeView(h.owner.session.scope, "draft:room", {
+        text: "@Scout Respond to this",
+        recipients: [
+          { pubkey: h.agent.pubkey, name: "Scout", start: 0, end: 6 },
+        ],
+      });
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
@@ -3444,9 +3451,10 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: soloChannel ? "Message your agents" : "Reply to thread",
+      name: soloChannel ? "Message this conversation" : "Reply to thread",
     });
-    fireEvent.change(editor, { target: { value: "Respond to this" } });
+    if (!soloChannel)
+      fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Send message" }),
@@ -3476,11 +3484,15 @@ it.each([true, false])(
     );
   },
 );
-it("Inbox Solo chat activity with multiple agents requires an explicit recipient", async () => {
+it("Inbox Solo chat activity shared with a person sends without a tag", async () => {
   const h = fixture({
     withWriter: true,
     soloChannel: true,
     memberAgents: 2,
+  });
+  writeView(h.owner.session.scope, "draft:room", {
+    text: "No tag needed",
+    recipients: [],
   });
   render(h.view);
   await screen.findByText("Please review this");
@@ -3489,20 +3501,16 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
   });
-  fireEvent.change(editor, { target: { value: "Choose someone first" } });
+  expect(editor).toHaveValue("No tag needed");
+  // Alice is a member, so the viewer isn't alone with agents.
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
   );
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  expect(
-    await screen.findByText(
-      "There are multiple agents in this chat. @mention who should respond.",
-    ),
-  ).toBeInTheDocument();
-  expect(h.published).toEqual([]);
-  expect(editor).toHaveValue("Choose someone first");
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
 it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {
@@ -3530,7 +3538,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
   });
   fireEvent.change(editor, { target: { value: "Draft in progress" } });
   act(() =>
@@ -3550,7 +3558,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   );
   await act(async () => {});
   expect(
-    screen.getByRole("textbox", { name: "Message your agents" }),
+    screen.getByRole("textbox", { name: "Message this conversation" }),
   ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
@@ -3561,7 +3569,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   await act(async () => {});
   expect(
-    screen.getByRole("textbox", { name: "Message your agents" }),
+    screen.getByRole("textbox", { name: "Message this conversation" }),
   ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),

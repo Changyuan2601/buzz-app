@@ -1,7 +1,10 @@
 # Packaged human identity and relay access
 
 Native macOS, Windows and Linux without the live development broker offer
-**Use an existing key** or **Create a new identity**. These are alternatives. Import accepts an nsec,
+**Create a new identity** or **Use an existing key**. These are alternatives.
+Setup can also offer **Continue with your Buzz identity** when old Buzz is
+installed and **Restore from backup** in builds with backup recovery configured;
+both are described below. Import accepts an nsec,
 validates its checksum and secp256k1 scalar, and persists that exact key before
 adopting its public identity. It never generates a replacement after an import,
 read or write failure. Denied/unavailable/corrupt storage is not first run.

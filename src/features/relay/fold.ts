@@ -255,10 +255,12 @@ export function foldMessages(
     includeReplies = false,
     collapseHuddles = true,
     signingAuthority,
+    agentOwner,
   }: {
     includeReplies?: boolean;
     collapseHuddles?: boolean;
     signingAuthority?: string | undefined;
+    agentOwner?: ((pubkey: string) => string | undefined) | undefined;
   } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
@@ -283,7 +285,10 @@ export function foldMessages(
   // message target kinds gain the owner path; reactions remain author-only.
   const byAuthor = (item: EventData, event: EventData) =>
     item.pubkey === event.pubkey ||
-    item.pubkey === messageAuthor(event, signingAuthority);
+    item.pubkey === messageAuthor(event, signingAuthority) ||
+    ([9, 40002].includes(event.kind) &&
+      item.tags.some((entry) => entry[0] === "h" && entry[1] === channelId) &&
+      item.pubkey === agentOwner?.(messageAuthor(event, signingAuthority)));
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)

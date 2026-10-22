@@ -34,7 +34,10 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-function harness(overrides: Partial<PluginStorage> = {}, fail = false) {
+function harness(
+  overrides: Partial<PluginStorage> = {},
+  fail: boolean | (() => boolean) = false,
+) {
   const installation: PluginStorage = {
     getCatalog: vi.fn(async () => ready()),
     changePlugin: vi.fn(async () => ready(false)),
@@ -53,7 +56,8 @@ function harness(overrides: Partial<PluginStorage> = {}, fail = false) {
         module: {
           inject: ["pages"],
           apply(ctx) {
-            if (fail) throw new Error("Activation failed");
+            if (typeof fail === "function" ? fail() : fail)
+              throw new Error("Activation failed");
             ctx.pages.register({
               id: "main",
               title: "Main",
@@ -317,9 +321,12 @@ it("defaults to platform storage using the bundled manifests", async () => {
 it("installs a selected preview through the management boundary, rejecting overlap and stale polls", async () => {
   const install = deferred();
   const imports = {
+    checkFolder: vi.fn(async () => "updated"),
+    previewFolder: vi.fn(async () => null),
     folder: vi.fn(async () => null),
     files: vi.fn(async () => null),
     git: vi.fn(async () => null),
+    checkGit: vi.fn(async () => null),
     discard: vi.fn(async () => {}),
     install: vi.fn(() => install.promise),
   };
@@ -359,4 +366,54 @@ it("reloads through the management boundary, rejecting overlap and stale polls",
   poll.resolve(ready());
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.snapshot().configuration).toEqual(ready(false));
+});
+
+it("retries only failed activation of the installed revision without storage writes or acquisition", async () => {
+  const shouldFail = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+  const { plugins, installation, pages } = harness({}, shouldFail);
+  expect(plugins.retryPlugin("example")).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  const configuration = plugins.snapshot().configuration;
+  expect(plugins.snapshot().activation.example?.status).toBe("failed");
+  expect(plugins.retryPlugin("missing")).toBe(false);
+  expect(plugins.retryPlugin("example")).toBe(true);
+  expect(plugins.snapshot().activation.example?.status).toBe("starting");
+  expect(plugins.retryPlugin("example")).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.snapshot().activation.example?.status).toBe("active");
+  expect(plugins.snapshot().configuration).toBe(configuration);
+  expect(pages.snapshot()).toHaveLength(1);
+  expect(shouldFail).toHaveBeenCalledTimes(2);
+  expect(installation.getCatalog).toHaveBeenCalledTimes(1);
+  expect(installation.readModule).not.toHaveBeenCalled();
+  expect(installation.changePlugin).not.toHaveBeenCalled();
+  expect(installation.reloadPlugin).not.toHaveBeenCalled();
+  expect(plugins.retryPlugin("example")).toBe(false);
+  await plugins.dispose();
+  expect(plugins.retryPlugin("example")).toBe(false);
+});
+
+it("rejects retry while busy, disabled, paused, or carrying an artifact error", async () => {
+  const operation = deferred();
+  const { plugins, installation } = harness(
+    { changePlugin: vi.fn(() => operation.promise) },
+    true,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  const change = plugins.change("disable", "example");
+  expect(plugins.retryPlugin("example")).toBe(false);
+  operation.resolve(ready(false));
+  await change;
+  expect(plugins.retryPlugin("example")).toBe(false);
+  vi.mocked(installation.getCatalog).mockResolvedValue(ready(true, true));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(plugins.retryPlugin("example")).toBe(false);
+  const broken = ready();
+  if (broken.status !== "ready") throw new Error("Expected ready fixture");
+  for (const plugin of broken.catalog.plugins)
+    plugin.error = "Artifact unavailable";
+  vi.mocked(installation.getCatalog).mockResolvedValue(broken);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(plugins.snapshot().activation.example?.status).toBe("failed");
+  expect(plugins.retryPlugin("example")).toBe(false);
 });

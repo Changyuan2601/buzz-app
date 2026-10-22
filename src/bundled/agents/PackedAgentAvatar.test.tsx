@@ -7,14 +7,35 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 const motion = vi.hoisted(() => ({ reduced: false }));
 vi.mock("motion/react", () => ({ useReducedMotion: () => motion.reduced }));
+let visibility: IntersectionObserverCallback;
+beforeEach(() => {
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: IntersectionObserverCallback) {
+        visibility = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+});
+function showAvatar() {
+  visibility(
+    [{ isIntersecting: true } as IntersectionObserverEntry],
+    {} as IntersectionObserver,
+  );
+}
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   motion.reduced = false;
 });
 it.each([
@@ -34,7 +55,7 @@ it.each([
     const view = render(<PackedAgentAvatar avatar={avatar} />);
     const video = view.container.querySelector("video");
     if (!video) throw new Error("Missing selected animation");
-    expect(video).toHaveAttribute("autoplay");
+    expect(video).not.toHaveAttribute("autoplay");
     expect(video).toHaveAttribute("playsinline");
     expect(video.querySelectorAll("source")).toHaveLength(2);
     expect(video.querySelector("source")?.src).toContain(extension);
@@ -84,7 +105,7 @@ it("starts muted inline playback without native controls", () => {
   const view = render(<PackedAgentAvatar avatar={avatar} />);
   const video = view.container.querySelector("video");
   if (!video) throw new Error("Missing avatar video");
-  fireEvent.canPlay(video);
+  showAvatar();
   expect(play).toHaveBeenCalledOnce();
   expect(video.muted).toBe(true);
   expect(video.defaultMuted).toBe(true);
@@ -102,7 +123,7 @@ it("keeps animation available after autoplay is blocked and retries on hover", a
   const view = render(<PackedAgentAvatar avatar={avatar} />);
   const video = view.container.querySelector("video");
   if (!video) throw new Error("Missing video");
-  fireEvent.canPlay(video);
+  showAvatar();
   await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
   expect(view.container.querySelector("video")).toBe(video);
   fireEvent.pointerEnter(video.parentElement as HTMLElement);

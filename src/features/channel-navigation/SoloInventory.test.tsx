@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
-import { conversationTarget } from "./routes";
+import { writeView } from "../../shared/view-state";
+import { conversationTarget, soloDraftTarget } from "./routes";
+import type { Contribution } from "../../plugins/contributions";
+import type { ChatIcon } from "../conversation/service";
 
 import {
   fixture,
@@ -173,6 +182,42 @@ it("opens a typing-only agent's profile activity in its Solo chat", async () => 
   );
   expect(f.open).toHaveBeenLastCalledWith(conversationTarget(scope, id));
 });
+
+it("shows a plugin's chat icon in place of the chat bubble, from when it registers", () => {
+  let icons: readonly Contribution<ChatIcon>[] = [];
+  const listeners = new Set<() => void>();
+  fixture(false, false, undefined, undefined, 0, {
+    snapshot: () => icons,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  const planning = screen.getByRole("button", { name: /^Planning/ });
+  expect(planning.querySelector("[aria-hidden] svg")).not.toBeNull();
+  act(() => {
+    icons = [
+      {
+        id: "chat-icon",
+        key: "github/chat-icon",
+        pluginId: "github",
+        revision: "one",
+        component: ({ channelId, fallback }) =>
+          channelId === id ? (
+            <span data-testid="pull">Pull request, merged: </span>
+          ) : (
+            fallback
+          ),
+      },
+    ];
+    for (const listener of listeners) listener();
+  });
+  expect(within(planning).getByTestId("pull")).toBeInTheDocument();
+  expect(planning).toHaveAccessibleName(/^Pull request, merged:\s*Planning/);
+  // A chat the plugin knows nothing about keeps its bubble.
+  const otherRow = screen.getByRole("button", { name: /^Other/ });
+  expect(otherRow.querySelector("[aria-hidden] svg")).not.toBeNull();
+});
 it.each([
   { observedCount: 1, attentionCount: 1 },
   { observedCount: 1, attentionCount: 0 },
@@ -187,6 +232,37 @@ it.each([
     expect(row.querySelector("[data-channel-priority]")).toBeNull();
     f.clearUnread();
     expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
+  },
+);
+
+it.each(["new", "linked", "agent"])(
+  "shows and selects the ordinary New chat draft row for %s",
+  async (route) => {
+    const f = fixture();
+    writeView(scope, "solo:collapsed-projects", [""]);
+    const target = soloDraftTarget(
+      scope,
+      route === "agent"
+        ? { agent }
+        : route === "linked"
+          ? { linked: "33333333-3333-4333-8333-333333333333" }
+          : {},
+    );
+    act(() => f.navigate(target));
+    const draft = await screen.findByRole("button", { name: "New chat" });
+    expect(draft).toHaveAttribute("aria-current", "page");
+    expect(draft).toHaveAttribute("data-selected", "true");
+    expect(screen.getByRole("button", { name: /^Other/ })).not.toHaveAttribute(
+      "aria-current",
+    );
+    await userEvent.click(draft);
+    expect(f.open).toHaveBeenLastCalledWith(target);
+    act(() => f.navigate(conversationTarget(scope, id)));
+    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Planning/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   },
 );
 

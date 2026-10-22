@@ -18,6 +18,7 @@ import type { Identity } from "./service";
 import { RestoreIdentity } from "./RestoreIdentity";
 import styles from "./IdentitySetup.module.css";
 import { OnboardingWordmark } from "./OnboardingWordmark";
+import { OnboardingScreen } from "./OnboardingScreen";
 
 export function IdentitySetup({
   identity,
@@ -60,17 +61,10 @@ export function IdentitySetup({
   if (state.status === "ready") return children;
   if (missing && !importing && !state.recovery) {
     return (
-      <main className={styles.landing} aria-labelledby="identity-landing-title">
-        <header
-          className={styles.titlebar}
-          data-buzz-window-drag=""
-          data-tauri-drag-region={integratedWindowControls || undefined}
-          {...(macDesktop ? macTitleBarDragHandlers : {})}
-        >
-          {(macDesktop || integratedWindowControls) && <WindowControls />}
-        </header>
-        <div className={styles.content}>
-          <div className={styles.brand}>
+      <OnboardingScreen
+        labelledBy="identity-landing-title"
+        intro={
+          <>
             <h1 id="identity-landing-title" className={styles.wordmark}>
               <OnboardingWordmark />
             </h1>
@@ -78,58 +72,57 @@ export function IdentitySetup({
               Your people, your agents, your projects —<br />
               all in one place.
             </p>
-          </div>
-          <div className={styles.actions}>
-            {state.error && <p role="alert">{state.error}</p>}
-            {available && (
-              <>
-                {legacyAvailable && (
-                  <Button
-                    size="lg"
-                    variant="prominent"
-                    disabled={state.busy}
-                    onClick={() => void identity.importLegacy()}
-                  >
-                    Continue with your Buzz identity
-                  </Button>
-                )}
-                <Button
-                  size="lg"
-                  variant={legacyAvailable ? "subtle" : "prominent"}
-                  disabled={state.busy}
-                  onClick={() => void identity.create()}
-                >
-                  Create a new identity
-                </Button>
-                <Button
-                  ref={(button) => {
-                    if (!button || !returning.current) return;
-                    returning.current = false;
-                    button.focus();
-                  }}
-                  size="lg"
-                  variant="ghost"
-                  disabled={state.busy}
-                  onClick={() => setImporting(true)}
-                >
-                  Use an existing key
-                </Button>
-                {available.backup && (
-                  <Button
-                    size="lg"
-                    variant="ghost"
-                    disabled={state.busy}
-                    onClick={() => void identity.beginRecovery()}
-                  >
-                    Restore from backup
-                  </Button>
-                )}
-              </>
+          </>
+        }
+      >
+        {state.error && <p role="alert">{state.error}</p>}
+        {available && (
+          <>
+            {legacyAvailable && (
+              <Button
+                size="lg"
+                variant="prominent"
+                disabled={state.busy}
+                onClick={() => void identity.importLegacy()}
+              >
+                Continue with your Buzz identity
+              </Button>
             )}
-            {state.busy && <p role="status">Saving your identity securely…</p>}
-          </div>
-        </div>
-      </main>
+            <Button
+              size="lg"
+              variant={legacyAvailable ? "subtle" : "prominent"}
+              disabled={state.busy}
+              onClick={() => void identity.create()}
+            >
+              Create a new identity
+            </Button>
+            <Button
+              ref={(button) => {
+                if (!button || !returning.current) return;
+                returning.current = false;
+                button.focus();
+              }}
+              size="lg"
+              variant="ghost"
+              disabled={state.busy}
+              onClick={() => setImporting(true)}
+            >
+              Use an existing key
+            </Button>
+            {available.backup && (
+              <Button
+                size="lg"
+                variant="ghost"
+                disabled={state.busy}
+                onClick={() => void identity.beginRecovery()}
+              >
+                Restore from backup
+              </Button>
+            )}
+          </>
+        )}
+        {state.busy && <p role="status">Saving your identity securely…</p>}
+      </OnboardingScreen>
     );
   }
 

@@ -10,6 +10,10 @@ export type PluginInfo = {
   publisher?: string | null;
   rollbackBlockedReason?: string | null;
   reloadable: boolean;
+  updateSource?:
+    | { root: string; path: string }
+    | { repository: string; reference: string; path: string }
+    | null;
   error: string | null;
   readmeRevision?: string | null;
   iconPngRevision?: string | null;
@@ -50,9 +54,17 @@ export type ImportFile = { path: string } & (
 );
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
+  checkFolder(id: string): Promise<string>;
+  previewFolder(id: string): Promise<ImportPreview | null>;
   files(source: string, files: ImportFile[]): Promise<ImportPreview | null>;
   /** `authorization` is a NIP-98 token signed for exactly `repository`. */
   git(
+    repository: string,
+    reference: string,
+    authorization?: string,
+  ): Promise<ImportPreview | null>;
+  /** Reads Git metadata without acquiring or replacing an installation preview. */
+  checkGit(
     repository: string,
     reference: string,
     authorization?: string,

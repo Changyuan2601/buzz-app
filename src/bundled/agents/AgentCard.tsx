@@ -11,6 +11,17 @@ import { PackedAgentAvatar } from "./PackedAgentAvatar";
 
 type Portrayed = Readonly<{ name: string; picture?: string | undefined }>;
 
+/** Static artwork shares the portrait's pack lookup and protected media path. */
+export function useAgentPortraitSource(agent: Portrayed, community?: string) {
+  const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
+  const src = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    community,
+    "small",
+  );
+  return { pack, src: pack?.preview ?? src };
+}
+
 /** An agent's picture: a pack avatar animates, any other shows through its
  * community's media access. */
 export function AgentPortrait({
@@ -20,12 +31,7 @@ export function AgentPortrait({
   agent: Portrayed;
   community?: string | undefined;
 }) {
-  const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
-  const src = useAvatarPreview(
-    pack ? "" : (agent.picture ?? ""),
-    community,
-    "small",
-  );
+  const { pack, src } = useAgentPortraitSource(agent, community);
   if (pack) return <PackedAgentAvatar avatar={pack} />;
   return (
     <Avatar

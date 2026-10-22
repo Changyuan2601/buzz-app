@@ -93,7 +93,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   });
   const title = row.getByText("GitHub", { exact: true });
   const description = row.getByText(
-    "View GitHub repositories, pull requests, issues, and commits.",
+    "View GitHub repositories, issues, and commits, and merge pull requests.",
     { exact: true },
   );
   await expect(toggle).toHaveAccessibleName("Disable GitHub");
@@ -543,7 +543,20 @@ confirmedPresence(
         const content = await pluginContent.boundingBox();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - scrollport.y).toBe(32);
+        // Keyboard focus can scroll this pane; measure its layout inset in
+        // scroll-content coordinates rather than assuming scrollTop is zero.
+        await expect
+          .poll(() =>
+            pluginContent.evaluate((element) => {
+              const pane = element.closest(".buzz-dialog-navigation-detail");
+              return (
+                element.getBoundingClientRect().top -
+                pane.getBoundingClientRect().top +
+                pane.scrollTop
+              );
+            }),
+          )
+          .toBe(32);
       } else {
         // Narrow Settings stacks its navigation above the detail.
         expect(navigation.y + navigation.height).toBeLessThanOrEqual(
@@ -577,12 +590,12 @@ confirmedPresence(
         "Notifications",
         "Shortcuts",
         "Agent setup",
+        "Decisions API",
         "Channel templates",
         "Software updates",
         "Manage plugins",
         "Builderlab agents",
         "Builderlab hosting",
-        "Jev classifier",
       ]) {
         await tab();
         await expect(
@@ -597,6 +610,21 @@ confirmedPresence(
     }
   },
 );
+
+/** A viewer with no saved community starts on the join screen, not the shell. */
+const savedCommunity = (page, viewer) =>
+  page.addInitScript((viewer) => {
+    const key = `buzz-client.v1:${viewer}`;
+    if (!localStorage.getItem(key))
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          profile: { name: "Browser Fixture", picture: "" },
+          memberships: [{ id: "primary", name: "Primary" }],
+          selected: null,
+        }),
+      );
+  }, viewer);
 
 test("hosted deletion reload keeps the UUID until an enabled manual replay", async ({
   page,
@@ -615,6 +643,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     calls.push(action);
@@ -716,6 +745,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "auth")
@@ -992,7 +1022,7 @@ test("discarding community setup leaves the published profile unchanged", async 
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await page
-    .getByRole("textbox", { name: "Relay URL", exact: true })
+    .getByRole("textbox", { name: "Community URL", exact: true })
     .fill("wss://primary.example");
   await button(page, "Continue").click();
   await expect(
@@ -1089,6 +1119,33 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
     await expect(trigger).toBeFocused();
     await expect(trigger).toBeVisible();
   }
+});
+
+// Browser-only: opening the inspector must retain the catalog's actual scrollport.
+test("plugin details preserves the catalog scroll position on open and close", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const catalog = settingsDialog(page).locator(".buzz-settings-page");
+  const trigger = button(page, "View Usage details");
+  await trigger.scrollIntoViewIfNeeded();
+  const before = await catalog.evaluate((element) => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+  await trigger.click();
+  const close = button(page, "Close plugin details");
+  await expect(close).toBeFocused();
+  await expect
+    .poll(() => catalog.evaluate((element) => element.scrollTop))
+    .toBe(before);
+  await close.click();
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => catalog.evaluate((element) => element.scrollTop))
+    .toBe(before);
+  await expect(button(page, "More actions for Usage")).toHaveCount(0);
 });
 
 // Real shell + shared presentation + browser storage across reload. State/error

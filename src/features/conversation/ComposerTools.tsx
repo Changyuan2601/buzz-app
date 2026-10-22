@@ -73,6 +73,7 @@ function OwnedTool({
         | "insertText"
         | "insertMention"
         | "insertMentions"
+        | "replaceRecipients"
         | "insertResource"
         | "focus"
         | "capture"
@@ -105,6 +106,8 @@ function OwnedTool({
         active() ? current.current.insertMention(recipient) : false,
       insertMentions: (recipients) =>
         active() ? current.current.insertMentions(recipients) : false,
+      replaceRecipients: (recipients) =>
+        active() ? current.current.replaceRecipients(recipients) : false,
       insertResource: (resource) =>
         active()
           ? current.current.insertResource(resource)

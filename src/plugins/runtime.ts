@@ -65,14 +65,18 @@ export class PluginRuntime {
   }
 
   // The manager chooses desired plugins; this adapter owns only their execution.
-  reconcile(plugins: readonly PluginInfo[]) {
+  reconcile(plugins: readonly PluginInfo[], retryId?: string) {
     if (this.closed) return;
     const wanted = new Map(
       plugins.map((plugin) => [plugin.manifest.id, plugin]),
     );
     for (const [id, entry] of this.entries) {
       const next = wanted.get(id);
-      if (next?.revision === entry.plugin.revision && !entry.cancelled)
+      if (
+        next?.revision === entry.plugin.revision &&
+        !entry.cancelled &&
+        !(id === retryId && entry.failed)
+      )
         continue;
       // Keep the entry as a teardown barrier: rapid disable/enable must also wait.
       void this.stop(entry).catch(() => {});

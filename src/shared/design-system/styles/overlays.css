@@ -132,10 +132,11 @@
       transform: none;
     }
   }
-  /* Nested sheets and pointer-dismissible dialogs need a backdrop above the
+  /* Confirmations, nested sheets and pointer-dismissible dialogs need a backdrop above the
      parent popup. Matching its layer preserves parent, backdrop, child order. */
   .buzz-dialog-backdrop[data-placement="right"],
-  .buzz-dialog-backdrop[data-outside-dismissal] {
+  .buzz-dialog-backdrop[data-outside-dismissal],
+  .buzz-dialog-backdrop[data-alert-dialog] {
     z-index: var(--layer-dialog);
   }
   .buzz-dialog[data-placement="right"] {

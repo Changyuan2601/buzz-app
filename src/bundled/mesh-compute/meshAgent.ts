@@ -218,8 +218,13 @@ export class MeshAgentRuntime {
   run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const { trigger, agent, channelId } = delivery;
-    // Catch-up batches have no single triggering event; Mesh agents answer live turns only.
-    if (trigger.type === "timer" || trigger.type === "catch-up" || !channelId)
+    // Mesh accepts owner-authored events only, not timers, catch-up or plugin wakes.
+    if (
+      trigger.type === "timer" ||
+      trigger.type === "catch-up" ||
+      trigger.type === "plugin" ||
+      !channelId
+    )
       return Promise.resolve();
     const event = trigger.event;
     const config = meshAgentConfig(delivery.config);

@@ -340,6 +340,7 @@ function setup(
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
     interruptible: () => false,
     interrupt: vi.fn(async () => false),
+    note: () => false,
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),
@@ -363,6 +364,7 @@ function setup(
     storage: localStore(),
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
+    wake: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

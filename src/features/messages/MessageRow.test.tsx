@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
@@ -42,8 +43,13 @@ const row: ChannelMessage = {
 };
 
 it.each([false, true])(
-  "carries agent-envelope appearance into avatar navigation: %s",
-  (agentEnvelope) => {
+  "previews human and agent identities and preserves avatar navigation: %s",
+  async (agentEnvelope) => {
+    vi.useFakeTimers();
+    const showPopover = HTMLElement.prototype.showPopover;
+    HTMLElement.prototype.showPopover = function () {
+      this.style.display = "block";
+    };
     const authorId = "ab".repeat(32);
     const open = vi.fn(() => true);
     try {
@@ -62,17 +68,37 @@ it.each([false, true])(
           retry={undefined}
         />,
       );
+      const avatar = screen.getByRole("button", {
+        name: `View ${authorId.slice(0, 10)} profile`,
+      });
+      expect(
+        screen.queryByRole("dialog", { name: /profile preview/ }),
+      ).toBeNull();
+      fireEvent.mouseEnter(avatar);
+      await act(() => vi.advanceTimersByTimeAsync(250));
+      const preview = screen.getByRole("dialog", {
+        name: `${authorId.slice(0, 10)} profile preview`,
+      });
+      expect(preview).toHaveTextContent(authorId.slice(0, 10));
+      expect(!!within(preview).queryByLabelText("Agent")).toBe(agentEnvelope);
       fireEvent.click(
-        screen.getByRole("button", {
-          name: `View ${authorId.slice(0, 10)} profile`,
-        }),
+        within(preview).getByRole("button", { name: "View profile" }),
       );
+      expect(open).toHaveBeenCalledWith(
+        profileTarget(authorId, { agent: agentEnvelope }),
+        { rootId: "root" },
+      );
+      open.mockClear();
+      fireEvent.click(avatar);
       expect(open).toHaveBeenCalledWith(
         profileTarget(authorId, { agent: agentEnvelope }),
         { rootId: "root" },
       );
     } finally {
       cleanup();
+      if (showPopover) HTMLElement.prototype.showPopover = showPopover;
+      else Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+      vi.useRealTimers();
     }
   },
 );
@@ -2431,7 +2457,7 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Session: PR 45 fixes",
+        name: "Open Chat: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
       expect(card.closest("[data-solo-cards]")).not.toBeNull();
@@ -2492,7 +2518,7 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Session: Fix" })
+        .getByRole("link", { name: "Open Chat: Fix" })
         .closest("[class*=messageBubble]"),
     ).toBeNull();
   } finally {
@@ -3135,5 +3161,351 @@ it("keeps own-message and bubble styling off a shown thread root", () => {
     expect(content).not.toHaveAttribute("data-bubble");
   } finally {
     cleanup();
+  }
+});
+
+it.each([
+  {
+    claim: undefined,
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  { claim: "shot", fails: false, card: true, listed: ["notes.txt"] },
+  {
+    claim: "throws",
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  {
+    claim: "shot",
+    fails: true,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+  },
+  // The host skips the message body here, so the card never mounts.
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "",
+  },
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "[Session: PR 45 fixes](buzz://channel/session-id)",
+  },
+])(
+  "lists only the attachments a message renderer does not claim: %o",
+  ({ claim, fails, card, listed, content }) => {
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: () => true,
+      ...(claim
+        ? {
+            ownsAttachment: (
+              _message: unknown,
+              attachment: { url: string },
+            ) => {
+              if (claim === "throws") throw new Error("broken claim");
+              return attachment.url.endsWith("shot.png");
+            },
+          }
+        : {}),
+      component: () => {
+        if (fails) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          ...(content === undefined ? {} : { content }),
+          replyCount: 0,
+          attachments: [
+            {
+              kind: "file",
+              url: "https://media.test/notes.txt",
+              name: "notes.txt",
+            },
+            {
+              kind: "file",
+              url: "https://media.test/shot.png",
+              name: "shot.png",
+            },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => entries, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    try {
+      expect(!!screen.queryByText("Plugin card")).toBe(card);
+      expect(!!screen.queryByText("Root")).toBe(!card && content === undefined);
+      for (const name of ["notes.txt", "shot.png"])
+        expect(screen.queryAllByText(name)).toHaveLength(
+          listed.includes(name) ? 1 : 0,
+        );
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);
+
+it("returns claimed attachments when a card fails late and claims again after reinstall", () => {
+  let fail = false;
+  const install = (revision: string) => ({
+    id: "card",
+    title: "Card",
+    key: `fixture.card:card:${revision}`,
+    pluginId: "fixture.card",
+    revision,
+    matches: () => true,
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      if (fail) throw new Error("broken renderer");
+      return <p>Plugin card</p>;
+    },
+  });
+  // Stable snapshots: useSyncExternalStore rereads on every render.
+  const none: never[] = [];
+  let entries = [install("one")];
+  const listeners = new Set<() => void>();
+  const messages = {
+    snapshot: () => entries,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const update = (next: typeof entries) =>
+    act(() => {
+      entries = next;
+      for (const listener of listeners) listener();
+    });
+  const message = {
+    ...row,
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/notes.txt",
+        name: "notes.txt",
+      },
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages,
+  };
+  const render = (next: typeof message) => (
+    <MessageRow
+      row={next}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={extensions}
+    />
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const view = renderDom(render(message));
+  const listed = (name: string) => screen.queryAllByText(name).length;
+  try {
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+
+    // The same registration fails on a later render.
+    fail = true;
+    view.rerender(render({ ...message }));
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(1);
+    expect(listed("notes.txt")).toBe(1);
+
+    // A reinstalled plugin is a new registration and gets a fresh start.
+    fail = false;
+    update([install("two")]);
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+    expect(listed("notes.txt")).toBe(1);
+
+    // Removing the plugin lists every attachment again.
+    update([]);
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(listed("shot.png")).toBe(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
+  }
+});
+
+it.each(["unmatched", "collapsed"] as const)(
+  "claims attachments again when a failed card remounts healthy (%s)",
+  async (unmount) => {
+    let fail = true;
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: (message: { content: string }) =>
+        message.content.includes("card"),
+      ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+        attachment.url.endsWith("shot.png"),
+      component: () => {
+        if (fail) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const extensions = {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      messages: { snapshot: () => entries, subscribe: () => () => {} },
+    };
+    const message = {
+      ...row,
+      content: "A card",
+      replyCount: 0,
+      ...(unmount === "collapsed" ? { audience: "agents" as const } : {}),
+      attachments: [
+        {
+          kind: "file" as const,
+          url: "https://media.test/shot.png",
+          name: "shot.png",
+        },
+      ],
+    };
+    const render = (next: typeof message) => (
+      <MessageRow
+        row={next}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(render(message));
+    const toggle = () =>
+      fireEvent.click(screen.getByRole("button", { name: /^author: A card/ }));
+    const listed = () => screen.queryAllByText("shot.png").length;
+    try {
+      if (unmount === "collapsed") toggle();
+      expect(screen.queryByText("Plugin card")).toBeNull();
+      expect(listed()).toBe(1);
+
+      fail = false;
+      if (unmount === "unmatched") {
+        // An edit stops the match, then a later edit matches again.
+        view.rerender(render({ ...message, content: "A note" }));
+        expect(listed()).toBe(1);
+        view.rerender(render({ ...message }));
+      } else {
+        // Closing to completion unmounts the panel; reopening remounts it.
+        toggle();
+        await waitFor(() => expect(listed()).toBe(0));
+        expect(screen.getAllByText("A card")).toHaveLength(1);
+        toggle();
+      }
+      expect(screen.getByText("Plugin card")).toBeInTheDocument();
+      expect(listed()).toBe(0);
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);
+
+it("keeps a failed card's attachments listed under StrictMode", () => {
+  const entry = {
+    id: "card",
+    title: "Card",
+    key: "fixture.card:card",
+    pluginId: "fixture.card",
+    revision: "one",
+    matches: (message: { content: string }) => message.content.includes("card"),
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      throw new Error("broken renderer");
+    },
+  };
+  const none: never[] = [];
+  const entries = [entry];
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages: { snapshot: () => entries, subscribe: () => () => {} },
+  };
+  const message = {
+    ...row,
+    content: "A card",
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  // StrictMode replays mount effects: unmount, then mount the same failed boundary.
+  const view = renderDom(
+    <StrictMode>
+      <MessageRow
+        row={message}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    </StrictMode>,
+  );
+  try {
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.queryAllByText("shot.png")).toHaveLength(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
   }
 });

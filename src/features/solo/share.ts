@@ -38,7 +38,7 @@ export function canShareConversation(
 export const soloChatLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
-  `[Session: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
+  `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
 
 /** A saved share keeps its original label even when the chat is renamed. */
 function matchesSoloChatLink(content: string, id: string) {
@@ -46,7 +46,7 @@ function matchesSoloChatLink(content: string, id: string) {
   return (
     parts.length === 1 &&
     parts[0]?.url === soloChatLink(id) &&
-    /^Session(?:: | · )/.test(parts[0]?.label ?? "")
+    /^(?:Session|Chat)(?:: | · )/.test(parts[0]?.label ?? "")
   );
 }
 
@@ -75,11 +75,15 @@ export async function grantSoloChatAccess(
   onConfirmed: (key: string) => void,
   includeAgents = false,
   soloParticipant = true,
+  skipArchived = false,
 ) {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
   for (const key of people) {
     signal.throwIfAborted();
+    // Channel audiences omit archived identities; direct selections still fail explicitly.
+    if (skipArchived && archiveHides(session.archives, key, session.viewer))
+      continue;
     const intent = intents.get(key) ?? {};
     intents.set(key, intent);
     await addChannelMember(
@@ -132,11 +136,9 @@ export async function destinationShareAudience(
   ];
   if (keys.some((key) => !/^[0-9a-f]{64}$/.test(key)))
     throw new Error("Destination membership contains an invalid identity.");
-  if (keys.some((key) => archiveHides(session.archives, key, session.viewer)))
-    throw new Error(
-      "A destination member is archived. Choose selected people instead.",
-    );
-  return keys;
+  return keys.filter(
+    (key) => !archiveHides(session.archives, key, session.viewer),
+  );
 }
 
 /** Recheck the exact destination after grants: confirmed additions do not imply

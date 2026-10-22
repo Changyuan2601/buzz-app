@@ -2,7 +2,7 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { channelIcon } from "../channels/channel-icon";
+import { ChatCircleIcon } from "../../shared/design-system/icons";
 import type { ReactNode } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import styles from "./Solo.module.css";
@@ -55,7 +55,7 @@ export function SoloTitle({
   channel: Pick<ChannelSummary, "name" | "archived" | "private">;
   children?: ReactNode;
 }) {
-  const Icon = channelIcon(channel);
+  const Icon = ChatCircleIcon;
   const status = channel.archived ? <span>Archived</span> : children;
   return (
     <PanelHeader

@@ -1192,3 +1192,24 @@ it.each(mentionConformance.tags.read)(
     }).toEqual(fixture.expected);
   },
 );
+
+it("applies an agent owner's edit only with ownership evidence for that author", () => {
+  const original = message(alice, channel, "Whole answer", 10);
+  const edit = signed(bob, {
+    kind: 40003,
+    content: "Spoken prefix",
+    created_at: 11,
+    tags: [
+      ["e", original.id],
+      ["h", channel],
+    ],
+  });
+  const fold = (owner: string | undefined) =>
+    foldMessages(channel, relay.pubkey, [original, edit], {
+      agentOwner: (pubkey: string) =>
+        pubkey === alice.pubkey ? owner : undefined,
+    } as never)[0]?.content;
+  expect(fold(undefined)).toBe("Whole answer");
+  expect(fold(relay.pubkey)).toBe("Whole answer");
+  expect(fold(bob.pubkey)).toBe("Spoken prefix");
+});

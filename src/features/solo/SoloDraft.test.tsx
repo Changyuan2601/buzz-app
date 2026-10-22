@@ -15,6 +15,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
+import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
@@ -1375,5 +1376,153 @@ it("resumes a new chat's interrupted upload after navigating away and back", asy
     expect.stringContaining("See attached"),
     ["a".repeat(64)],
     [notes],
+  );
+});
+
+it("shows an editable ordinary source link and sends it with the default agent", async () => {
+  const t = setup();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: `buzz://message?channel=design&id=${"c".repeat(64)}&thread=${"b".repeat(64)}`,
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  const started = vi.fn();
+  render(
+    <SoloDraft
+      session={t.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      onStarted={started}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+  expect(input.value).toContain(source.link);
+  expect(t.channelWrites.create).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  const id = started.mock.calls[0]?.[0];
+  expect(t.channelWrites.start).toHaveBeenCalledWith(
+    id,
+    expect.any(String),
+    ["a".repeat(64)],
+    undefined,
+    false,
+    undefined,
+  );
+  expect(t.messages.send).toHaveBeenCalledWith(
+    id,
+    expect.stringContaining(source.link),
+    ["a".repeat(64)],
+  );
+});
+it("starting again from a sent source seeds its link and default agent again", async () => {
+  const t = setup();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+  };
+  const start = () => {
+    writeView("test", linkedDraftKey(linkedId), source);
+    return render(
+      <SoloDraft
+        session={t.session}
+        scope="test"
+        linkedId={linkedId}
+        source={source}
+        onStarted={started}
+      />,
+    );
+  };
+  const started = vi.fn();
+  const first = start();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  first.unmount();
+  start();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain(
+    source.link,
+  );
+});
+it("keeps a removed default tag when the linked draft is reopened", async () => {
+  const t = setup();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  const draft = () => (
+    <SoloDraft
+      session={t.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      onStarted={vi.fn()}
+    />
+  );
+  const first = render(draft());
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+  await userEvent.clear(input);
+  await userEvent.type(input, source.link);
+  await waitFor(() =>
+    expect(
+      readView<{ text?: string } | null>(
+        "test",
+        `${linkedDraftKey(linkedId)}:new-draft`,
+        null,
+      )?.text,
+    ).toBe(source.link),
+  );
+  first.unmount();
+  render(draft());
+  const reopened = screen.getByRole("textbox") as HTMLTextAreaElement;
+  expect(reopened.value).toBe(source.link);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reopened.value).not.toContain("@Member agent");
+});
+it("keeps an edited linked draft instead of reinserting its removed source", async () => {
+  const t = setup();
+  const started = vi.fn();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+  };
+  writeView(
+    "test",
+    `${linkedDraftKey(linkedId)}:new-draft`,
+    taggedDraft("Changed request"),
+  );
+  render(
+    <SoloDraft
+      session={t.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      onStarted={started}
+    />,
+  );
+  expect(
+    (screen.getByRole("textbox") as HTMLTextAreaElement).value,
+  ).not.toContain(source.link);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe(
+    "@Member agent Changed request",
   );
 });

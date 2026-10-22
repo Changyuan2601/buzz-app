@@ -11,7 +11,7 @@ import {
   ClaudeLogoIcon,
   GoogleLogoIcon,
   MetaLogoIcon,
-  OpenAILogoIcon,
+  CodexLogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -43,13 +43,13 @@ export function ModelIcon({ model }: { model: string }) {
   const Icon = /claude|anthropic|opus|sonnet|haiku/.test(name)
     ? ClaudeLogoIcon
     : /(?:^|[\s/._-])(?:gpt|codex|o[134](?:[\s/._-]|$))|openai/.test(name)
-      ? OpenAILogoIcon
+      ? CodexLogoIcon
       : /gemini/.test(name)
         ? GoogleLogoIcon
         : /llama/.test(name)
           ? MetaLogoIcon
           : RobotIcon;
-  return <Icon size={18} aria-hidden="true" />;
+  return <Icon size={20} aria-hidden="true" />;
 }
 
 /** The custom-model form. Create hosts it outside its closing menu; Settings

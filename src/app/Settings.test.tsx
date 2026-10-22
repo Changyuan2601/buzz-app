@@ -642,7 +642,7 @@ function reviewPluginFixture(
     source: "external",
     enabled: true,
     revision: "current",
-    previous: null,
+    previous: null as string | null,
     reloadable: true,
     error: null as string | null,
   };
@@ -706,6 +706,65 @@ function reviewPluginFixture(
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   return { external, snapshot, publish, manager };
 }
+
+it("keeps bundled plugins free of manual-plugin menus in rows and details", () => {
+  reviewPluginFixture();
+  expect(
+    screen.queryByRole("button", { name: "More actions for Alphabet bundled" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "More actions for Zebra external" }),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Alphabet bundled details" }),
+  );
+  const pane = screen.getByRole("complementary", {
+    name: "Alphabet bundled details",
+  });
+  expect(
+    within(pane).queryByRole("button", { name: "More plugin actions" }),
+  ).toBeNull();
+  expect(within(pane).queryByText("Review access")).toBeNull();
+});
+
+it("confirms rollback from either menu and retains failures for retry", async () => {
+  const user = userEvent.setup();
+  const { external, manager } = reviewPluginFixture();
+  external.previous = "previous";
+  await user.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  await user.click(screen.getByRole("button", { name: "More plugin actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Roll back" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Roll back Zebra external?",
+  });
+  expect(manager.change).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(manager.change).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "More plugin actions" }),
+  ).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "Close plugin details" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Zebra external" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Roll back" }));
+  vi.mocked(manager.change).mockResolvedValueOnce(false);
+  await user.click(screen.getByRole("button", { name: "Roll back" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Plugin rollback wasn’t confirmed",
+  );
+  vi.mocked(manager.change).mockResolvedValueOnce(true);
+  await user.click(screen.getByRole("button", { name: "Roll back" }));
+  expect(manager.change).toHaveBeenLastCalledWith(
+    "rollback",
+    external.manifest.id,
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
 
 it("sorts Essentials first and names alphabetically", () => {
   const { snapshot, publish, external } = reviewPluginFixture();
@@ -987,12 +1046,14 @@ it.each(["row", "pane"])(
 );
 
 it("keeps a rejected plugin deletion open for retry", async () => {
+  const user = userEvent.setup();
   const fixture = reviewPluginFixture();
   vi.mocked(fixture.manager.change).mockResolvedValueOnce(false);
   fireEvent.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+  await user.click(screen.getByRole("button", { name: "More plugin actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   const confirmation = screen.getByRole("alertdialog");
   expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
@@ -1010,6 +1071,7 @@ it("keeps a rejected plugin deletion open for retry", async () => {
 });
 
 it("returns focus to the Plugins section when the selected plugin is deleted", async () => {
+  const user = userEvent.setup();
   const fixture = reviewPluginFixture();
   fireEvent.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
@@ -1017,9 +1079,12 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   const details = screen.getByRole("complementary", {
     name: "Zebra external details",
   });
-  const remove = within(details).getByRole("button", { name: "Delete" });
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  const remove = screen.getByRole("button", { name: "More plugin actions" });
+  expect(details).toContainElement(remove);
   remove.focus();
-  fireEvent.click(remove);
+  await user.click(remove);
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   expect(fixture.manager.change).not.toHaveBeenCalledWith(
     "remove",
     "example.external",
@@ -1029,7 +1094,8 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   });
   fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  fireEvent.click(remove);
+  await user.click(remove);
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   expect(fixture.manager.change).toHaveBeenCalledWith(
     "remove",
@@ -1476,6 +1542,8 @@ it("keeps related plugins out of the pane even when tags overlap", () => {
   };
   const plugins = {
     imports: {
+      checkFolder: vi.fn(async () => "updated"),
+      previewFolder: vi.fn(),
       folder: vi.fn(),
       files: vi.fn(),
       git: vi.fn(),
@@ -1840,7 +1908,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       expect(f.manager.change).not.toHaveBeenCalled();
     }
     await user.click(
-      within(pane).getByRole("button", { name: "Check access again" }),
+      screen.getByRole("button", { name: "Check access again" }),
     );
     expect(retry).toHaveBeenCalledWith(id);
     expect(enable).toHaveFocus();
@@ -1872,7 +1940,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     });
     expect(disable).not.toHaveAttribute("aria-disabled", "true");
     expect(
-      within(pane).queryByRole("button", { name: "Check access again" }),
+      screen.queryByRole("button", { name: "Check access again" }),
     ).toBeInTheDocument();
     expect(disable).toHaveAccessibleDescription(/Could not check access/);
     expect(
@@ -1948,6 +2016,47 @@ it("keeps identity independent of community profile and clears revealed keys on 
   expect(exportKey).toHaveBeenCalledTimes(1);
 });
 
+it("offers Retry beside a failed installed revision without changing saved state", () => {
+  const fixture = reviewPluginFixture();
+  const retryPlugin = vi.fn(() => true);
+  Object.assign(fixture.manager, { retryPlugin });
+  Object.assign(fixture.snapshot.activation, {
+    [fixture.external.manifest.id]: {
+      revision: "current",
+      status: "failed",
+      error: "Temporary startup failure",
+    },
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const pane = screen.getByRole("complementary", {
+    name: "Zebra external details",
+  });
+  const retry = within(pane).getByRole("button", {
+    name: /^Retry$/,
+  });
+  expect(retry.parentElement).toContainElement(
+    within(pane).getByText("Temporary startup failure"),
+  );
+  fireEvent.click(retry);
+  expect(retryPlugin).toHaveBeenCalledExactlyOnceWith(
+    fixture.external.manifest.id,
+  );
+  expect(fixture.manager.change).not.toHaveBeenCalled();
+  expect(within(pane).queryByRole("button", { name: "Reload" })).toBeNull();
+  Object.assign(fixture.snapshot.activation, {
+    [fixture.external.manifest.id]: {
+      revision: "current",
+      status: "starting",
+      error: null,
+    },
+  });
+  act(fixture.publish);
+  expect(within(pane).queryByRole("button", { name: /^Retry$/ })).toBeNull();
+});
+
 it("retains both local drafts across section navigation but retires them with their account or community", async () => {
   const priorNative = Object.getOwnPropertyDescriptor(globalThis, "isTauri");
   Object.defineProperty(globalThis, "isTauri", {
@@ -2007,4 +2116,66 @@ it("retains both local drafts across section navigation but retires them with th
     if (priorNative) Object.defineProperty(globalThis, "isTauri", priorNative);
     else Reflect.deleteProperty(globalThis, "isTauri");
   }
+});
+
+it("allows Add to install while an independent folder check is pending, including pane remount", async () => {
+  let finish!: (revision: string) => void;
+  const fixture = reviewPluginFixture();
+  const checkFolder = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const preview = {
+    token: "add",
+    source: "/new",
+    commit: null,
+    warnings: [],
+    candidates: [
+      {
+        path: "dist",
+        revision: "new",
+        manifest: {
+          id: "example.new",
+          name: "New plugin",
+          apiVersion: 1 as const,
+        },
+      },
+    ],
+  };
+  const folder = vi.fn(async () => preview);
+  const discard = vi.fn(async () => {});
+  const installImport = vi.fn(async () => true);
+  Object.assign(fixture.external, {
+    updateSource: { root: "/plugins", path: "dist" },
+  });
+  Object.assign(fixture.manager, {
+    imports: { checkFolder, folder, discard },
+    installImport,
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  await waitFor(() => expect(checkFolder).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Browse plugin folder" }),
+  );
+  await within(dialog).findByRole("button", { name: "Install plugin" });
+  fixture.external.revision = "cli-reloaded";
+  act(fixture.publish);
+  await act(async () => finish("current"));
+  expect(discard).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(dialog).getByRole("switch", { name: "Enable plugin" }),
+  );
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() =>
+    expect(installImport).toHaveBeenCalledExactlyOnceWith("add", "dist"),
+  );
 });

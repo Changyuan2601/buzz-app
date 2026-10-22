@@ -332,7 +332,7 @@ export function CommunityDialog({
             ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
             : connectionFrom
               ? "Edit connection"
-              : "Add a community"
+              : "Join a community"
       }
     >
       <form
@@ -345,7 +345,7 @@ export function CommunityDialog({
         }}
       >
         {mode === "join" && step !== "destination" && destination && (
-          <p className={styles.note}>Relay: {destination.url}</p>
+          <p className={styles.note}>Community URL: {destination.url}</p>
         )}
         {unavailable ? (
           <p>
@@ -353,18 +353,18 @@ export function CommunityDialog({
               ? "Opening your local identity…"
               : client.status === "ready"
                 ? "Your identity is ready, but connecting to communities is not available in this build yet. You can manage your local profile and identity in Settings."
-                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
+                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See docs/contributing.md for requirements."}
           </p>
         ) : (
           <>
             {step === "destination" && (
               <Field
-                label="Relay URL"
+                label="Community URL"
                 error={error || undefined}
                 description={
                   connectionFrom
                     ? undefined
-                    : "Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                    : "Paste your community link. Continue shares your Buzz identity with the community so you can preview it before joining."
                 }
               >
                 <Input
@@ -373,7 +373,7 @@ export function CommunityDialog({
                   autoComplete="url"
                   autoCapitalize="none"
                   spellCheck={false}
-                  placeholder="wss://relay.example.com"
+                  placeholder="wss://community.example.com"
                   maxLength={2048}
                   disabled={busy}
                   value={url}

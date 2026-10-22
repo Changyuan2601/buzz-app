@@ -52,7 +52,7 @@ Direct selections stay separate. Start over is required to choose a new audience
 device-local display history, not proof of link delivery. The grant remains a
 snapshot: future joins/departures are not synchronized. **Share** grants the
 union of directly selected keys and one fresh relay-confirmed destination roster,
-including bots, then posts one ordinary kind-9 link without notification tags.
+including bots but excluding known-archived identities, then posts one ordinary kind-9 link without notification tags.
 Its hover/focus hint explains that channel sharing grants access and posts a link.
 The footer reuses shared Dialog wrapping: each whole action gets its own flex item,
 so Copy link and Share can occupy separate rows at narrow widths or enlarged text.

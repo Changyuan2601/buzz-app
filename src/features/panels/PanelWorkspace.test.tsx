@@ -340,6 +340,47 @@ test("choosing a tab with the pointer resumes its composer; the keyboard stays i
   expect(tab("Two")).toHaveFocus();
 });
 
+test("a pointer-chosen tab's composer takes focus when it mounts later, unless the user acts first", async () => {
+  const user = userEvent.setup();
+  let ready: (id: string) => void = () => {};
+  function Harness() {
+    const [value, select] = useState("One");
+    const [mounted, setMounted] = useState(["One"]);
+    ready = (id) => setMounted((ids) => [...ids, id]);
+    return (
+      <>
+        <input aria-label="Search" />
+        <PanelWorkspace
+          value={value}
+          select={select}
+          items={["One", "Two", "Three", "Four"].map((id) => ({
+            id,
+            label: id,
+            content: mounted.includes(id) && (
+              <input aria-label={`${id} reply`} data-tab-focus="" />
+            ),
+          }))}
+        />
+      </>
+    );
+  }
+  render(<Harness />);
+  await user.click(tab("Two"));
+  expect(tab("Two")).toHaveFocus();
+  await act(async () => ready("Two"));
+  expect(screen.getByRole("textbox", { name: "Two reply" })).toHaveFocus();
+  await user.click(tab("Three"));
+  await user.keyboard("{ArrowLeft}");
+  await act(async () => ready("Three"));
+  expect(tab("Two")).toHaveFocus();
+  // Leaving the tab and returning before the composer mounts keeps it there.
+  await user.click(tab("Four"));
+  act(() => screen.getByRole("textbox", { name: "Search" }).focus());
+  act(() => tab("Four").focus());
+  await act(async () => ready("Four"));
+  expect(tab("Four")).toHaveFocus();
+});
+
 test("Escape cancelling IME composition does not close the tab", () => {
   render(<Fixture />);
   const draft = screen.getByRole("textbox", { name: "Thread draft" });

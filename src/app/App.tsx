@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
@@ -39,6 +40,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -54,18 +56,20 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <ModalWindowDragProvider
-      value={isTauri() ? modalWindowDragHandlers : undefined}
-    >
-      <LaunchWindowControls />
-      {services.identity ? (
-        <IdentitySetup identity={services.identity}>
+    <AgentAvatarArtworkProvider>
+      <ModalWindowDragProvider
+        value={isTauri() ? modalWindowDragHandlers : undefined}
+      >
+        <LaunchWindowControls />
+        {services.identity ? (
+          <IdentitySetup identity={services.identity}>
+            <ConnectedApp services={services} />
+          </IdentitySetup>
+        ) : (
           <ConnectedApp services={services} />
-        </IdentitySetup>
-      ) : (
-        <ConnectedApp services={services} />
-      )}
-    </ModalWindowDragProvider>
+        )}
+      </ModalWindowDragProvider>
+    </AgentAvatarArtworkProvider>
   );
 }
 
@@ -102,6 +106,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // Someone without a community starts by joining one. Having had one this
+  // run keeps the shell; Personal space with memberships is unchanged.
+  const [hadCommunity, setHadCommunity] = useState(false);
+  if (!hadCommunity && client.memberships.length > 0) setHadCommunity(true);
+  const firstRun =
+    !settings &&
+    !hadCommunity &&
+    startup !== "recovery" &&
+    client.status === "ready" &&
+    client.relayAvailable &&
+    client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
   if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
@@ -160,6 +175,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const launchReady =
     settings ||
     terminal ||
+    firstRun ||
     (!restoring && startup !== "loading" && !route.waiting);
   useEffect(
     () => setLaunchReady(launchReady, terminal),
@@ -214,6 +230,30 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <img src="/buzz-loading-mark.svg" alt="Buzz" width="72" height="72" />
         </picture>
       </div>
+    );
+  const selectCommunity = (id: string | null) => {
+    const recovering =
+      services.navigation.snapshot().ingress &&
+      services.navigation.snapshot().retryable;
+    services.communities.select(id);
+    if (!recovering) select("buzz.channels/channels");
+  };
+  if (firstRun)
+    return (
+      <CommunityLanding
+        communities={services.communities}
+        invite={invite?.viewer === client.viewer ? invite : undefined}
+        onInviteClose={services.invites.clear}
+        settingsCards={services.settingsCards}
+        onJoined={selectCommunity}
+        onCreate={() =>
+          void services.navigation.open({
+            version: 1,
+            kind: "settings",
+            section: "block.hosted-communities/hosted",
+          })
+        }
+      />
     );
   const openSettingsSection = (section: string) => {
     const client = services.communities.snapshot();
@@ -285,6 +325,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
+                chatIcons={services.conversation.chatIcons}
                 target={workspace.target}
               >
                 {pageNavigation}
@@ -293,13 +334,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             navigationControls={
               <NavigationControls navigation={services.navigation} />
             }
-            onCommunitySelect={(id) => {
-              const recovering =
-                services.navigation.snapshot().ingress &&
-                services.navigation.snapshot().retryable;
-              services.communities.select(id);
-              if (!recovering) select("buzz.channels/channels");
-            }}
+            onCommunitySelect={selectCommunity}
             // A scoped Settings target selects its community on the way.
             onOpenTarget={(target) => void services.navigation.open(target)}
             communities={services.communities}
@@ -397,7 +432,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 : (document.getElementById("main-content") ?? false);
             }}
           >
-            <div id="settings-content" tabIndex={-1}>
+            <div id="settings-content" className="h-full" tabIndex={-1}>
               {(!route.state.ingress && route.failure) ||
               route.state.status === "failed" ? (
                 destinationFailure
@@ -406,6 +441,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : (
                 <Settings
                   agents={services.agents}
+                  decisions={services.decisions}
                   plugins={plugins}
                   cards={services.settingsCards}
                   adminAccess={services.adminAccess}

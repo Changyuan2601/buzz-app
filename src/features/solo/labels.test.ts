@@ -11,17 +11,12 @@ const id = "22222222-2222-4222-8222-222222222222";
 const owner = "a".repeat(64);
 const guest = "b".repeat(64);
 
-it("shares IDs until a chosen name is recorded, never an automatic first prompt", () => {
-  const channel = { id, name: "Private first prompt" };
-  expect(soloChatLinkName(channel)).toBe("22222222");
-  expect(soloChatLinkName({ ...channel, labels: ["work"] })).toBe("22222222");
-  expect(
-    soloChatLinkName({
-      ...channel,
-      name: "PR 45 fixes",
-      labels: [SOLO_NAMED_LABEL],
-    }),
-  ).toBe("PR 45 fixes");
+it("names shared chats by their current name, falling back to the short ID", () => {
+  expect(soloChatLinkName({ id, name: "Investigate the flaky test" })).toBe(
+    "Investigate the flaky test",
+  );
+  expect(soloChatLinkName({ id, name: "PR 45 fixes" })).toBe("PR 45 fixes");
+  expect(soloChatLinkName({ id, name: "  " })).toBe("22222222");
 });
 
 it("marks Solo only with its channel label", () => {

@@ -84,6 +84,25 @@ function deferred<T>() {
 }
 
 describe("Mesh agent runtime", () => {
+  it("ignores plugin wakes rather than granting owner-only admission", async () => {
+    const { delivery, publish, query, inline, runtime } = setup();
+    await runtime.run({
+      ...delivery(),
+      trigger: {
+        type: "plugin",
+        plugin: "github",
+        channel: "chan",
+        root: EVENT.id,
+        text: "CI settled",
+        id: "wake",
+        at: 1000,
+      },
+    });
+    expect(inline.run).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("answers in chat mode with one completion and no inline agent", async () => {
     const chat = vi.fn(async () => "chat answer");
     const { delivery, publish, query, inline, runtime } = setup(

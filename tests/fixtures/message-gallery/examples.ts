@@ -189,6 +189,13 @@ export const groups: Group[] = [
         { mentions: [teammate, agent] },
       ),
       single(
+        "long-links",
+        "Long links",
+        "Long destinations wrap inside the bubble. Try Narrow preview.",
+        "Join https://feedback.communities.buzz.xyz/invite/workshop-testing to help test, and review https://github.com/block/buzz-app/pull/1423 too.",
+        { authorId: teammate },
+      ),
+      single(
         "table-links",
         "Linked table content",
         "A neutral inset surface owns the text and link colors in a colored bubble.",

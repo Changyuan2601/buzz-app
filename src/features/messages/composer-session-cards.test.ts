@@ -142,3 +142,12 @@ it("preserves literal label punctuation across repeated card restoration", () =>
     expect(draft.sessionCards).toEqual([card]);
   }
 });
+
+it("stages new Chat labels and legacy Session labels with identical source identity", () => {
+  for (const label of ["Chat: Fix", "Session: Fix", "Session · Fix"]) {
+    const link = `[${label}](buzz://channel/session-id)`;
+    expect(stageSessionCards(mentionDraft(link), []).sessionCards).toEqual([
+      link,
+    ]);
+  }
+});

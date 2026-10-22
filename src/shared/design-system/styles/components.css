@@ -146,16 +146,30 @@
       background: var(--surface-panel);
       backdrop-filter: none;
     }
-    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
-      background: var(--surface-panel);
+    @media (hover: hover) and (pointer: fine) {
+      .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+        background: var(--affordance-subtle-hover);
+      }
+    }
+    .buzz-button[data-variant="glass"]:is(:active, [aria-expanded="true"]):not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-subtle-pressed);
     }
   }
   @supports not (backdrop-filter: blur(1px)) {
     .buzz-button[data-variant="glass"] {
       background: var(--surface-panel);
     }
-    .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
-      background: var(--surface-panel);
+    @media (hover: hover) and (pointer: fine) {
+      .buzz-button[data-variant="glass"]:hover:not([data-disabled]) {
+        background: var(--affordance-subtle-hover);
+      }
+    }
+    .buzz-button[data-variant="glass"]:is(:active, [aria-expanded="true"]):not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-subtle-pressed);
     }
   }
   .buzz-button[data-variant="inverted"] {

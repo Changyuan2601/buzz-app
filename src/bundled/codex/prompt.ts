@@ -1,6 +1,10 @@
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
+import {
+  type PluginTrigger,
+  wakeSection,
+} from "../../features/agent-harness/plugin-wake";
 import type { AgentHandle } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
@@ -81,14 +85,19 @@ export function turnInput(
   steering = false,
   /** The Buzz tools' note for the end of the turn, if any. */
   note?: string,
+  /** A plugin's wake, whose section takes the place of `event`'s. */
+  wake?: PluginTrigger,
 ) {
   const section = steering
     ? "new-message-arrived-while-you-were-working"
     : "buzz-event";
+  const body = wake
+    ? wakeSection(wake)
+    : `${quoted(event)}\nRequest: ${quoted(text)}`;
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${note ? `\n\n${note}` : ""}`;
+  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

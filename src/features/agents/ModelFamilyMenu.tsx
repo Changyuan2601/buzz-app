@@ -94,11 +94,19 @@ export function ModelFamilyMenu({
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
-            {leading ?? <ModelIcon model={selected.id || selected.label} />}
-            {/* Select's value text: only the name ellipsizes, not Default. */}
+            {leading && (
+              <span className="buzz-select-leading" aria-hidden="true">
+                {leading}
+              </span>
+            )}
+            <span className="buzz-select-leading" aria-hidden="true">
+              <ModelIcon model={selected.id || selected.label} />
+            </span>
+            {/* Select's value text: only the name ellipsizes, not Default.
+                A card's chip gives the name that room; its label and hint keep Default. */}
             <span className="buzz-select-value-text">
               <span className="buzz-select-value">{selected.label}</span>
-              {inherited && (
+              {inherited && appearance !== "subtle" && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
                 </span>

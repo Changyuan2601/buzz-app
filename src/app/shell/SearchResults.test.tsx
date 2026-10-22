@@ -38,6 +38,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import { clearViewScope, writeView } from "../../shared/view-state";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -3420,7 +3421,7 @@ it("tells uncached directory namesakes apart before a DM opens", async () => {
   }
 });
 it.each([true, false])(
-  "sends the viewer's agents to a new chat, not their DMs (Solo=%s)",
+  "leads with a new chat for the viewer's agents, then their chats, then their DMs (Solo=%s)",
   async (solo) => {
     const relay = keypair(),
       viewer = keypair(),
@@ -3435,9 +3436,24 @@ it.each([true, false])(
       ]),
       roster(relay, id, [viewer.pubkey, member]),
     ];
+    const chat = (id: string, name: string, at: number, member: string) => [
+      metadata(relay, id, name, at, [
+        ["t", "stream"],
+        ["private"],
+        ["t", "buzz.solo"],
+      ]),
+      roster(relay, id, [viewer.pubkey, member]),
+    ];
     const discovery = [
       ...dm("mine-dm", mine.pubkey),
       ...dm("theirs-dm", theirs.pubkey),
+      // Scout's chats match by their agent, not their names.
+      ...chat("older-chat", "Fix the build", 1700000001, mine.pubkey),
+      ...chat("newer-chat", "Plan the week", 1700000002, mine.pubkey),
+      ...chat("other-chat", "Unrelated", 1700000003, theirs.pubkey),
+      // A channel that matches as well as the agent does.
+      metadata(relay, "scout-ops", "scout-ops"),
+      roster(relay, "scout-ops", [viewer.pubkey]),
       profile(mine, { name: "Scout", is_agent: true }),
       profile(theirs, { name: "Scooter", is_agent: true }),
       profile(fresh, { name: "Scotia", is_agent: true }),
@@ -3507,12 +3523,36 @@ it.each([true, false])(
         expect(agents.queryByRole("option", { name: /Scout/ })).toBeNull();
         return;
       }
-      expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
       const agents = within(
         await screen.findByRole("group", { name: "Agents" }),
       );
       const choice = agents.getByRole("option", { name: /Scout/ });
       expect(choice).toHaveTextContent("New chat");
+      // The chats with Scout follow, newest first; the DM comes later.
+      const chats = within(await screen.findByRole("group", { name: "Chats" }));
+      await waitFor(() =>
+        expect(
+          chats.getAllByRole("option").map((row) => row.textContent),
+        ).toEqual([
+          expect.stringContaining("Plan the week"),
+          expect.stringContaining("Fix the build"),
+        ]),
+      );
+      expect(chats.getAllByRole("option")[0]).toHaveTextContent(
+        "Chat with Scout",
+      );
+      expect(
+        await direct.findByRole("option", { name: /Scout/ }),
+      ).toBeVisible();
+      await screen.findByRole("group", { name: "Channels" });
+      const options = screen.getAllByRole("option");
+      expect(options[0]).toBe(choice);
+      const at = (name: RegExp) =>
+        options.findIndex((row) => name.test(row.textContent ?? ""));
+      expect(at(/Plan the week/)).toBeLessThan(at(/scout-ops/));
+      expect(at(/Fix the build/)).toBeLessThan(
+        options.indexOf(direct.getByRole("option", { name: /Scout/ })),
+      );
       // An agent with no DM yet starts a chat too, not a DM.
       expect(agents.getByRole("option", { name: /Scotia/ })).toHaveTextContent(
         "New chat",
@@ -3546,6 +3586,224 @@ it.each([true, false])(
     }
   },
 );
+
+it.each([
+  {
+    name: "keeps an agent's new chat and chats ahead of a picked channel",
+    // The viewer last chose this channel for the same text; Scout matches
+    // only part of it, as "Scoo" and the "scoo" chat do.
+    picked: "channel:scout-ops",
+    exactName: "Scoo",
+    groups: ["Agents", "Chats"],
+    chats: ["Plan the week", "scoo"],
+    first: /Scout.*New chat/,
+  },
+  {
+    name: "puts exact names ahead of an agent's new chat",
+    picked: undefined,
+    exactName: "Sco",
+    // Chats leads with its exact name; Channels and Direct messages have
+    // exact names too, so they come before the partly matching agent.
+    groups: ["Chats", "Channels", "Direct messages", "Agents"],
+    chats: ["sco", "Plan the week"],
+    first: /^sco/,
+  },
+])("$name", async ({ picked, exactName, groups, chats: chatOrder, first }) => {
+  localStorage.clear();
+  if (picked) recordChoice(usage, "sco", picked);
+  const relay = keypair(),
+    viewer = keypair(),
+    mine = keypair(),
+    human = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const lower = exactName.toLowerCase();
+  const dm = (id: string, member: string) => [
+    metadata(relay, id, "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const chat = (id: string, name: string, at: number, members: string[]) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, ...members]),
+  ];
+  const discovery = [
+    ...dm("mine-dm", mine.pubkey),
+    ...dm("human-dm", human.pubkey),
+    ...chat("agent-chat", "Plan the week", 1700000002, [mine.pubkey]),
+    // A chat found by its name, not its agent.
+    ...chat("named-chat", lower, 1700000003, []),
+    metadata(relay, "scout-ops", "scout-ops"),
+    roster(relay, "scout-ops", [viewer.pubkey]),
+    metadata(relay, "named-channel", lower),
+    roster(relay, "named-channel", [viewer.pubkey]),
+    profile(mine, { name: "Scout", is_agent: true }),
+    profile(human, { name: exactName }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+    selectable: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        usageScope={usage}
+        openConversation={vi.fn()}
+        openAgentSession={vi.fn()}
+      />,
+    );
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    await direct.findByRole("option", {
+      name: new RegExp(`^${exactName}(?!ut)`),
+    });
+    await direct.findByRole("option", { name: /Scout/ });
+    await screen.findByRole("group", { name: "Channels" });
+    await screen.findByRole("group", { name: "Agents" });
+    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    await waitFor(() =>
+      expect(
+        chats.getAllByRole("option").map((row) => row.textContent),
+      ).toEqual(chatOrder.map((name) => expect.stringContaining(name))),
+    );
+    const labels = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(labels.slice(0, groups.length)).toEqual(groups);
+    expect(screen.getAllByRole("option")[0]?.textContent).toMatch(first);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each([
+  {
+    name: "keeps an exactly named chat ahead of an exact agent's many chats",
+    named: "chat" as const,
+    groups: ["Agents", "Chats"],
+  },
+  {
+    name: "does not let an exact agent's chats claim an exact name",
+    named: "channel" as const,
+    // Channels has the exact name; the agent's chats only inherit it.
+    groups: ["Agents", "Channels", "Chats"],
+  },
+])("$name", async ({ named, groups }) => {
+  localStorage.clear();
+  const relay = keypair(),
+    viewer = keypair(),
+    mine = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const chat = (id: string, name: string, at: number, members: string[]) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, ...members]),
+  ];
+  const discovery = [
+    // More chats with the agent than the group shows, all newer.
+    ...Array.from({ length: 9 }, (_, index) =>
+      chat(`agent-chat-${index}`, `Task ${index}`, 1700000010 + index, [
+        mine.pubkey,
+      ]),
+    ).flat(),
+    ...(named === "chat"
+      ? chat("named-chat", "scout", 1700000001, [])
+      : [
+          metadata(relay, "named-channel", "scout"),
+          roster(relay, "named-channel", [viewer.pubkey]),
+        ]),
+    profile(mine, { name: "Scout", is_agent: true }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+    selectable: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="scout"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        usageScope={usage}
+        openConversation={vi.fn()}
+        openAgentSession={vi.fn()}
+      />,
+    );
+    await screen.findByRole("group", { name: "Agents" });
+    if (named === "channel")
+      await screen.findByRole("group", { name: "Channels" });
+    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    await waitFor(() => expect(chats.getAllByRole("option")).toHaveLength(8));
+    if (named === "chat")
+      expect(chats.getAllByRole("option")[0]).toHaveTextContent(/^scout/);
+    const labels = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(labels.slice(0, groups.length)).toEqual(groups);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("preserves remembered page ranking when inline settings match", async () => {
   localStorage.clear();
@@ -3750,5 +4008,110 @@ it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary d
     release();
     cleanup();
     owner.dispose();
+  }
+});
+
+it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", async () => {
+  // The sidebar hides a DM on this device (Hide conversation) or by the
+  // relay's DM visibility list. Search reads both, as the sidebar does.
+  const scope = "search-hidden-dms";
+  writeView(scope, "hidden-dms", [{ id: "local-dm" }]);
+  const relay = keypair(),
+    viewer = keypair();
+  const dms = [
+    { id: "local-dm", name: "Scotty", key: keypair() },
+    { id: "relay-dm", name: "Scooby", key: keypair() },
+    { id: "shown-dm", name: "Scott", key: keypair() },
+  ];
+  const discovery = dms.flatMap(({ id, key, name }) => [
+    metadata(relay, id, "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, key.pubkey]),
+    profile(key, { name }),
+  ]);
+  const hits = [
+    message(viewer, "local-dm", "sco from local", 1700000001),
+    message(viewer, "relay-dm", "sco from relay", 1700000001),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return filters.some((filter) => filter.kinds?.includes(0)) ? [] : hits;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const lifecycle = owner.session.channelLifecycle;
+  const visibility = {
+    ...lifecycle.snapshot(),
+    status: "ready" as const,
+    hidden: Object.freeze(["relay-dm"]),
+  };
+  // The confirmed open is what restores a hidden DM's sidebar row.
+  const open = vi.fn(async () => "local-dm");
+  const session = {
+    ...owner.session,
+    channelLifecycle: {
+      ...lifecycle,
+      snapshot: () => visibility,
+      subscribe: () => () => {},
+    },
+    directMessages: {
+      ...owner.session.directMessages,
+      available: true,
+      open,
+    },
+  } as typeof owner.session;
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+        sidebarScope={scope}
+      />,
+    );
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    expect(
+      await direct.findByRole("option", { name: /^Scott(?!y)/ }),
+    ).toBeVisible();
+    expect(direct.queryByRole("option", { name: /Scotty/ })).toBeNull();
+    expect(direct.queryByRole("option", { name: /Scooby/ })).toBeNull();
+    expect(
+      await screen.findByRole("option", { name: /sco from local/ }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("option", { name: /sco from relay/ }),
+    ).toBeVisible();
+    // Choosing the person opens the locally hidden DM through the confirmed
+    // open, not the plain shortcut that leaves its row hidden.
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    fireEvent.click(await people.findByRole("option", { name: /Scotty/ }));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("local-dm"),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      [dms[0]?.key.pubkey],
+      expect.any(AbortSignal),
+    );
+    // When the sidebar restores the row, search follows without remounting.
+    act(() => {
+      writeView(scope, "hidden-dms", []);
+    });
+    expect(await direct.findByRole("option", { name: /Scotty/ })).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+    clearViewScope(scope);
   }
 });

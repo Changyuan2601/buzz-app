@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -9,10 +8,11 @@ import {
   within,
   waitFor,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { GitHubPanel } from "./index";
+import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
+import { GitHubPanel, REFRESH_MS } from "./index";
 
 afterEach(() => {
   cleanup();
@@ -184,7 +184,7 @@ it("links the author login to their external GitHub profile", async () => {
   const author = authors.find(
     (link) => link.parentElement?.textContent === "by tellaho",
   );
-  expect(authors).toHaveLength(2);
+  expect(authors).toHaveLength(1);
   expect(author).toHaveAttribute("href", "https://github.com/tellaho");
   expect(author).toHaveAttribute("target", "_blank");
   expect(author).toHaveAttribute("rel", "noreferrer");
@@ -298,7 +298,7 @@ it.each([
 it.each([500])(
   "keeps the PR title and prominent external recovery action usable after API failure %s",
   async (status) => {
-    const target = "https://github.com/block/buzz-app/pull/629#issuecomment-1";
+    const target = "https://github.com/block/buzz-app/pull/629";
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => {
       finish = resolve;
@@ -350,220 +350,528 @@ it.each([500])(
   },
 );
 
-it.each([
-  ["reviews", "#issuecomment-123", "Approved", "pullrequestreview-789"],
-  ["discussion", "#pullrequestreview-123", "Comment", "issuecomment-456"],
-])(
-  "copies the selected %s permalink with input fragment '%s' without changing the PR title URL",
-  async (_source, inputFragment, label, expectedFragment) => {
-    const user = userEvent.setup();
-    const write = vi
-      .spyOn(navigator.clipboard, "writeText")
-      .mockResolvedValue();
-    const base = "https://github.com/sample/project/pull/1";
-    const target = `${base}${inputFragment}`;
-    const fetch = vi.fn(async (destination: string) => {
-      let data: unknown;
-      if (destination.includes("/comments?")) {
-        data = [
-          {
-            id: 456,
-            created_at: "2026-10-01T13:00:00Z",
-            body: "Neutral comment",
-            user: { login: "reader" },
-          },
-        ];
-      } else if (destination.includes("/reviews?")) {
-        data = [
-          {
-            id: 789,
-            submitted_at: "2026-10-01T14:00:00Z",
-            state: "APPROVED",
-            body: "",
-            user: { login: "reviewer" },
-          },
-        ];
-      } else {
-        data = { title: "Neutral PR", state: "open", body: "Summary" };
-      }
-      return new Response(JSON.stringify(data));
-    });
-    vi.stubGlobal("fetch", fetch);
-    render(
-      <ToastProvider>
-        <GitHubPanel target={target} close={() => {}} />
-      </ToastProvider>,
-    );
-    const row = await screen.findByRole("group", { name: label });
-    await waitFor(() =>
-      expect(
-        screen.queryByText(/some sources are incomplete/),
-      ).not.toBeInTheDocument(),
-    );
-    const title = screen.getByRole("link", { name: "Neutral PR #1" });
-    expect(title).toHaveAttribute("href", target);
-    fireEvent.contextMenu(
-      within(row).getByText(label === "Comment" ? "reader" : "reviewer"),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Copy link" }),
-    );
-    await screen.findByText("Comment link copied");
-    expect(write).toHaveBeenCalledExactlyOnceWith(
-      `${base}#${expectedFragment}`,
-    );
-    expect(title).toHaveAttribute("href", target);
-    expect(fetch.mock.calls.map(([destination]) => destination).sort()).toEqual(
-      [
-        "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
-        "https://api.github.com/repos/sample/project/pulls/1",
-        "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
-      ],
-    );
-  },
-);
+const pull = "https://github.com/block/private/pull/9";
+/** A `gh` answer for an open pull request, with `pull` overrides. */
+function pullData(over: Record<string, unknown> = {}) {
+  return {
+    repository: {
+      viewerDefaultMergeMethod: "SQUASH",
+      squashMergeAllowed: true,
+      mergeCommitAllowed: true,
+      rebaseMergeAllowed: false,
+      pullRequest: {
+        id: "PR_9",
+        title: "Private change",
+        state: "OPEN",
+        isDraft: false,
+        body: "Why it changes",
+        author: { login: "baxen" },
+        baseRefName: "main",
+        headRefName: "fix",
+        headRefOid: "abc123",
+        headRepository: { nameWithOwner: "block/private" },
+        headRepositoryOwner: { login: "block" },
+        baseRepository: { nameWithOwner: "block/private" },
+        additions: 3,
+        deletions: 1,
+        changedFiles: 2,
+        mergeStateStatus: "CLEAN",
+        reviewDecision: "APPROVED",
+        viewerCanUpdate: true,
+        viewerCanUpdateBranch: true,
+        viewerCanMergeAsAdmin: false,
+        viewerCanEnableAutoMerge: false,
+        viewerCanDisableAutoMerge: false,
+        autoMergeRequest: null,
+        reviewRequests: { nodes: [] },
+        latestOpinionatedReviews: {
+          nodes: [{ author: { login: "wes" }, state: "APPROVED" }],
+        },
+        reviewThreads: { nodes: [] },
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  contexts: {
+                    totalCount: 2,
+                    nodes: [
+                      {
+                        __typename: "CheckRun",
+                        name: "unit",
+                        status: "COMPLETED",
+                        conclusion: "SUCCESS",
+                      },
+                      {
+                        __typename: "StatusContext",
+                        context: "deploy",
+                        state: "SUCCESS",
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+        ...over,
+      },
+    },
+  };
+}
+const checklist = () =>
+  screen.getByRole("list", { name: "Pull request checklist" });
+const row = (label: string) =>
+  within(checklist()).getByText(label).closest("li") as HTMLElement;
 
-it("renders the settled conversation in Discussion without mounting or requesting checks", async () => {
-  const pending: ((response: Response) => void)[] = [];
-  const fetch = vi.fn((target: string) => {
-    if (target.endsWith("/pulls/1"))
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            title: "Discussion only",
-            body: "Summary\n\n## Details",
-            head: { sha: "head-sha" },
-            updated_at: "2026-10-02T23:57:00Z",
-          }),
-        ),
-      );
-    return new Promise<Response>((resolve) => pending.push(resolve));
-  });
+it("reads a private pull request with gh as one checklist, without the public API", async () => {
+  const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
-  render(
-    <GitHubPanel
-      target="https://github.com/sample/project/pull/1"
-      close={() => {}}
-    />,
+  const gh = vi.fn(async () =>
+    pullData({
+      mergeStateStatus: "BLOCKED",
+      reviewDecision: "CHANGES_REQUESTED",
+      latestOpinionatedReviews: {
+        nodes: [{ author: { login: "wes" }, state: "CHANGES_REQUESTED" }],
+      },
+      reviewThreads: {
+        nodes: [
+          { isResolved: false },
+          { isResolved: true },
+          { isResolved: false },
+        ],
+      },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                contexts: {
+                  totalCount: 3,
+                  nodes: [
+                    {
+                      __typename: "CheckRun",
+                      name: "e2e",
+                      status: "COMPLETED",
+                      conclusion: "FAILURE",
+                      detailsUrl: "https://github.com/block/private/runs/1",
+                    },
+                    {
+                      __typename: "CheckRun",
+                      name: "lint",
+                      status: "IN_PROGRESS",
+                      conclusion: null,
+                    },
+                    {
+                      __typename: "CheckRun",
+                      name: "unit",
+                      status: "COMPLETED",
+                      conclusion: "SUCCESS",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    }),
+  ) as unknown as GitHubCli;
+  render(<GitHubPanel target={pull} close={() => {}} gh={gh} />);
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(row("Checks")).toHaveTextContent(
+    "1 failed: e2e · 1 running · 1 passed",
   );
-  await waitFor(() => expect(pending).toHaveLength(2));
+  expect(row("Checks")).toHaveAttribute("data-tone", "failure");
   expect(
-    screen.getByRole("region", { name: "Pull request conversation" }),
-  ).toHaveTextContent(/some sources are incomplete/);
-  await act(async () => {
-    for (const resolve of pending) resolve(new Response("[]"));
-  });
-  await waitFor(() =>
-    expect(
-      screen.queryByText(/some sources are incomplete/),
-    ).not.toBeInTheDocument(),
-  );
-  expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("tabpanel", { name: "Discussion" })).toContainElement(
-    screen.getByRole("region", { name: "Pull request conversation" }),
-  );
-  expect(screen.getByRole("tab", { name: "Checks" })).toHaveAttribute(
-    "aria-selected",
-    "false",
-  );
-  const hiddenChecks = document.getElementById(
-    screen.getByRole("tab", { name: "Checks" }).getAttribute("aria-controls") ??
-      "",
-  );
-  expect(hiddenChecks).not.toBeVisible();
-  expect(hiddenChecks).toBeEmptyDOMElement();
+    within(row("Checks")).getByRole("link", { name: "e2e" }),
+  ).toHaveAttribute("href", "https://github.com/block/private/runs/1");
+  expect(row("Review")).toHaveTextContent("Changes requested by wes");
+  expect(row("Threads")).toHaveTextContent("2 unresolved");
+  expect(row("Merge")).toHaveTextContent("Blocked by main’s rules");
+  expect(row("Merge")).not.toHaveTextContent("bypass");
+  // Blocked, and this viewer cannot bypass: nothing to merge with.
   expect(
-    screen.queryByText("Checks", { selector: "dt" }),
+    screen.queryByRole("button", { name: /merge/i }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.queryByText(/checks on the PR head commit/),
-  ).not.toBeInTheDocument();
-  expect(fetch.mock.calls.map(([target]) => target).sort()).toEqual([
-    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
-    "https://api.github.com/repos/sample/project/pulls/1",
-    "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
-  ]);
-  expect(
-    screen.getByText("Last updated").parentElement?.querySelector("time"),
-  ).toHaveAttribute("datetime", "2026-10-02T23:57:00Z");
-  fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
-  expect(screen.getByRole("heading", { name: "Details" })).toBeVisible();
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(screen.getByText("Read with your gh sign-in.")).toBeInTheDocument();
+  expect(screen.getByText("Changes").parentElement).toHaveTextContent(
+    "+3 / −1",
+  );
+  expect(fetch).not.toHaveBeenCalled();
 });
 
-it("keeps one PR request across anchor-only targets and returns to Discussion for the new comment", async () => {
-  const scroll = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: scroll,
-  });
-  const fetch = vi.fn(async (destination: string) => {
-    let data: unknown = { total_count: 0, statuses: [] };
-    if (destination.includes("/check-runs?"))
-      data = { total_count: 0, check_runs: [] };
-    else if (destination.includes("/comments?"))
-      data = [
-        { id: 20, body: "First", user: { login: "reader" } },
-        { id: 21, body: "Second", user: { login: "reader" } },
-      ];
-    else if (destination.includes("/reviews?")) data = [];
-    else if (destination.endsWith("/pulls/1"))
-      data = { title: "Anchored PR", state: "open", head: { sha: "abc" } };
-    return new Response(JSON.stringify(data));
-  });
+it("falls back to public data when gh is unavailable, and says why private links fail", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/pulls/9")
+        ? new Response(null, { status: 404 })
+        : new Response("{}"),
+    ),
+  );
+  const gh = vi.fn(async () => {
+    throw new GhUnavailable("To get started with GitHub CLI");
+  }) as unknown as GitHubCli;
+  render(<GitHubPanel target={pull} close={() => {}} gh={gh} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Sign in to the gh CLI to see private repositories",
+  );
+});
+
+it("says when the signed-in account cannot see it, without falling back", async () => {
+  const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
-  const base = "https://github.com/sample/project/pull/1";
-  const view = render(
-    <GitHubPanel target={`${base}#issuecomment-20`} close={() => {}} />,
+  const gh = vi.fn(async () => {
+    throw new GitHubError("Could not resolve", "NOT_FOUND");
+  }) as unknown as GitHubCli;
+  render(<GitHubPanel target={pull} close={() => {}} gh={gh} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "your GitHub account can’t see it",
   );
-  const first = await waitFor(() => {
-    const row = document.querySelector('[data-event-key="discussion-20"]');
-    if (!(row instanceof HTMLElement)) throw new Error("Not loaded yet");
-    return row;
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("merges after confirming, at the head it showed, then shows it merged", async () => {
+  const user = userEvent.setup();
+  let merged = false;
+  const gh = vi.fn(async (query: string) => {
+    if (query.startsWith("mutation")) {
+      merged = true;
+      return {};
+    }
+    return merged
+      ? pullData({
+          state: "MERGED",
+          mergedBy: { login: "baxen" },
+          mergedAt: new Date().toISOString(),
+        })
+      : pullData();
   });
-  await waitFor(() => expect(first).toHaveFocus());
-  const conversation = screen.getByRole("region", {
-    name: "Pull request conversation",
-  });
-  expect(screen.getByRole("link", { name: "Anchored PR #1" })).toHaveAttribute(
-    "href",
-    `${base}#issuecomment-20`,
-  );
-  expect(fetch).toHaveBeenCalledTimes(3);
-  fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
-  expect(screen.getByRole("tab", { name: "Checks" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  view.rerender(
+  render(
     <GitHubPanel
-      target={`${base}?view=all#issuecomment-21`}
+      target={pull}
       close={() => {}}
+      gh={gh as unknown as GitHubCli}
     />,
   );
-  const second = document.querySelector('[data-event-key="discussion-21"]');
-  await waitFor(() => expect(second).toHaveFocus());
-  expect(second).toHaveAttribute("data-anchored", "true");
-  expect(first).not.toHaveAttribute("data-anchored");
-  expect(
-    screen.getByRole("region", { name: "Pull request conversation" }),
-  ).toBe(conversation);
-  expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(row("Checks")).toHaveTextContent("All 2 passed");
+  expect(row("Review")).toHaveTextContent("Approved by wes");
+  expect(row("Threads")).toHaveTextContent("None unresolved");
+  expect(row("Merge")).toHaveTextContent("Ready to merge into main");
+  await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(gh).toHaveBeenCalledTimes(1);
+  await user.click(within(dialog).getByRole("button", { name: "Merge" }));
+  await screen.findByText(/Merged into/);
+  expect(screen.getByText(/Merged into/)).toHaveTextContent(
+    "Merged into main by baxen",
   );
-  expect(screen.getByRole("link", { name: "Anchored PR #1" })).toHaveAttribute(
-    "href",
-    `${base}#issuecomment-21`,
+  expect(gh.mock.calls[1]).toEqual([
+    "mutation($input:MergePullRequestInput!){mergePullRequest(input:$input){clientMutationId}}",
+    {
+      input: {
+        pullRequestId: "PR_9",
+        expectedHeadOid: "abc123",
+        mergeMethod: "SQUASH",
+      },
+    },
+    undefined,
+  ]);
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("closes the merge confirmation when a refresh brings a newer push", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let head = "abc123";
+    const gh = vi.fn(async (query: string, _variables?: unknown) =>
+      query.startsWith("mutation")
+        ? {}
+        : pullData({
+            headRefOid: head,
+            ...(head !== "abc123" && { title: "Pushed again" }),
+          }),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    const dialog = await screen.findByRole("alertdialog");
+    head = "def456";
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Pushed again #9" });
+    expect(dialog).not.toBeInTheDocument();
+    // Confirming again names the head now shown.
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Merge",
+      }),
+    );
+    await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(4));
+    expect(gh.mock.calls[2]?.[1]).toEqual({
+      input: {
+        pullRequestId: "PR_9",
+        expectedHeadOid: "def456",
+        mergeMethod: "SQUASH",
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("closes the merge confirmation when the pull request is retargeted, for good", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let base = "main";
+    const gh = vi.fn(async () =>
+      pullData({
+        baseRefName: base,
+        ...(base !== "main" && { title: "Retargeted" }),
+      }),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    const dialog = await screen.findByRole("alertdialog");
+    base = "release";
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Retargeted #9" });
+    expect(dialog).not.toBeInTheDocument();
+    // Changing back does not open it again without another click.
+    base = "main";
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Private change #9" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says when threads beyond the latest 100 went unread, and gates actions on GitHub's viewer flags", async () => {
+  const gh = vi.fn(async () =>
+    pullData({
+      mergeStateStatus: "BEHIND",
+      viewerCanUpdateBranch: false,
+      reviewThreads: { totalCount: 101, nodes: [{ isResolved: true }] },
+    }),
+  );
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(row("Threads")).toHaveTextContent("0 unresolved in the latest 100");
+  expect(
+    screen.queryByRole("button", { name: "Update branch" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps the confirmation open with GitHub's reason when a merge fails, under StrictMode", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async (query: string) => {
+    if (query.startsWith("mutation"))
+      throw new GitHubError(
+        "Head branch was modified. Review and try the merge again.",
+      );
+    return pullData();
+  });
+  // StrictMode replays effect cleanup, which must not leave the panel deaf.
+  render(
+    <StrictMode>
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />
+    </StrictMode>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Squash and merge" }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Merge" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Head branch was modified",
+  );
+});
+
+it("offers a bypass merge to admins, and other methods and drafting in the menu", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async () =>
+    pullData({ mergeStateStatus: "BLOCKED", viewerCanMergeAsAdmin: true }),
+  );
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  const merge = await screen.findByRole("button", { name: "Squash and merge" });
+  expect(merge).toHaveAttribute("data-variant", "attention");
+  expect(row("Merge")).toHaveTextContent("you can bypass them");
+  await user.click(
+    screen.getByRole("button", { name: "More pull request actions" }),
   );
   expect(
-    fetch.mock.calls.filter(([destination]) =>
-      /\/(pulls\/1|comments\?|reviews\?)/.test(destination),
-    ),
-  ).toHaveLength(3);
-  expect(scroll).toHaveBeenCalledTimes(2);
-  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+  ).toEqual(["Create a merge commit", "Convert to draft"]);
+  await user.click(
+    screen.getByRole("menuitem", { name: "Create a merge commit" }),
+  );
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+    "This bypasses main’s branch rules",
+  );
+});
+
+it("opens the merge confirmation without an earlier action's error", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async (query: string) => {
+    if (query.startsWith("mutation"))
+      throw new GitHubError("Could not convert to draft");
+    return pullData({ viewerCanMergeAsAdmin: true });
+  });
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "More pull request actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Convert to draft" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not convert to draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("marks a draft ready for review, and offers auto-merge while blocked", async () => {
+  const user = userEvent.setup();
+  let draft = true;
+  const gh = vi.fn(async (query: string) => {
+    if (query.startsWith("mutation")) {
+      draft = false;
+      return {};
+    }
+    return pullData({
+      isDraft: draft,
+      mergeStateStatus: draft ? "DRAFT" : "BLOCKED",
+      reviewDecision: "REVIEW_REQUIRED",
+      latestOpinionatedReviews: { nodes: [] },
+      reviewRequests: {
+        nodes: [{ requestedReviewer: { login: "wes" } }],
+      },
+    });
+  });
+  const { rerender } = render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Ready for review" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Ready for review" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(gh.mock.calls[1]?.[0]).toContain("markPullRequestReadyForReview");
+  expect(row("Review")).toHaveTextContent("Required · waiting on wes");
+  expect(
+    screen.queryByRole("button", { name: "Merge when ready" }),
+  ).not.toBeInTheDocument();
+  // Where the repository allows it, a blocked pull request can merge itself.
+  gh.mockImplementation(async () =>
+    pullData({ mergeStateStatus: "BLOCKED", viewerCanEnableAutoMerge: true }),
+  );
+  rerender(
+    <GitHubPanel
+      target={`${pull}0`}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Merge when ready" }),
+  ).toBeInTheDocument();
+});
+
+it("reads an open pull request again while the panel is open", async () => {
+  vi.useFakeTimers();
+  try {
+    const gh = vi.fn(async () => pullData());
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await vi.waitFor(() =>
+      screen.getByRole("heading", { name: "Private change #9" }),
+    );
+    expect(gh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(gh).toHaveBeenCalledTimes(2);
+    // A merged pull request doesn't change, so it isn't read again.
+    gh.mockImplementation(async () => pullData({ state: "MERGED" }));
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(gh).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(REFRESH_MS * 3);
+    expect(gh).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a required review pending while an approval is in", async () => {
+  const gh = vi.fn(async () =>
+    pullData({
+      reviewDecision: "REVIEW_REQUIRED",
+      reviewRequests: {
+        nodes: [{ requestedReviewer: { login: "kalvin" } }],
+      },
+    }),
+  );
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(row("Review")).toHaveTextContent(
+    "Required · approved by wes · waiting on kalvin",
+  );
 });

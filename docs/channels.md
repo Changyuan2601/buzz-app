@@ -3,14 +3,18 @@
 ## Run the integration
 
 Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
-[development setup](../README.md#relay-channels), then run `just web` or
+[development setup](contributing.md#live-relay-development), then run `just web` or
 `just desktop` (one at a time); the development broker starts with the dev server.
-Add a community using the top-left community switcher, open Messages and click a supported GitHub URL in a message to open its object
-in a side panel. Pull requests show title, state, author, branches, change counts,
-and description; issues, commits, and repositories show their relevant details.
-The panel reads GitHub's public API on demand. Private or unavailable objects and
-API limits show an explanation with a direct GitHub link. File and branch links
-continue to open normally. No GitHub account connection is configured yet.
+Join a community using the community picker, open Messages and click a supported GitHub URL in a message to open its object
+in a side panel. Pull requests show their change summary and a one-page checklist
+of checks, reviews, unresolved threads and merge state; issues, commits, and
+repositories show their relevant details. On desktop, the panel reads through the
+signed-in `gh` CLI, so private repositories you can see load, and pull requests
+can be merged, marked ready or converted to draft, set to merge automatically and
+have their branch updated, as your GitHub account. Without `gh` (on the web, or
+when it isn't signed in), the panel reads GitHub's public API and offers no
+actions. Private or unavailable objects and API limits show an explanation with a
+direct GitHub link. File and branch links continue to open normally.
 
 Descriptions support GitHub-flavored Markdown with inline images, video, and
 audio. Other files remain links; media that cannot load keeps a fallback link.

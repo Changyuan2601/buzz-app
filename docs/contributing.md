@@ -163,7 +163,7 @@ A public `BUZZ_DEV_VIEWER` pin enables the legacy development broker for either
 command. Without it, browser development has no live broker identity, while
 supported desktop development can use native identity and relay access. See
 [host modes below](#shared-logic-and-host-boundaries) and
-[the broker setup requirements](../README.md#relay-channels).
+[the broker setup requirements](#live-relay-development).
 
 After creating a worktree, bootstrap it from the checkout whose local development
 configuration it should inherit:
@@ -196,6 +196,235 @@ if it fails, startup warns and continues with the ordinary icon. Explicit Tauri
 Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existing
 icons. This does not change the app identifier, credentials, profiles, or
 notification settings.
+
+## Source layout
+
+Shared React frontend for web and Tauri desktop, with bundled page plugins and
+local desktop plugins managed by `buzzodz`. Channels reads the relay through a
+shared data service; the GitHub plugin adds rich reference panels to channels.
+
+- `src/`: shared browser-compatible application UI and feature logic.
+- [`browser-host/`](../browser-host/README.md): Node host for browser development
+  and tests; not a production browser backend or code shipped in desktop.
+- `src-tauri/`: native Rust host used by desktop development and releases.
+- `scripts/`: development/build tooling, including Vite developer settings and
+  the live setup diagnostic probe.
+
+See [shared logic and host boundaries](#shared-logic-and-host-boundaries)
+for ownership and runtime modes. Host-specific custody and I/O stay in the host;
+platform-neutral feature policy belongs in its existing `src/features/*` owner.
+
+### Code entry points
+
+- `src/main.tsx` → `src/app/App.tsx`: startup and app shell
+- `src/plugins/api.ts` and `src/features/{pages,panels}/service.ts`: plugin contracts
+- `src/plugins/runtime.ts`: Cordis activation and disposal
+- `src/plugins/storage.ts`: web/desktop storage adapter
+- `crates/plugin-manager`: shared Rust manager and `buzzodz`
+- `src-tauri/src/lib.rs`: desktop commands delegating to that manager
+
+The app composes core services once in `src/app/services.ts` and passes the page
+reader directly to the React shell. Cordis owns plugin dependencies and effects;
+React owns rendering, subscriptions, and page selection. The shell is ordinary
+app UI and remains available when no plugins are active.
+
+`src/features/pages` owns page registration, activation filtering, and rendering.
+It observes plugin status through a Cordis service; it does not import app wiring.
+`src/plugins` owns installation and executable lifetimes, including the adapter
+from Cordis state changes to observable plugin status. Bundled features use the
+same registration contract as external plugins. Target-based panels provide a second extension point alongside pages; both use the same
+contribution ownership and readiness implementation.
+
+Desktop release builds are described in [Desktop test releases](releases.md).
+To exercise a local macOS bundle with embedded frontend assets:
+`pnpm tauri build --debug --bundles app`. Agents and its read of the installed
+Buzz library are described in [Agents](agents.md#community-inventory).
+
+## Running the app
+
+Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
+installation is needed. From the repository root, activate the pinned environment:
+
+```sh
+source bin/activate-hermit
+just web
+just desktop
+```
+
+Or run `bin/just web` / `bin/just desktop` without activation. Tools download from
+public Hermit sources. Dependencies use npm's public registry by default; local
+registry and CA settings remain in effect. Desktop
+builds still require the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+The exact pins, registry settings and the pinned pnpm package's Intel Mac
+limitation are described [above](#contribution-workflow).
+
+Both commands forward arguments to their development tool (Vite or Tauri).
+Both rebuild Vite's dependency cache on every start (`vite --force`, under a
+second), so imports present at startup don't trigger a mid-load reload. Imports
+added while a server runs still can. Servers in one checkout share that cache,
+so starting a second one rebuilds it under the first, which may reload; restart
+the first if it stays blank, or run the second from its own worktree.
+The default port is derived from the worktree's path, giving each checkout a
+stable default that normally avoids collisions between parallel worktrees;
+`just desktop` prints the URL it chose. Override it with `just web --port 1431`
+or `just desktop --port 1432`. Browser servers prefer the requested port and
+use the next open port automatically; desktop requires the exact port to be free and keeps
+Vite and the native window on the same URL. Use an explicit port if two paths
+collide, another process occupies the default, or you start a second instance
+from the same checkout:
+
+```sh
+just desktop
+# A second instance from the same checkout:
+just desktop --port 1431
+```
+
+Ports do not isolate account credentials or native plugin data. For separate
+plugin profiles, use the existing `BUZZODZ_PROFILE` setting described in
+[the `buzzodz` CLI](plugin-architecture.md#the-buzzodz-cli).
+Without a public viewer pin, browser development runs the shell/fixtures;
+supported desktop development can use [native identity and relay access](identity.md).
+See the [host-mode matrix](#shared-logic-and-host-boundaries).
+`just iterate` applies formatting and runs fast checks plus the frontend build.
+`just scan` adds tests and native checks. [PR CI](../.github/workflows/ci.yml) runs
+those checks in cached, parallel jobs with sharded browser journeys.
+Staged-file pre-commit and related-test pre-push hooks run through lhm where it
+is installed; otherwise run `just hooks` (or `bin/just hooks` without activation)
+once per clone. See
+[hook behavior and partial staging](#git-hooks).
+
+### Design system
+
+Run `just design` (or `bin/just design` without activation) to install locked
+dependencies, start the standalone design-system viewer, and open it in your
+browser. It uses port 1442 and does not start the desktop app or live relay broker.
+If that port is occupied, choose another with `just design --port 1444`.
+Press Ctrl+C to stop the server.
+
+### OS deep links
+
+Desktop builds register `buzz://` with the OS, the scheme in-app links already use, so
+opening a `buzz://message?channel=…&id=…`, `buzz://channel/<id>`, or
+`buzz://channel/<id>/<event>`, or a repository/PR/issue link outside the
+app focuses it and opens that destination, on a cold start too. A
+`buzz://join?relay=…&code=…` invite opens **Join a community** prefilled; it
+joins nothing until the user continues. Entity Git browsing
+uses the development broker or, in desktop builds, native reads through the system `git`.
+Bundled and released builds use `buzz://`; each packaged launch claims its OS handler. Ordinary
+`just desktop` runs leave any installed handler alone. macOS only routes a scheme
+to a bundled app, so test there with `just desktop-bundle`; Windows and Linux
+bundles register themselves at launch. See [OS deep links](deep-links.md) for
+per-platform steps and limits.
+
+## Live relay development
+
+For manual testing of shipped behavior, use `BUZZ_DEV_VIEWER= just desktop` to
+exercise the native path, even if `.env.local` contains a public viewer pin.
+Broker-backed runs do not prove native acceptance. Browser capabilities remain
+supported; consolidate shared policy rather than maintain parallel feature logic.
+See [host boundaries and testing guidance](#shared-logic-and-host-boundaries).
+
+Live **browser/broker development** requires an existing Buzz account in the OS credential
+store: the `buzz-desktop` / `secrets` Keychain entry on macOS, or the same entry in
+the freedesktop secret service on Linux (read with libsecret's `secret-tool`, so
+install `libsecret-tools` and run inside an unlocked desktop session). This development broker is not native
+sign-in and is not included in packaged builds. `just web` and `just desktop` run
+it automatically once `BUZZ_DEV_VIEWER` is configured, including inside the native
+window. Without that pin, web stays in shell/fixture mode and supported desktop
+uses its separate [native identity path](identity.md). Removing the pin can
+change the active identity; it does not migrate the legacy key.
+
+1. Copy your existing Buzz account's **public key** (npub or 64-character hex).
+2. Add it to the git-ignored `.env.local` at this repository's root. The optional
+   relay settings below are examples only; replace them with your community's origin:
+   ```dotenv
+   BUZZ_DEV_VIEWER=npub1YOUR_PUBLIC_KEY
+   # Optional default for unscoped development-broker requests:
+   BUZZ_RELAY_URL=wss://relay.example.com
+   # Optional: on a fresh dev port, save and select BUZZ_RELAY_URL as a community.
+   BUZZ_DEV_OPEN_RELAY=1
+   # Optional compatibility map for memberships saved with short aliases:
+   BUZZ_COMMUNITY_ALIASES='{"example":"wss://relay.example.com"}'
+   ```
+   Never put an nsec/private key in this file. The public pin explicitly authorizes
+   the account to use; it does not import or change a key. Relay URLs and aliases
+   are public configuration, not secrets. With both relay settings unset, there is
+   no default relay or alias map; Personal space and communities saved by canonical
+   URL remain usable. Configuration does not automatically join a community:
+   `BUZZ_DEV_OPEN_RELAY=1` only saves and selects the default relay locally on a
+   dev port whose saved choice is absent. It does not implicitly join a community,
+   accept an invite, or publish a profile. Normal session traffic and presence still
+   apply.
+3. Start a development target:
+   ```sh
+   just web
+   # Or, instead of web:
+   just desktop
+   ```
+
+   Open the Local URL printed by `just web`. Each worktree derives a stable
+   default port from its path, but two paths can still collide. If the default
+   is busy, use `just desktop --port 1431` (or another free port) instead of
+   stopping the other copy.
+
+The broker reads the existing Keychain credential only after validating the
+public pin, refuses mismatches and never falls back to another credential. If it
+reports a mismatch, check which account your existing Buzz installation uses;
+do not delete or replace its Keychain entry. Environment variables override
+`.env.local`. Restart the dev server after changing the configuration. Without
+an existing supported credential, live development is unavailable; shell and
+fixture tests still work.
+
+Media attachments in live development need `ffmpeg` on the server’s PATH for
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception. Install ffmpeg on the host (macOS: `brew install ffmpeg`; Linux: your
+distribution’s ffmpeg package); HEIC tile grids require ffmpeg 8 or newer.
+Like `block/buzz`, real conversion tests return early when optional host tools
+are missing; tiled-HEIC tests also require ffmpeg 8+ and ffprobe. These tools are
+not pinned through Hermit or provisioned by CI. Packaged apps use the host's
+installed ffmpeg and reject HEIC preparation if its version is older than 8 or
+cannot be determined. The broker
+prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
+those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
+audio conversion or recording UI is added.
+
+JPEG/PNG/WebP cleanup preserves orientation and alpha; GIF/APNG/WebP structural
+cleanup preserves animation. Animated images requiring ICC or EXIF orientation
+transforms reject rather than silently change appearance. Snapshot PNG manifests
+survive cleanup. A lazy, cancellable lossless WebP encoder covers still-image pixel
+cleanup on WebKit, which lacks a canvas WebP encoder.
+
+Final-file defaults match old Buzz: 50 MiB images, 10 MiB GIFs, 100 MiB generic
+files, 500 MiB videos. The relay remains authoritative and can enforce lower
+limits, 25-million-pixel images, and video codec/duration/resolution constraints.
+The client separately bounds source files at 500 MiB (voice notes: 128 MiB), ten
+files per draft, and 1,000 MiB retained sources per session. These source/batch
+safety budgets are not old-relay final-byte limits. Preparation can grow or shrink
+files. Browser Blobs still retain complete prepared payloads; only the broker's
+transfer buffers are streaming. Private spool files and conversion children are
+request-owned, cancelled on disconnect and cleaned before admission is released.
+
+Picker/paste/drop share the same tab-local draft. Files must finish uploading
+before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
+unsent files. Background Send, attachment-first new chats and UX polish are
+separate work. Live uploads use the development broker in dev runs and the
+native `relay_upload` path in packaged desktop builds. The native host prepares
+HEIC and supported video/voice-note inputs with fixed demuxers and bounded child
+processes before upload; it requires ffmpeg installed on the host.
+
+The broker supports reads, live traffic and basic message sending **as your real
+account**. Profile changes and invite admission can also write to real communities.
+Open the community picker, choose **Join a community**, and type the community's `wss://` or
+`https://` relay origin (no path, credentials, query or fragment). For example,
+`wss://relay.example.com` and `https://relay.example.com` identify the same relay
+origin. Continue contacts that destination using your
+identity; you review the community before you join or publish a profile. Then open
+Messages, choose a channel, and click a GitHub reference. See
+[the channel extension contract and data budgets](channels.md) for ownership,
+performance, validation, and limitations.
+
+Messages opens by default. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
+
+See [client and community ownership](communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 
 ## Shared logic and host boundaries
 

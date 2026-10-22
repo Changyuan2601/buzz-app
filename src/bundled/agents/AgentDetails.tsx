@@ -45,12 +45,15 @@ import {
   canonicalPublicKey,
   formatPublicKey,
 } from "../../shared/identity/public-key";
-import { AgentPortrait } from "./AgentCard";
+import { AgentPortrait, useAgentPortraitSource } from "./AgentCard";
 import { AgentIdentityDialog } from "./AgentIdentityDialog";
 import { useNamePrompt, useShake } from "./useNamePrompt";
 import { AgentTabs } from "./AgentTabs";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 import styles from "./AgentsPage.module.css";
+import { PackedAgentAvatar } from "./PackedAgentAvatar";
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
+import hero from "../../features/profiles/ProfileHero.module.css";
 
 export function AgentDetails({
   agents,
@@ -71,10 +74,11 @@ export function AgentDetails({
   channels: readonly ChannelChoice[];
   memories: AgentMemories | undefined;
   onRemoved(): void;
-  messageAction: ReactNode;
+  messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
 }) {
+  const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
   const tabbed = !!usePanelTabHost();
   const reducedMotion = useReducedMotion();
   const identityTransition = {
@@ -179,7 +183,13 @@ export function AgentDetails({
               onClick={onRemoved}
             />
           )}
-          <aside className={styles.rail} aria-label={`${agent.name} identity`}>
+          <aside
+            className={`${hero.hero} ${hero.panelHero}`}
+            aria-label={`${agent.name} identity`}
+          >
+            <ProfileBackdrop src={backdrop}>
+              {pack && <PackedAgentAvatar avatar={pack} fit="cover" />}
+            </ProfileBackdrop>
             <motion.div
               className={styles.identityPortrait}
               initial={false}
@@ -201,7 +211,7 @@ export function AgentDetails({
               transition={identityTransition}
             >
               <h2
-                className="m-0 text-heading text-center break-words"
+                className="m-0 text-body-lg text-center break-words"
                 style={{ visibility: editingName ? "hidden" : undefined }}
               >
                 {agent.name}
@@ -237,7 +247,7 @@ export function AgentDetails({
                 </div>
               )}
             </motion.div>
-            <div className={styles.identityActions}>
+            <div className={hero.actions}>
               {editingName ? (
                 <motion.div
                   className={styles.nameActions}
@@ -273,14 +283,14 @@ export function AgentDetails({
                 </motion.div>
               ) : (
                 <>
-                  {messageAction}
+                  {messageAction(backdrop ? "glass" : "subtle")}
                   <MenuRoot>
                     <MenuTrigger
                       render={
                         <IconButton
                           ref={identityMenu}
                           aria-label="Agent profile actions"
-                          variant="subtle"
+                          variant={backdrop ? "glass" : "subtle"}
                           size="sm"
                           icon={<DotsThreeIcon aria-hidden="true" />}
                         />

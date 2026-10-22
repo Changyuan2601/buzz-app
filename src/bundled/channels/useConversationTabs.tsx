@@ -23,7 +23,7 @@ import { PanelCard } from "../../features/panels/PanelCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   BrowserIcon,
-  ChatCircleIcon,
+  MessageReplyIcon,
   InfoIcon,
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
@@ -555,6 +555,22 @@ export function useConversationTabs({
   const nodes = useTabNodes(
     tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
   );
+  // Hidden thread tabs mount when first shown, then stay mounted for the visit.
+  const visitTabs = useRef<{ shown: Set<string>; entered: Map<string, Tab> }>(
+    undefined,
+  );
+  if (!continuingVisit || !visitTabs.current)
+    visitTabs.current = {
+      shown: new Set(),
+      entered: new Map(tabState.tabs.map((tab) => [tab.id, tab])),
+    };
+  const visitTab = visitTabs.current;
+  // A closed tab's lifetime ends; reopening it starts its requests afresh.
+  const openIds = new Set(tabState.tabs.map((tab) => tab.id));
+  for (const id of visitTab.entered.keys())
+    if (!openIds.has(id)) visitTab.entered.delete(id);
+  for (const id of visitTab.shown)
+    if (!openIds.has(id)) visitTab.shown.delete(id);
   function usableChannel(target: ChannelSummary) {
     return (
       !target.readOnly &&
@@ -627,7 +643,7 @@ export function useConversationTabs({
           : (target?.name ?? "Unavailable conversation"),
       icon:
         tab.kind === "thread" ? (
-          <ChatCircleIcon size="1rem" />
+          <MessageReplyIcon size="1rem" />
         ) : target ? (
           conversationIcon(target)
         ) : (
@@ -777,6 +793,8 @@ export function useConversationTabs({
         tabPane(tab) === "main"
           ? tabState.mainSelected === tab.id
           : tabState.paneOpen && selectedTab === tab.id;
+      if (active) visitTab.shown.add(tab.id);
+      else if (!visitTab.shown.has(tab.id)) return [];
       const route =
         routed?.channelId === tab.channelId &&
         routed.messageId === tab.messageId
@@ -802,6 +820,7 @@ export function useConversationTabs({
           >
             <ConversationTab
               focusOnMount={continuingVisit}
+              restored={visitTab.entered.get(tab.id)}
               active={active}
               visit={visits}
               tab={tab}

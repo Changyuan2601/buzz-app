@@ -290,6 +290,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("codex manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/goose/manifest.json"))
             .expect("goose manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/pi/manifest.json"))
+            .expect("pi manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -306,6 +308,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/relay-notes/manifest.json"
+        ))
+        .expect("relay notes manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -356,12 +362,12 @@ struct Installed {
     #[serde(default)]
     current_signature: Option<Event>,
     #[serde(default)]
-    current_source: Option<ReloadSource>,
+    current_source: Option<InstallSource>,
     previous: Option<String>,
     #[serde(default)]
     previous_signature: Option<Event>,
     #[serde(default)]
-    previous_source: Option<ReloadSource>,
+    previous_source: Option<InstallSource>,
     enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     readme_revision: Option<String>,
@@ -384,6 +390,20 @@ impl ReloadSource {
         validate_candidate_path(&path)?;
         Ok(Self { root, path })
     }
+}
+// Untagged keeps existing {root, path} folder metadata readable without migration.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum InstallSource {
+    Folder(ReloadSource),
+    Git(GitSource),
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitSource {
+    pub repository: String,
+    pub reference: String,
+    pub path: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -529,6 +549,7 @@ pub struct PluginInfo {
     pub has_signature: bool,
     pub rollback_blocked_reason: Option<&'static str>,
     pub reloadable: bool,
+    pub update_source: Option<InstallSource>,
     pub error: Option<String>,
     pub publisher: Option<String>,
     pub readme_revision: Option<String>,
@@ -708,6 +729,7 @@ impl Manager {
                     has_signature: false,
                     rollback_blocked_reason: None,
                     reloadable: false,
+                    update_source: None,
                     error: None,
                     publisher: None,
                     readme_revision: None,
@@ -746,7 +768,8 @@ impl Manager {
                 previous: p.previous,
                 has_signature,
                 rollback_blocked_reason,
-                reloadable: p.current_source.is_some(),
+                reloadable: matches!(&p.current_source, Some(InstallSource::Folder(_))),
+                update_source: p.current_source,
                 error,
                 publisher,
                 readme_revision: p.readme_revision,
@@ -762,9 +785,16 @@ impl Manager {
     }
     pub fn install(&self, directory: &Path) -> Result<Catalog> {
         let source = ReloadSource::folder(directory.canonicalize().map_err(err)?, ".".into())?;
-        self.install_artifact(&prepare_artifact(directory)?, Some(source))
+        self.install_artifact(
+            &prepare_artifact(directory)?,
+            Some(InstallSource::Folder(source)),
+        )
     }
-    fn install_artifact(&self, release: &Release, source: Option<ReloadSource>) -> Result<Catalog> {
+    fn install_artifact(
+        &self,
+        release: &Release,
+        source: Option<InstallSource>,
+    ) -> Result<Catalog> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
         let manifest = artifact.manifest.clone();
@@ -858,12 +888,10 @@ impl Manager {
                             return Err(SIGNED_ROLLBACK_ERROR.into());
                         }
                         let a = self.artifact(id, &previous, p.previous_signature.as_ref())?;
-                        let previous_source = p.previous_source.clone();
-                        p.previous = Some(p.current.clone());
-                        p.previous_source = p.current_source.clone();
                         p.current = previous;
-                        std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
-                        p.current_source = previous_source;
+                        p.current_signature = p.previous_signature.take();
+                        p.current_source = p.previous_source.take();
+                        p.previous = None;
                         p.readme_revision = a.readme_revision();
                         p.icon_png_revision = icon_revision(a.icon_png.as_deref());
                         p.icon_jpg_revision = icon_revision(a.icon_jpg.as_deref());
@@ -1114,7 +1142,10 @@ fn prepare_artifact(directory: &Path) -> Result<Release> {
 pub fn release_manifest(directory: &Path) -> Result<Manifest> {
     prepare_artifact(directory)?.validate()
 }
-fn prepare_reload_artifact(source: &ReloadSource) -> Result<Release> {
+fn prepare_reload_artifact(source: &InstallSource) -> Result<Release> {
+    let InstallSource::Folder(source) = source else {
+        return Err("Plugin was not installed from a reloadable folder".into());
+    };
     let relative = validate_candidate_path(&source.path)?;
     if !fs::symlink_metadata(&source.root)
         .map_err(err)?

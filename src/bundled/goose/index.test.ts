@@ -34,6 +34,8 @@ it("observes saved conversations with the status of open sessions", () => {
     },
     effect: vi.fn(),
   } as never);
+  // A reload stops its turns, so the owner is asked to resume them.
+  expect(type?.resumes).toBe(true);
   expect(
     type?.importShared?.({
       runtime: "goose",

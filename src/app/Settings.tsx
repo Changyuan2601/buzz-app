@@ -12,13 +12,15 @@ import {
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
+import type { DecisionsService } from "../features/decisions/service";
+import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
-import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
+import { PluginMenu } from "./PluginMenu";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
@@ -44,10 +46,10 @@ import {
   CheckCircleIcon,
   SparklesIcon,
   SquaresFourIcon,
-  XIcon,
+  SidebarRightIcon,
 } from "../shared/design-system/icons/index";
-import type { PluginManager } from "../plugins/manager";
-import type { PluginInfo } from "../plugins/types";
+import { canRetryPlugin, type PluginManager } from "../plugins/manager";
+import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import { PluginReadme } from "./PluginReadme";
@@ -250,9 +252,21 @@ function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
 }
 
+function pluginToggleDisabled(
+  plugin: PluginInfo,
+  access: AdminAccessState,
+  busy: boolean,
+) {
+  return (
+    busy ||
+    (!plugin.enabled && restrictedPlugin(plugin) && access !== "allowed")
+  );
+}
+
 function PluginDetails({
   plugin,
   failure,
+  retryable,
   busy,
   plugins,
   onToggle,
@@ -260,28 +274,42 @@ function PluginDetails({
   onClose,
   access,
   onCheckAccess,
+  catalog,
+  authorizeGit,
+  onUpdateAvailableChange,
+  reviewRequested,
+  onReviewHandled,
+  initialUpdateAvailable,
 }: {
   plugin: PluginInfo;
   failure: string | null;
+  retryable: boolean;
   busy: boolean;
   plugins: PluginManager;
   onToggle(): void;
   close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
   access: AdminAccessState;
+  catalog: Catalog;
+  authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
+  onUpdateAvailableChange(available: boolean): void;
+  reviewRequested: boolean;
+  onReviewHandled(): void;
+  initialUpdateAvailable: boolean;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
     : null;
+  const [installedStatus, setInstalledStatus] =
+    useState<HTMLSpanElement | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
-  const deleteTrigger = useRef<HTMLButtonElement>(null);
-  const cancelDelete = useRef<HTMLButtonElement>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [actionTarget, setActionTarget] = useState<HTMLDivElement | null>(null);
+  const [primaryActionTarget, setPrimaryActionTarget] =
+    useState<HTMLDivElement | null>(null);
+  const updateAvailable = initialUpdateAvailable;
   useLayoutEffect(() => {
-    close.current?.focus();
+    close.current?.focus({ preventScroll: true });
   }, [close]);
   // READMEs ship with Buzz; never attach one to an external plugin.
   const readme =
@@ -296,7 +324,7 @@ function PluginDetails({
       className={styles.pluginAside}
       aria-label={`${plugin.manifest.name} details`}
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        if (event.defaultPrevented || event.key !== "Escape") return;
         event.stopPropagation();
         onClose();
       }}
@@ -334,15 +362,21 @@ function PluginDetails({
           ref={close}
           aria-label="Close plugin details"
           size="sm"
-          icon={<XIcon size={16} aria-hidden="true" />}
+          icon={<SidebarRightIcon size={16} aria-hidden="true" />}
           onClick={onClose}
         />
       </div>
       {plugin.source === "external" && (
-        <span className={styles.pluginInstallBadge}>
-          <CheckCircleIcon size={14} aria-hidden="true" />
-          Installed
-        </span>
+        <div className={styles.pluginBadges}>
+          <span className={styles.pluginInstallBadge}>
+            <CheckCircleIcon size={14} aria-hidden="true" />
+            Installed
+          </span>
+          <span
+            ref={setInstalledStatus}
+            className={styles.pluginInstallBadge}
+          />
+        </div>
       )}
       <div className={styles.pluginStatus}>
         {plugin.enabled && accessReason && (
@@ -350,62 +384,71 @@ function PluginDetails({
             {access === "checking" ? "Checking…" : "Unavailable"}
           </span>
         )}
-        {/* Channels is required and has no enable/disable control. */}
-        {plugin.manifest.id === "buzz.channels" ? (
-          <Button variant="outline" size="sm" disabled>
-            Required
-          </Button>
-        ) : (
-          <Tooltip
-            content={
-              access === "error"
-                ? "Could not check access. Try again."
-                : accessReason
-            }
-            {...(accessReason ? {} : { open: false })}
-            disableHoverablePopup
+        <div className={styles.pluginPrimaryActions}>
+          <div
+            ref={setPrimaryActionTarget}
+            className={styles.pluginPrimaryAction}
           >
-            <Button
-              variant={
-                plugin.enabled
-                  ? "subtle"
-                  : accessReason
-                    ? "outline"
-                    : "prominent"
-              }
-              size="sm"
-              disabled={
-                busy ||
-                (!plugin.enabled &&
-                  restrictedPlugin(plugin) &&
-                  access !== "allowed")
-              }
-              loading={
-                !plugin.enabled &&
-                restrictedPlugin(plugin) &&
-                access === "checking"
-              }
-              aria-describedby={
-                accessReason ? "plugin-detail-access" : undefined
-              }
-              focusableWhenDisabled
-              ref={toggle}
-              onClick={onToggle}
-            >
-              {pluginActionLabel(plugin, access)}
-            </Button>
-          </Tooltip>
-        )}
-      </div>
-      {accessReason && (
-        <p id="plugin-detail-access" className="sr-only">
-          {access === "error"
-            ? "Could not check access. Try again."
-            : accessReason}
-        </p>
-      )}
-      {accessReason && access === "error" && (
-        <div className={styles.pluginAccess}>
+            {/* Channels is required and has no enable/disable control. */}
+            {!updateAvailable &&
+              (plugin.manifest.id === "buzz.channels" ? (
+                <Button variant="outline" size="sm" disabled>
+                  Required
+                </Button>
+              ) : (
+                <Tooltip
+                  content={
+                    access === "error"
+                      ? "Could not check access. Try again."
+                      : accessReason
+                  }
+                  {...(accessReason ? {} : { open: false })}
+                  disableHoverablePopup
+                >
+                  <Button
+                    variant={
+                      plugin.enabled
+                        ? "subtle"
+                        : accessReason
+                          ? "outline"
+                          : "prominent"
+                    }
+                    size="sm"
+                    disabled={pluginToggleDisabled(plugin, access, busy)}
+                    loading={
+                      !plugin.enabled &&
+                      restrictedPlugin(plugin) &&
+                      access === "checking"
+                    }
+                    aria-describedby={
+                      accessReason ? "plugin-detail-access" : undefined
+                    }
+                    focusableWhenDisabled
+                    ref={toggle}
+                    onClick={onToggle}
+                  >
+                    {pluginActionLabel(plugin, access)}
+                  </Button>
+                </Tooltip>
+              ))}
+          </div>
+          <PluginMenu
+            plugin={plugin}
+            plugins={plugins}
+            busy={busy}
+            {...(updateAvailable
+              ? {
+                  toggle: {
+                    label: pluginActionLabel(plugin, access),
+                    disabled: pluginToggleDisabled(plugin, access, busy),
+                    run: onToggle,
+                  },
+                }
+              : {})}
+          />
+        </div>
+        <div ref={setActionTarget} className={styles.pluginExtraActions} />
+        {accessReason && access === "error" && (
           <Button
             size="sm"
             onClick={() => {
@@ -415,7 +458,37 @@ function PluginDetails({
           >
             Check access again
           </Button>
-        </div>
+        )}
+
+        {plugin.rollbackBlockedReason && (
+          <span className="text-body-sm text-muted">
+            {plugin.rollbackBlockedReason}
+          </span>
+        )}
+      </div>
+      {plugin.source === "external" && plugins.imports && (
+        <PluginImport
+          key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+          initialUpdateAvailable={initialUpdateAvailable}
+          actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
+          onUpdateAvailableChange={onUpdateAvailableChange}
+          reviewRequested={reviewRequested}
+          onReviewHandled={onReviewHandled}
+          statusTarget={installedStatus}
+          returnFocus={() => close.current}
+          updateId={plugin.manifest.id}
+          plugins={plugins}
+          catalog={catalog}
+          busy={busy}
+          {...(authorizeGit ? { authorizeGit } : {})}
+        />
+      )}
+      {accessReason && (
+        <p id="plugin-detail-access" className="sr-only">
+          {access === "error"
+            ? "Could not check access. Try again."
+            : accessReason}
+        </p>
       )}
       {readme && (
         <section
@@ -476,94 +549,22 @@ function PluginDetails({
           </tbody>
         </table>
       </section>
-      {failure && <p className="error text-body-sm">{failure}</p>}
-      <div className="actions items-center">
-        {plugin.previous && (
-          <Button
-            type="button"
-            disabled={busy || !!plugin.rollbackBlockedReason}
-            onClick={() => plugins.change("rollback", plugin.manifest.id)}
-          >
-            Roll back
-          </Button>
-        )}
-        {plugin.rollbackBlockedReason && (
-          <span className="text-body-sm text-muted">
-            {plugin.rollbackBlockedReason}
-          </span>
-        )}
-        {plugin.reloadable && !plugin.enabled && (
-          <Button
-            type="button"
-            disabled={busy}
-            onClick={() => plugins.reload(plugin.manifest.id)}
-          >
-            Reload
-          </Button>
-        )}
-        {plugin.source === "external" && (
-          <Button
-            type="button"
-            ref={deleteTrigger}
-            variant="destructive"
-            disabled={busy}
-            onClick={() => {
-              setDeleteError(null);
-              setConfirmDelete(true);
-            }}
-          >
-            Delete
-          </Button>
-        )}
-      </div>
-      {confirmDelete && (
-        <AlertDialog
-          title={`Delete ${plugin.manifest.name}?`}
-          description="Removes this plugin and its rollback history from Buzz. You can install it again later."
-          pending={busy || deleting}
-          finalFocus={deleteTrigger}
-          initialFocus={cancelDelete}
-          onClose={() => setConfirmDelete(false)}
-          actions={
-            <>
-              <Button
-                ref={cancelDelete}
-                disabled={busy || deleting}
-                onClick={() => setConfirmDelete(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={busy || deleting}
-                onClick={async () => {
-                  if (busy || deleting) return;
-                  setDeleting(true);
-                  setDeleteError(null);
-                  try {
-                    if (await plugins.change("remove", plugin.manifest.id))
-                      setConfirmDelete(false);
-                    else
-                      setDeleteError(
-                        plugins.snapshot().error ??
-                          "Plugin deletion wasn’t confirmed. Try again.",
-                      );
-                  } finally {
-                    setDeleting(false);
-                  }
-                }}
-              >
-                Delete plugin
-              </Button>
-            </>
-          }
-        >
-          {deleteError && (
-            <p role="alert" className="error text-body-sm">
-              {deleteError}
-            </p>
+      {failure && (
+        <div className={styles.pluginStatus}>
+          <p className="m-0 error text-body-sm">{failure}</p>
+          {retryable && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                if (plugins.retryPlugin(plugin.manifest.id))
+                  close.current?.focus({ preventScroll: true });
+              }}
+            >
+              Retry
+            </Button>
           )}
-        </AlertDialog>
+        </div>
       )}
     </aside>
   );
@@ -571,6 +572,7 @@ function PluginDetails({
 
 export function Settings({
   agents,
+  decisions,
   cards,
   plugins,
   adminAccess,
@@ -588,6 +590,7 @@ export function Settings({
   onUnsavedChange,
 }: {
   agents?: Agents | undefined;
+  decisions?: DecisionsService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   adminAccess?: AdminAccessReader;
@@ -762,7 +765,10 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
-  const [updatingPluginId, setUpdatingPluginId] = useState<string>();
+  const [reviewPluginId, setReviewPluginId] = useState<string>();
+  const [updateChecks, setUpdateChecks] = useState<
+    Record<string, { revision: string; available: boolean }>
+  >({});
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -794,7 +800,7 @@ export function Settings({
         (active.contains(element) ||
           (element.contains(active) && !details?.contains(active)))
       )
-        detailsClose.current?.focus();
+        detailsClose.current?.focus({ preventScroll: true });
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -807,6 +813,7 @@ export function Settings({
   }, [catalog, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
     restorePluginFocus.current = true;
+    setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
   };
   useLayoutEffect(() => {
@@ -818,7 +825,9 @@ export function Settings({
             plugin.manifest.id === pluginTrigger.current?.dataset.pluginId,
         ),
       );
-      (visible ? pluginTrigger.current : pluginSection.current)?.focus();
+      (visible ? pluginTrigger.current : pluginSection.current)?.focus({
+        preventScroll: true,
+      });
     }
   }, [selectedPlugin, coreGroup, pluginGroups]);
   const selectedRunning = selectedPlugin
@@ -874,6 +883,10 @@ export function Settings({
               const failure =
                 plugin.error ??
                 (running?.revision === plugin.revision ? running.error : null);
+              const updateAvailable =
+                !!plugins.imports &&
+                updateChecks[id]?.revision === plugin.revision &&
+                !!updateChecks[id]?.available;
               const name = (
                 <span className={styles.pluginName}>
                   <span>{plugin.manifest.name}</span>
@@ -913,10 +926,6 @@ export function Settings({
                       data-plugin-id={id}
                       data-access-state={
                         plugin.enabled && accessReason ? "" : undefined
-                      }
-                      data-updatable={
-                        (plugin.source === "external" && !!plugins.imports) ||
-                        undefined
                       }
                       className={styles.pluginRow}
                       data-enabled={plugin.enabled}
@@ -966,7 +975,10 @@ export function Settings({
                           label={name}
                           description={
                             plugin.manifest.description ? (
-                              <span id={`plugin-description-${id}`}>
+                              <span
+                                id={`plugin-description-${id}`}
+                                className={styles.pluginRowDescription}
+                              >
                                 {plugin.manifest.description}
                               </span>
                             ) : undefined
@@ -989,20 +1001,21 @@ export function Settings({
                           {access === "checking" ? "Checking…" : "Unavailable"}
                         </span>
                       )}
-                      {plugin.source === "external" &&
-                        plugins.imports &&
-                        catalog && (
-                          <Button
-                            size="sm"
-                            aria-label={`Update ${plugin.manifest.name}`}
-                            data-plugin-update-id={id}
-                            disabled={busy}
-                            onClick={() => setUpdatingPluginId(id)}
-                          >
-                            Update
-                          </Button>
-                        )}
-                      {isRequiredPlugin(plugin) ? (
+                      {updateAvailable ? (
+                        <Button
+                          size="sm"
+                          variant="prominent"
+                          disabled={busy}
+                          aria-label={`Update ${plugin.manifest.name}`}
+                          onClick={() => {
+                            setActivationAttempt(undefined);
+                            setSelectedPluginId(id);
+                            setReviewPluginId(id);
+                          }}
+                        >
+                          Update
+                        </Button>
+                      ) : isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
                         </Button>
@@ -1022,12 +1035,11 @@ export function Settings({
                             }
                             size="sm"
                             aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
-                            disabled={
-                              busy ||
-                              (!plugin.enabled &&
-                                restrictedPlugin(plugin) &&
-                                access !== "allowed")
-                            }
+                            disabled={pluginToggleDisabled(
+                              plugin,
+                              access,
+                              busy,
+                            )}
                             loading={
                               !plugin.enabled &&
                               restrictedPlugin(plugin) &&
@@ -1043,6 +1055,26 @@ export function Settings({
                           </Button>
                         </Tooltip>
                       )}
+                      <PluginMenu
+                        plugin={plugin}
+                        plugins={plugins}
+                        busy={busy}
+                        label={`More actions for ${plugin.manifest.name}`}
+                        onRemoved={() => pluginSection.current?.focus()}
+                        {...(updateAvailable
+                          ? {
+                              toggle: {
+                                label: pluginActionLabel(plugin, access),
+                                disabled: pluginToggleDisabled(
+                                  plugin,
+                                  access,
+                                  busy,
+                                ),
+                                run: () => togglePlugin(plugin),
+                              },
+                            }
+                          : {})}
+                      />
                     </div>
                   </article>
                   {accessReason && (
@@ -1112,6 +1144,14 @@ export function Settings({
         <div hidden={selected !== "agents"}>
           <AgentSettings agents={agents} active={selected === "agents"} />
         </div>
+        {agents && decisions && (
+          <div hidden={selected !== "decisions"}>
+            <DecisionsSettings
+              agents={agents}
+              active={() => selected === "decisions"}
+            />
+          </div>
+        )}
         <div hidden={selected !== "updates"}>
           <UpdateSettings updates={updates} active={selected === "updates"} />
         </div>
@@ -1243,7 +1283,17 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 authorizeGit={authorizePluginGit}
-                returnFocus={() => visibleReturn(null)}
+                onOpenInstalled={(id) => {
+                  pluginTrigger.current =
+                    [
+                      ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                        "button[data-plugin-id]",
+                      ) ?? []),
+                    ].find((button) => button.dataset.pluginId === id) ?? null;
+                  setActivationAttempt(undefined);
+                  setSelectedPluginId(id);
+                }}
+                returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />
             ) : configuration.status === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
@@ -1253,28 +1303,7 @@ export function Settings({
                 work.
               </p>
             )}
-            {catalog && updatingPluginId && (
-              <PluginImport
-                updateId={updatingPluginId}
-                plugins={plugins}
-                catalog={catalog}
-                busy={busy}
-                authorizeGit={authorizePluginGit}
-                onClosed={() => setUpdatingPluginId(undefined)}
-                returnFocus={() =>
-                  visibleReturn(
-                    Array.from(
-                      pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                        "[data-plugin-update-id]",
-                      ) ?? [],
-                    ).find(
-                      (button) =>
-                        button.dataset.pluginUpdateId === updatingPluginId,
-                    ) ?? pluginSection.current,
-                  )
-                }
-              />
-            )}
+
             <div>
               <div>
                 {externalPluginsPaused && (
@@ -1359,11 +1388,39 @@ export function Settings({
           </section>
         </div>
       </div>
-      {showingDetails && selectedPlugin && (
+      {showingDetails && selectedPlugin && catalog && (
         <PluginDetails
           key={selectedPlugin.manifest.id}
           plugin={selectedPlugin}
+          catalog={catalog}
+          initialUpdateAvailable={
+            updateChecks[selectedPlugin.manifest.id]?.revision ===
+              selectedPlugin.revision &&
+            updateChecks[selectedPlugin.manifest.id]?.available === true
+          }
+          authorizeGit={authorizePluginGit}
+          reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
+          onReviewHandled={() => setReviewPluginId(undefined)}
+          onUpdateAvailableChange={(available) =>
+            setUpdateChecks((current) => {
+              const id = selectedPlugin.manifest.id;
+              if (
+                current[id]?.revision === selectedPlugin.revision &&
+                current[id]?.available === available
+              )
+                return current;
+              return {
+                ...current,
+                [id]: { revision: selectedPlugin.revision, available },
+              };
+            })
+          }
           failure={selectedFailure}
+          retryable={canRetryPlugin(
+            selectedPlugin,
+            selectedRunning,
+            !!externalPluginsPaused,
+          )}
           busy={busy}
           access={pluginAccess(selectedPlugin)}
           onCheckAccess={() => adminAccess?.retry(selectedPlugin.manifest.id)}
@@ -1378,7 +1435,10 @@ export function Settings({
   // The Settings modal supplies its own frame, title and section navigation.
   if (navigationPane)
     return (
-      <div className={styles.navigationPane}>
+      <div
+        className={styles.navigationPane}
+        data-plugin-catalog={selected === "plugins" || undefined}
+      >
         {announcement}
         <div
           ref={layout}

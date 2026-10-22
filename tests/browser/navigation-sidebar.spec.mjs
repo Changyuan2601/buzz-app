@@ -574,7 +574,7 @@ test("community picker stays available across pages and restores focus after joi
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Add a community", exact: true }),
+    page.getByRole("heading", { name: "Join a community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(

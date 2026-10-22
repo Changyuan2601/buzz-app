@@ -1,11 +1,13 @@
-import { expect, it } from "vitest";
+import { beforeAll, expect, it } from "vitest";
 import type {
   Agent,
   SessionUsage,
   UsageObservation,
 } from "../../features/agents/service";
-import { estimateCost } from "./pricing";
+import { estimateCost, loadPrices } from "./pricing";
 import { dayStart, merge, modelName, since, stats } from "./stats";
+
+beforeAll(loadPrices);
 
 const HOUR = 3_600_000;
 const now = new Date(2026, 9, 16, 15).getTime();
@@ -69,7 +71,30 @@ it("prices cache writes by how long they are kept, and dated snapshots", () => {
   // With no count known there is nothing to price, not $0.
   expect(estimateCost("claude-opus-5-5", {})).toEqual({ partial: true });
   expect(estimateCost("claude-opus-9-9", full(1e6))).toBeUndefined();
-  expect(estimateCost("gpt-5", full(1e6))).toBeUndefined();
+  expect(estimateCost("acme-1", full(1e6))).toBeUndefined();
+});
+
+it("prices OpenAI models, at their long-prompt rates past 272K tokens", () => {
+  // GPT-6.1 Sol: $2 in, $10 out, $0.10 read, $2.50 write per million.
+  expect(
+    estimateCost("gpt-6.1-sol", {
+      input: 1e5,
+      output: 1e5,
+      cacheRead: 1e5,
+      cacheWrite: 0,
+    }),
+  ).toEqual({ usd: expect.closeTo(0.2 + 1 + 0.01), partial: false });
+  // A 300K prompt: 2× input and cache rates, 1.5× output, for the request.
+  expect(
+    estimateCost("gpt-6.1-sol", {
+      input: 1e5,
+      output: 1e6,
+      cacheRead: 2e5,
+      cacheWrite: 0,
+    })?.usd,
+  ).toBeCloseTo(0.4 + 15 + 0.04);
+  // Codex's coding snapshot is priced as its base model.
+  expect(estimateCost("gpt-5.2-codex", full(1e6))?.usd).toBeCloseTo(1.75);
 });
 
 it("totals the period, compares the previous one and ranks agents and sessions", () => {
@@ -101,8 +126,8 @@ it("totals the period, compares the previous one and ranks agents and sessions",
         harness: "x/codex",
         sessions: [
           session("recorded", [
-            seen(dayStart(now, 2), full(10), "gpt-5", 1.5),
-            seen(dayStart(now, 2) + HOUR, full(10), "gpt-5"),
+            seen(dayStart(now, 2), full(10), "acme-1", 1.5),
+            seen(dayStart(now, 2) + HOUR, full(10), "acme-1"),
           ]),
         ],
       },
@@ -111,14 +136,13 @@ it("totals the period, compares the previous one and ranks agents and sessions",
     7,
   );
   // Pixel: $4 + $0.60 cache reads + $0.50 cache writes + $1 Sonnet output.
-  // Relay: its recorded $1.50, and a GPT reply with no rates, not counted.
+  // Relay: its recorded $1.50, and a reply from a model with no rates, not counted.
   expect(result.cost).toEqual({ value: expect.closeTo(7.6), partial: true });
   expect(result.previousCost).toEqual({
     value: expect.closeTo(2),
     partial: false,
   });
   expect(result.sessions).toBe(2);
-  expect(result.incomplete).toBe(0);
   expect(result.tokens).toEqual({
     value: 1e6 + 3e6 + 1e5 + 1e5 + 20,
     partial: false,
@@ -136,20 +160,19 @@ it("totals the period, compares the previous one and ranks agents and sessions",
       "claude-opus-5-5",
       { value: expect.closeTo(6.1), partial: false },
     ],
-    ["relay", "gpt-5", { value: 1.5, partial: true }],
+    ["relay", "acme-1", { value: 1.5, partial: true }],
   ]);
   expect(result.costliest.map((entry) => entry.session.id)).toEqual([
     "big",
     "recorded",
   ]);
-  expect(result.unpriced).toEqual(["gpt-5"]);
   expect(result.days).toHaveLength(7);
   expect(result.days.at(-1)).toMatchObject({ start: today });
   expect(result.days.at(-1)?.costs.get("x/claude")).toEqual({
     value: expect.closeTo(6.1),
     partial: false,
   });
-  // The day's unpriced GPT reply leaves its cost partial, not complete.
+  // The day's unpriced reply leaves its cost partial, not complete.
   expect(result.days.at(-3)?.costs.get("x/codex")).toEqual({
     value: 1.5,
     partial: true,
@@ -169,7 +192,7 @@ it("keeps unknown usage unknown, and counts sessions without any", () => {
         sessions: [
           // Recorded no usage at all.
           session("quiet", [], { startedAt: today, lastAt: today + HOUR }),
-          session("priced-nowhere", [seen(today, { output: 5 }, "gpt-5")]),
+          session("priced-nowhere", [seen(today, { output: 5 }, "acme-1")]),
         ],
       },
     ],
@@ -210,7 +233,6 @@ it("marks the totals of a session it could not fully read as partial", () => {
     now,
     7,
   );
-  expect(result.incomplete).toBe(1);
   expect(result.cost).toEqual({ value: expect.closeTo(8), partial: true });
   expect(result.tokens.partial).toBe(true);
   expect(
@@ -312,7 +334,7 @@ it("names Claude models", () => {
   expect(modelName("claude-sonnet-5")).toBe("Claude Sonnet 5");
   expect(modelName("databricks-claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
   expect(modelName("global.anthropic.claude-opus-4-8")).toBe("Claude Opus 4.8");
-  expect(modelName("gpt-5")).toBe("gpt-5");
+  expect(modelName("gpt-6.1-sol")).toBe("gpt-6.1-sol");
 });
 
 it("keeps costs unknown when nothing priced was known, on each day too", () => {
@@ -327,7 +349,7 @@ it("keeps costs unknown when nothing priced was known, on each day too", () => {
         agent: agent("relay"),
         harness: "x/codex",
         sessions: [
-          session("unpriced", [seen(dayStart(now, 1), full(10), "gpt-5")]),
+          session("unpriced", [seen(dayStart(now, 1), full(10), "acme-1")]),
         ],
       },
     ],

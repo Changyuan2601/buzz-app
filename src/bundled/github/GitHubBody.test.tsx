@@ -536,7 +536,7 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
   expect(
     screen.getByRole("heading", { name: "Current PR #3270" }),
   ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
+  fireEvent.click(screen.getByRole("button", { name: "Description" }));
   expect(container.querySelector("video")).toHaveAttribute("src", before);
   const next = deferred<Response>();
   fetch.mockReturnValueOnce(next.promise);

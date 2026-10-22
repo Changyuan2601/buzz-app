@@ -676,6 +676,7 @@ export function SoloShare({
         () => {},
         true,
         source?.channelType === "solo",
+        true,
       );
       const historySaved = remember();
       if (target !== channel.id) {

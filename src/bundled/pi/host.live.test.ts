@@ -1,0 +1,442 @@
+// @vitest-environment node
+// The real host.mjs on Pi durable, with Pi's faux provider for a model: run
+// with PI_DEPS set to a folder pi.sh installed Pi's packages in, such as
+// "~/Library/Application Support/Buzz/pi/deps/<sum>".
+import { execFile } from "node:child_process";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { afterAll, describe, expect, it } from "vitest";
+import host from "./host.mjs?raw";
+
+const DEPS = process.env.PI_DEPS;
+const run = promisify(execFile);
+
+/** Serves the plugin's side over in-process streams, as Buzz would. */
+const DRIVER = `
+import { spawn } from "node:child_process";
+import { rm, utimes, writeFile } from "node:fs/promises";
+import { PassThrough } from "node:stream";
+import { createInterface } from "node:readline";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import lockfile from "proper-lockfile";
+import { AuthFile, serve } from "./host.mjs";
+const data = process.argv[2];
+const faux = fauxProvider();
+const models = createModels();
+models.setProvider(faux.provider);
+const agent = "b".repeat(64);
+const tools = [
+  { name: "send", description: "Post", inputSchema: { type: "object", properties: { text: { type: "string" }, final: { type: "boolean" } } }, load: "always" },
+  { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
+];
+const out = {};
+function start() {
+  const input = new PassThrough(), output = new PassThrough();
+  const events = [], tools = [], pending = new Map();
+  let id = 0;
+  createInterface({ input: output }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.method === "event") events.push(message.params);
+    else if (message.method === "tool") {
+      tools.push(message.params);
+      const final = message.params.arguments.final === true;
+      input.write(JSON.stringify({ id: message.id, result: { content: [{ type: "text", text: "sent" }], ...(final ? { final } : {}) } }) + "\\n");
+    } else if (message.id !== undefined) {
+      const call = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error) call.reject(new Error(message.error));
+      else call.resolve(message.result);
+    }
+  });
+  const rpc = (method, params) => new Promise((resolve, reject) => {
+    pending.set(++id, { resolve, reject });
+    input.write(JSON.stringify({ id, method, params }) + "\\n");
+  });
+  const { stop } = serve({ data, models, dir: data, input, output, exit: () => {} });
+  return { rpc, events, tools, stop };
+}
+const turn = (request, text) => ({ agent, key: "chan/root", at: 100, context: { channel: "chan", root: "root" }, text, steer: "steer: " + text, request, provider: "faux", model: "faux-1", instructions: "Test.", cwd: data });
+const held = () => { let release; const gate = new Promise((resolve) => (release = resolve)); return { gate, release }; };
+const abortable = (gate, signal) => Promise.race([gate, new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }))]);
+const started = (events, request) => new Promise((resolve) => { const check = () => events.some((event) => event.type === "placed" && event.request === request) ? resolve() : setTimeout(check, 5); check(); });
+
+let pi = start();
+await pi.rpc("open", { agent, tools });
+// A provider only a Pi package adds is not one Buzz's Pi has.
+out.unknown = await pi.rpc("test", { provider: "databricks", model: "m" }).catch((error) => error.message);
+// A final send ends the run without another model call.
+faux.setResponses([fauxAssistantMessage(fauxToolCall("buzz_send", { text: "hi", final: true }), { stopReason: "toolUse" })]);
+const a = await pi.rpc("deliver", turn("A", "first"));
+out.a = { ...(await pi.rpc("wait", { agent, submission: a.submission })), calls: faux.state.callCount, tools: pi.tools.splice(0), conversation: a.conversation };
+// A plain answer, in the same conversation.
+faux.setResponses([fauxAssistantMessage("Plain answer")]);
+const b = await pi.rpc("deliver", turn("B", "second"));
+out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
+// What a transcript and usage read: the places, and the entries without schemas.
+out.places = (await pi.rpc("places", { agent })).places;
+out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
+out.entries = (await pi.rpc("entries", { agent, conversation: a.conversation })).entries.map((entry) => [entry.kind, ...(entry.model ?? []).map((message) => message.role + (message.usage ? "+usage" : ""))]);
+// A request while the run works steers it.
+const c = held();
+let saw = [], results = [];
+faux.setResponses([
+  async () => { await c.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+  (context) => { saw = context.messages.filter((m) => m.role === "user").map((m) => m.content); results = context.messages.filter((m) => m.role === "toolResult").map((m) => m.content); return fauxAssistantMessage("Answer to both"); },
+]);
+const c1 = await pi.rpc("deliver", turn("C1", "third"));
+await started(pi.events, "C1");
+const c2 = await pi.rpc("deliver", turn("C2", "fourth"));
+c.release();
+out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, results, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
+// A run the host stops in continues in the next host.
+const d = held(), calling = held();
+faux.setResponses([
+  async (_context, options) => { calling.release(); await abortable(d.gate, options?.signal); return fauxAssistantMessage("first try"); },
+  () => fauxAssistantMessage("Resumed answer"),
+]);
+const d1 = await pi.rpc("deliver", turn("D", "fifth"));
+await calling.gate;
+const stopped = pi.rpc("wait", { agent, submission: d1.submission });
+await pi.stop();
+out.stopped = await stopped;
+pi = start();
+await pi.rpc("open", { agent, tools });
+out.unfinished = (await pi.rpc("unfinished", { agent })).submissions;
+out.resumed = await pi.rpc("wait", { agent, submission: d1.submission });
+// A run that fails leaves no request it was steered with waiting for the next.
+const e = held();
+faux.setResponses([async () => { await e.gate; return fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 Bad model" }); }]);
+const e1 = await pi.rpc("deliver", turn("E1", "sixth"));
+await started(pi.events, "E1");
+const e2 = await pi.rpc("deliver", turn("E2", "seventh"));
+e.release();
+out.e = await Promise.all([e1, e2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
+// The owner's Stop aborts the run.
+const g = held(), asking = held();
+faux.setResponses([async (_context, options) => { asking.release(); await abortable(g.gate, options?.signal); return fauxAssistantMessage("never"); }]);
+const g1 = await pi.rpc("deliver", turn("G", "ninth"));
+await asking.gate;
+await pi.rpc("abort", { agent, conversation: g1.conversation });
+out.aborted = await pi.rpc("wait", { agent, submission: g1.submission });
+// Session controls act on a conversation key's Pi conversation.
+const s = held(), running = held();
+faux.setResponses([async (_context, options) => { running.release(); await abortable(s.gate, options?.signal); return fauxAssistantMessage("never"); }]);
+const s1 = await pi.rpc("deliver", turn("S", "session"));
+await running.gate;
+await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
+out.interrupted = await pi.rpc("wait", { agent, submission: s1.submission });
+// Interrupted in a tool call, the run leaves Pi's aborted result for it.
+faux.setResponses([() => fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 30" }), { stopReason: "toolUse" })]);
+const t1 = await pi.rpc("deliver", turn("T", "tool"));
+await new Promise((resolve) => { const check = () => pi.events.some((event) => event.type === "step" && event.tool === "bash") ? resolve() : setTimeout(check, 5); check(); });
+await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
+out.toolStop = { wait: await pi.rpc("wait", { agent, submission: t1.submission }), last: (await pi.rpc("entries", { agent, conversation: t1.conversation })).entries[0] };
+// Past what Pi keeps verbatim, so compacting summarizes the older turn.
+faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
+for (const request of ["S2", "S3"]) {
+  const long = await pi.rpc("deliver", turn(request, "word ".repeat(25_000)));
+  await pi.rpc("wait", { agent, submission: long.submission });
+}
+await pi.rpc("session", { agent, key: "chan/root", action: "compact" });
+await pi.rpc("session", { agent, key: "chan/root", action: "new" });
+out.renewed = { place: await pi.rpc("place", { agent, key: "chan/root" }), kinds: (await pi.rpc("entries", { agent, conversation: s1.conversation })).entries.map((entry) => entry.kind).slice(0, 2) };
+out.unplaced = await pi.rpc("session", { agent, key: "chan/none", action: "compact" });
+// A tool loaded on search is offered once tool_search finds it.
+const offered = [];
+/** The tools a request offers: its own, and those its system messages add. */
+const toolsOf = (context) => {
+  const names = new Set((context.tools ?? []).map((tool) => tool.name));
+  for (const message of context.messages) {
+    for (const tool of message.toolsAdded ?? []) names.add(tool.name);
+    for (const tool of message.toolsRemoved ?? []) names.delete(tool.name ?? tool);
+  }
+  return [...names];
+};
+faux.setResponses([
+  (context) => { offered.push(toolsOf(context)); return fauxAssistantMessage(fauxToolCall("tool_search", { query: "watch events" }), { stopReason: "toolUse" }); },
+  (context) => { offered.push(toolsOf(context)); return fauxAssistantMessage(fauxToolCall("buzz_watch_add", {}), { stopReason: "toolUse" }); },
+  () => fauxAssistantMessage("Watching"),
+]);
+const h = await pi.rpc("deliver", turn("H", "watch it"));
+out.search = { wait: await pi.rpc("wait", { agent, submission: h.submission }), offered, called: pi.tools.splice(0).map((call) => call.name) };
+out.place = await pi.rpc("place", { agent, key: "chan/root" });
+// A turn Pi could not start leaves what the conversation was shown.
+out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
+out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
+// A request that waits after the agent's storage failed is told to open it
+// again, and finds its run there. Another connection holds the write lock
+// while the run commits, so the storage fails while the host is blocked and the
+// request is read only afterwards, as when the plugin's wait is already in the pipe.
+const locked = held();
+faux.setResponses([async () => { await locked.gate; return fauxAssistantMessage("Late answer"); }, () => fauxAssistantMessage("Late answer")]);
+const l1 = await pi.rpc("deliver", turn("L", "tenth"));
+const blocker = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(process.argv[1]).exec('BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => {}, 60000)", data + "/agents/" + agent + ".sqlite"], { stdio: ["ignore", "pipe", "inherit"] });
+await new Promise((resolve) => blocker.stdout.once("data", resolve));
+locked.release();
+await new Promise((resolve) => setTimeout(resolve, 50));
+out.failed = await pi.rpc("wait", { agent, submission: l1.submission });
+blocker.kill();
+await new Promise((resolve) => blocker.once("exit", resolve));
+await pi.rpc("open", { agent, tools });
+out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
+// Pi's settings as they are now, which the pi command changes.
+await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
+out.defaults = await pi.rpc("defaults", {});
+// One-off turns a stopped host left are listed with no place. Dropping them
+// continues nothing, not even a mention left beside them, which runs only
+// once it is waited for; and no later run continues them.
+const w = held(), leaving = held();
+let asked = 0;
+const leave = async (_context, options) => { if (++asked === 3) leaving.release(); await abortable(w.gate, options?.signal); return fauxAssistantMessage("Late"); };
+faux.setResponses([leave, leave, leave]);
+const m1 = await pi.rpc("deliver", turn("M", "twelfth"));
+const w1 = await pi.rpc("once", { ...turn("W1", "timer"), context: undefined });
+const w2 = await pi.rpc("once", { ...turn("W2", "watch"), context: undefined });
+await leaving.gate;
+await pi.stop();
+pi = start();
+await pi.rpc("open", { agent, tools });
+const order = [];
+faux.setResponses([() => { order.push("model"); return fauxAssistantMessage("Mention answer"); }]);
+const left = (await pi.rpc("unfinished", { agent })).submissions;
+await pi.rpc("drop", { agent, submissions: [w1, w2].map(({ submission, conversation }) => ({ submission, conversation })) });
+order.push("dropped");
+const calls = faux.state.callCount;
+out.timer = {
+  left: left.map((item) => [item.request, !!item.context]),
+  mention: await pi.rpc("wait", { agent, submission: m1.submission }),
+  dropped: await Promise.all([w1, w2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))),
+  calls: faux.state.callCount - calls,
+  order,
+};
+// A host whose storage another host took over stops running it, and leaves
+// its run there: changing the lock's time is what taking it over does.
+const k = held(), thinking = held();
+faux.setResponses([async (_context, options) => { thinking.release(); await abortable(k.gate, options?.signal); return fauxAssistantMessage("Ran beside the new owner"); }]);
+const k1 = await pi.rpc("deliver", turn("K", "eleventh"));
+await thinking.gate;
+const lock = data + "/agents/" + agent + ".sqlite.lock";
+const taken = new Date(Date.now() + 60_000);
+await utimes(lock, taken, taken);
+// The lock's own timer, which finds it taken, doesn't keep a process up.
+const up = setInterval(() => {}, 1_000);
+out.lost = await pi.rpc("wait", { agent, submission: k1.submission });
+clearInterval(up);
+out.lostDeliver = await pi.rpc("deliver", turn("K2", "twelfth")).catch((error) => error.message);
+await rm(lock, { recursive: true });
+await pi.rpc("open", { agent, tools });
+out.lostLeft = (await pi.rpc("unfinished", { agent })).submissions.map((item) => item.request);
+await pi.stop();
+// Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
+// another process refreshed first, keeps the sign-in.
+const auth = new AuthFile(data + "/auth.json");
+const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
+await auth.modify("p", async () => signIn);
+out.auth = { result: await auth.modify("p", async () => undefined), stored: await auth.read("p") };
+// A key \`pi\` gets by running a command, or from its environment, is not used here.
+await auth.modify("c", async () => ({ type: "api_key", key: "!echo secret" }));
+out.command = await auth.read("c").catch((error) => error.message);
+process.env.BUZZ_PI_TEST_KEY = "secret";
+await auth.modify("e", async () => ({ type: "api_key", key: "$BUZZ_PI_TEST_KEY" }));
+out.environment = await auth.read("e").catch((error) => error.message);
+// A read waits out a write \`pi\` makes in place under the same lock, rather
+// than seeing it half done; the pause gives a read that didn't wait its chance.
+const writing = await lockfile.lock(data + "/auth.json", { realpath: false });
+await writeFile(data + "/auth.json", '{"p":');
+const reading = auth.read("p").catch((error) => error.message);
+await new Promise((resolve) => setTimeout(resolve, 100));
+await writeFile(data + "/auth.json", JSON.stringify({ p: signIn }));
+await writing();
+out.whileWritten = await reading;
+console.log(JSON.stringify(out));
+`;
+
+describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
+  const folders: string[] = [];
+  afterAll(async () => {
+    await Promise.all(
+      folders.map((folder) => rm(folder, { recursive: true, force: true })),
+    );
+  });
+
+  it("runs, steers, ends and resumes turns", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "buzz-pi-live-"));
+    folders.push(folder);
+    await symlink(
+      join(DEPS ?? "", "node_modules"),
+      join(folder, "node_modules"),
+    );
+    await writeFile(join(folder, "host.mjs"), host);
+    await writeFile(join(folder, "driver.mjs"), DRIVER);
+    // Storage an earlier build left readable by others.
+    const agents = join(folder, "agents");
+    const database = join(agents, `${"b".repeat(64)}.sqlite`);
+    await mkdir(agents, { mode: 0o755 });
+    await chmod(agents, 0o755);
+    await writeFile(database, "", { mode: 0o644 });
+    await chmod(database, 0o644);
+    const { stdout } = await run(
+      process.execPath,
+      [
+        "--disable-warning=ExperimentalWarning",
+        join(folder, "driver.mjs"),
+        folder,
+      ],
+      { cwd: folder, timeout: 60_000 },
+    );
+    const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
+    if (process.platform !== "win32") {
+      const mode = async (path: string) => (await stat(path)).mode & 0o777;
+      expect(await mode(agents)).toBe(0o700);
+      expect(await mode(database)).toBe(0o600);
+    }
+    expect(out.unknown).toMatch(
+      /^Buzz can use only Pi's built-in providers, and databricks isn't one/,
+    );
+    expect(out.a).toMatchObject({ status: "done", calls: 1 });
+    expect(out.a.tools).toEqual([
+      {
+        agent: "b".repeat(64),
+        conversation: out.a.conversation,
+        context: { channel: "chan", root: "root" },
+        name: "send",
+        arguments: { text: "hi", final: true },
+      },
+    ]);
+    expect(out.recorded).toEqual(["faux/faux-1"]);
+    expect(out.places).toEqual([
+      { key: "chan/root", conversation: out.a.conversation, seen: 100 },
+    ]);
+    // Newest first; a system entry's tool schemas are left out, an answer's
+    // usage kept.
+    expect(out.entries).toEqual([
+      ["pi.assistant", "assistant+usage"],
+      ["pi.user", "user"],
+      ["pi.tool-result", "toolResult"],
+      ["pi.assistant", "assistant+usage"],
+      ["pi.system"],
+      ["pi.user", "user"],
+    ]);
+    expect(out.b).toMatchObject({
+      status: "done",
+      text: "Plain answer",
+      conversation: out.a.conversation,
+    });
+    const [first, second] = out.c.waits;
+    expect(first).toMatchObject({ status: "done", text: "Answer to both" });
+    expect(second).toEqual(first);
+    expect(out.c.saw.slice(-2)).toEqual(["third", "steer: fourth"]);
+    expect(out.c.placed.map(([request]: [string]) => request)).toEqual([
+      "A",
+      "B",
+      "C1",
+      "C2",
+    ]);
+    // Each placed at an entry before the run's answer, which the runtime
+    // compares to find the latest request a run took.
+    const [, c1] = out.c.placed[2];
+    const [, c2] = out.c.placed[3];
+    expect(c1).toBeLessThan(c2);
+    expect(c2).toBeLessThan(first.answer);
+    expect(out.c.steps).toContain("send");
+    // What a Buzz tool answered is what the model reads.
+    expect(out.c.results.at(-1)).toEqual([{ type: "text", text: "sent" }]);
+    expect(out.stopped).toEqual({ status: "closed" });
+    expect(out.unfinished).toEqual([
+      {
+        submission: expect.any(Number),
+        conversation: out.a.conversation,
+        request: "D",
+        context: { channel: "chan", root: "root" },
+      },
+    ]);
+    expect(out.resumed).toMatchObject({
+      status: "done",
+      text: "Resumed answer",
+    });
+    const [failed, withdrawn] = out.e;
+    expect(failed).toMatchObject({
+      status: "unanswered",
+      detail: expect.stringContaining("400 Bad model"),
+    });
+    expect(withdrawn).toEqual(failed);
+    expect(out.aborted).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
+    expect(out.interrupted).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
+    expect(out.toolStop.wait).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
+    expect(out.toolStop.last).toMatchObject({
+      kind: "pi.tool-result",
+      aborted: true,
+    });
+    // A new session is shown the whole conversation at its next turn.
+    expect(out.renewed).toEqual({
+      place: { seen: 0 },
+      kinds: ["pi.reset", "pi.compaction"],
+    });
+    expect(out.unplaced).toEqual({});
+    const [before, after] = out.search.offered;
+    expect(before).toEqual(
+      expect.arrayContaining(["buzz_send", "tool_search"]),
+    );
+    expect(before).not.toContain("buzz_watch_add");
+    expect(after).toContain("buzz_watch_add");
+    expect(out.search.called).toContain("watch_add");
+    expect(out.search.wait).toMatchObject({ status: "done", text: "Watching" });
+    expect(out.place).toEqual({ seen: 100 });
+    expect(out.unstarted).toMatch(/Pi has no model nope/);
+    expect(out.unstartedPlace).toEqual({ seen: 100 });
+    expect(out.failed).toEqual({ status: "reopen" });
+    expect(out.failedResumed).toMatchObject({
+      status: "done",
+      text: "Late answer",
+    });
+    expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
+    expect(out.timer).toEqual({
+      left: [
+        ["M", true],
+        ["W1", false],
+        ["W2", false],
+      ],
+      mention: expect.objectContaining({
+        status: "done",
+        text: "Mention answer",
+      }),
+      dropped: [
+        { status: "unanswered", reason: "aborted" },
+        { status: "unanswered", reason: "aborted" },
+      ],
+      // Only the mention's: the dropped runs asked the model nothing more.
+      calls: 1,
+      order: ["dropped", "model"],
+    });
+    expect(out.lost).toEqual({ status: "closed" });
+    expect(out.lostDeliver).toBe("The agent is not open");
+    expect(out.lostLeft).toEqual(["K"]);
+    const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
+    expect(out.auth).toEqual({ result: signIn, stored: signIn });
+    expect(out.command).toMatch(
+      /^Buzz doesn't use `!command` or `\$NAME` keys/,
+    );
+    expect(out.environment).toBe(out.command);
+    expect(out.whileWritten).toEqual(signIn);
+  }, 90_000);
+});

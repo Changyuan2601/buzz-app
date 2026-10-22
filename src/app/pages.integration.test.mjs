@@ -70,9 +70,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       );
       assert.equal(
         plugin.enabledByDefault,
-        !["buzz.bestie", "buzz.todos", "buzz.usage"].includes(
-          plugin.manifest.id,
-        ),
+        ![
+          "buzz.bestie",
+          "buzz.pi",
+          "buzz.todos",
+          "buzz.usage",
+          "buzz.relay-notes",
+        ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }
@@ -122,7 +126,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "block.builderlab",
         "block.hosted-communities",
-        "buzz.agents",
         "buzz.channels",
         "buzz.emoji",
         "buzz.mesh-compute",
@@ -196,7 +199,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "block.builderlab",
         "block.hosted-communities",
-        "buzz.agents",
         "buzz.channels",
         "buzz.emoji",
         "buzz.mesh-compute",

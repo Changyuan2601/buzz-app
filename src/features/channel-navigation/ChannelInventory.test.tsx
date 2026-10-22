@@ -1231,7 +1231,7 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
 });
 
 // The actual mounted caller owns the Solo/Team visibility boundary.
-it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one", async () => {
+it("keeps owned and unfiled shared Solo chats out of Team without removing access", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1243,7 +1243,10 @@ it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one
   await screen.findByRole("button", { name: "gamma" });
   expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
   h.publish("beta", { creator: "b".repeat(64) });
-  expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  expect(
+    h.session.channels.list().channels.find((channel) => channel.id === "beta"),
+  ).toMatchObject({ channelType: "solo", creator: "b".repeat(64) });
   expect(h.navigator.open).not.toHaveBeenCalled();
 });
 
@@ -1332,4 +1335,58 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
   } finally {
     preferences.dispose();
   }
+});
+
+it.each(["star", "section", "unfiled"])(
+  "lists a shared chat with the viewer's chats, never under Team (%s)",
+  async (placement) => {
+    const data = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: placement === "section" ? { beta: "work" } : {},
+      starred: placement === "star" ? ["beta"] : [],
+      muted: [],
+    };
+    const store = createSidebarPreferencesStore({
+      available: true,
+      read: async () => data,
+      write: async () => data,
+    });
+    await store.queries.ensure();
+    const h = fixture(store.queries, "ready", [
+      {
+        id: "beta",
+        name: "Shared work",
+        channelType: "solo",
+        private: true,
+        creator: "b".repeat(64),
+      },
+      { id: "alpha", name: "Team channel", channelType: "stream" },
+    ]);
+    render(h.view("alpha"));
+    await screen.findByRole("button", { name: "Team channel" });
+    // One row, in the Solo list (which the sidebar navigation contains).
+    const rows = screen.getAllByRole("button", { name: "Shared work" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
+  },
+);
+
+it("opening a shared chat lists it once, with the viewer's chats", async () => {
+  const h = fixture();
+  h.publish("beta", {
+    channelType: "solo",
+    private: true,
+    creator: "b".repeat(64),
+  });
+  const view = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  view.rerender(h.view("beta"));
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const rows = await screen.findAllByRole("button", { name: "beta" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
 });

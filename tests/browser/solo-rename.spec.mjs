@@ -313,7 +313,11 @@ test("live conversion removes the old editor and permits renaming another Solo c
 }) => {
   await page.goto(app.origin);
   await newChat(page);
+  // Leaving the draft retires its "New chat" row; let the list settle first.
+  await row(page, alpha).click();
+  await expect(composer(page)).toBeVisible();
   await row(page, alpha).dblclick();
+  await expect(input(page)).toHaveValue("Alpha");
   await expect(input(page)).toHaveAttribute("aria-disabled", "false");
   await expect.poll(() => app.relay.hasRoute("primary", alpha)).toBe(true);
   app.relay.publish(

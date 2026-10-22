@@ -35,8 +35,6 @@ export type Stats = Readonly<{
   cacheHit?: Total;
   /** Sessions active in the period, whether or not they recorded usage. */
   sessions: number;
-  /** Of them, those whose latest read missed something. */
-  incomplete: number;
   days: readonly Day[];
   /** Agents with sessions in the period, costliest first. */
   agents: readonly Readonly<{
@@ -55,8 +53,6 @@ export type Stats = Readonly<{
     cost: Total;
     tokens: number;
   }>[];
-  /** Models used in the period with no recorded cost or known rates. */
-  unpriced: readonly string[];
 }>;
 
 const COSTLIEST = 5;
@@ -172,10 +168,8 @@ export function stats(
   const output = new Sum();
   const read = new Sum();
   const prompt = new Sum();
-  const unpriced = new Set<string>();
   const agents: Stats["agents"][number][] = [];
   const sessions: Stats["costliest"][number][] = [];
-  let incomplete = 0;
   for (const { agent, harness, sessions: list } of usage) {
     const models = new Map<string, number>();
     const agentCost = new Sum();
@@ -193,8 +187,7 @@ export function stats(
           continue;
         }
         sessionCost.add(spent?.usd, spent?.partial);
-        if (!spent) unpriced.add(observation.model);
-        else if (spent.usd !== undefined)
+        if (spent?.usd !== undefined)
           models.set(
             observation.model,
             (models.get(observation.model) ?? 0) + spent.usd,
@@ -227,7 +220,6 @@ export function stats(
         previousCost.partial = true;
       if (!active) continue;
       if (gap) {
-        incomplete += 1;
         // What the read missed may be in the period.
         for (const sum of [sessionCost, tokens, output, read])
           sum.partial = true;
@@ -276,7 +268,6 @@ export function stats(
         ? { cacheHit: { partial: true } }
         : {}),
     sessions: sessions.length,
-    incomplete,
     days: dayStarts.map((day, index) => ({
       start: day,
       costs: new Map(
@@ -292,7 +283,6 @@ export function stats(
     costliest: sessions
       .sort((a, b) => known(b.cost) - known(a.cost) || b.tokens - a.tokens)
       .slice(0, COSTLIEST),
-    unpriced: [...unpriced].sort(),
   };
 }
 

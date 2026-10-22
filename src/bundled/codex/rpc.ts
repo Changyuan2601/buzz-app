@@ -31,6 +31,9 @@ export type ToolReply = {
   )[];
 };
 
+/** Codex's answer refusing a request, which it therefore did not carry out. */
+export class Refused extends Error {}
+
 /** One request owner for the JSONL app-server connection. No Node sidecar. */
 export class AppServer {
   private next = 0;
@@ -118,7 +121,7 @@ export class AppServer {
         if (waiter) {
           this.pending.delete(message.id as number);
           clearTimeout(waiter.timer);
-          if (message.error) waiter.reject(new Error(message.error.message));
+          if (message.error) waiter.reject(new Refused(message.error.message));
           else waiter.resolve(message.result);
         } else if (message.id != null && message.method) {
           if (message.method === "item/tool/call" && this.toolCall) {

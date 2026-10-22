@@ -102,6 +102,11 @@
 .navigationPane {
   container-type: inline-size;
 }
+.navigationPane[data-plugin-catalog] {
+  height: calc(100% + 2 * var(--dialog-padding));
+  min-height: 0;
+  margin: calc(-1 * var(--dialog-padding));
+}
 .navigationPane .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -110,11 +115,16 @@
 .navigationPane .layout[data-plugin-detail] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-rows: minmax(0, 1fr);
 }
-/* The modal body scrolls; integrated details keep their natural height. */
+/* Plugin lists keep one scrollport whether or not the inspector is open. */
 .detail[data-integrated] {
   padding: 0;
   overflow: visible;
+}
+.navigationPane[data-plugin-catalog] .detail[data-integrated] {
+  overflow-y: auto;
+  padding: var(--dialog-padding);
 }
 
 .pluginHeading > [class~="buzz-content-header"] {
@@ -169,6 +179,8 @@
 
 .pluginRowAction {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
   position: relative;
   z-index: 1;
@@ -210,7 +222,7 @@
   padding: var(--space-3) var(--settings-group-inset);
   padding-right: calc(
     var(--space-16) +
-    var(--space-8) +
+    var(--space-16) +
     var(--settings-group-inset)
   );
   border: 0;
@@ -223,7 +235,6 @@
   user-select: none;
 }
 
-.pluginRow[data-updatable],
 .pluginRow[data-access-state] {
   padding-right: calc(
     var(--space-16) +
@@ -392,7 +403,6 @@
 
 @container (max-width: 32rem) {
   .pluginRow,
-  .pluginRow[data-updatable],
   .pluginRow[data-access-state] {
     align-items: stretch;
     flex-direction: column;
@@ -432,10 +442,14 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
-  border-left: 1px solid var(--border-standard);
+  border: 1px solid var(--border-standard);
   background: var(--surface-panel);
   animation: plugin-side-in var(--duration-fast, 160ms)
     var(--ease-out, ease-out);
+}
+
+.navigationPane .pluginAside {
+  background: var(--surface-popover);
 }
 
 @keyframes plugin-side-in {
@@ -537,9 +551,27 @@
   @apply text-caption;
 }
 
+.pluginPrimaryActions {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.pluginPrimaryAction {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.pluginPrimaryAction > button {
+  flex: 1;
+  min-width: 0;
+}
+
 .pluginStatus {
   display: grid;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: var(--space-3);
 }
 
@@ -609,7 +641,6 @@
     z-index: 1;
     inset: 0;
     width: auto;
-    border-left: 0;
   }
 }
 
@@ -691,4 +722,23 @@
   padding: var(--space-2) var(--settings-group-inset) var(--space-3);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
+}
+
+.pluginExtraActions {
+  display: contents;
+}
+
+.pluginBadges > span:empty {
+  display: none;
+}
+
+.pluginRowDescription {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pluginRow [class~="buzz-choice-row-content"] {
+  grid-template-columns: minmax(0, 1fr);
 }

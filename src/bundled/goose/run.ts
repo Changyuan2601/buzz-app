@@ -11,7 +11,12 @@ export const gooseRun = (
   runtime: GooseRuntime,
 ): Pick<
   AgentType<Config>,
-  "sessionControls" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  | "sessionControls"
+  | "run"
+  | "runOnce"
+  | "timeoutMs"
+  | "syncedSettings"
+  | "resumes"
 > => ({
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
@@ -26,4 +31,7 @@ export const gooseRun = (
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,
   },
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in a new session shown what it already did in the conversation.
+  resumes: true,
 });

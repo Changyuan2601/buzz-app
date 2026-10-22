@@ -82,6 +82,8 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
+    modelAppearance?: "subtle";
+    config?: Config;
   }> = {},
 ) {
   const saved = new Map<string, Set<string>>([
@@ -106,7 +108,9 @@ function created(
   if (!CreateModel) throw new Error("no model field");
   const changes: Config[] = [];
   function Harness() {
-    const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+    const [config, setConfig] = useState<Config>(
+      options.config ?? DEFAULT_CONFIG,
+    );
     const onChange = (next: Config) => {
       changes.push(next);
       setConfig(next);
@@ -114,7 +118,14 @@ function created(
     return (
       <>
         <Create config={config} disabled={false} onChange={onChange} />
-        <CreateModel config={config} disabled={false} onChange={onChange} />
+        <CreateModel
+          config={config}
+          disabled={false}
+          onChange={onChange}
+          {...(options.modelAppearance && {
+            modelAppearance: options.modelAppearance,
+          })}
+        />
       </>
     );
   }
@@ -223,6 +234,40 @@ it("keeps provider fields visible while saving its key and selecting a model", a
     await screen.findByRole("menuitem", { name: "Use Goose default" }),
   );
   expect(changes.at(-1)).toMatchObject({ model: "", effort: "" });
+});
+
+it("keeps a card's model chip to the model, while its menu shows the level", async () => {
+  created({
+    modelAppearance: "subtle",
+    config: {
+      ...DEFAULT_CONFIG,
+      provider: "anthropic",
+      model: "claude-opus-5-5",
+      effort: "high",
+    },
+  });
+  const user = userEvent.setup();
+  await waitFor(() => expect(modelButton()).toBeEnabled());
+  expect(modelButton()).toHaveTextContent(/^claude-opus-5-5$/);
+  // The Goose mark, the model's family mark and the caret.
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(3);
+  await user.click(modelButton());
+  (await screen.findByRole("menuitem", { name: "Claude" })).focus();
+  await user.keyboard("{ArrowRight}");
+  (
+    await screen.findByRole("menuitemradio", { name: "claude-opus-5-5" })
+  ).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "High" }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
+  created({ modelAppearance: "subtle" });
+  await waitFor(() => expect(modelButton()).toBeEnabled());
+  expect(modelButton()).toHaveTextContent(/^claude$/);
+  expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");
 });
 
 it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", async () => {

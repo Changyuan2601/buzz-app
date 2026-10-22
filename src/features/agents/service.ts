@@ -81,6 +81,7 @@ import {
   type ClassifierNative,
   type ClassifierOutcome,
 } from "./classifier";
+import type { Decisions } from "../decisions/service";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -328,6 +329,16 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** Takes notes for this conversation, oldest first. A thread session passes
+   * its root; a channel session omits it and takes all notes in the channel. */
+  notes?(channelId: string, root?: string): readonly string[];
+  /** Puts back notes taken for a turn that never began, ahead of any left
+   * since, targeting the same conversation that took them. */
+  restoreNotes?(
+    channelId: string,
+    notes: readonly string[],
+    root?: string,
+  ): void;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -364,6 +375,19 @@ export type Trigger =
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
+  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
+   * event, and not the owner's words. It runs like a mention, in the
+   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
+  | Readonly<{
+      type: "plugin";
+      plugin: string;
+      channel: string;
+      /** The thread, absent for a channel-level conversation (a Solo chat). */
+      root?: string;
+      text: string;
+      id: string;
+      at: number;
+    }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -613,7 +637,7 @@ export type AgentType<Config = unknown> = {
   /** Its turns run in this page, so closing or reloading the app stops them.
    * With this, a mention turn still working then is kept, and given to `run`
    * again marked `resumed` if the owner chooses to resume it, to carry on in
-   * the conversation's saved session. */
+   * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
@@ -766,6 +790,15 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Wakes an agent this copy of the app runs in one of its conversations,
+   * as a mention there would, but with no message: the agent is told `text`
+   * comes from this plugin, not its owner, and is data. `root` is the
+   * thread's root event id; leave it out for a Solo chat. Throws when this copy does not run the agent or its queue is full;
+   * like a mention, a queued wake is dropped if the agent stops running here. */
+  wake(
+    pubkey: string,
+    wake: Readonly<{ channel: string; root?: string; text: string }>,
+  ): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
@@ -855,6 +888,14 @@ export type Agents = {
     pubkey: string,
     place: Readonly<{ channelId: string; threadRootId: string }>,
   ): Promise<boolean>;
+  /** Leaves private context for the agent's next turn in a conversation: text at
+   * the end of that turn's prompt that nobody else sees, such as what the
+   * owner did since its last turn. False unless this copy runs the agent,
+   * so the plugin can say it another way. Notes are not saved: one left
+   * when the app quits is gone. Pass a thread root for a thread conversation;
+   * omit it for a channel conversation, including Solo chats. Thread sessions
+   * never take notes addressed only to their channel. */
+  note(pubkey: string, channelId: string, text: string, root?: string): boolean;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -1070,9 +1111,9 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
-  /** Settles once the saved key's status is known; until then a classified
-   * event waits rather than pass unchecked. */
-  private jevStatus: Promise<void> | undefined;
+  /** Settles once the saved TypeSafe key's status is known; until then an
+   * event classified on that backend waits rather than pass unchecked. */
+  private keyStatus: Promise<void> | undefined;
   /** Goes up when a save or remove of the key starts and when it ends, so
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
@@ -1157,6 +1198,8 @@ export class AgentsService extends Service implements Agents {
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
     private readonly jev: ClassifierNative | undefined = nativeClassifier(),
+    /** Runs watch classifiers on this device's decision backend. */
+    private readonly decisions: Decisions | undefined = undefined,
     /** Which artifact types an agent has synced, from its config channel
      * binding. Unset, every agent starts `local`. */
     private readonly configBinding?: (agent: Agent) => ConfigBinding,
@@ -1175,7 +1218,7 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
-      classifier: "unavailable",
+      classifier: this.availability("checking"),
       classifierKey: "checking",
       agents: [],
       running: [],
@@ -1299,8 +1342,8 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session);
       },
       classifier: () => this.classifier(),
-      jev: () => this.jev,
-      jevStatus: () => this.jevStatus,
+      decisions: () => this.decisions,
+      keyStatus: () => this.keyStatus,
       classifierKey: () => this.state.classifierKey,
       classifierKeyGeneration: () => this.keyGeneration,
       setClassifierKey: (key, generation) => {
@@ -1334,6 +1377,10 @@ export class AgentsService extends Service implements Agents {
           this.watch();
           this.update();
         }),
+        // Another backend can make classifiers available or not.
+        this.decisions?.subscribe(() =>
+          this.setKey(this.state.classifierKey),
+        ) ?? (() => {}),
       ];
       this.watch();
       void this.refresh();
@@ -1341,7 +1388,7 @@ export class AgentsService extends Service implements Agents {
       const found = (key: ClassifierKey) => {
         if (generation === this.keyGeneration) this.setKey(key);
       };
-      this.jevStatus = this.jev
+      this.keyStatus = this.jev
         ?.status()
         .then((configured) => found(configured ? "saved" : "missing"))
         .catch((error) => {
@@ -1432,6 +1479,32 @@ export class AgentsService extends Service implements Agents {
     });
   }
   tools = () => this.addedTools.snapshot();
+  wake(
+    pubkey: string,
+    {
+      channel,
+      root,
+      text,
+    }: Readonly<{ channel: string; root?: string; text: string }>,
+  ) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin) throw new Error("Only a plugin wakes an agent");
+    if (!channel || !text.trim())
+      throw new Error("A wake needs a channel and text");
+    // Harnesses find the thread from a well-formed id; any other would leave
+    // them answering at the wake's own id.
+    if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
+      throw new Error("A wake's root must be the thread's 64-hex event id");
+    this.runners.wakeIn(pubkey, {
+      type: "plugin",
+      plugin,
+      channel,
+      ...(root ? { root: root.toLowerCase() } : {}),
+      text,
+      id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+      at: Date.now(),
+    });
+  }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -1456,6 +1529,9 @@ export class AgentsService extends Service implements Agents {
   handle(pubkey: string) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(pubkey, owner.id);
+  }
+  note(pubkey: string, channelId: string, text: string, root?: string) {
+    return this.runners.note(pubkey, channelId, text, root);
   }
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
@@ -1519,7 +1595,8 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device: a key is saved. */
+  /** Whether watch classifiers can run on this device: there is a decision
+   * backend, and on the `typesafe` backend a key is saved. */
   classifier(): ClassifierAvailability {
     return this.state.classifier;
   }
@@ -1545,15 +1622,24 @@ export class AgentsService extends Service implements Agents {
       this.keyGeneration++;
     }
   }
-  /** Agents are told a classifier can run only while a key is known to be
-   * saved. A key the service refused still runs, and each event reports why
-   * it passed unchecked. */
+  /** On the `typesafe` backend, agents are told a classifier can run only
+   * while a key is known to be saved. A key the service refused still runs,
+   * and each event reports why it passed unchecked. */
+  private availability(classifierKey: ClassifierKey): ClassifierAvailability {
+    const decisions = this.decisions;
+    if (!decisions) return "unavailable";
+    if (decisions.backend() !== "typesafe") return "available";
+    return classifierKey === "saved" || classifierKey === "refused"
+      ? "available"
+      : "unavailable";
+  }
   private setKey(classifierKey: ClassifierKey) {
-    const classifier =
-      classifierKey === "saved" || classifierKey === "refused"
-        ? "available"
-        : "unavailable";
-    if (this.state.classifierKey === classifierKey) return;
+    const classifier = this.availability(classifierKey);
+    if (
+      this.state.classifierKey === classifierKey &&
+      this.state.classifier === classifier
+    )
+      return;
     this.state = Object.freeze({ ...this.state, classifier, classifierKey });
     this.notify();
   }

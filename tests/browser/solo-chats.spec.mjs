@@ -583,9 +583,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   expect(links).toHaveLength(1);
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
-  expect(links[0].event.content).toBe(
-    `[Session: 33333333](buzz://channel/${id})`,
-  );
+  expect(links[0].event.content).toBe(`[Chat: Alpha](buzz://channel/${id})`);
 });
 
 // App composition boundary: signed metadata switches Messages discoverability

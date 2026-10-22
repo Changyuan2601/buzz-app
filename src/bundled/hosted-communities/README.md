@@ -6,4 +6,4 @@ Create and manage your own communities, hosted by Builderlab.
 
 1. Go to **Settings → Communities → Hosted communities** and choose **Sign in with Builderlab**.
 2. Choose **Create community**, then **Copy address**.
-3. Join it with **Add a community** (+) in the community rail.
+3. Open the community picker and choose **Join a community**.

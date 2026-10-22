@@ -656,7 +656,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   // a lost setSent -> select handoff when New message resolves the selected DM.
   const dmInput = page.getByRole("textbox", { name: "Message #Avery Chen" });
   await dmInput.fill(
-    Array.from({ length: 60 }, (_, i) => `Reading paragraph ${i + 1}`).join(
+    Array.from({ length: 40 }, (_, i) => `Reading paragraph ${i + 1}`).join(
       "\n\n",
     ),
   );

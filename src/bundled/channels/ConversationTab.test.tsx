@@ -319,6 +319,49 @@ it.each([false, true])(
   },
 );
 
+it("a tab mounted later in its visit treats the visit's requests as restored", () => {
+  const channel = { id: "beta", name: "Beta" };
+  const snapshot = { status: "ready", channels: [channel] };
+  const session = {
+    channels: { list: () => snapshot, subscribeList: () => () => {} },
+  } as unknown as RelaySession;
+  const tab: Tab = {
+    id: "thread",
+    kind: "thread",
+    channelId: "beta",
+    messageId: "a".repeat(64),
+    replyRequest: 1,
+    revealRequest: 1,
+    focusRequest: 1,
+  };
+  const props = {
+    channel,
+    session,
+    scope: "deferred-test",
+    active: true,
+    focusOnMount: true,
+    restored: tab,
+    openLink: () => false,
+    canOpenLink: () => false,
+    openThread: () => {},
+    close: () => {},
+  };
+  const mounted = render(<ConversationTab {...props} tab={tab} />);
+  const thread = screen.getByText("Thread content");
+  expect(thread).not.toHaveAttribute("data-reply-request");
+  expect(thread).not.toHaveAttribute("data-focus-request");
+  expect(thread).toHaveAttribute("data-reveal-selected", "false");
+  mounted.rerender(
+    <ConversationTab
+      {...props}
+      tab={{ ...tab, replyRequest: 2, revealRequest: 2, focusRequest: 2 }}
+    />,
+  );
+  expect(thread).toHaveAttribute("data-reply-request", "2");
+  expect(thread).toHaveAttribute("data-focus-request", "2");
+  expect(thread).toHaveAttribute("data-reveal-request", "2");
+});
+
 it.each([
   ["conversation", false],
   ["conversation", true],
@@ -580,4 +623,42 @@ it("markRead false reaches the reader, and a restored tab does not reveal again"
     />,
   );
   expect(body).toHaveAttribute("data-target", "post");
+});
+
+it("lets the tab supply Solo chat identity without repeating a visible heading", () => {
+  const channel = {
+    id: "beta",
+    name: "Poem explanation",
+    channelType: "solo" as const,
+  };
+  const snapshot = { status: "ready", channels: [channel] };
+  const idle = () => () => {};
+  const profiles = new Map();
+  const session = {
+    channels: { list: () => snapshot, subscribeList: idle },
+    profiles: { snapshot: () => profiles, subscribe: idle },
+    agentChoices: { snapshot: () => undefined, subscribe: idle },
+  } as unknown as RelaySession;
+  render(
+    <ConversationTab
+      tab={{ id: "chat", kind: "conversation", channelId: "beta" }}
+      channel={channel}
+      session={session}
+      scope="tab-title-test"
+      openLink={() => false}
+      canOpenLink={() => false}
+      openThread={() => {}}
+      close={() => {}}
+      active
+      visit={false}
+    />,
+  );
+  const conversation = screen.getByRole("region", {
+    name: "Conversation in Poem explanation",
+  });
+  expect(
+    within(conversation).queryByRole("heading", { name: "Poem explanation" }),
+  ).toBeNull();
+  expect(within(conversation).getByText("Conversation content")).toBeVisible();
+  expect(within(conversation).getByText("Composer content")).toBeVisible();
 });

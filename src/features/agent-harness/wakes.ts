@@ -11,7 +11,7 @@ import {
 } from "./attention-prompt";
 import type { AgentHandle, Trigger, TurnResult } from "../agents/service";
 
-export type WakeTrigger = Exclude<Trigger, { type: "mention" }>;
+export type WakeTrigger = Exclude<Trigger, { type: "mention" | "plugin" }>;
 /** Runs one standalone turn, `key` naming it (`watch/ID`, `catch-up/ID` or
  * `timer/ID`). It calls `prompt` once it is ready to start the turn, and
  * starts none when it gives undefined: the wake is no longer wanted. */

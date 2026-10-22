@@ -72,6 +72,8 @@ export type Settled = Readonly<{
   ok: boolean;
   /** Why it failed, for the person waiting. */
   error?: string;
+  /** The message failed before any turn took it in. */
+  undelivered?: true;
 }>;
 
 const STDERR_LIMIT = 4_000;

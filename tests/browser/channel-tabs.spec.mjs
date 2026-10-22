@@ -1,3 +1,4 @@
+import { getPublicKey } from "nostr-tools";
 import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -9,12 +10,22 @@ import {
   settlePanelMotion,
 } from "./navigation.mjs";
 
+// Another person in shared Beta, so it is a conversation, not a chat with agents.
+// A fixed key keeps the roster static; its profile confirms it is a person.
+const teammateKey = new Uint8Array(32);
+teammateKey[31] = 1;
+const teammate = getPublicKey(teammateKey);
+
 test.use({
   productionBroker: true,
   companionFixture: true,
   readState: true,
   soloChannels: ["beta"],
+  sessionMembers: { beta: [teammate] },
   historyCounts: { alpha: 2, beta: 1 },
+});
+test.beforeEach(({ app }) => {
+  app.serveProfile(teammateKey, { name: "Teammate" });
 });
 
 // Real content links, two independent editors, browser focus and signed routing
@@ -32,7 +43,7 @@ test("middle-click closes a content tab without selecting it", async ({
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" })
+    .getByRole("link", { name: "Open Chat: Beta" })
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const beta = workspace.getByRole("tab", { name: "Beta", exact: true });
@@ -82,7 +93,7 @@ test("Open in channel takes a content tab to its conversation with its composer 
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" })
+    .getByRole("link", { name: "Open Chat: Beta" })
     .click();
   await page
     .locator("[data-panel-workspace]")
@@ -97,7 +108,10 @@ test("Open in channel takes a content tab to its conversation with its composer 
   ).resolves.toMatchObject({ kind: "conversation", channelId: "beta" });
   // The menu hands focus back before navigating, so the destination takes it.
   await expect(
-    main.getByRole("textbox", { name: "Message your agents", exact: true }),
+    main.getByRole("textbox", {
+      name: "Message this conversation",
+      exact: true,
+    }),
   ).toBeFocused();
 });
 
@@ -122,7 +136,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   );
   const chip = main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" });
+    .getByRole("link", { name: "Open Chat: Beta" });
   await expect(chip).toBeVisible();
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -134,7 +148,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   const composer = beta.getByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
     exact: true,
   });
   await expect(composer).toBeVisible();
@@ -234,7 +248,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   });
   await expect(reply).toBeFocused();
   await reply.fill("Alpha reply draft");
-  await page.locator('button[data-channel-id="beta"]').click();
+  // Shared Beta lists with the viewer's chats.
+  await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
@@ -337,7 +352,7 @@ test.describe("crowded content tabs", () => {
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
     await row
-      .getByRole("link", { name: "Open Session: beta", exact: true })
+      .getByRole("link", { name: "Open Chat: Beta", exact: true })
       .click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
@@ -365,7 +380,7 @@ test.describe("crowded content tabs", () => {
     };
     for (const id of ids.slice(2))
       await row
-        .getByRole("link", { name: `Open Session: ${id}`, exact: true })
+        .getByRole("link", { name: `Open Chat: ${id}`, exact: true })
         .click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);

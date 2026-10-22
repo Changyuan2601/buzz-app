@@ -1,5 +1,10 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  type PluginTrigger,
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -52,6 +57,7 @@ import {
 import {
   AppServer,
   listModels,
+  Refused,
   type Spawn,
   type ToolCall,
   type ToolReply,
@@ -65,6 +71,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** A plugin's wake, for which `event` is its local anchor. */
+  wake?: PluginTrigger;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
@@ -85,6 +93,9 @@ type Request = {
   failActivity(reason: string): void;
   /** Given again after a reload stopped its turn partway. */
   resumed?: true;
+  /** Notes plugins left for this turn, taken when its input is first built:
+   * one that fails or is cancelled before then leaves them for the next. */
+  notes?: readonly string[];
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
  * saved before it existed have none. `tools` is the `addedKey` of the
@@ -183,10 +194,25 @@ const titlePrompt = (text: string) =>
   `Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.\n\nUser prompt:\n${[...text].slice(0, 800).join("")}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** Puts back the notes a request took, for a turn that never took it in. */
+function restoreNotes(request: Request) {
+  if (request.notes)
+    request.agent.restoreNotes?.(
+      request.conversation.channelId,
+      request.notes,
+      request.conversation.root,
+    );
+}
 /** The note at the end of a request's turn input, if any. */
 function noteOf(request: Request) {
+  request.notes ??=
+    request.agent.notes?.(
+      request.conversation.channelId,
+      request.conversation.root,
+    ) ?? [];
   const notes = [
     request.resumed ? RESUMED_PROMPT : undefined,
+    ...request.notes,
     turnNote(request.agent),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
@@ -618,9 +644,15 @@ export class CodexRuntime {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return delivery.ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return delivery.ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.pubkey);
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -641,6 +673,7 @@ export class CodexRuntime {
       channelId,
       delivery.signal,
     );
+    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const project = topLevel
@@ -650,8 +683,7 @@ export class CodexRuntime {
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();
-    const toolRoot =
-      channel?.dm || topLevel ? undefined : rootOf(trigger.event);
+    const toolRoot = channel?.dm || topLevel ? undefined : rootOf(event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     delivery.signal.throwIfAborted();
     let finishActivity!: (result: WorkOutcome) => void;
@@ -666,7 +698,8 @@ export class CodexRuntime {
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
       scope: reads.scope,
-      event: trigger.event,
+      event,
+      ...(wake ? { wake } : {}),
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
@@ -685,7 +718,9 @@ export class CodexRuntime {
       ...(delivery.step ? { step: delivery.step } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
-      ...(trigger.resumed ? { resumed: true } : {}),
+      ...(trigger.type === "mention" && trigger.resumed
+        ? { resumed: true }
+        : {}),
       ...(topLevel && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
@@ -759,7 +794,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request))}`,
+                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), request.wake)}`,
                 ),
               });
               active.reply = request;
@@ -777,6 +812,8 @@ export class CodexRuntime {
                 queue();
                 return;
               }
+              // A refused steer took nothing in, so its notes are the next turn's.
+              if (error instanceof Refused) restoreNotes(request);
               request.failActivity(
                 `Steering was not accepted: ${message(error)}`,
               );
@@ -1075,6 +1112,8 @@ export class CodexRuntime {
       request.conversation,
       (filters) =>
         starting ? Promise.resolve([]) : reads.read(filters, signal),
+      reads,
+      reads.workflowAuthority(),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -1496,7 +1535,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request))}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request), request.wake)}`,
         ),
         model,
         effort,
@@ -1555,6 +1594,8 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      // Refused before any turn began, it took nothing in.
+      if (error instanceof Refused && !active.turnId) restoreNotes(request);
       for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
       active.finished = true;

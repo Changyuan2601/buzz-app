@@ -53,8 +53,11 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
         plugins: structuredClone(plugins),
       },
     });
+    let importSource = null;
+    let pendingPreview = null;
+    let importLocked = false;
+    let previewSequence = 0;
     const preview = {
-      token: "preview-one",
       source: "https://github.com/example/plugins",
       commit: "a".repeat(40),
       warnings: ["broken: Missing file: broken/plugin.js"],
@@ -100,54 +103,124 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           return;
         }
         if (command === "plugin_catalog") return ready();
+        if (command === "plugin_update_check") {
+          const plugin = plugins.find(
+            (plugin) => plugin.manifest.id === args.id,
+          );
+          const candidate = preview.candidates.find(
+            (candidate) =>
+              candidate.manifest.id === args.id &&
+              candidate.path === plugin?.updateSource?.path,
+          );
+          if (!candidate)
+            throw new Error("Saved source no longer contains this plugin");
+          return window.importCategory
+            ? `${candidate.path}-${window.importCategory}`
+            : candidate.revision;
+        }
+        if (command === "plugin_import_git" && args?.checkOnly) {
+          const result = structuredClone(preview);
+          if (window.importCategory)
+            for (const candidate of result.candidates)
+              candidate.revision = `${candidate.path}-${window.importCategory}`;
+          return result;
+        }
         if (
+          command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
           command === "plugin_import_git"
         ) {
-          if (window.importDelay)
-            await new Promise((resolve) => {
-              window.resolveImport = resolve;
-            });
-          if (args?.repository === "bad")
-            throw new Error("Repository unavailable");
-          if (window.importCategory)
-            for (const candidate of preview.candidates)
-              candidate.manifest.discovery = {
-                category: window.importCategory,
-              };
-          return preview;
+          if (importLocked) throw new Error("Another import is in progress");
+          importLocked = true;
+          pendingPreview = null;
+          try {
+            if (window.importDelay)
+              await new Promise((resolve) => {
+                window.resolveImport = resolve;
+              });
+            if (window.importAcquisitionError)
+              throw new Error(window.importAcquisitionError);
+            if (args?.repository === "bad")
+              throw new Error("Repository unavailable");
+            importSource =
+              command === "plugin_import_git"
+                ? { repository: args.repository, reference: args.reference }
+                : args?.upload
+                  ? null
+                  : {
+                      root:
+                        command === "plugin_update_preview"
+                          ? plugins.find(
+                              (plugin) => plugin.manifest.id === args.id,
+                            )?.updateSource?.root
+                          : "/fixture/plugins",
+                    };
+            if (window.importCategory)
+              for (const candidate of preview.candidates) {
+                candidate.revision = `${candidate.path}-${window.importCategory}`;
+                candidate.manifest.discovery = {
+                  category: window.importCategory,
+                };
+              }
+
+            pendingPreview = {
+              ...structuredClone(preview),
+              token: `preview-${++previewSequence}`,
+            };
+            return structuredClone(pendingPreview);
+          } finally {
+            importLocked = false;
+          }
         }
-        if (command === "plugin_import_discard") return;
+        if (command === "plugin_import_discard") {
+          if (importLocked) throw new Error("Another import is in progress");
+          if (pendingPreview?.token === args.token) pendingPreview = null;
+          return;
+        }
         // Agent storage starts empty; the app saves agent state there.
         if (command === "app_agent_state_load") return {};
         if (command === "app_agent_state_set") return;
         if (command === "plugin_import_install") {
-          if (window.importInstallError) {
-            await new Promise((resolve) => {
-              window.rejectInstall = resolve;
-            });
-            throw new Error(window.importInstallError);
+          if (importLocked) throw new Error("Another import is in progress");
+          if (!pendingPreview || pendingPreview.token !== args.token)
+            throw new Error("This import preview expired");
+          importLocked = true;
+          try {
+            if (window.importInstallError) {
+              await new Promise((resolve) => {
+                window.rejectInstall = resolve;
+              });
+              throw new Error(window.importInstallError);
+            }
+            const candidate = pendingPreview.candidates.find(
+              (p) => p.path === args.path,
+            );
+            const existing = plugins.find(
+              (p) => p.manifest.id === candidate.manifest.id,
+            );
+            if (existing) {
+              existing.manifest = structuredClone(candidate.manifest);
+              existing.previous = existing.revision;
+              existing.revision = candidate.revision;
+              existing.updateSource = importSource
+                ? { ...importSource, path: candidate.path }
+                : null;
+            } else
+              plugins.push({
+                ...candidate,
+                source: "external",
+                enabled: false,
+                previous: null,
+                reloadable: true,
+                updateSource: importSource
+                  ? { ...importSource, path: candidate.path }
+                  : null,
+                error: null,
+              });
+            return ready();
+          } finally {
+            importLocked = false;
           }
-          const candidate = preview.candidates.find(
-            (p) => p.path === args.path,
-          );
-          const existing = plugins.find(
-            (p) => p.manifest.id === candidate.manifest.id,
-          );
-          if (existing) {
-            existing.manifest = structuredClone(candidate.manifest);
-            existing.previous = existing.revision;
-            existing.revision = candidate.revision;
-          } else
-            plugins.push({
-              ...candidate,
-              source: "external",
-              enabled: false,
-              previous: null,
-              reloadable: true,
-              error: null,
-            });
-          return ready();
         }
         if (command === "plugin_reload") {
           const plugin = plugins.find((p) => p.manifest.id === args.id);
@@ -457,10 +530,11 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
   }
 });
 
-test("folder/Git preview selects the exact subfolder, installs disabled and warns on enabled updates", async ({
+test("folder/Git preview selects the exact subfolder and preserves enabled state through updates", async ({
   page,
   app,
 }, info) => {
+  await page.clock.install();
   await nativeImports(
     page,
     ["one", "two"].map((name, index) => ({
@@ -471,6 +545,9 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
         description:
           "Review repository activity and share detailed project updates with your community and collaborators.",
         apiVersion: 1,
+        host: {
+          commands: [{ id: "check", program: "example-cli", args: ["status"] }],
+        },
       },
       revision: name,
     })),
@@ -581,11 +658,11 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
         window.importCalls.find((c) => c.command === "plugin_import_install")
           .args,
     ),
-  ).toEqual({ token: "preview-one", path: "dist" });
+  ).toEqual({ token: expect.stringMatching(/^preview-\d+$/), path: "dist" });
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   const row = button(page, "View Example two details");
-  await expect(row).toHaveAttribute("data-updatable", "true");
+  await expect(button(page, "Update Example two")).toHaveCount(0);
   for (const width of [1100, 768]) {
     await page.setViewportSize({ width, height: 950 });
     await row.scrollIntoViewIfNeeded();
@@ -596,16 +673,19 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           const actions = [...node.parentElement.querySelectorAll("button")]
             .filter((button) => button !== node)
             .map((button) => button.getBoundingClientRect());
-          const range = document.createRange();
-          range.selectNodeContents(description);
-          return [...range.getClientRects()].every((rect) =>
+          // Ellipsis clips glyphs outside this box; Range rects include those hidden glyphs.
+          const rect = description.getBoundingClientRect();
+          const style = getComputedStyle(description);
+          return (
+            style.textOverflow === "ellipsis" &&
+            style.overflow === "hidden" &&
             actions.every(
               (action) =>
                 rect.right <= action.left ||
                 rect.left >= action.right ||
                 rect.bottom <= action.top ||
                 rect.top >= action.bottom,
-            ),
+            )
           );
         }),
       )
@@ -621,36 +701,202 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await page.setViewportSize({ width: 1440, height: 950 });
 
   await button(page, "View Example two details").click();
-  await expect(button(page, "Reload")).toBeVisible();
-  await button(page, "Reload").click();
-  expect(
-    await page.evaluate(
-      () => window.importCalls.find((c) => c.command === "plugin_reload").args,
-    ),
-  ).toEqual({ id: "example.two" });
+  await expect(button(page, "Reload")).toHaveCount(0);
   await enabled.click();
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
-  await button(page, "Close plugin details").click();
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
+  await page.clock.runFor(5_000);
+  // The open pane detects folder changes without a manual check.
+  await expect(button(page, "Update")).toBeEnabled();
+  const updatingPane = page.getByRole("complementary", {
+    name: "Example two details",
+  });
+  await expect(
+    updatingPane.getByRole("button", { name: "Disable", exact: true }),
+  ).toHaveCount(0);
+  await expect(button(page, "Update Example two")).toBeVisible();
+  await updatingPane.screenshot({
+    path: info.outputPath("primary-update-pane.png"),
+  });
+  await button(page, "More plugin actions").click();
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Review access",
+    "Disable",
+    "Delete",
+  ]);
+  await page
+    .getByRole("menu")
+    .screenshot({ path: info.outputPath("primary-update-menu.png") });
+  await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Enable", exact: true }).click();
+  await button(page, "More plugin actions").click();
+  await page
+    .getByRole("menuitem", { name: "Review access", exact: true })
+    .click();
+  const accessDialog = page.getByRole("dialog", {
+    name: "What this plugin can do",
+  });
+  await expect(
+    accessDialog.getByRole("button", { name: /^Run example-cli/ }),
+  ).toBeVisible();
+  await accessDialog.getByRole("button", { name: /^Computer access/ }).click();
+  await expect(
+    accessDialog.getByRole("region", { name: "Plugin safety" }),
+  ).toContainText("Plugins aren’t sandboxed");
+  await accessDialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(button(page, "More plugin actions")).toBeFocused();
+  await button(page, "Close plugin details").click();
+  await button(page, "More actions for Example two").click();
+  await page
+    .getByRole("menuitem", { name: "Review access", exact: true })
+    .click();
+  await accessDialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(button(page, "More actions for Example two")).toBeFocused();
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls
+          .filter((c) => c.command === "plugin_update_check")
+          .at(-1).args,
+    ),
+  ).toEqual({ id: "example.two" });
+  await expectOnlySettings(page);
+  await expect(button(page, "Check for updates")).toHaveCount(0);
   await button(page, "Update Example two").click();
-  await button(page, "Browse plugin folder").click();
+  await expect(button(page, "Change source folder")).toHaveCount(0);
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
-    page.getByText(/It stays on and may run immediately/),
+    page.getByText(/may run immediately|earlier revision to roll back/),
+  ).toHaveCount(0);
+  await expect(button(page, "Update")).toBeEnabled();
+  await button(page, "View unchanged declarations").click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    "Unchanged declarations",
+  );
+  await expect(button(page, "Back")).toBeFocused();
+  await expect(button(page, "Update")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /^Run example-cli/ }),
   ).toBeVisible();
-  await expect(button(page, "Update plugin")).toBeEnabled();
+  await button(page, "Back").click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    "Update Example two",
+  );
+  await expect(button(page, "View unchanged declarations")).toBeFocused();
   await page
     .getByRole("dialog")
     .screenshot({ path: info.outputPath("plugin-update-review.png") });
-  await button(page, "Update plugin").click();
+  await button(page, "Update").click();
   await expectOnlySettings(page);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
-  await expect(button(page, "Update Example two")).toBeFocused();
-  await button(page, "View Example two details").click();
-  await button(page, "Delete").click();
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Up to date" }),
+  ).toBeVisible();
+  await expect(button(page, "Update")).toHaveCount(0);
+  const pane = page.getByRole("complementary", { name: "Example two details" });
+  const paneActions = pane.getByRole("button", {
+    name: /^Disable$/,
+  });
+  await expect(paneActions).toHaveCount(1);
+  await expect(paneActions).toHaveText(["Disable"]);
+  await expect(button(page, "Delete")).toHaveCount(0);
+  for (const [width, theme] of [
+    [1440, "light"],
+    [480, "dark"],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.emulateMedia({ colorScheme: theme });
+    await expect
+      .poll(() =>
+        paneActions.evaluateAll((buttons) => {
+          const rects = buttons.map((node) => node.getBoundingClientRect());
+          const row = buttons[0].parentElement.parentElement;
+          const group = row.parentElement.getBoundingClientRect();
+          const primary = row.getBoundingClientRect();
+          const more = row
+            .querySelector('[aria-label="More plugin actions"]')
+            .getBoundingClientRect();
+          return (
+            Math.abs(primary.left - group.left) < 1 &&
+            Math.abs(primary.right - group.right) < 1 &&
+            Math.abs(more.top - rects[0].top) < 1 &&
+            rects[0].right <= more.left &&
+            Math.abs(more.right - group.right) < 1 &&
+            rects.every(
+              (rect, index) =>
+                Math.abs(rect.left - group.left) < 1 &&
+                (index === 0 ||
+                  (Math.abs(rect.right - group.right) < 1 &&
+                    rect.top >= primary.bottom)),
+            )
+          );
+        }),
+      )
+      .toBe(true);
+    await pane.screenshot({
+      path: info.outputPath(`plugin-actions-${theme}-${width}.png`),
+    });
+    await button(page, "More plugin actions").click();
+    const menu = page.getByRole("menu", { name: "Plugin actions" });
+    await expect(menu).toBeInViewport();
+    await menu.screenshot({
+      path: info.outputPath(`plugin-menu-${theme}-${width}.png`),
+    });
+    await menu
+      .getByRole("menuitem", { name: "Roll back", exact: true })
+      .click();
+    const rollback = page.getByRole("alertdialog", {
+      name: "Roll back Example two?",
+    });
+    const cancel = rollback.getByRole("button", {
+      name: "Cancel",
+      exact: true,
+    });
+    await expect(cancel).toBeFocused();
+    await expect(rollback).not.toContainText("enabled or disabled");
+    const scrim = page.locator(".buzz-dialog-backdrop[data-alert-dialog]");
+    await expect(scrim).toBeVisible();
+    // The confirmation scrim must cover Settings, rather than sit behind it.
+    const parentBox = await page
+      .locator('[role="dialog"][data-navigation]')
+      .boundingBox();
+    await expect
+      .poll(() =>
+        scrim.evaluate(
+          (element, point) => {
+            return (
+              document.elementFromPoint(point.x, point.y) === element &&
+              getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)"
+            );
+          },
+          { x: parentBox.x + 12, y: parentBox.y + 12 },
+        ),
+      )
+      .toBe(true);
+    await expect(
+      rollback.getByRole("button", { name: "Roll back", exact: true }),
+    ).toBeVisible();
+    await cancel.click();
+    await expect(rollback).toHaveCount(0);
+    await expect(paneActions).toHaveText(["Disable"]);
+    await expect(button(page, "More plugin actions")).toBeFocused();
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await button(page, "More plugin actions").focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Delete", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(pane).toBeVisible();
+  await expect(button(page, "More plugin actions")).toBeFocused();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   const deletion = page.getByRole("alertdialog", {
     name: "Delete Example two?",
   });
@@ -662,7 +908,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     path: info.outputPath("plugin-delete-confirmation.png"),
   });
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(button(page, "Delete")).toBeFocused();
+  await expect(button(page, "More plugin actions")).toBeFocused();
   await button(page, "Close plugin details").click();
   await page
     .getByRole("region", { name: "Manage plugins", exact: true })
@@ -705,8 +951,25 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue("bad");
   await page.keyboard.press("Escape");
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await page.getByRole("radio", { name: /Example two/ }).check();
+  await button(page, "Continue").click();
+  await expect(
+    page.getByRole("dialog", { name: "Already installed" }),
+  ).toBeVisible();
+  await page.getByRole("dialog").screenshot({
+    path: info.outputPath("installed-open-dialog.png"),
+  });
+  await button(page, "Open in Buzz").click();
+  await expectOnlySettings(page);
+  await expect(pane).toBeVisible();
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await button(page, "Close plugin details").click();
+  await expect(button(page, "View Example two details")).toBeFocused();
   await button(page, "View Example two details").click();
-  await button(page, "Delete").click();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Delete plugin", exact: true })
@@ -844,6 +1107,59 @@ test("checked-in local examples activate and work independently", async ({
     .getByRole("combobox", { name: "Search Buzz", exact: true })
     .fill("Notes playground");
   await expect(pageChoice(navigation, "Notes playground")).toBeVisible();
+});
+
+// Browser-only: Settings -> manager -> runtime retries the cached installed module,
+// keeping native acquisition and persistence separate from activation recovery.
+test("Retry recovers installed activation without installing or enabling again", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: { id: "example.retry", name: "Retry example", apiVersion: 1 },
+      code: "export function apply() { globalThis.retryAttempts = (globalThis.retryAttempts ?? 0) + 1; if (globalThis.retryAttempts === 1) throw new Error('Temporary startup failure'); }",
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await button(page, "View Retry example details").click();
+  const pane = page.getByRole("complementary", {
+    name: "Retry example details",
+  });
+  await expect(pane.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect(pane.getByText(/Temporary startup failure/)).toBeVisible();
+  const callsBefore = await page.evaluate(
+    () =>
+      window.importCalls.filter((c) =>
+        /^(plugin_import_folder|plugin_import_install|plugin_change|plugin_reload)$/.test(
+          c.command,
+        ),
+      ).length,
+  );
+  await button(page, "Retry").click();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.retryAttempts))
+    .toBe(2);
+  await expect(button(page, "Retry")).toHaveCount(0);
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await expect(pane.getByText(/Temporary startup failure/)).toHaveCount(0);
+  await expect(button(page, "Disable")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls.filter((c) =>
+          /^(plugin_import_folder|plugin_import_install|plugin_change|plugin_reload)$/.test(
+            c.command,
+          ),
+        ).length,
+    ),
+  ).toBe(callsBefore);
 });
 
 // Browser-only: real modal focus and manager error propagation across the IPC boundary.
@@ -1116,11 +1432,79 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await expect(pluginAction(page, "Retry plugin")).toHaveAccessibleName(
     "Disable Retry plugin",
   );
-  expect(
-    await page.evaluate(() =>
-      window.importCalls
-        .filter((c) => c.command === "plugin_import_install")
-        .map((c) => c.args),
-    ),
-  ).toEqual(Array(2).fill({ token: "preview-one", path: "dist" }));
+  const installs = await page.evaluate(() =>
+    window.importCalls
+      .filter((c) => c.command === "plugin_import_install")
+      .map((c) => c.args),
+  );
+  expect(installs).toHaveLength(2);
+  expect(installs[0]).toEqual({
+    token: expect.stringMatching(/^preview-\d+$/),
+    path: "dist",
+  });
+  expect(installs[1]).toEqual(installs[0]);
 });
+
+// Browser-only: the real modal must retain keyboard focus through failed retries.
+for (const source of ["folder", "git"]) {
+  test(`saved ${source} acquisition retries stay focused inside the update modal`, async ({
+    page,
+    app,
+  }) => {
+    const sample = {
+      path: "dist",
+      revision: "one",
+      manifest: { id: "example.recovery", name: "Recovery", apiVersion: 1 },
+    };
+    await nativeImports(page, [sample]);
+    await openPlugins(page, app.origin);
+    await button(page, "Add").click();
+    if (source === "git") {
+      await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+      await button(page, "Find plugins").click();
+    } else await button(page, "Browse plugin folder").click();
+    await button(page, "Install plugin").click();
+    await expectOnlySettings(page);
+    await button(page, "View Recovery details").click();
+    await page.evaluate(() => {
+      window.importCategory = "productivity";
+    });
+    if (source === "git") {
+      await button(page, "Check for updates").click();
+    } else {
+      await expect(button(page, "Update")).toBeVisible();
+    }
+    await page.evaluate(() => {
+      window.importAcquisitionError = "Saved source unavailable";
+    });
+    await button(page, "Update").click();
+    const dialog = page.getByRole("dialog", {
+      name: "Update plugin",
+      exact: true,
+    });
+    const retry = dialog.getByRole("button", {
+      name: "Try again",
+      exact: true,
+    });
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Saved source unavailable",
+    );
+    await expect(retry).toBeFocused();
+    await retry.press("Enter");
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Saved source unavailable",
+    );
+    await expect(retry).toBeFocused();
+    await page.evaluate(() => {
+      window.importAcquisitionError = null;
+    });
+    await retry.press("Enter");
+    const review = page.getByRole("dialog", {
+      name: "Update Recovery",
+      exact: true,
+    });
+    await expect(
+      review.getByRole("button", { name: "Update", exact: true }),
+    ).toBeFocused();
+  });
+}

@@ -919,7 +919,7 @@ it("starting over preserves access and lets Outbox finish the exact link before 
   render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
   await user.click(screen.getByText(/^Outbox ·/));
   // The Outbox renders the message, not its last transport error.
-  const linkRow = screen.getByText(/\[Session:/).closest("li");
+  const linkRow = screen.getByText(/\[Chat:/).closest("li");
   if (!linkRow) throw new Error("Missing Outbox link");
   t.failLink(false);
   await user.click(within(linkRow).getByRole("button", { name: "Retry" }));

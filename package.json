@@ -47,6 +47,7 @@
     "@jsquash/webp": "1.5.0",
     "@modelcontextprotocol/server": "2.3.1",
     "@noble/curves": "2.0.1",
+    "@pydantic/genai-prices": "0.1.13",
     "@tabler/icons": "3.46.0",
     "@tabler/icons-react": "3.46.0",
     "@tanstack/react-router": "^1.168.10",

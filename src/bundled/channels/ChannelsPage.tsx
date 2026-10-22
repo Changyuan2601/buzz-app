@@ -1,3 +1,9 @@
+import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import {
+  readLinkedChat,
+  linkedDraftKey,
+} from "../../features/solo/linked-chat";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -17,7 +23,6 @@ import {
   soloDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { ownSolo } from "../../features/solo/labels";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
@@ -197,6 +202,15 @@ function ChannelWorkspace({
         ? soloDraft(draftTarget.route?.params)
         : undefined,
     [draftTarget],
+  );
+  // The draft consumes its source on creation. Keep this visit's source while
+  // membership and first-send work settles; a later visit reads storage anew.
+  const linkedSource = useMemo(
+    () =>
+      !navigation?.signal.aborted && draft?.linked
+        ? readLinkedChat(scope, linkedDraftKey(draft.linked))
+        : undefined,
+    [draft?.linked, scope, navigation?.signal],
   );
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
@@ -586,7 +600,6 @@ function ChannelWorkspace({
   const solo = current?.channelType === "solo";
   // Solo has no main tab workspace; its threads open beside the chat.
   const threadPane = solo ? ("side" as const) : undefined;
-  const personal = ownSolo(current, queries.viewer);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
   const chooseLifecycle = (
@@ -1449,7 +1462,7 @@ function ChannelWorkspace({
             !routedThread
           }
           trailingTool={
-            personal ? (
+            solo ? (
               <WorkspaceControl
                 session={queries}
                 channelId={current.id}
@@ -1539,13 +1552,22 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : draft?.linked && !linkedSource ? (
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="Draft unavailable"
+              description="This linked chat draft is unavailable. Start again from its source."
+            />
           ) : draft ? (
             <SoloDraft
               key={JSON.stringify([
                 draft.project,
                 draft.agent,
+                draft.linked,
                 retiredSoloDraft.generation,
               ])}
+              linkedId={draft.linked}
+              source={linkedSource}
               focusRequest={
                 navigation?.focus === "preserve" ||
                 (retiredSoloDraft.generation > 0 &&
@@ -1653,6 +1675,17 @@ function ChannelWorkspace({
                         )}
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          startChat={
+                            navigator &&
+                            current &&
+                            canStartLinkedChat(queries, current.id) ? (
+                              <StartLinkedChat
+                                session={queries}
+                                navigation={navigator}
+                                channelId={current.id}
+                              />
+                            ) : undefined
+                          }
                           key={`channel-actions:${currentId ?? "empty"}`}
                           channel={current}
                           session={queries}
