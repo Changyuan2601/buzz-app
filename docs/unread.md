@@ -198,7 +198,8 @@ owner mentions requires additional relay metadata, not client-side name parsing.
 
 ## Relevant replies
 
-Every top-level message counts. A reply counts only when it is in one of the
+Every top-level message counts, apart from agents-audience messages (below). A
+reply counts only when it is in one of the
 viewer's conversations, or it is a DM, mentions the viewer, or is broadcast to the
 channel. A conversation is the set of direct replies to one parent message. The
 viewer is part of it when the viewer wrote the parent or also replied to that
@@ -207,6 +208,13 @@ the reference client. A thread the viewer has not posted in therefore stays
 quiet, apart from mentions and broadcasts. Explicit per-message unread intent still
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
+
+A message signed for the agents audience (`["audience", "agents"]`) is
+coordination between agents, so it never counts by itself: not as a top-level
+message, a reply in the viewer's conversation, a DM, a mention or a broadcast.
+Only explicit per-message unread intent (**Mark unread** on that message) makes
+it unread in channel and thread counts, thread activity and message attention.
+Inbox leaves these messages out even when marked unread.
 
 **Follow thread** / **Unfollow thread** in a message's menu records an explicit
 choice for the message's canonical thread root (`threadRootId ?? id`), so every
