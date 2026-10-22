@@ -1,53 +1,23 @@
-import { BestieIcon } from "../../shared/design-system/icons";
 import type { PluginModule } from "../../plugins/api";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
+import { BestiePage } from "./page";
 
-export const inject = ["pages"];
+export const inject = [
+  "pages",
+  "relay",
+  "navigation",
+  "panels",
+  "conversation",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
+  const relay = ctx.relay;
+  const extensions = ctx.conversation;
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",
     layout: "workspace",
     primary: true,
-    component: BestiePage,
+    component: () => (
+      <BestiePage host={ctx} relay={relay} extensions={extensions} />
+    ),
   });
 };
-
-// Bestie's home page until agent chat connects.
-function BestiePage() {
-  return (
-    <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Bestie">
-        <div className="flex h-full min-h-0 flex-col">
-          <PanelHeader
-            title={
-              <PanelHeaderLabel
-                title="Bestie"
-                icon={<BestieIcon size="1rem" />}
-              />
-            }
-          />
-          <div className="min-h-0 flex-1 overflow-auto">
-            <Bestie />
-          </div>
-        </div>
-      </FullPageSurface>
-    </div>
-  );
-}
-
-function Bestie() {
-  return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <img src="/bestie.png" alt="" className="size-20 object-contain" />
-      <h2 className="text-heading">Meet your Bestie</h2>
-      <p className="max-w-xs text-body-sm text-muted">
-        Your companion’s home in Buzz. Agent chat isn’t connected yet.
-      </p>
-    </div>
-  );
-}

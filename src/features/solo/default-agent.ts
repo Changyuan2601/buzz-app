@@ -12,9 +12,11 @@ import {
 // Saved on this device for the account and community (the view scope).
 const KEY = "solo:default-agent";
 
+const PUBKEY = /^[0-9a-f]{64}$/;
+
 /** Makes an agent the one new Berd messages are tagged for. */
 export function setDefaultAgent(scope: string, pubkey: string) {
-  return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
+  return writeView(scope, KEY, PUBKEY.test(pubkey) ? pubkey : null);
 }
 
 /** A deleted agent stops being the main agent everywhere it was chosen; the
@@ -23,14 +25,17 @@ export function forgetDefaultAgent(pubkey: string) {
   clearViewValue(KEY, pubkey);
 }
 
-/** The agent explicitly saved as main, whether or not it can be tagged now. */
+/** The saved default/Bestie, whether chosen by the person or initialized by
+ * default selection. Read `useDefaultAgent` for the recipient of a new chat. */
+export function readDefaultAgent(scope: string) {
+  const value = readView<unknown>(scope, KEY, null);
+  return typeof value === "string" && PUBKEY.test(value) ? value : undefined;
+}
+
 export function useChosenAgent(scope: string) {
   return useSyncExternalStore(
-    useCallback((notify) => subscribeView(scope, notify), [scope]),
-    () => {
-      const value = readView<unknown>(scope, KEY, null);
-      return typeof value === "string" ? value : undefined;
-    },
+    useCallback((notify: () => void) => subscribeView(scope, notify), [scope]),
+    () => readDefaultAgent(scope),
   );
 }
 

@@ -306,9 +306,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(bestiePage.title, "Bestie");
     assert.equal(bestiePage.layout, "workspace");
     assert.equal(bestiePage.primary, true);
+    // The page renders its own surface. Its copy belongs to the feature's
+    // tests, so the runtime does not pin wording that is still changing.
     assert.match(
       renderToStaticMarkup(createElement(bestiePage.component)),
-      /isn’t connected yet/,
+      /aria-label="Bestie"/,
     );
     await services.plugins.change("disable", "buzz.bestie");
     assert.equal(
