@@ -1,4 +1,7 @@
 import Markdown from "react-markdown";
+import { parseBuzzLink } from "../../features/navigation/buzz-links";
+import { profileKey } from "../../features/profiles/target";
+import { safeLinkUrl } from "../../features/relay/message-content";
 import remarkGfm from "remark-gfm";
 import { MessageLink } from "../../features/conversation/MessageLink";
 import { CanvasConflictError } from "../../features/channel-templates/canvas-conflict";
@@ -52,6 +55,7 @@ import {
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import {
+  todoLabelText,
   addTodo,
   assignTodo,
   readTodos,
@@ -119,12 +123,14 @@ export function TodosPanel({
   context,
   close,
   active,
+  onOpenLink = () => false,
 }: {
   canvas: ChannelCanvas;
   people: TodoPeople;
   context: ChannelPanelContext;
   close(): void;
   active(): boolean;
+  onOpenLink?(url: string): boolean;
 }) {
   const list = useSyncExternalStore(
     people.channels.subscribeList,
@@ -388,6 +394,12 @@ export function TodosPanel({
   const renderItems = (group: typeof items): ReactNode =>
     group.map((item) => {
       const children = childrenByOffset.get(item.offset) ?? [];
+      const taskLabel = todoLabelText(item.label);
+      const assigneeName = item.assignee
+        ? resolveName(item.assignee.pubkey, item.assignee.name) ||
+          keyLabels.get(item.assignee.pubkey)
+        : item.namedAssignee?.name;
+
       return (
         <li key={item.offset}>
           <div className={styles.row}>
@@ -395,7 +407,7 @@ export function TodosPanel({
               {children.length > 0 && (
                 <IconButton
                   size="sm"
-                  aria-label={`${collapsed.has(item.offset) ? "Expand" : "Collapse"} ${item.label}`}
+                  aria-label={`${collapsed.has(item.offset) ? "Expand" : "Collapse"} ${taskLabel}`}
                   aria-expanded={!collapsed.has(item.offset)}
                   aria-controls={`${prefix}-${item.offset}-children`}
                   icon={
@@ -431,7 +443,7 @@ export function TodosPanel({
                   ),
                 );
               }}
-              aria-label={item.label}
+              aria-label={taskLabel}
               label=""
             />
             <div
@@ -440,6 +452,11 @@ export function TodosPanel({
             >
               <Markdown
                 remarkPlugins={[remarkGfm]}
+                urlTransform={(value) =>
+                  parseBuzzLink(value) || profileKey(value)
+                    ? value
+                    : safeLinkUrl(value)
+                }
                 allowedElements={[
                   "p",
                   "a",
@@ -458,7 +475,7 @@ export function TodosPanel({
                       <MessageLink
                         url={href}
                         registry={undefined}
-                        onOpenLink={() => false}
+                        onOpenLink={(url) => active() && onOpenLink(url)}
                       >
                         {children}
                       </MessageLink>
@@ -478,7 +495,7 @@ export function TodosPanel({
               >
                 <TodoChoice
                   id={`${prefix}-${item.offset}-status-control`}
-                  label={`Status for ${item.label}`}
+                  label={`Status for ${taskLabel}`}
                   menuTitle="Change status"
                   title="Status"
                   icon={<StatusIcon status={item.status} />}
@@ -502,11 +519,11 @@ export function TodosPanel({
               <fieldset
                 id={`${prefix}-${item.offset}-assignee`}
                 className={styles.assignee}
-                aria-label={`Assignee for ${item.label}`}
+                aria-label={`Assignee for ${taskLabel}`}
               >
                 <TodoChoice
                   id={`${prefix}-${item.offset}-assignee-control`}
-                  label={`Assignee for ${item.label}`}
+                  label={`Assignee for ${taskLabel}${assigneeName ? `: ${assigneeName}` : ""}`}
                   menuTitle="Assign to"
                   text={
                     (item.assignee || item.namedAssignee) && (

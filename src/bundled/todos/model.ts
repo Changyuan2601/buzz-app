@@ -1,5 +1,7 @@
-import type { ListItem } from "mdast";
+import type { Root, RootContent, ListItem } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 
 export type Assignee = { pubkey: string; name: string };
@@ -177,4 +179,24 @@ export function assignTodo(
       "Could not assign safely. Check this todo’s Markdown in Canvas.",
     );
   return next;
+}
+
+/** Match the inline title renderer without exposing Markdown syntax in control names. */
+export function todoLabelText(label: string): string {
+  const text = (node: Root | RootContent): string =>
+    "children" in node
+      ? node.children.map(text).join("")
+      : node.type === "text" || node.type === "inlineCode"
+        ? node.value
+        : node.type === "image"
+          ? (node.alt ?? "")
+          : node.type === "break"
+            ? " "
+            : "";
+  return text(
+    fromMarkdown(label, {
+      extensions: [gfmStrikethrough()],
+      mdastExtensions: [gfmStrikethroughFromMarkdown()],
+    }),
+  );
 }

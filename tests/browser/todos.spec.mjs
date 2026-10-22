@@ -33,7 +33,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   app,
 }) => {
   const original =
-    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com)\n- [ ] Legacy · Assignee: John\n\n## Decisions\nKeep these too.\n";
+    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com) [Beta](buzz://channel/beta)\n- [ ] Legacy · Assignee: John\n\n## Decisions\nKeep these too.\n";
   let head = app.sign({
     kind: 40100,
     content: original,
@@ -118,10 +118,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(nested).toBeVisible();
   await expect(
     drawer.getByRole("link", { name: "guide", exact: true }),
-  ).toHaveAttribute("href", "https://example.com");
+  ).toHaveAttribute("href", "https://example.com/");
   await expect(drawer.locator("strong", { hasText: "Read" })).toBeVisible();
   await expect(
-    drawer.getByRole("button", { name: "Assignee for Legacy", exact: true }),
+    drawer.getByRole("button", {
+      name: "Assignee for Legacy: John",
+      exact: true,
+    }),
   ).toHaveAttribute(
     "aria-description",
     "John (from Canvas; choose a member to link)",
@@ -308,6 +311,18 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(
     drawer.getByRole("checkbox", { name: "Ship it", exact: true }),
   ).toBeChecked();
+  await drawer.getByRole("link", { name: "Beta", exact: true }).click();
+  await expect(
+    page
+      .getByRole("article", { name: "Conversation" })
+      .getByRole("tab", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(
+    page
+      .getByRole("article", { name: "Conversation" })
+      .getByRole("tab", { name: "Alpha", exact: true }),
+  ).toBeVisible();
   await plugins();
   await enabled.click();
   await expect(enabled).toHaveAccessibleName(/^Enable /);

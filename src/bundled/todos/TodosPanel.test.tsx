@@ -66,6 +66,7 @@ function fixture() {
     people,
     context,
     close: vi.fn(),
+    onOpenLink: vi.fn(() => true),
     active: () => active,
   };
   return {
@@ -219,7 +220,7 @@ it("keeps failed save changes through close/reopen and confirms destructive refr
   expect(
     screen.queryByRole("button", { name: /^Retry$/ }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Refresh todos" }));
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
   view.unmount();
@@ -431,9 +432,9 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     },
   };
   const select = () =>
-    within(screen.getByRole("group", { name: "Assignee for First" })).getByRole(
-      "button",
-    );
+    within(
+      screen.getByRole("group", { name: /^Assignee for First/ }),
+    ).getByRole("button");
   const view = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
   f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
@@ -555,9 +556,9 @@ it("shows saved identity when profiles fail, disables missing-roster assignments
   f.canvas.read.mockResolvedValue({ ...head, content: saved });
   const view = render(<TodosPanel {...f.props} people={users} />);
   const select = () =>
-    within(screen.getByRole("group", { name: "Assignee for First" })).getByRole(
-      "button",
-    );
+    within(
+      screen.getByRole("group", { name: /^Assignee for First/ }),
+    ).getByRole("button");
   await screen.findByRole("checkbox", { name: "First" });
   expect(select()).toHaveAttribute(
     "aria-description",
@@ -705,7 +706,7 @@ it("scopes live naming to channel members rather than out-of-channel namesakes",
   f.canvas.read.mockResolvedValue({ ...head, content });
   const view = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
-  const trigger = screen.getByRole("button", { name: "Assignee for First" });
+  const trigger = screen.getByRole("button", { name: /^Assignee for First/ });
   expect(trigger).toHaveAttribute(
     "aria-description",
     expect.stringContaining("Alex"),
@@ -890,7 +891,7 @@ it("updates the assigned avatar from live profiles through the session media own
   });
   const view = render(<TodosPanel {...f.props} people={users} />);
   await screen.findByRole("checkbox", { name: "First" });
-  const trigger = screen.getByRole("button", { name: "Assignee for First" });
+  const trigger = screen.getByRole("button", { name: /^Assignee for First/ });
   expect(trigger.querySelector("img")).toHaveAttribute(
     "src",
     "/media/first.png",
@@ -958,4 +959,46 @@ it("renders task Markdown outside checkbox labels and shows a legacy named assig
     "aria-description",
     "John (from Canvas; choose a member to link)",
   );
+});
+
+it("routes copied Buzz links and filters unsupported task destinations", async () => {
+  const f = fixture();
+  const message = `buzz://channel/general/${"a".repeat(64)}`;
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content: `## Todos\n\n- [ ] Review [channel](buzz://channel/general) and [message](${message}) and [website](https://example.com) and [relative](/settings) and [credentials](https://user:pass@example.com) and [invalid](buzz://bad/path)\n`,
+  });
+  render(<TodosPanel {...f.props} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("link", { name: "channel" }));
+  expect(f.props.onOpenLink).toHaveBeenLastCalledWith("buzz://channel/general");
+  await user.click(screen.getByRole("link", { name: "message" }));
+  expect(f.props.onOpenLink).toHaveBeenLastCalledWith(message);
+  expect(screen.getByRole("link", { name: "website" })).toHaveAttribute(
+    "href",
+    "https://example.com/",
+  );
+  for (const name of ["relative", "credentials", "invalid"]) {
+    expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    expect(screen.getByText(name)).toBeInTheDocument();
+  }
+});
+it("uses rendered Markdown and the displayed assignee in accessible names", async () => {
+  const f = fixture();
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content:
+      "## Todos\n\n- [ ] **Build** [release](https://example.com) · Assignee: John\n    - [ ] Child\n",
+  });
+  render(<TodosPanel {...f.props} />);
+  await screen.findByRole("checkbox", { name: "Build release" });
+  expect(
+    screen.getByRole("button", { name: "Collapse Build release" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Status for Build release" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Assignee for Build release: John" }),
+  ).toHaveTextContent("John");
 });
