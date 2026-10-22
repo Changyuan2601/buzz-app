@@ -215,17 +215,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  const pageOwnsCompanion =
-    !!workspace.page?.companion &&
-    (settings
-      ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
   // A registration lookup does not admit the target's parameters and scope.
-  const pageSidebarReady =
-    startup === "ready" &&
-    (settings
-      ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
+  const pageAdmitted = settings
+    ? !!workspace.request
+    : !route.failure && !route.waiting && route.state.status !== "failed";
+  const pageOwnsCompanion = !!workspace.page?.companion && pageAdmitted;
+  // Sidebar rendering also waits for plugin startup; companion behavior is unchanged.
+  const pageSidebarReady = startup === "ready" && pageAdmitted;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (

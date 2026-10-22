@@ -72,6 +72,7 @@ vi.mock("../bundled", async () => {
 const key = new Uint8Array(32).fill(6),
   viewer = getPublicKey(key),
   origin = "https://community.example";
+const otherOrigin = "https://other-community.example";
 const channelId = "11111111-1111-4111-8111-111111111111";
 const channelEvents = [
   metadata({ secret: key, pubkey: viewer }, channelId, "Planning"),
@@ -115,6 +116,7 @@ async function setup(
     channelId: string;
     muted: boolean;
   }) => Promise<Response>,
+  memberships = [{ id: origin, name: "Fixture community" }],
 ) {
   // jsdom has no media queries; responsive shell geometry is covered in browsers.
   vi.stubGlobal("matchMedia", (media: string) => ({
@@ -136,7 +138,7 @@ async function setup(
     `buzz-client.v1:${viewer}`,
     JSON.stringify({
       profile: { name: "Local name", picture: "" },
-      memberships: [{ id: origin, name: "Fixture community" }],
+      memberships,
       selected: origin,
     }),
   );
@@ -234,6 +236,84 @@ it("updates an owned page sidebar target without remounting its healthy draft", 
   expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
     sidebarDraft,
   );
+});
+
+it("remounts a page sidebar after the community selection catches up", async () => {
+  await setup(false, undefined, [
+    { id: origin, name: "Fixture community" },
+    { id: otherOrigin, name: "Other community" },
+  ]);
+  const current = services;
+  if (!current) throw new Error("Missing app services");
+  await act(async () => {
+    expect(
+      await current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "first-community" },
+        scope: { viewer, communityOrigin: origin },
+      }),
+    ).toMatchObject({ status: "opened" });
+  });
+  const previousDraft = await screen.findByRole("textbox", {
+    name: "Sidebar draft",
+  });
+  fireEvent.change(previousDraft, { target: { value: "first community" } });
+
+  const select = current.communities.select.bind(current.communities);
+  const selectOther = vi
+    .spyOn(current.communities, "select")
+    .mockImplementation((id) => {
+      if (id !== otherOrigin) select(id);
+    });
+  let opening: ReturnType<typeof current.navigation.open> | undefined;
+  let selectionReleased = false;
+  try {
+    act(() => {
+      opening = current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "second-community" },
+        scope: { viewer, communityOrigin: otherOrigin },
+      });
+    });
+    const pendingOpening = opening;
+    if (!pendingOpening) throw new Error("Missing page navigation request");
+    await waitFor(() => expect(selectOther).toHaveBeenCalledWith(otherOrigin));
+    expect(current.communities.snapshot().selected).toBe(origin);
+    expect(
+      screen.getByRole("complementary", { name: "Page navigation" }),
+    ).toBeVisible();
+    expect(previousDraft).not.toBeInTheDocument();
+    expect(screen.queryByText("Beacon page content")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Opening destination");
+
+    await act(async () => {
+      select(otherOrigin);
+      selectionReleased = true;
+    });
+    await expect(pendingOpening).resolves.toMatchObject({ status: "opened" });
+    const newSidebar = await screen.findByRole("complementary", {
+      name: "Beacon sidebar",
+    });
+    const newDraft = within(newSidebar).getByRole("textbox", {
+      name: "Sidebar draft",
+    });
+    expect(newDraft).not.toBe(previousDraft);
+    expect(newDraft).toHaveValue("");
+    expect(newSidebar).toHaveTextContent("main:second-community");
+    expect(current.communities.snapshot().selected).toBe(otherOrigin);
+  } finally {
+    selectOther.mockRestore();
+    if (!selectionReleased) {
+      await act(async () => select(otherOrigin));
+      await opening?.catch(() => {});
+    }
+  }
 });
 
 it("retains an owned page sidebar and its draft through Settings sections and Close", async () => {

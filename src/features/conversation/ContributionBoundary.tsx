@@ -16,7 +16,7 @@ export class ContributionBoundary extends Component<
     children: ReactNode;
     fallback: ReactNode;
     resetIdentity?: unknown;
-    /** True when the fallback replaces the children; false when a failed boundary unmounts. */
+    /** True when the fallback replaces children; false when the failed boundary unmounts or resets. */
     onFailedChange?: ((failed: boolean) => void) | undefined;
   },
   { failed: boolean; resetIdentity?: unknown }
@@ -35,6 +35,13 @@ export class ContributionBoundary extends Component<
   }
   componentDidCatch() {
     this.props.onFailedChange?.(true);
+  }
+  componentDidUpdate(
+    _props: Readonly<ContributionBoundary["props"]>,
+    previousState: Readonly<ContributionBoundary["state"]>,
+  ) {
+    if (previousState.failed && !this.state.failed)
+      this.props.onFailedChange?.(false);
   }
   // StrictMode replays unmount and mount on the same failed instance without
   // replaying componentDidCatch, so a mount reports a retained failure again.

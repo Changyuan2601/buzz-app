@@ -281,10 +281,12 @@ shell-owned. Pages without `sidebar` continue to
 use the conversation sidebar. The host isolates sidebar rendering with
 `OwnedContribution`; a throwing sidebar shows a concise alert with scrollable page
 navigation inside the standard fallback frame while the selected page and shell
-remain usable. A new page navigation request retries a failed sidebar without
-remounting healthy sidebar state. The sidebar shares the page's admitted workspace
-target and stays mounted beneath Settings; invalid destinations are not delivered
-to it.
+remain usable. Healthy sidebar state survives target changes within the same
+community/viewer scope. A community change shows the neutral Page navigation
+frame while selection catches up, then mounts a fresh sidebar for the new
+scope. A new page navigation request retries a failed sidebar independently of
+the page body. The sidebar shares the page's admitted workspace target and stays
+mounted beneath Settings; invalid destinations are not delivered to it.
 
 ```tsx
 import type { PageSidebarProps } from "@buzz/author";

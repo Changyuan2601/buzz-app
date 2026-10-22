@@ -85,9 +85,12 @@ semantic tokens, UI authoring rules and the local component reference.
   A selected page may replace the conversation sidebar through `Page.sidebar`.
   It receives the admitted workspace target and shell-generated Pages navigation
   as children, without navigation completion authority. Healthy sidebar state
-  survives target changes and stays mounted beneath Settings. A failed sidebar
-  shows an alert and scrollable page navigation in the standard frame; a new
-  workspace navigation request retries it independently of the page body.
+  survives target changes within the same community/viewer scope and stays
+  mounted beneath Settings. A community change uses the neutral Page navigation
+  frame while selection catches up, then mounts a fresh sidebar for the new
+  scope. A failed sidebar shows an alert and scrollable page navigation in the
+  standard frame; a new workspace navigation request retries it independently
+  of the page body.
   Pages without a sidebar contribution keep the conversation sidebar.
   `App.tsx` composes `PrimarySidebar` around `features/channel-navigation/ChannelInventory`. The inventory supplies channel rows,
   notices, dialogs and scroll bindings through a render prop; PrimarySidebar owns
