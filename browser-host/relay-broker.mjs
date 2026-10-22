@@ -1490,7 +1490,7 @@ export function relayBrokerPlugin({
               if (
                 Buffer.byteLength(raw) >
                 (updating
-                  ? 450000
+                  ? 4 * 1024 * 1024
                   : watchingPresence
                     ? 20000
                     : prioritizing
@@ -1607,7 +1607,7 @@ export function relayBrokerPlugin({
             req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > 300000)
+              if (Buffer.byteLength(raw) > 3 * 1024 * 1024)
                 return json(res, 413, { error: "Live interests too large" });
             }
             let channels,
@@ -1655,7 +1655,7 @@ export function relayBrokerPlugin({
             // Bound slow-client buffering rather than retaining unbounded traffic.
             const write = (kind, value) => {
               if (res.destroyed) return;
-              if (res.writableLength > 2 * 1024 * 1024) {
+              if (res.writableLength > 8 * 1024 * 1024) {
                 res.destroy();
                 return;
               }

@@ -15,6 +15,8 @@ import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
+export const LIVE_JOINED_CAPACITY = 10_000;
+export const LIVE_INTEREST_CAPACITY = LIVE_JOINED_CAPACITY + 64;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
@@ -161,13 +163,13 @@ export function livePresenceAuthors(input: unknown): string[] {
 export function liveChannels(input: unknown): string[] {
   if (
     !Array.isArray(input) ||
-    input.length > 1024 ||
+    input.length > LIVE_INTEREST_CAPACITY ||
     input.some(
       (id) => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id),
     )
   )
     throw new Error(
-      "Invalid live channel interests (maximum 1024 bounded IDs)",
+      `Invalid live channel interests (maximum ${LIVE_INTEREST_CAPACITY} bounded IDs)`,
     );
   return [...new Set(input as string[])].sort();
 }
@@ -178,7 +180,10 @@ export function liveJoined(
   input: unknown,
 ): string[] {
   const joined = liveChannels(input);
-  if (joined.some((id) => !channels.includes(id)))
+  if (joined.length > LIVE_JOINED_CAPACITY)
+    throw new Error("Joined channel capacity reached");
+  const interests = new Set(channels);
+  if (joined.some((id) => !interests.has(id)))
     throw new Error("Joined scope outside live interests");
   return joined;
 }
@@ -195,6 +200,7 @@ type Route = {
   since: number;
   liveOnly?: boolean;
   previous?: Route;
+  previousChannels?: readonly string[];
   retryRenewal?: boolean;
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
@@ -299,6 +305,12 @@ export function subscribeRelayTraffic(
     // A sent replacement is not yet established. Keep the established source
     // through repeated removals; retire the pending intermediate, not a survivor.
     const previous = route.previous ?? (route.wire ? route : undefined);
+    const previousChannels = previous
+      ? (previous === route
+          ? scope(route)
+          : (route.previousChannels ?? scope(previous))
+        ).filter((id) => ids.includes(id))
+      : [];
     delete route.previous;
     if (previous !== route) closeWire(route); // Never retain a third wire.
     clearTimeout(route.deadline);
@@ -309,7 +321,7 @@ export function subscribeRelayTraffic(
       liveOnly: true,
       count: 0,
       quotaRetries: 0,
-      ...(previous ? { previous } : {}),
+      ...(previous ? { previous, previousChannels } : {}),
     };
     delete next.wire;
     delete next.deadline;
@@ -346,20 +358,33 @@ export function subscribeRelayTraffic(
   }
   function sync() {
     if (denying || closed) return;
+    const interested = new Set(interests);
+    const members = new Set(joined);
     const ranked = [
       ...new Set([
-        ...priority.filter((id) => interests.includes(id)),
+        ...priority.filter((id) => interested.has(id)),
         ...interests,
       ]),
     ];
-    const admitted = new Set(
-      ranked.slice(
-        0,
-        LIVE_CHANNEL_CAPACITY -
-          (observer !== null ? 1 : 0) -
-          (presenceAuthors.length ? 1 : 0),
-      ),
+    const retainedBatches = [...routes.values()].filter((route) =>
+      route.channelIds?.some((id) => members.has(id)),
+    ).length;
+    const batchCount = Math.max(
+      retainedBatches,
+      Math.ceil(joined.length / LIVE_BATCH_SIZE),
     );
+    const previewCapacity = Math.max(
+      0,
+      LIVE_CHANNEL_CAPACITY -
+        batchCount -
+        (joined.length ? setupConcurrency : 0) -
+        (observer !== null ? 1 : 0) -
+        (presenceAuthors.length ? 1 : 0),
+    );
+    const admitted = new Set([
+      ...joined,
+      ...ranked.filter((id) => !members.has(id)).slice(0, previewCapacity),
+    ]);
     const remaining = new Set(interests);
     const globals = new Set([
       "profiles",
@@ -377,12 +402,13 @@ export function subscribeRelayTraffic(
               (id) =>
                 !remaining.has(id) ||
                 (route.status === "limited") === admitted.has(id) ||
-                (!!route.channelIds && !joined.includes(id)),
+                (!!route.channelIds && !members.has(id)) ||
+                (!route.channelIds && members.has(id)),
             )
           : !globals.has(route.id)
       ) {
         const survivors = ids.filter(
-          (id) => remaining.has(id) && admitted.has(id) && joined.includes(id),
+          (id) => remaining.has(id) && admitted.has(id) && members.has(id),
         );
         if (
           route.channelIds &&
@@ -421,11 +447,28 @@ export function subscribeRelayTraffic(
         route.status = "limited";
         route.error =
           "Live channel capacity reached; finite reads remain available";
-      } else if (!joined.includes(id) || priority.includes(id))
-        add(`channel:${id}`, [id]);
+      } else if (!members.has(id)) add(`channel:${id}`, [id]);
       else batch.push(id);
     }
-    for (let i = 0; i < batch.length; i += LIVE_BATCH_SIZE)
+    let offset = 0;
+    for (const route of routes.values()) {
+      if (
+        !route.channelIds ||
+        route.channelIds.length >= LIVE_BATCH_SIZE ||
+        offset === batch.length
+      )
+        continue;
+      const added = batch.slice(
+        offset,
+        offset + LIVE_BATCH_SIZE - route.channelIds.length,
+      );
+      offset += added.length;
+      const next = replace(route, [...route.channelIds, ...added]);
+      // New members need replay. The old wire remains until the replacement reaches EOSE.
+      next.liveOnly = false;
+      next.since = Math.floor(Date.now() / 1000) - 300;
+    }
+    for (let i = offset; i < batch.length; i += LIVE_BATCH_SIZE)
       add(`batch:${++serial}`, batch.slice(i, i + LIVE_BATCH_SIZE), true);
     pump();
     notify();
@@ -802,7 +845,7 @@ export function subscribeRelayTraffic(
         )
           return;
         if (previous) {
-          const retained = scope(currentRoute);
+          const retained = currentRoute.previousChannels ?? scope(currentRoute);
           // Untagged auxiliary events cannot inherit a narrowed scope. Preserve
           // the original source fence; the replacement can deliver fresh copies.
           if (

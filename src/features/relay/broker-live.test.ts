@@ -126,7 +126,7 @@ it("rejects status snapshots beyond channel interests plus both globals and obse
     await tick();
     f.publish(0, {
       status: "connected",
-      routes: Array.from({ length: 1028 }, (_, i) => ({
+      routes: Array.from({ length: 10_069 }, (_, i) => ({
         id: `route-${i}`,
         status: "pending",
         replay: "unknown",

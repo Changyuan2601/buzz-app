@@ -50,7 +50,7 @@ export class DiscoveryState {
   constructor(
     readonly viewer: string,
     readonly relayAuthor: string,
-    readonly capacity = 1024,
+    readonly capacity = 10_000,
   ) {}
   /** Returns whether visible state changed. Events from other authors are ignored, not trusted. */
   accept(event: RelayEvent, cached = false): boolean {

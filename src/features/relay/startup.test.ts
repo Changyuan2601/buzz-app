@@ -149,11 +149,27 @@ describe("device-local startup", () => {
         roster(relay, `channel-${index}`, [viewer.pubkey]),
       ).sort((a, b) => a.id.localeCompare(b.id)),
     ];
-    // Cached alpha plus these rosters exceeds the 1,024-entry retention cap.
-    capacityRosters = Array.from({ length: 1024 }, (_, i) =>
+    // Cached alpha plus these rosters exceeds the 10,000-entry retention cap.
+    capacityRosters = Array.from({ length: 10_000 }, (_, i) =>
       roster(relay, `other-${i}`, [viewer.pubkey]),
     ).sort((a, b) => a.id.localeCompare(b.id));
-  });
+  }, 60_000);
+
+  it("restores 10,000 signed rosters as cached membership after restart", async () => {
+    const { owner, channels, storage } = setup();
+    await storage.writeStartup?.({
+      discovery: {
+        savedAt: Date.now(),
+        relayAuthor: relay.pubkey,
+        events: [...capacityRosters],
+      },
+    });
+    await owner.restore();
+    expect(channels.list().channels).toHaveLength(10_000);
+    expect(channels.list().channels.every((channel) => channel.cached)).toBe(
+      true,
+    );
+  }, 60_000);
 
   it.each(["roster failure", "roster cancellation", "metadata failure"])(
     "retries restored metadata after %s clears cached membership",

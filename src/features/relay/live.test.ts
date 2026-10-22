@@ -227,9 +227,11 @@ it("batches joined background interests without rebalance and fences retired bat
     for (let i = 0; i < h.first.requests().length; i++)
       await h.first.receive(["EOSE", h.first.requests()[i]?.[1]]);
     const requests = h.first.requests();
-    expect(requests).toHaveLength(38);
+    expect(requests).toHaveLength(37);
     const batches = requests.filter((r) => scopeOf(r).length > 1);
-    expect(batches.map((r) => scopeOf(r).length)).toEqual(Array(33).fill(10));
+    expect(batches.map((r) => scopeOf(r).length).sort((a, b) => a - b)).toEqual(
+      [2, ...Array(33).fill(10)],
+    );
     for (const r of requests) {
       expect(filtersOf(r).length).toBeLessThanOrEqual(10);
       for (const f of filtersOf(r))
@@ -240,10 +242,10 @@ it("batches joined background interests without rebalance and fences retired bat
     }
     expect(
       requests.filter((r) => scopeOf(r).length === 1).map(scopeOf),
-    ).toEqual([["c331"], ["preview"], ["c330"]]);
-    expect(h.callbacks.established).toHaveBeenCalledTimes(38);
+    ).toEqual([["preview"]]);
+    expect(h.callbacks.established).toHaveBeenCalledTimes(37);
     expect(h.callbacks.state.mock.lastCall?.[0].routes).toHaveLength(335);
-    const batch = batches[0];
+    const batch = batches.find((request) => scopeOf(request).includes("c000"));
     assert.exists(batch);
     const first = message(h.key, "c000", "first", 1700000000);
     await h.first.receive(["EVENT", batch[1], first]);
@@ -266,11 +268,11 @@ it("batches joined background interests without rebalance and fences retired bat
       channelId: "c001",
     });
     h.owner.prioritize?.(["c001"]);
-    expect(h.first.requests()).toHaveLength(38);
+    expect(h.first.requests()).toHaveLength(37);
     const retained = joined.filter((id) => id !== "c000");
     h.owner.update([...retained, "preview"], retained);
     // Healthy survivors keep one scope and overlap the old wire until EOSE.
-    expect(h.first.requests()).toHaveLength(39);
+    expect(h.first.requests()).toHaveLength(38);
     const replacement = h.first.requests().at(-1);
     assert.exists(replacement);
     expect(replacement[2].limit).toBe(0);
@@ -540,7 +542,9 @@ it.each(["single", "chained"])(
         message(author, "a", "old lifetime", 1700000005),
       ]);
       expect(h.callbacks.receive).not.toHaveBeenCalled();
-      await h.first.receive(["EOSE", replacement[1]]);
+      const latest = h.first.requests().at(-1);
+      assert.exists(latest);
+      await h.first.receive(["EOSE", latest[1]]);
       expect(h.first.sent).toContainEqual(["CLOSE", initial[1]]);
     } finally {
       owner.dispose();
@@ -1067,7 +1071,7 @@ it("bounds interests and exposes every omitted ID without exceeding 1024 subscri
       .filter((r) => r.status === "limited")
       .map((r) => r.channelId),
   ).toEqual(ids.slice(1022));
-  expect(() => liveChannels([...ids, "excess"])).toThrow();
+  expect(() => liveChannels(Array(10_065).fill("a"))).toThrow();
   for (const invalid of [[""], ["a b"], ["x".repeat(129)], [9], {}])
     expect(() => liveChannels(invalid)).toThrow();
   h.owner.dispose();
@@ -2492,3 +2496,220 @@ it("carries verified workflow attribution from live admission to notification ca
     h.owner.dispose();
   }
 });
+
+it("keeps 10,000 joined channels live through membership changes, reconnect and restart", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 10_000 },
+    (_, i) => `task-${String(i).padStart(5, "0")}`,
+  );
+  const previews = Array.from(
+    { length: 64 },
+    (_, i) => `preview-${String(i).padStart(2, "0")}`,
+  );
+  const h = setup([]);
+  let latest: Parameters<LiveCallbacks["state"]>[0] | undefined;
+  h.callbacks.state.mockImplementation((state) => {
+    latest = state;
+  });
+  const settle = async (socket: Socket, start = 0) => {
+    for (let i = start; i < socket.requests().length; i++) {
+      await socket.receive(["EOSE", socket.requests()[i]?.[1]]);
+      h.callbacks.state.mockClear();
+    }
+  };
+  const assertBounds = (socket: Socket) => {
+    const active = new Set<unknown>();
+    for (const [kind, id] of socket.sent) {
+      if (kind === "REQ") active.add(id);
+      if (kind === "CLOSE") active.delete(id);
+      expect(active.size).toBeLessThanOrEqual(1024);
+    }
+    return active;
+  };
+  try {
+    h.owner.prioritize?.(ids.slice(-64));
+    h.owner.observe?.(1);
+    h.owner.watchPresence?.([h.key.pubkey]);
+    h.owner.update(ids);
+    h.owner.update([...ids, ...previews], ids);
+    await h.first.auth();
+    await settle(h.first);
+    expect(h.first.requests()).toHaveLength(1020);
+    expect(
+      latest?.routes.filter(
+        (route) => route.channelId && route.status === "live",
+      ),
+    ).toHaveLength(10_016);
+    expect(
+      latest?.routes.filter((route) => route.status === "limited"),
+    ).toHaveLength(48);
+    expect(new Set(h.first.requests().flatMap(scopeOf))).toEqual(
+      new Set([...ids, ...previews.slice(0, 16)]),
+    );
+    assertBounds(h.first);
+    const route = h.first
+      .requests()
+      .find((request) => scopeOf(request).includes("task-09999"));
+    assert.exists(route);
+    const event = message(
+      h.key,
+      "task-09999",
+      "input on the last task",
+      1700000001,
+    );
+    await h.first.receive(["EVENT", route[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      phase: "live",
+      channelId: ids[9999],
+    });
+
+    // Churn across every batch must reuse space, rather than grow one route per join.
+    const retained = ids.filter((_, i) => i % 10 !== 0);
+    const added = Array.from({ length: 1000 }, (_, i) => `replacement-${i}`);
+    const next = [...retained, ...added];
+    let start = h.first.requests().length;
+    h.owner.update([...retained, ...previews], retained);
+    h.owner.update([...next, ...previews], next);
+    await settle(h.first, start);
+    expect(
+      latest?.routes.filter(
+        (route) => route.channelId && route.status === "live",
+      ),
+    ).toHaveLength(10_016);
+    expect(assertBounds(h.first).size).toBe(1020);
+
+    start = h.first.requests().length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle(h.first, start);
+    expect(assertBounds(h.first).size).toBe(1020);
+    h.first.close();
+    await vi.advanceTimersByTimeAsync(500);
+    const reconnect = h.sockets.at(-1);
+    assert.exists(reconnect);
+    expect(reconnect).not.toBe(h.first);
+    await reconnect.auth();
+    await settle(reconnect);
+    expect(new Set(reconnect.requests().flatMap(scopeOf))).toEqual(
+      new Set([...next, ...previews.slice(0, 16)]),
+    );
+    expect(latest?.status).toBe("connected");
+    assertBounds(reconnect);
+
+    h.owner.dispose();
+    const restarted = setup([]);
+    try {
+      restarted.callbacks.state.mockImplementation(() =>
+        restarted.callbacks.state.mockClear(),
+      );
+      restarted.owner.update(next, next);
+      await restarted.first.auth();
+      await settle(restarted.first);
+      expect(new Set(restarted.first.requests().flatMap(scopeOf))).toEqual(
+        new Set(next),
+      );
+      assertBounds(restarted.first);
+    } finally {
+      restarted.owner.dispose();
+    }
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+}, 60_000);
+
+it("passes the full session roster and delivers input and artifacts on task 10,000", async () => {
+  vi.useFakeTimers({ now: 1_700_000_100_000 });
+  const h = setup([]),
+    relay = keypair(),
+    author = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  let latest: Parameters<LiveCallbacks["state"]>[0] | undefined;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation((state) => {
+        latest = state;
+        callbacks.state(state);
+      });
+      h.callbacks.established.mockImplementation(callbacks.established);
+      return h.owner;
+    },
+  });
+  try {
+    const ids = Array.from(
+      { length: 10_000 },
+      (_, i) => `task-${String(i).padStart(5, "0")}`,
+    );
+    h.callbacks.receive(ids.map((id) => roster(relay, id, [h.key.pubkey])));
+    expect(owner.session.channels.list().channels).toHaveLength(10_000);
+    const live = vi.fn(),
+      input = vi.fn();
+    owner.session.subscribeLive(live, { replay: true });
+    owner.session.subscribeIncoming(input);
+    await h.first.auth();
+    for (let i = 0; i < h.first.requests().length; i++) {
+      await h.first.receive(["EOSE", h.first.requests()[i]?.[1]]);
+      h.callbacks.state.mockClear();
+    }
+    expect(latest?.status).toBe("connected");
+    expect(
+      latest?.routes.filter(
+        (route) => route.channelId && route.status === "live",
+      ),
+    ).toHaveLength(10_000);
+    const route = h.first
+      .requests()
+      .find((request) => scopeOf(request).includes("task-09999"));
+    assert.exists(route);
+    const messageEvent = message(
+      author,
+      "task-09999",
+      "run this task",
+      1_700_000_101,
+    );
+    const artifactEvent = signed(author, {
+      kind: 45010,
+      created_at: 1_700_000_102,
+      content: '{"text":"Result"}',
+      tags: [
+        ["h", "task-09999"],
+        ["ar", "1"],
+        ["d", "result"],
+        ["type", "example.note"],
+        ["op", "create"],
+      ],
+    });
+    await h.first.receive(["EVENT", route[1], messageEvent]);
+    await h.first.receive(["EVENT", route[1], artifactEvent]);
+    expect(input).toHaveBeenCalledWith([
+      expect.objectContaining({
+        channelId: "task-09999",
+        messageId: messageEvent.id,
+      }),
+    ]);
+    expect(live).toHaveBeenCalledWith({
+      channelId: "task-09999",
+      events: [artifactEvent],
+    });
+    h.first.close();
+    await vi.advanceTimersByTimeAsync(500);
+    const reconnect = h.sockets.at(-1);
+    assert.exists(reconnect);
+    await reconnect.auth();
+    const replayRoute = reconnect
+      .requests()
+      .find((request) => scopeOf(request).includes("task-00000"));
+    assert.exists(replayRoute);
+    const missed = message(author, "task-00000", "missed input", 1_700_000_103);
+    await reconnect.receive(["EVENT", replayRoute[1], missed]);
+    expect(live).toHaveBeenCalledWith({
+      channelId: "task-00000",
+      events: [missed],
+      replay: true,
+    });
+  } finally {
+    owner.dispose();
+  }
+}, 120_000);

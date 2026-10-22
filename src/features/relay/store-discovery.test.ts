@@ -28,12 +28,12 @@ function named(id: string) {
 }
 // Preserve real page/capacity boundaries; sign metadata lazily when requested.
 beforeAll(() => {
-  memberships = Array.from({ length: 1025 }, (_, i) => {
+  memberships = Array.from({ length: 10_001 }, (_, i) => {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     names.set(id, { name: `Channel ${i}` });
     return roster(relay, id, [viewer.pubkey]);
   }).sort((a, b) => a.id.localeCompare(b.id));
-});
+}, 60_000);
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
@@ -74,8 +74,12 @@ function setup(
     next,
     settled,
     emit: (events: readonly RelayEvent[]) => receive(events),
-    async rosters(count: number) {
-      for (let offset = 0; offset <= count; offset += 500) {
+    async rosters(count: number, exhaust = true) {
+      for (
+        let offset = 0;
+        offset < count || (exhaust && offset === count);
+        offset += 500
+      ) {
         const request = await next(39002);
         const previous = memberships[offset - 1];
         expect(request.filters).toEqual([
@@ -479,29 +483,30 @@ it("keeps membership and earlier names when a later metadata batch fails, then r
   ).toBe(true);
 });
 
-it.each([1024, 1025])(
+it.each([10_000, 10_001])(
   "reports retention coverage truthfully for %i memberships",
   async (count) => {
     const h = setup();
     h.channels.ensureList();
     await h.rosters(count);
-    await h.metadata(1024);
-    expect(h.channels.list().channels).toHaveLength(1024);
+    await h.metadata(10_000);
+    expect(h.channels.list().channels).toHaveLength(10_000);
     expect(h.channels.list().coverage).toBe(
-      count > 1024 ? "partial" : undefined,
+      count > 10_000 ? "partial" : undefined,
     );
     expect(h.pending).toHaveLength(0);
   },
+  60_000,
 );
 
 it("does not revoke omitted channels when retained rosters exhaust capacity", async () => {
   const h = setup();
   h.emit([roster(relay, "omitted", [viewer.pubkey])]);
   h.channels.ensureList();
-  await h.rosters(1024);
-  await h.metadata(1023);
+  await h.rosters(10_000, false);
+  await h.metadata(9_999);
   expect(h.channels.list().coverage).toBe("partial");
-  expect(h.channels.list().channels).toHaveLength(1024);
+  expect(h.channels.list().channels).toHaveLength(10_000);
   expect(
     h.channels.list().channels.some((channel) => channel.id === "omitted"),
   ).toBe(true);
@@ -509,14 +514,14 @@ it("does not revoke omitted channels when retained rosters exhaust capacity", as
 
 it("keeps coverage partial when exact discovery overflows during omission confirmation", async () => {
   const h = setup();
-  h.emit(memberships.slice(0, 1024));
-  expect(h.channels.list().channels).toHaveLength(1024);
+  h.emit(memberships.slice(0, 10_000));
+  expect(h.channels.list().channels).toHaveLength(10_000);
 
   h.channels.ensureList();
-  await h.rosters(1000);
+  await h.rosters(9_976);
   const confirmation = await h.next(39002);
   const omitted = memberships
-    .slice(1000, 1024)
+    .slice(9_976, 10_000)
     .flatMap((event) => tag(event, "d") ?? []);
   const confirmationIds = confirmation.filters[0]?.["#d"] ?? [];
   expect(confirmation.filters[0]).toMatchObject({
@@ -549,7 +554,7 @@ it("keeps coverage partial when exact discovery overflows during omission confir
   expect(h.channels.list().coverage).toBe("partial");
 
   confirmation.respond([]);
-  await h.metadata(1000);
+  await h.metadata(9_976);
   expect(h.session.live.snapshot().roster.state).toBe("verified");
   expect(h.channels.list().coverage).toBe("partial");
   expect(
@@ -561,7 +566,7 @@ it("keeps coverage partial when exact discovery overflows during omission confir
 
 it("marks metadata retention overflow as partial without discarding membership", async () => {
   const h = setup();
-  const member = memberships[1024];
+  const member = memberships[10_000];
   assert.exists(member);
   const id = tag(member, "d");
   assert.exists(id);

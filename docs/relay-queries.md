@@ -760,14 +760,23 @@ for outstanding work. These manual fixtures are not part of `pnpm test`; see
 The session's `live` capability exposes connection/route state independently from
 finite-read readiness. A connected socket is not proof that every route is live.
 Global profile and self-scoped membership-hint routes are separate from channel
-traffic. The logical interest capacity remains 1,022 channels plus those two globals
-(one fewer channel while agent observation is enabled); omitted routes and partial
-roster coverage remain visible. Joined background channels share stable wires of
-at most 10 channels. Initial replay uses singleton channel filters, matching the
-relay's per-REQ filter cap; live-only replacements use one equivalent filter.
-Public previews and foreground interests admitted as singletons remain separate;
-navigation prioritizes pending work without rebuilding healthy wires. Joined
-versus preview classification travels atomically with interests.
+traffic. The session accepts 10,064 interests, including at most 10,000 joined
+channels. Joined channels share stable wires of at most 10 channels. Initial replay uses one filter
+per channel. Each request has at most 10 filters. New members fill empty slots in
+existing batches. Priority changes setup order and preserves healthy wires.
+Preview channels use separate wires. Their admission leaves room for joined
+batches, the optional observer and presence routes, and four replacement wires.
+Omitted previews remain visible as limited routes. Joined versus preview
+classification travels with the interest snapshot.
+
+With 10,000 joined channels, the default scheduler uses 1,000 channel wires.
+The two global routes, observer, presence, admitted previews and replacement
+wires share the relay's limit of 1,024 subscriptions. The broker accepts up to
+3 MiB for initial interests and 4 MiB for interest updates. It limits frames and
+its write buffer to 8 MiB. Channel IDs remain limited to 128 characters.
+Discovery retains up to 10,000 signed rosters and metadata records in each map. Startup restore accepts at most
+30,000 discovery records within the existing 8 MiB cache bound. A larger cache
+requires fresh discovery.
 
 Initial replay is opportunistic and capped at 500 events **per channel filter**,
 preserving the previous singleton replay allowance. A busy channel cannot consume
@@ -784,9 +793,11 @@ Catch-up merges into paged readers without resetting older pages or their cursor
 Removing a batch member rebuilds only that batch's survivor scope. One established
 source overlaps its zero-replay replacement until EOSE; another removal supersedes
 the pending replacement, not that established source. Removed IDs are fenced
-immediately, including after re-addition. Original source scopes stay immutable;
+immediately, including after re-addition. A batch with new members requests a
+fresh replay sample. Its old wire can deliver only for the surviving members.
+Original source scopes stay immutable;
 ambiguous auxiliary events never gain invented alert attribution. Replacements
-use fresh wire IDs, preserve `since`, and request `limit: 0`, so their events are
+without added members use fresh wire IDs, preserve `since`, and request `limit: 0`. Their events are
 live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
 failure, denial, invalid traffic and disposal release both sources. For an
 unchanged scope, a renewal timeout or transient relay error retires only the

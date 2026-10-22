@@ -919,7 +919,7 @@ export function createChannelStore(
         saved.savedAt > now() ||
         now() - saved.savedAt > 86_400_000 ||
         !Array.isArray(saved.events) ||
-        saved.events.length > 3072 ||
+        saved.events.length > discovery.capacity * 3 ||
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;

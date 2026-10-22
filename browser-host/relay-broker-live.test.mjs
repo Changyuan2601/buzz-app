@@ -258,7 +258,11 @@ test("real HTTP accepts the 1022-channel body and rejects invalid/oversized/orig
     large.abort();
     await until(() => h.sockets.every((s) => s.readyState === 3));
     const count = h.sockets.length;
-    for (const invalid of [[""], Array(1025).fill("a"), ["x".repeat(150001)]]) {
+    for (const invalid of [
+      [""],
+      Array(10_065).fill("a"),
+      ["x".repeat(150001)],
+    ]) {
       const { response } = await h.post(invalid);
       expect([400, 413]).toContain(response.status);
       await response.text();
@@ -2013,3 +2017,95 @@ test("live streams request no agent telemetry without plugin demand", async () =
     await h.close();
   }
 });
+
+test("real broker keeps 10,000 joined channels and delivers outside the first batch", async () => {
+  const h = await harness();
+  const nativeFetch = globalThis.fetch;
+  let traffic;
+  try {
+    vi.stubGlobal("fetch", (input, init) =>
+      nativeFetch(input, {
+        ...init,
+        headers: {
+          ...init?.headers,
+          ...(init?.method === "POST" ? { Origin: h.base } : {}),
+        },
+      }),
+    );
+    const transport = await connectBrokerTransport(h.base);
+    let snapshot;
+    const received = [];
+    const established = new Set();
+    traffic = transport.subscribe({
+      receive(events) {
+        received.push(...events);
+      },
+      established(ids) {
+        for (const id of typeof ids === "string" ? [ids] : (ids ?? []))
+          established.add(id);
+      },
+      denied() {},
+      state(value) {
+        snapshot = value;
+      },
+    });
+    const ids = Array.from(
+      { length: 10_000 },
+      (_, i) => `${String(i).padStart(5, "0")}-${"c".repeat(122)}`,
+    );
+    traffic.update(ids, ids);
+    await vi.waitFor(
+      () => {
+        expect(established.size).toBe(10_000);
+        expect(snapshot?.status).toBe("connected");
+        expect(
+          snapshot.routes.filter(
+            (route) => route.channelId && route.status === "live",
+          ),
+        ).toHaveLength(10_000);
+      },
+      { timeout: 30_000 },
+    );
+    expect(h.sockets).toHaveLength(1);
+    expect(h.requests).toHaveLength(1002);
+    const last = ids.at(-1);
+    const route = h.requests.find((request) =>
+      request.filters.some((filter) => filter["#h"]?.includes(last)),
+    );
+    expect(route).toBeDefined();
+    const event = finalizeEvent(
+      {
+        kind: 9,
+        content: "last task input",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", last]],
+      },
+      h.key,
+    );
+    await route.socket.receive(["EVENT", route.id, event]);
+    await vi.waitFor(() =>
+      expect(received.map((item) => item.id)).toContain(event.id),
+    );
+    const next = [...ids.slice(0, -1), "new-task"];
+    traffic.update(next, next);
+    await vi.waitFor(
+      () => {
+        expect(established.has("new-task")).toBe(true);
+        expect(snapshot.routes.some((route) => route.channelId === last)).toBe(
+          false,
+        );
+      },
+      { timeout: 30_000 },
+    );
+    const active = new Set();
+    for (const { kind, id } of h.frames) {
+      if (kind === "REQ") active.add(id);
+      if (kind === "CLOSE") active.delete(id);
+      expect(active.size).toBeLessThanOrEqual(1024);
+    }
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+}, 60_000);
