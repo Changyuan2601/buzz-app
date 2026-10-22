@@ -8,6 +8,12 @@ fn main() {
             "plugin" | "--home" | "--profile" | "--help" | "-h"
         )
     }) {
+        #[cfg(all(windows, not(debug_assertions)))]
+        unsafe {
+            windows_sys::Win32::System::Console::AttachConsole(
+                windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+            );
+        }
         if let Err(message) = buzzodz_plugins::cli::run(args) {
             eprintln!("Error: {message}");
             std::process::exit(1);

@@ -112,8 +112,8 @@ a published Git plugin without a compiler or a separate tool:
 in Settings and retains the previous revision for rollback. Stop active plugin
 workers first. The command prints declared host access. `--enable` accepts that
 access and enables the selected plugin. Without it, new installs start disabled
-and existing enabled states stay the same. A retry with `--enable` also finishes
-enablement after a partial installation failure. The command does not start or
+and existing enabled states stay the same. Install and enable commit together.
+The command does not start or
 restart the desktop UI, read an identity, or connect to a community relay.
 
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:

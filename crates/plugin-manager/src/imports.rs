@@ -139,6 +139,18 @@ impl PreparedImport {
         Ok(self)
     }
     pub fn install(&self, manager: &Manager, token: &str, path: &str) -> Result<Catalog> {
+        self.install_with_activation(manager, token, path, false)
+    }
+    pub fn install_enabled(&self, manager: &Manager, token: &str, path: &str) -> Result<Catalog> {
+        self.install_with_activation(manager, token, path, true)
+    }
+    fn install_with_activation(
+        &self,
+        manager: &Manager,
+        token: &str,
+        path: &str,
+        enable: bool,
+    ) -> Result<Catalog> {
         if token != self.preview.token {
             return Err("This import preview expired. Choose the source again.".into());
         }
@@ -157,7 +169,7 @@ impl PreparedImport {
                     InstallSource::Git(source)
                 })
             });
-        manager.install_artifact(release, source)
+        manager.install_artifact(release, source, enable)
     }
 }
 
@@ -1033,9 +1045,59 @@ mod tests {
             Some(OsString::from("/tmp/block.sock"))
         );
         assert!(configured_agent("identityagent $MISSING", no_env).is_err());
+        assert_eq!(
+            configured_agent("identityagent /tmp/agent%u.sock", no_env).unwrap(),
+            Some(OsString::from("/tmp/agent%u.sock"))
+        );
     }
 
     use super::*;
+    #[test]
+    fn install_enabled_saves_the_selected_revision_and_activation_together() {
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let manifest = r#"{"id":"example","name":"Example","apiVersion":1}"#;
+        let first = uploaded(&[
+            ("manifest.json", manifest),
+            ("plugin.js", "export default {old:true};"),
+        ]);
+        let first = prepare_upload(first).unwrap();
+        let before = first.install(&manager, &first.preview.token, ".").unwrap();
+        let previous = before
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example")
+            .unwrap()
+            .revision
+            .clone();
+        let selected = uploaded(&[
+            ("manifest.json", manifest),
+            ("plugin.js", "export default {selected:true};"),
+        ]);
+        let selected = prepare_upload(selected).unwrap();
+        let catalog = selected
+            .install_enabled(&manager, &selected.preview.token, ".")
+            .unwrap();
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example")
+            .unwrap();
+        assert_eq!(plugin.revision, selected.preview.candidates[0].revision);
+        assert_eq!(plugin.previous.as_ref(), Some(&previous));
+        assert!(plugin.enabled);
+        assert!(
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example")
+                .unwrap()
+                .enabled
+        );
+    }
+
     fn uploaded(files: &[(&str, &str)]) -> FolderUpload {
         FolderUpload {
             source: "example".into(),

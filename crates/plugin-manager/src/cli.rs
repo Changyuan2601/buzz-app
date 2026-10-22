@@ -108,9 +108,10 @@ pub fn run(mut args: Vec<String>) -> Result<()> {
                 "Host access: {}",
                 serde_json::to_string_pretty(&candidate.manifest.host).map_err(|e| e.to_string())?
             );
-            source.install(&manager, &source.preview.token, path)?;
             if enable {
-                manager.change("enable", &candidate.manifest.id)?;
+                source.install_enabled(&manager, &source.preview.token, path)?;
+            } else {
+                source.install(&manager, &source.preview.token, path)?;
             }
             println!(
                 "Installed {} from {repository} ({reference}) in profile {profile}.",

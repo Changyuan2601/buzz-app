@@ -784,12 +784,14 @@ impl Manager {
         self.install_artifact(
             &prepare_artifact(directory)?,
             Some(InstallSource::Folder(source)),
+            false,
         )
     }
     fn install_artifact(
         &self,
         release: &Release,
         source: Option<InstallSource>,
+        enable: bool,
     ) -> Result<Catalog> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
@@ -817,7 +819,7 @@ impl Manager {
                     (Some(p.current.clone()), p.current_source.clone())
                 }
             });
-            let enabled = old.is_some_and(|p| p.enabled);
+            let enabled = enable || old.is_some_and(|p| p.enabled);
             let previous_signature = old.and_then(|p| {
                 if p.current == revision {
                     p.previous_signature.clone()
