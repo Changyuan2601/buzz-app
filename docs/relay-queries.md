@@ -763,7 +763,8 @@ Global profile and self-scoped membership-hint routes are separate from channel
 traffic. The session accepts 10,064 interests, including at most 10,000 joined
 channels. Joined channels share stable wires of at most 10 channels. Initial replay uses one filter
 per channel. Each request has at most 10 filters. New members fill empty slots in
-existing batches. Priority changes setup order and preserves healthy wires.
+existing batches. Initial setup takes priority over renewal. Priority changes
+setup order and preserves healthy wires.
 Preview channels use separate wires. Their admission leaves room for joined
 batches, the optional observer and presence routes, and four replacement wires.
 Omitted previews remain visible as limited routes. Joined versus preview
@@ -794,14 +795,15 @@ Removing a batch member rebuilds only that batch's survivor scope. One establish
 source overlaps its zero-replay replacement until EOSE; another removal supersedes
 the pending replacement, not that established source. Removed IDs are fenced
 immediately, including after re-addition. A batch with new members requests a
-fresh replay sample. Its old wire can deliver only for the surviving members.
+fresh replay sample only for those members. Survivor filters request no replay.
+Their events stay live before EOSE. The old wire can deliver only for survivors.
 Original source scopes stay immutable;
 ambiguous auxiliary events never gain invented alert attribution. Replacements
 without added members use fresh wire IDs, preserve `since`, and request `limit: 0`. Their events are
 live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
-failure, denial, invalid traffic and disposal release both sources. For an
-unchanged scope, a renewal timeout or transient relay error retires only the
-replacement and retains the established source, with the error visible until
+failure, denial, invalid traffic and disposal release both sources. A temporary
+failure retains the established source when its full scope stays allowed. This
+also applies when a replacement adds members. The error stays visible until
 fresh EOSE. The existing minute timer retries that renewal; quota failures retain
 the same source but obey the existing cooldown and three-retry limit. Exhausted
 or unsupported quota retries require manual Retry, not a reset each minute.

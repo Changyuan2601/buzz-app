@@ -199,6 +199,7 @@ type Route = {
   count: number;
   since: number;
   liveOnly?: boolean;
+  replayChannels?: readonly string[];
   previous?: Route;
   previousChannels?: readonly string[];
   retryRenewal?: boolean;
@@ -311,6 +312,10 @@ export function subscribeRelayTraffic(
           : (route.previousChannels ?? scope(previous))
         ).filter((id) => ids.includes(id))
       : [];
+    const replayChannels =
+      route.status !== "live"
+        ? route.replayChannels?.filter((id) => ids.includes(id))
+        : undefined;
     delete route.previous;
     if (previous !== route) closeWire(route); // Never retain a third wire.
     clearTimeout(route.deadline);
@@ -318,11 +323,13 @@ export function subscribeRelayTraffic(
       ...route,
       ...(route.channelIds ? { channelIds: ids } : {}),
       status: "pending",
-      liveOnly: true,
+      liveOnly: !replayChannels?.length,
       count: 0,
       quotaRetries: 0,
       ...(previous ? { previous, previousChannels } : {}),
     };
+    delete next.replayChannels;
+    if (replayChannels?.length) next.replayChannels = replayChannels;
     delete next.wire;
     delete next.deadline;
     delete next.retryRenewal;
@@ -413,7 +420,9 @@ export function subscribeRelayTraffic(
         if (
           route.channelIds &&
           survivors.length &&
-          (route.status === "live" || route.liveOnly)
+          (route.status === "live" ||
+            route.liveOnly ||
+            route.previous?.status === "live")
         ) {
           replace(route, survivors);
           for (const id of survivors) remaining.delete(id);
@@ -463,9 +472,16 @@ export function subscribeRelayTraffic(
         offset + LIVE_BATCH_SIZE - route.channelIds.length,
       );
       offset += added.length;
-      const next = replace(route, [...route.channelIds, ...added]);
-      // New members need replay. The old wire remains until the replacement reaches EOSE.
-      next.liveOnly = false;
+      const expanded = [...route.channelIds, ...added];
+      const next = replace(route, expanded);
+      next.replayChannels = expanded.filter(
+        (id) =>
+          !(
+            next.previous?.status === "live" &&
+            next.previousChannels?.includes(id)
+          ),
+      );
+      next.liveOnly = !next.replayChannels.length;
       next.since = Math.floor(Date.now() / 1000) - 300;
     }
     for (let i = offset; i < batch.length; i += LIVE_BATCH_SIZE)
@@ -475,14 +491,14 @@ export function subscribeRelayTraffic(
   }
   function fail(route: Route, reason: string, transient = false) {
     const previous = route.previous;
-    // Only an established, unchanged scope may outlive a failed renewal. Never
-    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
+    // A failure can retain the old source only while its full scope remains allowed.
     const retain =
       transient &&
       previous?.status === "live" &&
       previous.wire &&
       wires.get(previous.wire) === previous &&
-      JSON.stringify(scope(previous)) === JSON.stringify(scope(route));
+      JSON.stringify(scope(previous)) ===
+        JSON.stringify(route.previousChannels ?? scope(route));
     if (retain) delete route.previous;
     closeWire(route);
     delete route.retryRenewal;
@@ -563,7 +579,8 @@ export function subscribeRelayTraffic(
             ),
           );
     for (const route of [...routes.values()].sort(
-      (a, b) => rank(a) - rank(b),
+      (a, b) =>
+        Number(!!a.previous) - Number(!!b.previous) || rank(a) - rank(b),
     )) {
       if (active >= setupConcurrency) break;
       if (route.status !== "pending" || route.wire) continue;
@@ -608,12 +625,21 @@ export function subscribeRelayTraffic(
         wire,
         ...filters.map((filter) => ({
           ...filter,
-          // Each channel retains its original replay allowance. Replacements
-          // are live-only on every actual dispatch, including cooldown retries.
+          // Survivor filters stay live-only so replay cannot suppress a fresh alert.
           since: route.since,
           ...(route.id === "observer"
             ? {}
-            : { limit: route.liveOnly ? 0 : LIVE_REPLAY_LIMIT }),
+            : {
+                limit:
+                  route.liveOnly ||
+                  (route.replayChannels &&
+                    "#h" in filter &&
+                    !filter["#h"].some((id) =>
+                      route.replayChannels?.includes(id),
+                    ))
+                    ? 0
+                    : LIVE_REPLAY_LIMIT,
+              }),
         })),
         ...(route.id === "membership"
           ? [
@@ -857,7 +883,13 @@ export function subscribeRelayTraffic(
         }
         // The session still verifies access and auxiliary target evidence.
         if (incoming.kind === 20002 && !channelId) return;
-        if (route.status === "pending" && !route.liveOnly) route.count++;
+        const replaying =
+          route.status === "pending" &&
+          !route.liveOnly &&
+          (!route.replayChannels ||
+            !channelId ||
+            route.replayChannels.includes(channelId));
+        if (replaying) route.count++;
         if (route.id === "presence") {
           if (
             incoming.kind === 20001 &&
@@ -875,8 +907,7 @@ export function subscribeRelayTraffic(
           callbacks.receive(
             [incoming],
             Object.freeze({
-              phase:
-                route.liveOnly || route.status === "live" ? "live" : "replay",
+              phase: replaying ? "replay" : "live",
               ...(channelId
                 ? { channelId }
                 : ids.length

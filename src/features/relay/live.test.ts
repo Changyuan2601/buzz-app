@@ -2713,3 +2713,126 @@ it("passes the full session roster and delivers input and artifacts on task 10,0
     owner.dispose();
   }
 }, 120_000);
+
+it("finishes initial channel setup before renewing established batches", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    const ids = Array.from(
+      { length: 400 },
+      (_, i) => `c${String(i).padStart(3, "0")}`,
+    );
+    h.owner.update(ids, ids);
+    await h.first.auth();
+    for (const request of h.first
+      .requests()
+      .filter((request) => !scopeOf(request).length))
+      await h.first.receive(["EOSE", request[1]]);
+    let cursor = 2;
+    for (let round = 0; round < 7; round++) {
+      await vi.advanceTimersByTimeAsync(8000);
+      const pending = h.first.requests().slice(cursor);
+      cursor = h.first.requests().length;
+      for (const request of pending)
+        await h.first.receive(["EOSE", request[1]]);
+    }
+    const pending = h.first.requests().slice(cursor);
+    await vi.advanceTimersByTimeAsync(4000);
+    assert.exists(pending[0]);
+    const before = h.first.requests().length;
+    await h.first.receive(["EOSE", pending[0][1]]);
+    expect(h.first.requests()).toHaveLength(before + 1);
+    expect(h.first.requests().at(-1)?.[2].limit).toBe(500);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["replacement", "source"])(
+  "keeps survivor alerts when %s delivers first during batch expansion",
+  async (first) => {
+    vi.useFakeTimers({ now: 1_700_000_100_000 });
+    const h = setup([]),
+      relay = keypair(),
+      author = keypair();
+    const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        h.callbacks.receive.mockImplementation(callbacks.receive);
+        h.callbacks.state.mockImplementation(callbacks.state);
+        return h.owner;
+      },
+    });
+    try {
+      h.callbacks.receive([roster(relay, "a", [h.key.pubkey])]);
+      await h.first.auth();
+      for (const request of h.first.requests())
+        await h.first.receive(["EOSE", request[1]]);
+      const source = h.first
+        .requests()
+        .find((request) => scopeOf(request).includes("a"));
+      assert.exists(source);
+      const incoming = vi.fn();
+      owner.session.subscribeIncoming(incoming);
+      h.callbacks.receive([roster(relay, "b", [h.key.pubkey])]);
+      const replacement = h.first.requests().at(-1);
+      assert.exists(replacement);
+      expect(scopeOf(replacement)).toEqual(["a", "b"]);
+      const event = message(author, "a", "fresh survivor", 1_700_000_101);
+      const sources =
+        first === "replacement" ? [replacement, source] : [source, replacement];
+      for (const request of sources)
+        await h.first.receive(["EVENT", request[1], event]);
+      expect(incoming).toHaveBeenCalledTimes(1);
+      expect(filtersOf(replacement).map((filter) => filter.limit)).toEqual([
+        0, 500,
+      ]);
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it.each(["transient failure", "removal"])(
+  "keeps the live survivor source after %s in an expanding batch",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      h.owner.update(["a", "b"], ["a", "b"]);
+      await h.first.auth();
+      for (const request of h.first.requests())
+        await h.first.receive(["EOSE", request[1]]);
+      const source = h.first
+        .requests()
+        .find((request) => scopeOf(request).includes("b"));
+      assert.exists(source);
+      h.owner.update(["a", "b", "c"], ["a", "b", "c"]);
+      const replacement = h.first.requests().at(-1);
+      assert.exists(replacement);
+      if (outcome === "transient failure")
+        await h.first.receive([
+          "CLOSED",
+          replacement[1],
+          "error: internal server error",
+        ]);
+      else h.owner.update(["b", "c"], ["b", "c"]);
+      expect(h.first.sent).not.toContainEqual(["CLOSE", source[1]]);
+      const event = message(h.key, "b", "survivor remains live", 1_700_000_101);
+      await h.first.receive(["EVENT", source[1], event]);
+      expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+        phase: "live",
+        channelId: "b",
+      });
+      if (outcome === "transient failure") h.owner.retry();
+      const retry = h.first.requests().at(-1);
+      assert.exists(retry);
+      expect(
+        filtersOf(retry).find((filter) => filter["#h"]?.includes("c"))?.limit,
+      ).toBe(500);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
