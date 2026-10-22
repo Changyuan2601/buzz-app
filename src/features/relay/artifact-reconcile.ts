@@ -266,10 +266,11 @@ export async function reconcileArtifactDelta(
         while (true) {
           const page = await reader.delta(
             queryFor(type),
-            {
-              ...(checkpoint !== undefined ? { checkpoint } : {}),
-              ...(cursor !== undefined ? { cursor } : {}),
-            },
+            cursor !== undefined
+              ? { cursor }
+              : checkpoint !== undefined
+                ? { checkpoint }
+                : {},
             signal,
           );
           signal.throwIfAborted();

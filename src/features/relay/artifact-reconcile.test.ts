@@ -7,7 +7,11 @@ import {
   reconcileArtifactDelta,
   reconcileArtifactCurrent,
 } from "./artifact-reconcile";
-import { ArtifactSyncError, type ArtifactSyncReader } from "./artifact-reader";
+import {
+  ArtifactSyncError,
+  createArtifactSyncReader,
+  type ArtifactSyncReader,
+} from "./artifact-reader";
 import { keypair, signed } from "./testing";
 import { eventDto } from "./events";
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -110,7 +114,6 @@ it("saves delta progress only after all pages commit", async () => {
   });
   await h.delta();
   expect(h.reader.delta.mock.calls[1]?.[1]).toEqual({
-    checkpoint: "old",
     cursor: "second",
   });
   expect(h.collection.applyBatch.mock.invocationCallOrder[0]).toBeLessThan(
@@ -124,6 +127,46 @@ it("saves delta progress only after all pages commit", async () => {
     },
     h.controller.signal,
   );
+});
+it("continues an incremental pass through the relay request validator", async () => {
+  const h = setup();
+  const request = vi.fn(
+    async (filter: import("./artifact-reader").ArtifactSyncRequest) => {
+      if ("checkpoint" in filter && "cursor" in filter)
+        return Response.json({ code: "sync_invalid" }, { status: 400 });
+      if ("cursor" in filter)
+        return Response.json({
+          ...h.page,
+          changes: [{ type: "remove", artifactId: id }],
+        });
+      return Response.json({
+        ...h.page,
+        changes: [{ type: "upsert", artifactId: id, event }],
+        nextCursor: "second",
+        checkpoint: null,
+      });
+    },
+  );
+  await reconcileArtifactDelta(
+    createArtifactSyncReader(request),
+    h.collection as unknown as HostArtifactCollection,
+    "test.task",
+    h.controller.signal,
+  );
+  expect(request.mock.calls.map(([filter]) => filter)).toEqual([
+    {
+      artifact: "sync",
+      query: { artifact: "current", kinds: [45010], "#type": ["test.task"] },
+      checkpoint: "old",
+    },
+    {
+      artifact: "sync",
+      query: { artifact: "current", kinds: [45010], "#type": ["test.task"] },
+      cursor: "second",
+    },
+  ]);
+  expect(h.rows.get(id)?.record.availability.state).toBe("unavailable");
+  expect(h.collection.completeRefresh).toHaveBeenCalledOnce();
 });
 it("does not infer absence from an empty delta", async () => {
   const h = setup();

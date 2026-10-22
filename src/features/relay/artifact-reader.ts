@@ -125,7 +125,7 @@ function queryType(query: ArtifactSyncQuery): string {
 function timestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const parts =
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}(?:Z|[+-](\d{2}):(\d{2}))$/.exec(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(
       value,
     );
   if (!parts) return false;
@@ -297,6 +297,7 @@ export function createArtifactSyncReader(
     async delta(query, position, signal) {
       const type = queryType(query);
       if (
+        (position.checkpoint !== undefined && position.cursor !== undefined) ||
         (position.checkpoint !== undefined && !token(position.checkpoint)) ||
         (position.cursor !== undefined && !token(position.cursor))
       )

@@ -84,6 +84,7 @@ export function provideArtifactSync(
       viewer && origin
         ? transportPartition({ viewer, scope: origin, relayAuthor: "" })
         : undefined;
+    if (scope === undefined) return;
     for (const [key, group] of groups)
       if (group.scope !== scope) {
         group.lifetime.abort();

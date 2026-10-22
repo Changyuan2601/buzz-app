@@ -32,18 +32,20 @@ function setup() {
     locks: { request: vi.fn(async (_key, _options, callback) => callback()) },
   });
   const listeners = new Set<() => void>();
+  const liveListeners = new Set<() => void>();
   let receive: (value: { events: readonly RelayEvent[] }) => void = () => {};
   let accepted: (event: EventData) => void = () => {};
   let opened: (entry: OpenArtifactCollection) => void = () => {};
   let online = true;
+  let scoped = true;
   const session = {
     artifactSync: {},
     live: {
       snapshot: () => ({ status: online ? "connected" : "retrying" }),
       subscribe: (listener: () => void) => {
-        listeners.add(listener);
+        liveListeners.add(listener);
         return () => {
-          listeners.delete(listener);
+          liveListeners.delete(listener);
         };
       },
     },
@@ -69,9 +71,8 @@ function setup() {
   const ctx = {
     relay: {
       snapshot: () => ({
-        viewer: "viewer",
-        origin: "https://relay.test",
-        status: "ready",
+        ...(scoped ? { viewer: "viewer", origin: "https://relay.test" } : {}),
+        status: scoped ? "ready" : "connecting",
         cached: false,
         session,
       }),
@@ -110,11 +111,15 @@ function setup() {
   };
   return {
     add,
+    scope: (value: boolean) => {
+      scoped = value;
+      for (const listener of listeners) listener();
+    },
     confirmed: (event: RelayEvent) => receive({ events: [event] }),
     accepted: (event: EventData) => accepted(event),
     connection: (value: boolean) => {
       online = value;
-      for (const listener of listeners) listener();
+      for (const listener of liveListeners) listener();
     },
   };
 }
@@ -147,6 +152,46 @@ it("aborts reconciliation on disconnect and starts a new capture on reconnect", 
   h.connection(true);
   await vi.advanceTimersByTimeAsync(0);
   expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+});
+it("keeps an open collection through a reconnect without relay scope", async () => {
+  const h = setup();
+  vi.mocked(reconcileArtifactDelta).mockImplementationOnce(
+    async (_reader, _collection, _type, signal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    },
+  );
+  const entry = h.add();
+  await vi.advanceTimersByTimeAsync(0);
+  const signal = vi.mocked(reconcileArtifactDelta).mock.calls[0]?.[3];
+  h.scope(false);
+  expect(signal?.aborted).toBe(true);
+  expect(entry.controller.signal.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
+  h.scope(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+  const event = eventDto(
+    signed(keypair(), {
+      kind: 45010,
+      content: "{}",
+      tags: [
+        ["d", "task"],
+        ["type", "test.task"],
+      ],
+    }),
+  );
+  h.confirmed(event);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledOnce();
+  h.accepted(event);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reconcileArtifactCurrent).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(3);
+  expect(navigator.locks.request).toHaveBeenCalledOnce();
 });
 it("refreshes after proven acceptance without writing raw revisions", async () => {
   const h = setup();

@@ -87,18 +87,13 @@ it("reads signed changes and gives a checkpoint only on the final page", async (
   expect(change?.type).toBe("upsert");
   if (change?.type === "upsert") expect(hasEventProof(change.event)).toBe(true);
   request.mockImplementationOnce(async () => Response.json(page()));
-  const last = await reader.delta(
-    query,
-    { checkpoint: "prior-checkpoint", cursor: "page-two" },
-    signal(),
-  );
+  const last = await reader.delta(query, { cursor: "page-two" }, signal());
   expect(last.checkpoint).toBe("checkpoint-final");
   expect(request.mock.calls.map(([filter]) => filter)).toEqual([
     { artifact: "sync", query, checkpoint: "prior-checkpoint" },
     {
       artifact: "sync",
       query,
-      checkpoint: "prior-checkpoint",
       cursor: "page-two",
     },
   ]);
@@ -130,7 +125,8 @@ it.each([
   "2026-02-30T22:00:01.123456Z",
   "2026-10-21T24:00:01.123456Z",
   "2026-10-21T22:60:01.123456Z",
-  "2026-10-21T22:00:01.123Z",
+  "2026-10-21T22:00:01.Z",
+  "2026-10-21T22:00:01.1234567890Z",
   "2026-10-21T22:00:01.123456",
   "2026-10-21T22:00:01.123456+24:00",
 ])("rejects invalid sync time %s", async (value) => {
@@ -141,12 +137,27 @@ it.each([
     code: "sync_invalid",
   });
 });
-it("accepts a leap day with a numeric time offset", async () => {
-  const time = "2024-02-29T22:00:01.123456+05:30";
+it.each([
+  "2026-10-21T22:00:01Z",
+  "2026-10-21T22:00:01.123Z",
+  "2026-10-21T22:00:01.123456Z",
+  "2026-10-21T22:00:01.123456789Z",
+  "2024-02-29T22:00:01.123456+05:30",
+])("accepts relay sync time %s", async (time) => {
   const reader = createArtifactSyncReader(async () =>
     Response.json({ ...page(), startedAt: time }),
   );
   expect((await reader.delta(query, {}, signal())).startedAt).toBe(time);
+  const current = createArtifactSyncReader(async () =>
+    Response.json({
+      version: 1,
+      startedAt: time,
+      changes: [{ type: "remove", artifactId }],
+    }),
+  );
+  expect((await current.current(query, [artifactId], signal())).startedAt).toBe(
+    time,
+  );
 });
 it.each(
   [
@@ -293,6 +304,7 @@ it.each([
   expect(request).not.toHaveBeenCalled();
 });
 it.each([
+  { checkpoint: "prior-checkpoint", cursor: "page-two" },
   { checkpoint: "" },
   { cursor: "has space" },
   { checkpoint: "x".repeat(4097) },
