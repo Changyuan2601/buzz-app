@@ -590,6 +590,7 @@ struct Git {
     deadline: Instant,
     /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
     authorization: Option<(String, String)>,
+    ssh_agent: Option<std::ffi::OsString>,
 }
 impl Git {
     fn new() -> Result<Self> {
@@ -597,6 +598,7 @@ impl Git {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
             authorization: None,
+            ssh_agent: None,
         })
     }
     fn command(&self) -> Command {
@@ -608,6 +610,9 @@ impl Git {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
+        }
+        if let Some(agent) = &self.ssh_agent {
+            command.env("SSH_AUTH_SOCK", agent);
         }
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         command
@@ -656,6 +661,27 @@ impl Git {
         let mut command = self.command();
         command.args(args);
         self.run_command(command, limit)
+    }
+    fn configure_ssh_agent(&mut self, repository: &str) -> Result<()> {
+        let url = url::Url::parse(repository).map_err(err)?;
+        if url.scheme() != "ssh" {
+            return Ok(());
+        }
+        let mut command = Command::new("ssh");
+        command.arg("-G");
+        if !url.username().is_empty() {
+            command.args(["-l", url.username()]);
+        }
+        command.args([
+            "-p",
+            &url.port().unwrap_or(22).to_string(),
+            "--",
+            url.host_str().ok_or("Missing SSH host")?,
+        ]);
+        let output = self.run_command(command, 64 * 1024)?;
+        let config = std::str::from_utf8(&output).map_err(err)?;
+        self.ssh_agent = configured_agent(config, |key| std::env::var_os(key))?;
+        Ok(())
     }
     fn run_command(&self, mut command: Command, limit: u64) -> Result<Vec<u8>> {
         let output = tempfile::tempfile().map_err(err)?;
@@ -865,6 +891,23 @@ impl Git {
     }
 }
 
+fn configured_agent(
+    config: &str,
+    get_env: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<Option<std::ffi::OsString>> {
+    match config
+        .lines()
+        .find_map(|line| line.strip_prefix("identityagent "))
+    {
+        None | Some("SSH_AUTH_SOCK") => Ok(None),
+        Some("none") => Ok(Some("".into())),
+        Some(variable) if variable.starts_with('$') => get_env(&variable[1..])
+            .map(Some)
+            .ok_or_else(|| "The SSH IdentityAgent environment variable is not set.".into()),
+        Some(path) => Ok(Some(path.into())),
+    }
+}
+
 /// `authorization` is a NIP-98 token that the caller signed for exactly this repository URL.
 pub fn prepare_git(
     repository: &str,
@@ -894,6 +937,7 @@ pub fn prepare_git(
         }
         git.authorization = Some((url.clone(), token.into()));
     }
+    git.configure_ssh_agent(&url)?;
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -956,6 +1000,41 @@ fn directory_size(root: &Path) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn configured_agent_selects_only_the_agent_socket() {
+        use super::configured_agent;
+        use std::ffi::OsString;
+
+        let no_env = |_: &str| None;
+        assert_eq!(
+            configured_agent(
+                "hostname other\nidentityagent /tmp/agent.sock\nproxycommand ignored",
+                no_env
+            )
+            .unwrap(),
+            Some(OsString::from("/tmp/agent.sock"))
+        );
+        assert_eq!(
+            configured_agent("identityagent none", no_env).unwrap(),
+            Some(OsString::new())
+        );
+        assert_eq!(
+            configured_agent("identityagent SSH_AUTH_SOCK", no_env).unwrap(),
+            None
+        );
+        assert_eq!(
+            configured_agent("hostname github.com", no_env).unwrap(),
+            None
+        );
+        assert_eq!(
+            configured_agent("identityagent $BLOCK_AGENT", |key| (key == "BLOCK_AGENT")
+                .then(|| OsString::from("/tmp/block.sock")))
+            .unwrap(),
+            Some(OsString::from("/tmp/block.sock"))
+        );
+        assert!(configured_agent("identityagent $MISSING", no_env).is_err());
+    }
+
     use super::*;
     fn uploaded(files: &[(&str, &str)]) -> FolderUpload {
         FolderUpload {

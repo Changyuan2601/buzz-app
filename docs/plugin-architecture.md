@@ -100,6 +100,22 @@ source imports are not a versioned external SDK. See
 
 ## The `buzzodz` CLI
 
+The installed desktop executable also accepts these commands. On macOS, install
+a published Git plugin without a compiler or a separate tool:
+
+```sh
+"/Applications/Buzz Foundation.app/Contents/MacOS/buzz-foundation" plugin install-git org-49461806@github.com:squareup/buzz-nexus.git plugin-release --enable
+```
+
+`install-git REPO REF [PATH] [--enable]` uses the same importer as Settings.
+`PATH` defaults to the repository root. It saves the Git source for later updates
+in Settings and retains the previous revision for rollback. Stop active plugin
+workers first. The command prints declared host access. `--enable` accepts that
+access and enables the selected plugin. Without it, new installs start disabled
+and existing enabled states stay the same. A retry with `--enable` also finishes
+enablement after a partial installation failure. The command does not start or
+restart the desktop UI, read an identity, or connect to a community relay.
+
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
 
 ```sh
@@ -1082,10 +1098,10 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
-known hosts, with interactive prompts and SSH config disabled. If normal Git uses
-an `IdentityAgent` from SSH config, launch the app with that socket in
-`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+usernames. Buzz reads `IdentityAgent` through `ssh -G` and passes that socket to
+the transport. Without that setting, it uses the inherited `SSH_AUTH_SOCK`.
+The transport uses existing known hosts and disables interactive prompts.
+Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
@@ -1116,8 +1132,11 @@ Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
-SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
-private-repo sign-in and custom SSH-config aliases are not supported in this slice.
+For SSH, Buzz runs `ssh -G` to read the configured `IdentityAgent` socket. OpenSSH
+evaluates the user's local SSH configuration for that lookup, including `Match exec`.
+Only the socket value reaches the Git transport. The transport disables SSH config
+and uses existing known hosts. Password entry, HTTPS private-repo sign-in, and
+custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
 
