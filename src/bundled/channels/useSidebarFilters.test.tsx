@@ -312,61 +312,112 @@ it("keeps known-inactive rows hidden through refreshes while new rows remain vis
   owner.dispose();
 });
 
-it("shows up to the DM limit of recent conversations and lists the rest as older", () => {
+it("shows the most recent DMs up to the limit, plus open, unread and unknown ones", () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
   const owner = createRelaySession(null);
   const now = Date.now() / 1000;
   const window = SIDEBAR_ACTIVE_WINDOW / 1000;
+  // Names sort opposite to recency, so name order cannot satisfy the limit.
   const recent: ChannelSummary[] = Array.from(
     { length: SIDEBAR_DM_LIMIT + 2 },
     (_, index) => ({
       id: `recent-${index}`,
-      name: `Recent ${String(index).padStart(2, "0")}`,
+      name: `Recent ${String(99 - index)}`,
       channelType: "dm",
-      lastActivityAt: now - index,
+      lastActivityAt: now - window + 1000 - index * 10,
     }),
   );
-  const sections = sidebarSections([
-    ...recent,
-    {
-      id: "stale",
-      name: "Stale",
-      channelType: "dm",
+  const many = (prefix: string): ChannelSummary[] =>
+    Array.from({ length: SIDEBAR_DM_LIMIT + 2 }, (_, index) => ({
+      id: `${prefix}-${index}`,
+      name: `${prefix} ${index}`,
+      channelType: prefix === "dm" ? "dm" : "stream",
       lastActivityAt: now - window,
-    },
+    }));
+  const unreadIds = new Set(["stale"]);
+  const unread = {
+    ...owner.session.unread,
+    snapshot: (
+      target: Parameters<typeof owner.session.unread.snapshot>[0],
+    ) => ({
+      ...owner.session.unread.snapshot(target),
+      observedCount: unreadIds.has(target.channelId) ? 1 : null,
+    }),
+  };
+  const roster: ChannelSummary[] = [
+    ...recent,
+    ...many("stream"),
+    { id: "stale", name: "Stale", channelType: "dm", lastActivityAt: 1 },
+    { id: "old", name: "Old", channelType: "dm", lastActivityAt: 1 },
     { id: "quiet", name: "Quiet", channelType: "dm", activityKnown: true },
-  ]);
+    { id: "unknown", name: "Unknown", channelType: "dm" },
+  ];
+  const sections = sidebarSections(roster);
   const { result, rerender, unmount } = renderHook(
-    ({ current, filter }: { current?: string; filter?: SidebarFilter }) =>
+    ({
+      current,
+      filter,
+      ready = true,
+    }: {
+      current?: string;
+      filter?: SidebarFilter;
+      ready?: boolean;
+    }) =>
       useSidebarFilters(
         sections,
         filter ? { dms: filter } : {},
         current,
-        owner.session.unread,
+        unread,
+        {},
+        ready,
       ),
     { initialProps: {} },
   );
-  const dms = () => result.current.find(({ key }) => key === "dms");
-  expect(dms()?.rows.map(({ id }) => id)).toEqual(
-    recent.slice(0, SIDEBAR_DM_LIMIT).map(({ id }) => id),
+  const ids = (key: string, field: "rows" | "hiddenRows" = "rows") =>
+    (result.current.find((section) => section.key === key)?.[field] ?? [])
+      .map(({ id }) => id)
+      .sort();
+  expect(ids("dms")).toEqual(
+    [...recent.slice(0, SIDEBAR_DM_LIMIT).map(({ id }) => id), "stale"].sort(),
   );
-  expect(
-    dms()
-      ?.hiddenRows.map(({ id }) => id)
-      .sort(),
-  ).toEqual(
+  expect(ids("dms", "hiddenRows")).toEqual(
     [
       `recent-${SIDEBAR_DM_LIMIT}`,
       `recent-${SIDEBAR_DM_LIMIT + 1}`,
-      "stale",
+      "old",
       "quiet",
+      "unknown",
     ].sort(),
   );
-  rerender({ current: "stale" });
-  expect(dms()?.rows.map(({ id }) => id)).toContain("stale");
+  expect(ids("channels")).toHaveLength(SIDEBAR_DM_LIMIT + 2);
+  rerender({ current: "old" });
+  expect(ids("dms")).toContain("old");
+  // Unknown activity during loading or a failed read never uses a slot.
+  rerender({ ready: false });
+  expect(ids("dms")).toEqual(
+    [
+      ...recent.slice(0, SIDEBAR_DM_LIMIT).map(({ id }) => id),
+      "stale",
+      "unknown",
+    ].sort(),
+  );
+  // An explicit filter applies without the limit.
   rerender({ filter: "active" });
-  expect(dms()?.rows).toHaveLength(SIDEBAR_DM_LIMIT + 2);
+  expect(ids("dms")).toHaveLength(SIDEBAR_DM_LIMIT + 2);
+  rerender({ filter: "unreads" });
+  expect(ids("dms")).toEqual(["stale"]);
+  // A shown DM leaves when it ages out of the window.
+  rerender({});
+  act(() => {
+    vi.advanceTimersByTime((1000 - (SIDEBAR_DM_LIMIT - 1) * 10 + 5) * 1000);
+  });
+  expect(ids("dms")).toEqual(
+    [
+      ...recent.slice(0, SIDEBAR_DM_LIMIT - 1).map(({ id }) => id),
+      "stale",
+    ].sort(),
+  );
   unmount();
   owner.dispose();
 });

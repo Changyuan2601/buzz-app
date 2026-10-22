@@ -36,31 +36,36 @@ export function useSidebarFilters(
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
-  // Unknown activity is not inactivity. Keep those rows during loading or a
-  // failed read; a successful read can establish that a channel has no activity.
   // Unfiltered DMs keep the current, unread, and up to SIDEBAR_DM_LIMIT
-  // conversations active within the default window, most recent first.
+  // conversations active within the default window, chosen by recency. Rows
+  // with unknown activity stay visible without using a slot.
   const recentDms = <T extends (typeof sections)[number]["rows"][number]>(
     rows: readonly T[],
   ) => {
-    const window = DEFAULT_ACTIVE_WINDOW_SECONDS * 1000;
     const recent = new Set(
       rows
         .filter((channel) => {
-          if (channel.lastActivityAt === undefined)
-            return !channel.activityKnown && !activityReady;
-          const expiry = channel.lastActivityAt * 1000 + window;
+          if (channel.lastActivityAt === undefined) return false;
+          const expiry = channel.lastActivityAt * 1000 + SIDEBAR_ACTIVE_WINDOW;
           if (expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
           return expiry > now;
         })
-        .sort((a, b) => (b.lastActivityAt ?? now) - (a.lastActivityAt ?? now))
+        .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))
         .slice(0, SIDEBAR_DM_LIMIT)
         .map(({ id }) => id),
     );
     return rows.filter(
-      ({ id }) => id === current || unreadSet.has(id) || recent.has(id),
+      (channel) =>
+        channel.id === current ||
+        unreadSet.has(channel.id) ||
+        recent.has(channel.id) ||
+        (channel.lastActivityAt === undefined &&
+          !channel.activityKnown &&
+          !activityReady),
     );
   };
+  // Unknown activity is not inactivity. Keep those rows during loading or a
+  // failed read; a successful read can establish that a channel has no activity.
   const visible = sections.map((section) => {
     const mode = filters[section.key] ?? "all";
     const activeWindow =
