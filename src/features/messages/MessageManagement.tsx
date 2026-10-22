@@ -280,7 +280,8 @@ export function MessageReadStateItem({
     (listener) => session.unread.subscribe(target, listener),
     () => session.unread.snapshot(target),
   );
-  if (!management) return null;
+  // Coordination between agents is never unread, so it has no read state.
+  if (!management || row.audience === "agents") return null;
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   return (

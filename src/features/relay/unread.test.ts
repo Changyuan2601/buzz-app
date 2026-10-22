@@ -1533,7 +1533,7 @@ it("manual message intent participates in shared counts and is cleared by explic
   expect(h.journal()?.localUnread[`msg:${row.id}`]).toBeUndefined();
 });
 
-it("agents-audience messages are never unread or Inbox attention unless marked unread", async () => {
+it("agents-audience messages are never unread or Inbox attention, even when marked unread", async () => {
   const h = setup();
   h.grant("room");
   h.grant("dm");
@@ -1576,7 +1576,7 @@ it("agents-audience messages are never unread or Inbox attention unless marked u
   expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
   expect(unread.inbox().items).toHaveLength(1);
 
-  // Marking an agents-audience message unread is the person's own choice.
+  // Unread intent cannot make coordination between agents unread.
   const [first] = quiet;
   assert(first);
   await unread.markUnreadLocal({
@@ -1584,10 +1584,15 @@ it("agents-audience messages are never unread or Inbox attention unless marked u
     channelId: "room",
     messageId: first.id,
   });
-  expect(h.snapshot().observedCount).toBe(2);
-  expect(unread.attention("room", first.id).unread).toBe(true);
-  await unread.markMessageRead("room", first.id);
+  await unread.markMessageUnread("room", first.id);
   expect(h.snapshot().observedCount).toBe(1);
+  expect(unread.attention("room", first.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+    forced: false,
+  });
+  expect(unread.activity("room").items).toHaveLength(0);
+  expect(unread.inbox().items).toHaveLength(1);
 });
 
 it("revocation rejects an unread action before its intent is saved", async () => {

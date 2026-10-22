@@ -523,7 +523,9 @@ export function createUnread({
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
-    if (event.pubkey === viewer) return false;
+    // Coordination between agents is never unread for people, whatever
+    // read state or unread intent says.
+    if (event.pubkey === viewer || entry.quiet) return false;
     // Explicit per-message unread intent wins; otherwise replies outside the
     // viewer's conversations are not unread.
     if (
@@ -531,13 +533,6 @@ export function createUnread({
       reads.localUnread(`msg:${event.id}`)
     )
       return true;
-    // People read coordination between agents quietly: only marking the
-    // message itself unread makes it unread.
-    if (entry.quiet)
-      return overrideActive(
-        state.overrides[`msg:${event.id}`],
-        effectiveFrontier(state, `msg:${event.id}`, channelId, entry.rootId),
-      );
     return relevant(entry, dm) && afterFrontier(entry, state, dm);
   }
   /** The read-state half of unread, before conversation relevance. */
@@ -673,11 +668,13 @@ export function createUnread({
     const entry = byChannel
       .get(channelId)
       ?.find((row) => row.event.id === messageId);
-    if (!entry || event.pubkey === viewer)
+    if (!entry || event.pubkey === viewer || entry.quiet)
       return Object.freeze({
         status: "ineligible",
         unread: false,
-        forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
+        forced:
+          !entry?.quiet &&
+          (forcedMessages.get(channelId)?.has(messageId) ?? false),
         viewing: false,
       });
     const dm = isDm(channelId);

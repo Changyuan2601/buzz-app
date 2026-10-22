@@ -210,11 +210,11 @@ applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
 A message signed for the agents audience (`["audience", "agents"]`) is
-coordination between agents, so it never counts by itself: not as a top-level
+coordination between agents, so it is never unread: not as a top-level
 message, a reply in the viewer's conversation, a DM, a mention or a broadcast.
-Only explicit per-message unread intent (**Mark unread** on that message) makes
-it unread in channel and thread counts, thread activity and message attention.
-Inbox leaves these messages out even when marked unread.
+Unread intent does not change that. The message has no **Mark read** /
+**Mark unread** action, and channel or thread **Mark unread** leaves it read. It
+never appears in counts, thread activity, message attention or Inbox.
 
 **Follow thread** / **Unfollow thread** in a message's menu records an explicit
 choice for the message's canonical thread root (`threadRootId ?? id`), so every

@@ -815,6 +815,31 @@ it("waits for confirmed membership before entering a restored channel visit", as
   expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("room");
 });
 
+it("offers no read action on an agents-audience message", async () => {
+  const h = await fixture(false, true);
+  cleanup();
+  const row = h.owner.session.channels.window("room").rows[0];
+  assert.exists(row);
+  render(
+    <MessageManagement session={h.owner.session} channelId="room">
+      <MenuRoot>
+        <MenuTrigger>Read actions</MenuTrigger>
+        <MenuPopup>
+          <MessageReadStateItem
+            row={{ ...row, audience: "agents" }}
+            session={h.owner.session}
+          />
+          <MessageReadStateItem row={row} session={h.owner.session} />
+        </MenuPopup>
+      </MenuRoot>
+    </MessageManagement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Read actions" }));
+  expect(
+    await screen.findAllByRole("menuitem", { name: /^Mark (un)?read$/ }),
+  ).toHaveLength(1);
+});
+
 async function heldUnreadAction(action: "read" | "unread") {
   const h = await fixture(action === "unread", true);
   cleanup();
