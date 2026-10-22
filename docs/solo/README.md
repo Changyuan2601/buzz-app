@@ -120,7 +120,7 @@ behavior on the label, so a rename touches copy only.
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
   already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
-  agent for this account/community. **Agents → right-click → Make default agent**
+  agent for this account/community. **Agents → ⋯ → Make default agent**
   changes that choice; its card shows **Default agent**. An unavailable choice
   falls back to the first managed agent, then the first selectable agent, only
   after agent evidence is complete and the requested archive read has settled.

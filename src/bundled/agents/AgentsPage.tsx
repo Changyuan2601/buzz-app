@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type ReactElement,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -68,8 +67,6 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
-  ContextMenuRoot,
-  ContextMenuTrigger,
   MenuNote,
   MenuPopup,
   MenuItem,
@@ -635,58 +632,6 @@ function DefaultAgentInventory({
   );
 }
 
-/** An agent card's right-click quick actions; the context-menu key and
- * Shift+F10 open them from the keyboard. */
-function AgentQuickActions({
-  name,
-  card,
-  isDefault,
-  available,
-  onMakeDefault,
-}: {
-  available: boolean;
-  name: string;
-  card: ReactElement;
-  isDefault: boolean;
-  onMakeDefault(): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [anchor, setAnchor] = useState<HTMLElement>();
-  return (
-    <ContextMenuRoot
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setAnchor(undefined);
-      }}
-    >
-      <ContextMenuTrigger
-        render={card}
-        onKeyDown={(event) => {
-          if (
-            event.key === "ContextMenu" ||
-            (event.shiftKey && event.key === "F10")
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            setAnchor(event.currentTarget);
-            setOpen(true);
-          }
-        }}
-      />
-      <MenuPopup aria-label={`Actions for ${name}`} anchor={anchor}>
-        {isDefault ? (
-          <MenuNote>Default agent</MenuNote>
-        ) : (
-          <MenuItem disabled={!available} onClick={onMakeDefault}>
-            Make default agent
-          </MenuItem>
-        )}
-      </MenuPopup>
-    </ContextMenuRoot>
-  );
-}
-
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
@@ -759,64 +704,55 @@ function Inventory({
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
-            const card = (
-              <InventoryCard
-                tag={
-                  agent.pubkey === defaultAgent ? "Default agent" : undefined
-                }
-                service={service}
-                type={type}
-                onBuild={() => onBuild(agent.pubkey)}
-                onRemoved={() => onSelect()}
-                role="gridcell"
-                aria-label={
-                  agent.pubkey === defaultAgent
-                    ? `${agent.name}, Default agent`
-                    : agent.name
-                }
-                data-selected={active}
-                aria-selected={active}
-                tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
-                data-unavailable={type ? undefined : ""}
-                onClick={(event) => {
-                  if (
-                    event.currentTarget.contains(event.target as Node) &&
-                    !(event.target as Element).closest(
-                      "[data-card-control], button, input",
-                    )
-                  )
-                    onSelect(active ? undefined : agent.pubkey);
-                }}
-                onDoubleClick={(event) => {
-                  if (
-                    event.currentTarget.contains(event.target as Node) &&
-                    !(event.target as Element).closest(
-                      "[data-card-control], button, input",
-                    )
-                  )
-                    onBuild(agent.pubkey);
-                }}
-                agent={agent}
-                community={agent.relay || undefined}
-                icon={<TypeIcon type={type} />}
-                detail={summaryOf(agent, type)}
-              />
-            );
+            const isDefault = agent.pubkey === defaultAgent;
             return (
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
-                {onMakeDefault ? (
-                  <AgentQuickActions
-                    name={agent.name}
-                    card={card}
-                    isDefault={agent.pubkey === defaultAgent}
-                    available={!!defaultChoices?.has(agent.pubkey)}
-                    onMakeDefault={() => onMakeDefault(agent.pubkey)}
-                  />
-                ) : (
-                  card
-                )}
+                <InventoryCard
+                  tag={isDefault ? "Default agent" : undefined}
+                  defaultChoice={
+                    onMakeDefault && {
+                      isDefault,
+                      available: !!defaultChoices?.has(agent.pubkey),
+                      onMake: () => onMakeDefault(agent.pubkey),
+                    }
+                  }
+                  service={service}
+                  type={type}
+                  onBuild={() => onBuild(agent.pubkey)}
+                  onRemoved={() => onSelect()}
+                  role="gridcell"
+                  aria-label={
+                    isDefault ? `${agent.name}, Default agent` : agent.name
+                  }
+                  data-selected={active}
+                  aria-selected={active}
+                  tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
+                  data-unavailable={type ? undefined : ""}
+                  onClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onSelect(active ? undefined : agent.pubkey);
+                  }}
+                  onDoubleClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onBuild(agent.pubkey);
+                  }}
+                  agent={agent}
+                  community={agent.relay || undefined}
+                  icon={<TypeIcon type={type} />}
+                  detail={summaryOf(agent, type)}
+                />
               </div>
             );
           })}
@@ -832,6 +768,7 @@ function InventoryCard({
   type,
   onBuild,
   onRemoved,
+  defaultChoice,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -839,6 +776,10 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  /** Present where this community's default agent can be chosen. */
+  defaultChoice?:
+    | { isDefault: boolean; available: boolean; onMake(): void }
+    | undefined;
 }) {
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
@@ -868,6 +809,18 @@ function InventoryCard({
         }
       />
       <MenuPopup align="end">
+        {defaultChoice?.isDefault ? (
+          <MenuNote>Default agent</MenuNote>
+        ) : (
+          defaultChoice && (
+            <MenuItem
+              disabled={!defaultChoice.available}
+              onClick={defaultChoice.onMake}
+            >
+              Make default agent
+            </MenuItem>
+          )
+        )}
         {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
         <MenuItem
           onClick={() => {

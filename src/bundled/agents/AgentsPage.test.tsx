@@ -2182,14 +2182,19 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the default agent and presents its menu status without a fake toggle", async () => {
+it("makes another agent the default from its actions menu", async () => {
+  const user = userEvent.setup();
   const ada = agent("Ada", 1);
-  const view = setup([ada]);
+  const bob = agent("Bob", 2);
+  const view = setup([ada, bob]);
   const choices = {
     status: "ready",
     complete: true,
     pending: false,
-    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bob.pubkey, name: bob.name, managed: true },
+    ],
     archives: { status: "unavailable" },
   };
   const connection = {
@@ -2208,11 +2213,20 @@ it("announces the default agent and presents its menu status without a fake togg
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
-  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
-  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  let menu = await screen.findByRole("menu");
   expect(within(menu).getByText("Default agent")).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Actions for Bob" }));
+  menu = await screen.findByRole("menu");
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Make default agent" }),
+  );
+  expect(
+    screen.getByRole("gridcell", { name: "Bob, Default agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {
