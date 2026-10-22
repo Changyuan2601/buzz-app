@@ -58,7 +58,7 @@
 .row:first-child {
   padding-block-start: var(--space-2);
 }
-.row:last-child {
+.list > li:last-child > .row {
   padding-block-end: 0;
   border-bottom: 0;
 }

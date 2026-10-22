@@ -442,8 +442,7 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ordinary Markdown renders it as plain text. Canvases without it keep their
 existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
 
-Unordered checkbox items in that section are shown, including nested tasks. Each
-nested task shows its parent-task path, including parents in other status groups.
+Unordered checkbox items in that section are shown, including nested tasks. Nested tasks remain under their root task’s status group, with collapsible subtrees.
 Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
