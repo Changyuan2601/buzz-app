@@ -553,8 +553,10 @@ store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, share
 helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
-   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
-   channels. Each channel's own fresh roster must then omit the agent.
+   unarchived channel whose relay-signed 39002 roster lists the agent, plus the
+   viewer's loaded unarchived channels. Each channel's own fresh roster must then omit
+   the agent. The relay refuses membership changes in an archived channel, so its
+   roster keeps the deleted agent.
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.
