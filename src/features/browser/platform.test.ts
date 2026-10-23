@@ -55,13 +55,21 @@ describe("createBrowserPlatform", () => {
     await expect(platform.attach("https://example.com", bounds)).resolves.toBe(
       "session-1",
     );
+    await platform.attach("https://example.com", bounds, "builderlab-apps");
     await platform.setBounds("session-1", bounds, true);
     await platform.navigate("session-1", "https://other.example.com");
     await platform.action("session-1", "reload");
     await platform.status("session-1");
     await platform.detach("session-1");
     expect(sdk.invoke.mock.calls).toEqual([
-      ["browser_attach", { url: "https://example.com/", bounds }],
+      [
+        "browser_attach",
+        { url: "https://example.com/", bounds, storage: null },
+      ],
+      [
+        "browser_attach",
+        { url: "https://example.com/", bounds, storage: "builderlab-apps" },
+      ],
       ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
       [
         "browser_navigate",

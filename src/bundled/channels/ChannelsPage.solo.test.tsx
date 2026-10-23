@@ -292,7 +292,13 @@ function fixture({
       )}
       <ChannelsPage
         relay={relay}
-        panels={{ ...contribution, register() {}, resolve: () => undefined }}
+        panels={{
+          ...contribution,
+          register() {},
+          resolve: () => undefined,
+          requestOpen: () => false,
+          handleOpenRequests: () => () => {},
+        }}
         extensions={extensions}
         navigation={navigation}
         navigator={navigator}

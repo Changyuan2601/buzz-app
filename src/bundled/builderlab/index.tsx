@@ -14,8 +14,16 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { applyApps } from "./apps";
 
-export const inject = ["host", "settingsCards", "agents", "relay"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "agents",
+  "relay",
+  "panels",
+  "browser",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -32,6 +40,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
+  applyApps(ctx, session);
   const backupSession = () => {
     if (!nativeIdentityEnabled()) return;
     handoffBackupSession(
@@ -48,6 +57,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
     };
   });
+
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {

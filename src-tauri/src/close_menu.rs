@@ -99,6 +99,9 @@ fn send_request<R: Runtime>(app: &AppHandle<R>, script: &str) -> bool {
     }
     // Evaluate only in the trusted main view, even when a raw guest webview
     // owns keyboard focus.
+    let browser = serde_json::to_string(&crate::browser::focused_session())
+        .expect("Browser session IDs are JSON strings");
+    let script = format!("{{ const browserSessionId = {browser};\n{script}\n}}");
     if let Err(error) = window.eval(script) {
         eprintln!("Could not send Buzz tab request: {error}");
         return false;

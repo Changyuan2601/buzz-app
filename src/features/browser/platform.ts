@@ -46,7 +46,7 @@ export type BrowserAction = "back" | "forward" | "reload";
 
 export interface BrowserPlatform {
   readonly available: boolean;
-  attach(url: string, bounds: BrowserBounds): Promise<string>;
+  attach(url: string, bounds: BrowserBounds, storage?: string): Promise<string>;
   setBounds(
     sessionId: string,
     bounds: BrowserBounds,
@@ -71,8 +71,12 @@ export function createBrowserPlatform(): BrowserPlatform {
     /Mac/i.test(navigator.platform);
   return {
     available,
-    attach: async (url, bounds) =>
-      invoke<string>("browser_attach", { url: normalizedUrl(url), bounds }),
+    attach: async (url, bounds, storage) =>
+      invoke<string>("browser_attach", {
+        url: normalizedUrl(url),
+        bounds,
+        storage: storage ?? null,
+      }),
     setBounds: (sessionId, bounds, visible) =>
       invoke("browser_set_bounds", { sessionId, bounds, visible }),
     navigate: async (sessionId, url) =>

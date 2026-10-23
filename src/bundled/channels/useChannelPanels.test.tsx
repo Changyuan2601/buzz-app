@@ -50,6 +50,8 @@ it.each(["bottom", "side"] as const)(
       subscribe: () => () => {},
       register: () => {},
       resolve: () => panel,
+      requestOpen: () => false,
+      handleOpenRequests: () => () => {},
     };
     function Harness() {
       const [settings, setSettings] = useState(false);
@@ -132,6 +134,8 @@ it("opens the host member picker only while the launcher binding is current", as
     subscribe: () => () => {},
     register: () => {},
     resolve: () => panel,
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
   };
   function Harness() {
     return useChannelPanels(
@@ -208,6 +212,8 @@ it.each(["bottom", "side"] as const)(
       subscribe: () => () => {},
       register: () => {},
       resolve: () => panel,
+      requestOpen: () => false,
+      handleOpenRequests: () => () => {},
     };
     const open = vi.fn(() => true);
     function Harness() {
