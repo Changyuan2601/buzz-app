@@ -32,6 +32,8 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
 beforeEach(() => {
+  // jsdom lacks it; the agent form reveals a failed setup's error with it.
+  Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
@@ -46,6 +48,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();
   native.invoke.mockReset();
   vi.unstubAllEnvs();

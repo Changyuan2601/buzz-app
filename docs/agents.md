@@ -6,8 +6,7 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog and
-agent-management request popups are gone, as are the native `agent_control_*`,
+Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
@@ -30,6 +29,29 @@ replacing either folder. A pending erase handles both folder names before the
 migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
+
+## Creating and changing agents from a conversation
+
+The shared tools offer `agent_types` to list installed local runtimes and
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, may edit the name, runtime and settings, and creates
+only by submitting it. Closing the form discards the request. Requests are local,
+bounded to 16 and do not survive reload or a change of signed-in owner.
+Approval binds the identity to the requesting agent's owner and community, even
+when another community is selected. Use `members` separately after creation to add
+it to a conversation. Agent tools do not expose draft approval.
+
+`agent_update` submits an unsaved draft of changes to one of the owner's local
+agents in the same community, named by pubkey or exact name: a new name, a type
+key from `agent_types`, or new instructions. Absent fields stay as they are. The
+owner reviews them in the New agent form, titled Edit and filled in with the
+agent's settings and the proposed changes, with the usual type-change preview;
+saving applies what the owner reviewed, and closing the review discards the
+request. A type change carries what the new type adopts, as a manual one does. Change
+requests share the creation requests' local bound and lifetime.
+Keys stay in native custody. Hosted-provider provisioning and standalone tool
+servers do not support these operations.
 
 ## Agent types and providers
 
