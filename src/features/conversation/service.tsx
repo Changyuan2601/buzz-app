@@ -8,6 +8,7 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import { MessageText, type MessageTextProps } from "./MessageText";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -64,6 +65,9 @@ export type Conversation = {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** A message's body only, read-only: Markdown, mentions and emoji as the
+     * message row shows them. */
+    MessageText: (props: MessageTextProps) => ReactNode;
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
@@ -208,6 +212,9 @@ export class ConversationService extends Service implements Conversation {
       ),
       Message: (props: Omit<MessageRowProps, "extensions">) => (
         <MessageRow {...props} extensions={this} />
+      ),
+      MessageText: (props: MessageTextProps) => (
+        <MessageText {...props} extensions={this} />
       ),
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;

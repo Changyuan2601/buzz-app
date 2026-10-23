@@ -1347,7 +1347,7 @@ pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.MessageText` / `.Thread` components, plus `.Tabs` while a plugin provides it. `.MessageText({ row, session, scope, media, participantProfiles })` is a message's body alone, as its row shows it (Markdown, mentions, custom emoji and inline renderers), read-only: links and mentions do not open. The caller owns its layout, for example a clamped list preview. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
