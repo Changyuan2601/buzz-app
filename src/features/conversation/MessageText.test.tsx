@@ -33,14 +33,14 @@ it("renders a message body with Markdown, mentions and custom emoji, read-only",
       error: null,
     },
   ]);
-  await vi.waitFor(() => expect(service.inline.snapshot()).toHaveLength(1));
+  await vi.waitFor(() => expect(service.inline.snapshot()).toHaveLength(2));
   const mic = "b".repeat(64);
   const row: ChannelMessage = {
     id: "row",
     channelId: "c",
     authorId: "a",
     createdAt: 1,
-    content: `**Ship it** with \`code\` :party: @Mic [docs](https://a.test/docs)`,
+    content: `**Ship it** with \`code\` :party: @Mic :+1: :Tada: :not_an_emoji: https://a.test/:+1: [docs](https://a.test/docs)`,
     mentions: [mic],
     attachments: [],
     reactions: [],
@@ -66,6 +66,12 @@ it("renders a message body with Markdown, mentions and custom emoji, read-only",
     container.querySelector('[data-mention-kind="person"]'),
   ).toHaveTextContent("Mic");
   expect(container).not.toHaveTextContent(":party:");
+  // Standard shortcodes show as their emoji once the dataset loads; unknown
+  // ones and ones inside links stay as written.
+  await vi.waitFor(() =>
+    expect(container).toHaveTextContent("👍 🎉 :not_an_emoji:"),
+  );
+  expect(container).toHaveTextContent("https://a.test/:+1:");
   // Read-only: no link or mention opens anything.
   expect(container.querySelector("a[href], button")).toBeNull();
 });

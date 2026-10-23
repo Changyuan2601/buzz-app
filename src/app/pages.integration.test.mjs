@@ -210,7 +210,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(services.conversation.attachments.snapshot().length, 1);
     await services.plugins.change("disable", "buzz.voice-notes");
     assert.equal(services.conversation.attachments.snapshot().length, 0);
-    assert.equal(services.conversation.inline.snapshot().length, 1);
+    // Emoji: custom emoji and the loader for standard shortcodes.
+    assert.deepEqual(
+      services.conversation.inline.snapshot().map((entry) => entry.key),
+      ["buzz.emoji/custom", "buzz.emoji/standard-loader"],
+    );
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
     );
