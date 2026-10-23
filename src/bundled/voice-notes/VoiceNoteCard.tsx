@@ -1,4 +1,3 @@
-import { useMediaCorners } from "../../features/messages/use-media-corners";
 import { useMediaElementSource } from "../../features/messages/use-media-element-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -52,8 +51,6 @@ function Player({
   source: string | undefined;
   unavailable: boolean;
 }) {
-  const corners = useMediaCorners();
-  const playCorners = useMediaCorners();
   const audio = useRef<HTMLAudioElement>(null);
   const active = useConversationPresentation();
   useEffect(() => {
@@ -157,19 +154,12 @@ function Player({
     }
   }
   return (
-    <fieldset ref={corners} className={styles.card}>
+    <fieldset className={styles.card}>
       <legend className="sr-only">Voice note</legend>
-      <svg
-        className={styles.cardSurface}
-        data-image-outline=""
-        aria-hidden="true"
-      >
-        <path />
-      </svg>
-      <span ref={playCorners} className={styles.play}>
+      <span className={styles.play}>
         <IconButton
           type="button"
-          variant="solid"
+          variant="bare"
           disabled={!source}
           size="compact"
           style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
