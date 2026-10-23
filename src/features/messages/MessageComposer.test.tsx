@@ -6004,9 +6004,10 @@ it("does not ask about outside recipients in a Solo chat media-comment composer"
   await act(async () => {});
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(h.messages.reply).toHaveBeenCalledOnce();
-  // Like a DM, the outside person is only referenced.
-  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([second.pubkey]);
-  expect(h.messages.reply.mock.calls[0]?.[6]).toEqual([first.pubkey]);
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
   expect(add).not.toHaveBeenCalled();
 });
 

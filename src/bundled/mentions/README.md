@@ -71,13 +71,14 @@ archived and not read-only, the choice set is:
 2. the agents that the client offers for mention in this channel; and
 3. people and agents found by a community directory search for the current query.
 
-A Solo chat also offers item 3, so its people can name anyone. It never adds
-directory people: an outside key that is not one of the viewer's available
-agents is a reference (section 7). This follows the channel type, so it also
-holds in Solo chat composers that do not invite agents, such as media comments
-and edits. A Solo chat that invites agents offers its own agent list as item 2.
-When the owner's composer limits members to its own roster, the directory MUST
-NOT bring back a member that the roster leaves out. Archived or read-only channels have
+A Solo chat composer that invites agents (the chat and its threads) offers its
+own agent list as item 2 and also offers item 3, so its people can name
+anyone. It never adds directory people: an outside key that is not one of the
+viewer's available agents is a reference (section 7). When the owner's
+composer limits members to its own roster, the directory MUST NOT bring back a
+member that the roster leaves out. Other Solo chat composers, such as media
+comments and edits, MUST NOT add directory people; they offer the members
+only. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
 archive state does not exclude a key.

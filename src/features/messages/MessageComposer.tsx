@@ -1497,13 +1497,9 @@ function Composer({
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
-          if (
-            missing.length &&
-            (channel?.channelType === "dm" || channel?.channelType === "solo")
-          ) {
-            // Nobody can be added to a DM, and a Solo chat composer without
-            // Solo mode (media comments) adds nobody either. There is no
-            // choice to offer: outside people become references.
+          if (missing.length && channel?.channelType === "dm") {
+            // Nobody can be added to a DM, so there is no choice to offer:
+            // outside people become references without a prompt.
             references = missing.map((person) => person.pubkey);
             recipients = recipients.filter((key) => !references.includes(key));
           } else if (missing.length) {

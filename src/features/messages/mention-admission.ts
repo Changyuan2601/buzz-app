@@ -10,19 +10,22 @@ export function archivedMention(session: ComposerSession, pubkey: string) {
 
 /**
  * Whether a destination can name people outside it from the community
- * directory. A Solo chat always can, so its people can reference anyone; it
- * never adds them. Other known channels can unless a closed draft roster or
- * agent invitation limits the choices. Delivery decides what an outside key
- * becomes: an added member, or a reference that notifies nobody.
+ * directory. A Solo chat composer in Solo mode (agent invitation or the
+ * owner's roster) can, so its people can reference anyone; it never adds
+ * them. Other Solo chat composers, such as media comments and edits, keep
+ * their members-only choices. Other known channels can unless a closed draft
+ * roster or agent invitation limits the choices. Delivery decides what an
+ * outside key becomes: an added member, or a reference that notifies nobody.
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
   roster?: readonly MentionRecipient[],
   inviteAgents = false,
 ) {
-  return (
-    !!channel && (channel.channelType === "solo" || (!roster && !inviteAgents))
-  );
+  if (!channel) return false;
+  return channel.channelType === "solo"
+    ? !!roster || inviteAgents
+    : !roster && !inviteAgents;
 }
 
 /**

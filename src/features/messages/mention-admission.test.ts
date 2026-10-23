@@ -43,9 +43,10 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   const sessionChannel = session({ channelType: "solo" });
   const plain = mentionAdmission(sessionChannel, "channel");
   expect(plain(member)).toBe(true);
-  // Outside keys are references in a Solo chat; delivery never adds them.
-  expect(plain(outside)).toBe(true);
-  expect(plain(library)).toBe(true);
+  // Without Solo mode (media comments, edits) only members are offered.
+  expect(plain(outside)).toBe(false);
+  expect(plain(library)).toBe(false);
+  // In Solo mode, outside keys are references; delivery never adds them.
   const inviting = mentionAdmission(sessionChannel, "channel", true);
   expect(inviting(library)).toBe(true);
   expect(inviting(outside)).toBe(true);

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -66,11 +65,9 @@ export function useMentionDirectory(
   enabled: boolean,
   lifetime: string,
 ) {
+  // The caller applies allowsOutsideMentions; it depends on composer mode.
   const active =
-    enabled &&
-    allowsOutsideMentions(channel) &&
-    !channel?.archived &&
-    !channel?.readOnly;
+    enabled && !!channel && !channel.archived && !channel?.readOnly;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     session: ComposerSession;
