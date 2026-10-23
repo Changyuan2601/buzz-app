@@ -1,4 +1,4 @@
-import { useSessionLinkSharing } from "./useSessionLinkSharing";
+import { useChatLinkSharing } from "./useChatLinkSharing";
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
@@ -602,7 +602,7 @@ function Composer({
     }
     focus();
   }, [disabled]);
-  const linkSharing = useSessionLinkSharing(
+  const linkSharing = useChatLinkSharing(
     fullSession(session),
     channelId,
     () => {

@@ -83,7 +83,7 @@ indicator. Clicking the indicator opens that same dialog.
 ## Sending a copied chat link
 
 Pasting a recognized Solo chat link into a stream/forum composer stages its
-existing session card. Sending that card (at channel level or in a thread) asks
+existing chat card. Sending that card (at channel level or in a thread) asks
 **Share and send** or **Send link only**. Closing preserves the draft. Share uses
 the existing fresh destination roster and membership grant helpers, including
 channel agents, before the composer queues its original message. It does not

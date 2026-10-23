@@ -34,7 +34,7 @@ type Pending = {
 class Unshareable extends Error {}
 
 /** Consent only. Existing membership receipts own grants; the composer owns the one message/reply. */
-export function useSessionLinkSharing(
+export function useChatLinkSharing(
   session: RelaySession | undefined,
   channelId: string,
   restoreFocus: () => void,
