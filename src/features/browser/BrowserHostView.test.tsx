@@ -419,6 +419,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
       "https://first.example/signed-in",
       expect.any(Object),
       undefined,
+      undefined,
     ),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -451,6 +452,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
   expect(platform.attach).toHaveBeenLastCalledWith(
     "https://first.example/signed-in",
     expect.any(Object),
+    undefined,
     undefined,
   );
   expect(screen.queryByRole("alert")).toBeNull();

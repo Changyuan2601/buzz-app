@@ -8,12 +8,15 @@ export function Login({
   available,
   active,
   showHeading = true,
+  cancelOnUnmount = true,
   unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
 }: {
   session: OAuthSession;
   available: boolean;
   active(): boolean;
   showHeading?: boolean;
+  /** Settings owns its pending login; shared app panels only observe it. */
+  cancelOnUnmount?: boolean;
   unavailableReason?: string;
 }) {
   const state = useSyncExternalStore(
@@ -23,9 +26,10 @@ export function Login({
   );
   useEffect(
     () => () => {
-      if (session.snapshot().status === "pending") session.cancel();
+      if (cancelOnUnmount && session.snapshot().status === "pending")
+        session.cancel();
     },
-    [session],
+    [cancelOnUnmount, session],
   );
   return (
     <div data-buzz-ui="" className="flex flex-col items-start gap-4">

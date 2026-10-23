@@ -64,11 +64,21 @@ describe("createBrowserPlatform", () => {
     expect(sdk.invoke.mock.calls).toEqual([
       [
         "browser_attach",
-        { url: "https://example.com/", bounds, storage: null },
+        {
+          url: "https://example.com/",
+          bounds,
+          storage: null,
+          builderlab: null,
+        },
       ],
       [
         "browser_attach",
-        { url: "https://example.com/", bounds, storage: "builderlab-apps" },
+        {
+          url: "https://example.com/",
+          bounds,
+          storage: "builderlab-apps",
+          builderlab: null,
+        },
       ],
       ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
       [

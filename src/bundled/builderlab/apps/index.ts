@@ -1,12 +1,15 @@
 // Builderlab Apps for local agents: tools that create, deploy and share a
 // web app with the plugin's Builderlab sign-in, and a side panel that
 // shows a deployed app in Buzz's browser view.
-import { createElement } from "react";
+import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
 import { createAppsClient, type RuntimeProfile } from "./client";
-import { appName, controlPlane, isAppUrl } from "./environment";
+import { appName, controlPlane, isAppUrl, isViewerTarget } from "./environment";
+
+import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
+import { Login } from "../login/Login";
 
 type Ctx = Parameters<PluginModule["apply"]>[0];
 /** How long `apps_deploy` waits for the new version to serve. */
@@ -37,20 +40,38 @@ It returns the version/deployment IDs once accepted, even if readiness checking 
 export function applyApps(ctx: Ctx, session: OAuthSession) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
+  const AppView = ({ target }: PanelProps) => {
+    const state = useSyncExternalStore(
+      session.subscribe,
+      session.snapshot,
+      session.snapshot,
+    );
+    if (!isViewerTarget(target))
+      return createElement(EmptyState, {
+        icon: null,
+        title: "Open this app with its Builderlab environment",
+        description:
+          "This app uses a different Builderlab environment than this Buzz build.",
+      });
+    if (state.status !== "signed-in")
+      return createElement(Login, {
+        session,
+        cancelOnUnmount: false,
+        available: true,
+        active: () => true,
+      });
+    return createElement(View, {
+      url: target,
+      builderlab: session.viewerSession(),
+      label: appName(target),
+    });
+  };
   ctx.panels.register({
     id: "app",
     title: "App",
-    // Each app keeps its own tab while the conversation moves on.
     keepOpen: true,
     matches: (target) => ctx.browser.available && isAppUrl(target),
-    component: ({ target }: PanelProps) =>
-      // One storage for every app keeps the apps sign-in, which covers all
-      // of a tenant's app hosts, between opens and restarts.
-      createElement(View, {
-        url: target,
-        storage: "builderlab-apps",
-        label: appName(target),
-      }),
+    component: AppView,
   });
   const base = controlPlane();
   if (!base) return;

@@ -22,7 +22,7 @@ export function controlPlane(
 
 /** Hosts that serve deployed apps, a subdomain each, per tenant. */
 const APP_DOMAINS = [
-  "apps.public.builderlab.xyz",
+  "apps.builderlab.xyz",
   "apps.builderlabstaging.xyz",
   "apps.block.builderlab.xyz",
   "apps.test.blockstaging.build",
@@ -52,4 +52,35 @@ export function isAppUrl(target: string) {
     !url.password &&
     APP_DOMAINS.some((domain) => host.endsWith(`.${domain}`))
   );
+}
+
+/** A credential is only exchanged for app hosts in the same configured tenant. */
+export function isViewerTarget(
+  target: string,
+  origin = import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "",
+) {
+  const domains: Readonly<Record<string, string>> = {
+    "https://app.builderlab.xyz": "apps.builderlab.xyz",
+    "https://app.builderlabstaging.xyz": "apps.builderlabstaging.xyz",
+    "https://block.builderlab.xyz": "apps.block.builderlab.xyz",
+  };
+  try {
+    const url = new URL(target);
+    const domain = domains[new URL(origin).origin];
+    const label = domain && url.hostname.slice(0, -(domain.length + 1));
+    return (
+      isAppUrl(target) &&
+      Boolean(
+        domain &&
+          url.port === "" &&
+          url.hostname.endsWith(`.${domain}`) &&
+          label &&
+          !label.includes(".") &&
+          label !== "login" &&
+          label !== "health",
+      )
+    );
+  } catch {
+    return false;
+  }
 }

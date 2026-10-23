@@ -34,11 +34,20 @@ again. A failed reservation or initialization names the planned app ID; inspect 
 resume that app before creating another one. Automatic reservation recovery and
 hosted tool declarations are separate work.
 
-The app panel uses the existing native browser and persistent website store on
-macOS 14+. Website login is separate from Settings login, including sign-out and
-account switching. Confirm the website account when testing. Earlier macOS uses a
-private store; other platforms do not expose the embedded app panel. CLI-to-site
-SSO is a separate integration.
+The macOS app panel uses the Settings account for viewing. Native code exchanges
+its CLI credential on the configured Builderlab API for a two-minute, one-use
+handoff, installs a host-only HttpOnly browser proof on the exact trusted login
+alias, and follows that alias to the registered app. The guest receives only the
+restricted hosted-site cookie. App authorization and consent still run at ingress.
+Opening a different tenant's app never forwards the current account's credential.
+
+Each sign-in has separate website storage. Signing out or changing accounts closes
+live and retained guests; deliberate sign-out also revokes the server CLI parent.
+Canceling sign-in or disposing the plugin closes its local guests without logging
+out an existing server session. Other platforms do not expose the app panel.
+The server's native handoff feature must be enabled after its schema and auth
+review; older CLI sessions without signed authentication time require a fresh
+Settings login. This client change alone does not enable the server feature.
 
 ## Remote agents
 

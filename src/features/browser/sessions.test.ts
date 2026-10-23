@@ -118,3 +118,72 @@ it("a parked guest is adopted only under its key", async () => {
     sessions.attach("https://a.example", bounds, () => true, "s", "a"),
   ).resolves.toBe("session-1");
 });
+
+it("sign-out closes live and parked account guests even while another attach is pending", async () => {
+  const browserPlatform = platform();
+  const held = deferred<string>();
+  vi.mocked(browserPlatform.attach)
+    .mockResolvedValueOnce("live")
+    .mockResolvedValueOnce("parked")
+    .mockImplementationOnce(() => held.promise);
+  const sessions = new BrowserSessions(browserPlatform);
+  const lifetime = new AbortController();
+  const viewer = {
+    credential: "private",
+    storage: "account-one",
+    signal: lifetime.signal,
+  };
+  await sessions.attach(
+    "https://a.example",
+    bounds,
+    () => true,
+    viewer.storage,
+    "a",
+    viewer,
+  );
+  await sessions.attach(
+    "https://b.example",
+    bounds,
+    () => true,
+    viewer.storage,
+    "b",
+    viewer,
+  );
+  await sessions.detach("parked", "b");
+  const pending = sessions.attach(
+    "https://c.example",
+    bounds,
+    () => true,
+    viewer.storage,
+    "c",
+    viewer,
+  );
+  await vi.waitFor(() =>
+    expect(browserPlatform.attach).toHaveBeenCalledTimes(3),
+  );
+  lifetime.abort();
+  expect(browserPlatform.detach).toHaveBeenCalledWith("live");
+  expect(browserPlatform.detach).toHaveBeenCalledWith("parked");
+  expect(sessions.owns("live")).toBe(false);
+  expect(sessions.owns("parked")).toBe(false);
+  held.resolve("pending");
+  await expect(pending).resolves.toBeUndefined();
+  expect(browserPlatform.detach).toHaveBeenCalledWith("pending");
+  const other = new AbortController();
+  vi.mocked(browserPlatform.attach).mockResolvedValueOnce("other-account");
+  await sessions.attach(
+    "https://b.example",
+    bounds,
+    () => true,
+    "account-two",
+    "b",
+    {
+      credential: "other",
+      storage: "account-two",
+      signal: other.signal,
+    },
+  );
+  expect(sessions.owns("other-account")).toBe(true);
+  expect(browserPlatform.attach).toHaveBeenCalledTimes(4);
+  other.abort();
+});

@@ -83,7 +83,8 @@ function hostOverlayOpen(viewport: BrowserBounds): boolean {
 
 export function BrowserHostView({
   url,
-  storage,
+  storage: requestedStorage,
+  builderlab,
   label,
   platform,
   sessions,
@@ -93,6 +94,7 @@ export function BrowserHostView({
   sessions: BrowserSessions;
   pollInterval?: number;
 }) {
+  const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
   const retryAttach = useRef<(() => void) | undefined>(undefined);
@@ -227,7 +229,7 @@ export function BrowserHostView({
     };
 
     const begin = () => {
-      if (attachStarted || disposed) return;
+      if (attachStarted || disposed || builderlab?.signal.aborted) return;
       const initialBounds = boundsFor(element);
       if (!visible(initialBounds)) return;
       attachStarted = true;
@@ -239,6 +241,7 @@ export function BrowserHostView({
           () => !disposed,
           storage,
           park,
+          builderlab,
         )
         .then((sessionId) => {
           if (!sessionId || disposed) return;
@@ -337,7 +340,7 @@ export function BrowserHostView({
       // say from another channel, so work in progress there survives.
       if (sessionId) void sessions.detach(sessionId, park);
     };
-  }, [platform, pollInterval, sessions, storage, titleKey, url]);
+  }, [builderlab, platform, pollInterval, sessions, storage, titleKey, url]);
 
   async function run(operation: (sessionId: string) => Promise<void>) {
     const sessionId = session.current;

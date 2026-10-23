@@ -1,3 +1,4 @@
+import type { BuilderlabViewerSession } from "./api";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 const MAX_URL_BYTES = 2048;
 const encoder = new TextEncoder();
@@ -46,7 +47,12 @@ export type BrowserAction = "back" | "forward" | "reload";
 
 export interface BrowserPlatform {
   readonly available: boolean;
-  attach(url: string, bounds: BrowserBounds, storage?: string): Promise<string>;
+  attach(
+    url: string,
+    bounds: BrowserBounds,
+    storage?: string,
+    builderlab?: BuilderlabViewerSession,
+  ): Promise<string>;
   setBounds(
     sessionId: string,
     bounds: BrowserBounds,
@@ -71,11 +77,12 @@ export function createBrowserPlatform(): BrowserPlatform {
     /Mac/i.test(navigator.platform);
   return {
     available,
-    attach: async (url, bounds, storage) =>
+    attach: async (url, bounds, storage, builderlab) =>
       invoke<string>("browser_attach", {
         url: normalizedUrl(url),
         bounds,
         storage: storage ?? null,
+        builderlab: builderlab ? { credential: builderlab.credential } : null,
       }),
     setBounds: (sessionId, bounds, visible) =>
       invoke("browser_set_bounds", { sessionId, bounds, visible }),

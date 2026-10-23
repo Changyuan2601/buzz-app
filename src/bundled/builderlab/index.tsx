@@ -34,11 +34,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  const session = createOAuthSession((signal) => {
-    if (!browserLoginAvailable())
-      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
-    return browserCredential(ctx.host, signal);
-  });
+  const session = createOAuthSession(
+    (signal) => {
+      if (!browserLoginAvailable())
+        throw new Error(
+          "Open the Buzz desktop app to sign in with Builderlab.",
+        );
+      return browserCredential(ctx.host, signal);
+    },
+    (credential) => {
+      // Local guest teardown is immediate; the parent logout also revokes every server-side viewer child.
+      void ctx.host
+        .request({
+          url: `${oauthTarget()}/v1/auth/logout`,
+          method: "POST",
+          headers: { "X-BB-Session-Credential": credential.value },
+        })
+        .catch(() => {});
+    },
+  );
   ctx.effect(() => () => session.dispose());
   applyApps(ctx, session);
   const backupSession = () => {

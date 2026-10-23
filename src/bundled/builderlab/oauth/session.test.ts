@@ -106,3 +106,37 @@ it("creation joins an existing Settings login and aborts its wait without cancel
   await session.ensureSignedIn(new AbortController().signal);
   expect(acquire).toHaveBeenCalledTimes(1);
 });
+
+it("gives each sign-in a separate viewer lifetime and revokes only deliberate sign-out or replacement", async () => {
+  const revoke = vi.fn();
+  const session = createOAuthSession(async () => credential, revoke);
+  await session.signIn();
+  const first = session.viewerSession();
+  expect(first.credential).toBe(credential.value);
+  expect(JSON.stringify(session.snapshot())).not.toContain(credential.value);
+  session.cancel();
+  expect(first.signal.aborted).toBe(true);
+  expect(revoke).not.toHaveBeenCalled();
+  await session.signIn();
+  const second = session.viewerSession();
+  expect(second.storage).not.toBe(first.storage);
+  session.signOut();
+  expect(second.signal.aborted).toBe(true);
+  expect(revoke).toHaveBeenCalledExactlyOnceWith(credential);
+  await session.signIn();
+  const third = session.viewerSession();
+  session.dispose();
+  expect(third.signal.aborted).toBe(true);
+  expect(revoke).toHaveBeenCalledTimes(1);
+});
+
+it("ensureSignedIn starts and joins a fresh Settings login from signed-out", async () => {
+  const login = deferred<Credential>();
+  const session = createOAuthSession(() => login.promise);
+  const pending = session.ensureSignedIn(new AbortController().signal);
+  expect(session.snapshot().status).toBe("pending");
+  login.resolve(credential);
+  await expect(pending).resolves.toBeUndefined();
+  expect(session.viewerSession().signal.aborted).toBe(false);
+  session.dispose();
+});
