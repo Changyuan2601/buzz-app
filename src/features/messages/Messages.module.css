@@ -205,6 +205,18 @@
   font-weight: var(--type-weight-medium);
   min-width: 0;
 }
+.authorAgentIcon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125em;
+}
+.authorOwner {
+  color: var(--text-subtle);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .text {
   white-space: normal;
 }

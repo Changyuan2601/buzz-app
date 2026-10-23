@@ -11,7 +11,9 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ArrowRightIcon,
   LightningIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons";
+import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
 import { addressedMessage } from "./audience-address";
@@ -310,6 +312,19 @@ function MessageRowContent({
       : undefined,
     row.authorId,
   );
+  const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
+  const owner = useProfileOwner(
+    session,
+    agentAuthor && !stackPrevious ? row.authorId : undefined,
+  );
+  // The viewer's own agents carry only the agent mark.
+  const ownerLabel =
+    owner &&
+    owner.id !== viewer &&
+    owner.profile &&
+    !owner.profile.nameIsFallback
+      ? `${resolveName(owner.id, owner.profile.name)}’s agent`
+      : undefined;
   const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
@@ -884,7 +899,16 @@ function MessageRowContent({
                   />
                 ) : (
                   <span className={styles.authorWithStatus}>
-                    <strong className={styles.author}>{name}</strong>
+                    <strong className={styles.author}>
+                      {/* Inside the name, so the byline keeps the text baseline. */}
+                      {agentAuthor && !stackPrevious && (
+                        <RobotIcon
+                          aria-hidden="true"
+                          className={styles.authorAgentIcon}
+                        />
+                      )}
+                      {name}
+                    </strong>
                     {session && !stackPrevious && (
                       <UserStatusDisplay
                         session={session}
@@ -893,6 +917,12 @@ function MessageRowContent({
                         focusable={false}
                       />
                     )}
+                  </span>
+                )}
+                {ownerLabel && (
+                  <span className={styles.authorOwner}>
+                    <span aria-hidden="true">· </span>
+                    {ownerLabel}
                   </span>
                 )}
                 {!stackPrevious && (
