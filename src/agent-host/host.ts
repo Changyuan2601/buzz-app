@@ -27,6 +27,7 @@ import { nodeClient } from "../buzz-mcp/node";
 import { CoreMemoryCache } from "../features/agents/core-memory-cache";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
 import { type AgentReads, ownerReads } from "../features/agents/reads";
+import { RecordChanges } from "../features/agents/record-changes";
 import { rosterDm, rosterMember } from "../features/agents/roster";
 import { soloChannel } from "../features/agents/solo-chat";
 import { communityDestination } from "../features/communities/destination";
@@ -46,7 +47,6 @@ import {
   readTeams,
   recordKey,
   setAttention,
-  withProgress,
   writeRecord,
 } from "../features/agents/store";
 import { eventsDto, type RelayEvent } from "../features/relay/events";
@@ -225,21 +225,29 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
     });
     return view;
   };
-  /** Keeps `record` as the agent's: saved, when `write`. */
-  const keep = async (record: AgentRecord, write = true) => {
-    mine(record.pubkey);
-    if (write) {
-      await writeRecord(storage, record);
-      saved = storage.get(recordKey(pubkey));
-    }
-    stored = record;
+  /** Shows the agent's newest record to its runner. */
+  const changed = () => {
     view = undefined;
     run.sync([agentView()]);
   };
   // As the app's agents service: the record's changes run in order, each
   // from the record the one before it kept, and its timers wait for them.
-  let changes: Promise<unknown> = Promise.resolve();
-  let changing = 0;
+  const changes = new RecordChanges({
+    saved: (agent) => (agent === pubkey ? recordOf() : undefined),
+    commit: async (agent, _, next) => {
+      mine(agent);
+      if (!next) throw new Error("This host cannot remove its agent");
+      await writeRecord(storage, next);
+      saved = storage.get(recordKey(pubkey));
+      stored = next;
+    },
+    keep: (agent, next) => {
+      mine(agent);
+      stored = next;
+    },
+    changed,
+    settled: () => runners.wake(pubkey),
+  });
   // Whether the app deleted, erased or changed the agent: then this host
   // stops, and tells its caller why.
   let gone = false;
@@ -296,35 +304,17 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
       mine(agent);
       return recordOf();
     },
-    change: (agent, apply) => {
+    change: async (agent, apply) => {
       mine(agent);
-      changing++;
-      const next = changes.then(async () => {
-        try {
-          const record = await apply(recordOf());
-          await keep(record);
-          return record;
-        } finally {
-          if (!--changing) runners.wake(pubkey);
-        }
-      });
-      changes = next.catch(() => {});
-      return next;
+      const record = await changes.change(agent, (saved) =>
+        apply(saved ?? recordOf()),
+      );
+      if (!record) throw new Error("No such agent on this host");
+      return record;
     },
-    changing: () => changing > 0,
-    timers: () => recordOf().timers ?? {},
-    // Timers wait while a change is pending, and a save here finishes as it
-    // is made, so progress applies to the newest record. Kept even when its
-    // save fails, so a timer does not run again at once.
-    progress: (agent, ran) => {
-      mine(agent);
-      const next = withProgress(recordOf(), ran);
-      if (!next) return;
-      keep(next).catch((error) => {
-        log(`Could not save the timers' progress: ${String(error)}`);
-        void keep(next, false);
-      });
-    },
+    changing: (agent) => changes.changing(agent),
+    timers: (agent) => changes.timers(agent),
+    progress: (agent, ran) => changes.progress(agent, ran),
     // Each run starts from its saved record, as the app's agents do while the
     // app binds no synced config to them: the synced copies are in the app's
     // web storage, which this host cannot read.
