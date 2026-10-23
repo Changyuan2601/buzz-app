@@ -242,6 +242,42 @@ async function adopted() {
   return { ...f, event };
 }
 
+async function settingsEvents(f: ReturnType<typeof fixture>, clock: number) {
+  const labels = (await f.details.load()).labels ?? [];
+  return [
+    sign({
+      kind: 39000,
+      created_at: clock,
+      content: "",
+      tags: [
+        ["d", channel],
+        ["name", "Chat"],
+        ["t", "stream"],
+        ["private"],
+        ...labels.map((label) => ["t", label]),
+      ],
+    }),
+    sign({
+      kind: 39001,
+      created_at: clock,
+      content: "",
+      tags: [
+        ["d", channel],
+        ["p", owner, "owner"],
+      ],
+    }),
+    sign({
+      kind: 39002,
+      created_at: clock,
+      content: "",
+      tags: [
+        ["d", channel],
+        ["p", owner, "", "owner"],
+      ],
+    }),
+  ];
+}
+
 describe("owner-authorized primary binding", () => {
   it("persists adoption before the binding, then conflict-checks subsequent edits", async () => {
     const f = fixture();
@@ -282,6 +318,71 @@ describe("owner-authorized primary binding", () => {
       notice: expect.stringMatching(/binding is missing/),
     });
   });
+  it.each([1, 2])(
+    "reload confirms an uncertain details write %s without republishing, then permits another primary save",
+    async (failedWrite) => {
+      const f = fixture();
+      let clock = 1;
+      let publications = 0;
+      let unavailable = false;
+      const details = createChannelDetails({
+        reader: {
+          read: async () => {
+            if (unavailable) throw new Error("confirmation unavailable");
+            return settingsEvents(f, clock);
+          },
+        },
+        writer: {
+          sign: f.writer.sign,
+          publish: async (event) => {
+            f.setMetadata({
+              labels: event.tags
+                .filter(([name]) => name === "t")
+                .map(([, value]) => value ?? ""),
+            });
+            clock++;
+            unavailable = ++publications === failedWrite;
+          },
+        },
+        viewer: owner,
+        relayAuthor: owner,
+        labels: true,
+        canAccess: () => true,
+        acceptDiscovery: () => {},
+      });
+      const cap = createSoloPrimary({ ...f.deps, details: details.capability });
+      try {
+        await expect(
+          cap.save(channel, {}, primary, "automatic"),
+        ).rejects.toThrow(/may have been saved/);
+        expect(details.capability.snapshot(channel)?.status).toBe(
+          "unconfirmed",
+        );
+        await expect(cap.load(channel)).rejects.toThrow(
+          /confirmation unavailable/,
+        );
+        const published = f.published.length;
+        unavailable = false;
+        const recovered = await cap.load(channel);
+        expect(details.capability.snapshot(channel)).toBeUndefined();
+        expect(publications).toBe(failedWrite);
+        expect(f.published).toHaveLength(published);
+        const saved = await cap.save(
+          channel,
+          recovered,
+          secondary,
+          "mention-only",
+        );
+        expect(saved.binding).toMatchObject({
+          identity: secondary,
+          mode: "mention-only",
+        });
+      } finally {
+        details.dispose();
+        f.life.abort();
+      }
+    },
+  );
   it("rechecks conversion before signing after marker adoption", async () => {
     const f = fixture();
     f.details.save.mockImplementationOnce(async () => {
@@ -1063,44 +1164,9 @@ it("converges two owner devices on the accepted pin without admitting unpublishe
     releaseB = resolve;
   });
   const owners: ReturnType<typeof createChannelDetails>[] = [];
-  const metadata = async () => {
-    const labels = (await f.details.load()).labels ?? [];
-    return [
-      sign({
-        kind: 39000,
-        created_at: clock,
-        content: "",
-        tags: [
-          ["d", channel],
-          ["name", "Chat"],
-          ["t", "stream"],
-          ["private"],
-          ...labels.map((label) => ["t", label]),
-        ],
-      }),
-      sign({
-        kind: 39001,
-        created_at: clock,
-        content: "",
-        tags: [
-          ["d", channel],
-          ["p", owner, "owner"],
-        ],
-      }),
-      sign({
-        kind: 39002,
-        created_at: clock,
-        content: "",
-        tags: [
-          ["d", channel],
-          ["p", owner, "", "owner"],
-        ],
-      }),
-    ];
-  };
   const device = (second: boolean) => {
     const details = createChannelDetails({
-      reader: { read: metadata },
+      reader: { read: () => settingsEvents(f, clock) },
       viewer: owner,
       relayAuthor: owner,
       labels: true,

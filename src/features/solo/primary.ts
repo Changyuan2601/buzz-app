@@ -386,6 +386,8 @@ export function createSoloPrimary({
     available: !!read && !!writer && !!relayAuthor && details.available,
     load(channel: string, caller?: AbortSignal) {
       return owned(async (signal) => {
+        if (details.snapshot(channel)?.status === "unconfirmed")
+          await details.check(channel, signal);
         if (!(await adoption(channel, signal))) return {};
         const { current, metadata } = await context(channel, signal, true);
         return head(channel, current.creator, metadata, signal);

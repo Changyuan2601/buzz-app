@@ -155,7 +155,7 @@ it("replies in the current thread and notifies the members it names", async () =
       tags: [
         ["h", "chan"],
         ["e", root, "", "reply"],
-        ["p", alice],
+        ["p", alice, "", "mention"],
       ],
     },
   ]);
@@ -171,7 +171,7 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published[0]?.tags).toEqual([
     ["h", "chan"],
     ["e", root, "", "reply"],
-    ["p", bob],
+    ["p", bob, "", "mention"],
     ["audience", "agents"],
   ]);
   await expect(
@@ -197,7 +197,7 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
     text: "hi @Carol",
     mentions: [bob],
   });
-  expect(published[0]?.tags).toContainEqual(["p", bob]);
+  expect(published[0]?.tags).toContainEqual(["p", bob, "", "mention"]);
 });
 
 it("replies to a message inside a thread at the thread's root, and posts a file's text and attachments", async () => {

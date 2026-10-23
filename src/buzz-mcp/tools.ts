@@ -466,7 +466,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       tags: [
         ["h", channel],
         ...thread,
-        ...mentions.map((pubkey) => ["p", pubkey]),
+        ...mentions.map((pubkey) => ["p", pubkey, "", "mention"]),
         ...files.tags,
         ...(args.audience === "agents" ? [["audience", "agents"]] : []),
       ],
