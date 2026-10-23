@@ -78,7 +78,7 @@ export function AgentCard({
   menu,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "children"> & {
-  /** A short status beside the name, such as "Default agent". */
+  /** A short status in the corner, such as "Main agent". */
   tag?: ReactNode;
   agent: Portrayed;
   community?: string | undefined;
