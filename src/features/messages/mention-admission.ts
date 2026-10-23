@@ -10,14 +10,35 @@ export function archivedMention(session: ComposerSession, pubkey: string) {
 
 /**
  * Whether a destination can name people outside it from the community
- * directory. A Solo chat cannot: its mentions admit agents through the Solo chat
- * choice policy. This follows the channel type, not composer props, because
- * some Solo chat composers (media comments, edits) do not carry Solo mode.
+ * directory. A Solo chat always can, so its people can reference anyone; it
+ * never adds them. Other known channels can unless a closed draft roster or
+ * agent invitation limits the choices. Delivery decides what an outside key
+ * becomes: an added member, or a reference that notifies nobody.
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
+  roster?: readonly MentionRecipient[],
+  inviteAgents = false,
 ) {
-  return !!channel && channel.channelType !== "solo";
+  return (
+    !!channel && (channel.channelType === "solo" || (!roster && !inviteAgents))
+  );
+}
+
+/**
+ * Whether sending a mention of this outside key adds it to the destination.
+ * A Solo chat adds only the viewer's agents; a DM adds nobody. There, any
+ * other outside key becomes a reference without a prompt.
+ */
+export function invitesOutsideMention(
+  channel: Pick<ChannelSummary, "channelType"> | undefined,
+  agents: readonly { pubkey: string }[],
+  pubkey: string,
+) {
+  if (channel?.channelType === "dm") return false;
+  if (channel?.channelType === "solo")
+    return agents.some((agent) => agent.pubkey === pubkey);
+  return true;
 }
 
 /**
@@ -42,11 +63,16 @@ export function mentionAdmission(
   if (!roster && inviteAgents && channel?.channelType !== "dm")
     for (const agent of session.agentChoices.snapshot().identities)
       allowed.add(agent.pubkey);
-  const outside = !roster && !inviteAgents && allowsOutsideMentions(channel);
+  // A roster leaves out some members on purpose; naming outside people must
+  // not admit them again. Unknown membership leaves no outside keys then.
+  const members = roster ? channel?.members : undefined;
+  const outside = (pubkey: string) =>
+    allowsOutsideMentions(channel, roster, inviteAgents) &&
+    (!roster || (!!members && !members.includes(pubkey)));
   return (pubkey) =>
     /^[0-9a-f]{64}$/.test(pubkey) &&
     !archivedMention(session, pubkey) &&
-    (outside || allowed.has(pubkey));
+    (allowed.has(pubkey) || outside(pubkey));
 }
 
 /**

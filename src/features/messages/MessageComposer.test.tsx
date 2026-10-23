@@ -6004,10 +6004,9 @@ it("does not ask about outside recipients in a Solo chat media-comment composer"
   await act(async () => {});
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(h.messages.reply).toHaveBeenCalledOnce();
-  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
-    first.pubkey,
-    second.pubkey,
-  ]);
+  // Like a DM, the outside person is only referenced.
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([second.pubkey]);
+  expect(h.messages.reply.mock.calls[0]?.[6]).toEqual([first.pubkey]);
   expect(add).not.toHaveBeenCalled();
 });
 
@@ -8378,7 +8377,7 @@ it("withholds recording tools while a message edit cannot take attachments", asy
 });
 
 it.each([true, false])(
-  "Solo human addressing is explicit for owner=%s and never enrolls outsiders",
+  "Solo human addressing is explicit for owner=%s and only references outsiders",
   async (owner) => {
     const h = mount();
     const human = { pubkey: "e".repeat(64), name: "Teammate" };
@@ -8403,14 +8402,21 @@ it.each([true, false])(
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
     expect(h.messages.send.mock.calls[0]?.[2]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
-    // Previously selected human loses membership before the fresh send check.
+    // Previously selected human loses membership before the fresh send check:
+    // they become a reference, which addresses nobody.
     act(() => h.commands().insertMention(human));
     channel.members = [first.pubkey];
     h.submit();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "already in this chat",
+      "Tag an agent to send.",
     );
     expect(h.messages.send).toHaveBeenCalledOnce();
+    // With an agent tagged, the outside human goes out as a reference.
+    act(() => h.commands().insertMention(first));
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
+    expect(h.messages.send.mock.calls[1]?.[5]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
   },
 );

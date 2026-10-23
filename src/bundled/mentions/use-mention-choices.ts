@@ -12,7 +12,10 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
-import { archivedMention } from "../../features/messages/mention-admission";
+import {
+  allowsOutsideMentions,
+  archivedMention,
+} from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import { mentionCandidates } from "./mention-candidates";
 import {
@@ -53,7 +56,7 @@ export function useMentionChoices(
     session,
     channel,
     query,
-    open && !roster && !invite,
+    open && allowsOutsideMentions(channel, roster, invite),
     lifetime,
   );
   const archives = useMentionArchives(session, open);
@@ -178,7 +181,13 @@ export function useMentionChoices(
     // Append-only: late invited agents and directory pages never move shown rows.
     // Member-list changes keep their installed set until the query changes.
     const shown = new Set(rows.map((row) => row.recipient.pubkey));
-    const added = (invite ? rank(candidates.filter((c) => c.agent)) : outside)
+    const added = (
+      invite
+        ? rank(
+            candidates.filter((c) => c.agent || !local.has(c.recipient.pubkey)),
+          )
+        : outside
+    )
       .filter((c) => !shown.has(c.recipient.pubkey))
       .slice(0, 50 - rows.length);
     if (added.length) {

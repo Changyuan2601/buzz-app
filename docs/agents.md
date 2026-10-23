@@ -480,8 +480,8 @@ with up to four cached avatar thumbnails and a remainder count. Empty, oversized
 is no partial expansion. Reopen or change the query to refresh changed team
 choices. The resulting draft must fit the existing 32-mention and message-length
 limits. Selection never adds members: ordinary channels retain invite-on-send
-consent, DMs retain reference-only outsiders, and Solo chat admission remains
-unchanged.
+consent, DMs retain reference-only outsiders, and Solo chats add only the
+viewer's available agents.
 
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 

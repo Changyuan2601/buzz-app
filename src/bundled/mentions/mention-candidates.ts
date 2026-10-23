@@ -20,13 +20,15 @@ function availableMentionAgents(
     : [];
 }
 
-/** Row detail for an outside choice. Nobody can be added to a DM. */
+/** Row detail for an outside choice that is not added when you send. */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
 ) {
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
-    : "Not in channel · Choose whether to add when you send";
+    : channel?.channelType === "solo"
+      ? "Not in chat · Will not be notified"
+      : "Not in channel · Choose whether to add when you send";
 }
 
 /** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
@@ -58,7 +60,7 @@ export function mentionCandidates(
           session.outbox?.supports(9000),
         )))
     choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-  if (!roster && !inviteAgents && allowsOutsideMentions(channel))
+  if (allowsOutsideMentions(channel, roster, inviteAgents))
     for (const person of directory) choices.set(person.pubkey, person);
   for (const pubkey of members)
     choices.set(pubkey, {

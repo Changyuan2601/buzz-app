@@ -1314,7 +1314,24 @@ function Composer({
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = [...explicit];
+    let missing = explicit.filter((key) => !channel.members?.includes(key));
+    let references: string[] = [];
+    if (missing.length) {
+      // Classification no longer depends on inventory; refresh before admission.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const agents = session.agentChoices.snapshot();
+      // Only your available agents join. Anyone else outside the chat is a
+      // reference, as in a DM. A failed agent read cannot tell them apart.
+      references = missing.filter(
+        (key) => !agents.selectable.some((agent) => agent.pubkey === key),
+      );
+      if (references.length && (agents.status !== "ready" || agents.error))
+        throw new Error("Could not load your agents. Retry.");
+      missing = missing.filter((key) => !references.includes(key));
+    }
+    const recipients = explicit.filter((key) => !references.includes(key));
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -1332,23 +1349,7 @@ function Composer({
       )
         throw new Error("Tag an agent to send.");
     }
-    const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      // Classification no longer depends on inventory; refresh before admission.
-      await session.agentChoices.refresh();
-      if (!currentAdmission())
-        throw new Error("The session changed. Review its channel and retry.");
-      if (
-        missing.some(
-          (key) =>
-            !session.agentChoices
-              .snapshot()
-              .selectable.some((agent) => agent.pubkey === key),
-        )
-      )
-        throw new Error(
-          "Tag a person already in this chat or one of your available agents.",
-        );
       await session.channelWrites.addAgents(
         channelId,
         missing,
@@ -1357,7 +1358,7 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
     }
-    return recipients;
+    return { recipients, references };
   }
   async function send() {
     if (!permitted.current || voice.isCapturing()) return;
@@ -1442,6 +1443,10 @@ function Composer({
       profileSnapshot,
       session.agentChoices.snapshot(),
     );
+    // A person outside the chat is only referenced, so it addresses nobody.
+    const chatMembers = session.channels
+      .list()
+      .channels.find((item) => item.id === channelId)?.members;
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
@@ -1449,7 +1454,9 @@ function Composer({
       followUpBehaviorPreference() === "queue" &&
       captured.recipients.length > 0 &&
       !soloHasPeople(
-        captured.recipients.map(({ pubkey }) => pubkey),
+        captured.recipients
+          .map(({ pubkey }) => pubkey)
+          .filter((key) => chatMembers?.includes(key)),
         session.viewer,
         profileSnapshot,
         agentKeys,
@@ -1481,7 +1488,7 @@ function Composer({
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        ({ recipients, references } = await prepareRecipients(recipients));
       } else if (recipients.length) {
         const channel = session.channels
           .list()
@@ -1490,9 +1497,13 @@ function Composer({
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
-          if (missing.length && channel?.channelType === "dm") {
-            // Nobody can be added to a DM, so there is no choice to offer:
-            // outside people become references without a prompt.
+          if (
+            missing.length &&
+            (channel?.channelType === "dm" || channel?.channelType === "solo")
+          ) {
+            // Nobody can be added to a DM, and a Solo chat composer without
+            // Solo mode (media comments) adds nobody either. There is no
+            // choice to offer: outside people become references.
             references = missing.map((person) => person.pubkey);
             recipients = recipients.filter((key) => !references.includes(key));
           } else if (missing.length) {

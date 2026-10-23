@@ -15,6 +15,10 @@ import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { outsideMentionDetail } from "./mention-candidates";
+import {
+  allowsOutsideMentions,
+  invitesOutsideMention,
+} from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
@@ -198,11 +202,11 @@ export function MentionPicker({
               variant="capsule"
               inputRef={searchInput}
               label={
-                draftRoster
-                  ? "Search recipients"
-                  : inviteAgents
-                    ? "Search members and agents"
-                    : "Search community people and agents"
+                allowsOutsideMentions(channel, draftRoster, inviteAgents)
+                  ? "Search community people and agents"
+                  : draftRoster
+                    ? "Search recipients"
+                    : "Search members and agents"
               }
               value={search}
               onValueChange={setSearch}
@@ -313,7 +317,12 @@ export function MentionPicker({
                         {reason && <small>{reason}</small>}
                         {!members?.includes(recipient.pubkey) && (
                           <small className="text-caption text-subtle">
-                            {inviteAgents
+                            {inviteAgents &&
+                            invitesOutsideMention(
+                              channel,
+                              agents.identities,
+                              recipient.pubkey,
+                            )
                               ? parentAdmission
                                 ? "Adds to channel when you send"
                                 : "Adds to chat when you send"

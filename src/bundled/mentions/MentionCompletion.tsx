@@ -6,6 +6,7 @@ import type { ComposerCompletionProps } from "../../features/conversation/contra
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
+import { invitesOutsideMention } from "../../features/messages/mention-admission";
 import { matchesMentionQuery } from "./mention-query";
 import { avatarMedia } from "../../shared/avatar-source";
 
@@ -117,7 +118,12 @@ export function MentionCompletion({
           disabled ??
           (members.includes(recipient.pubkey)
             ? recipient.pubkey
-            : inviteAgents
+            : inviteAgents &&
+                invitesOutsideMention(
+                  channel,
+                  agents.identities,
+                  recipient.pubkey,
+                )
               ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
               : outsideMentionDetail(channel)),
         preview: (

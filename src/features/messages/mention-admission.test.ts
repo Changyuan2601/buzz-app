@@ -43,12 +43,28 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   const sessionChannel = session({ channelType: "solo" });
   const plain = mentionAdmission(sessionChannel, "channel");
   expect(plain(member)).toBe(true);
-  expect(plain(outside)).toBe(false);
-  expect(plain(library)).toBe(false);
+  // Outside keys are references in a Solo chat; delivery never adds them.
+  expect(plain(outside)).toBe(true);
+  expect(plain(library)).toBe(true);
   const inviting = mentionAdmission(sessionChannel, "channel", true);
   expect(inviting(library)).toBe(true);
-  expect(inviting(outside)).toBe(false);
-  // Agent invitation never admits directory people, even in a stream.
+  expect(inviting(outside)).toBe(true);
+  // The owner's roster leaves out a member on purpose; outside people do
+  // not bring that member back.
+  const owned = mentionAdmission(sessionChannel, "channel", true, [
+    { pubkey: library, name: "Honey" },
+  ]);
+  expect(owned(library)).toBe(true);
+  expect(owned(outside)).toBe(true);
+  expect(owned(member)).toBe(false);
+  // Unknown Solo membership cannot tell outside keys from left-out members.
+  const unknown = session({ channelType: "solo", members: undefined });
+  expect(
+    mentionAdmission(unknown, "channel", true, [
+      { pubkey: library, name: "Honey" },
+    ])(outside),
+  ).toBe(false);
+  // Agent invitation never admits directory people in other channels.
   expect(
     mentionAdmission(
       session({ channelType: "stream" }),

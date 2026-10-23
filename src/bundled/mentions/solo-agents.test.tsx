@@ -39,7 +39,7 @@ import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
-import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -1274,40 +1274,101 @@ it("qualifies outside directory namesakes that have no cached profile", async ()
   names.dispose();
 });
 
-it("never expands Solo chat candidates from the community directory", async () => {
-  vi.useFakeTimers();
-  const t = setup();
-  const people = vi.fn(async () => ({
-    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
-    hasMore: false,
-  }));
+it.each(["comment", "guest", "owner"] as const)(
+  "offers directory people as references in a Solo chat %s composer",
+  async (mode) => {
+    const t = setup(false);
+    const outside = { pubkey: "e".repeat(64), name: "Outside" };
+    const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+    const session = {
+      ...t.session,
+      directMessages: { ...t.session.directMessages, people },
+    };
+    // A media comment has no Solo mode; a guest invites agents; the owner's
+    // composer also passes its roster of chat people and own agents.
+    const invite = mode !== "comment";
+    const publish = vi.fn();
+    const surfaces = (
+      <>
+        <MentionPicker
+          session={session}
+          scope="test"
+          channelId="parent"
+          disabled={false}
+          select={() => true}
+          inviteAgents={invite}
+        />
+        <MentionCompletion
+          session={session}
+          scope="test"
+          channelId="parent"
+          observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+          publish={publish}
+          query={{ start: 0, end: 4, query: "Out" }}
+          inviteAgents={invite}
+        />
+      </>
+    );
+    render(
+      mode === "owner" ? (
+        <DraftMentionRoster.Provider
+          value={[
+            { pubkey: t.member, name: "Member" },
+            { pubkey: t.key, name: "Outside agent" },
+          ]}
+        >
+          {surfaces}
+        </DraftMentionRoster.Provider>
+      ) : (
+        surfaces
+      ),
+    );
+    await waitFor(() => expect(people).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        (
+          publish.mock.lastCall?.[0] as CompletionResult | undefined
+        )?.items.find((item) => item.label === "Outside")?.detail,
+      ).toBe("Not in chat · Will not be notified"),
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Mention a member" }));
+    const row = await screen.findByRole("button", { name: /^Outside e/ });
+    expect(row).toHaveTextContent("Not in chat · Will not be notified");
+  },
+);
+
+it("keeps a Solo owner's left-out members out of directory results", async () => {
+  const t = setup(false);
+  const stranger = "c".repeat(64);
   const list = {
     status: "ready" as const,
     channels: [
       {
         id: "parent",
-        name: "Conversation",
+        name: "Chat",
         channelType: "solo" as const,
-        members: ["a".repeat(64)],
+        members: [t.member, stranger],
       },
     ],
   };
+  // Someone else's agent is in the chat, so the owner's roster leaves it out.
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: stranger, name: "Outsider bot", isAgent: true as const },
+      { pubkey: "e".repeat(64), name: "Outside" },
+    ],
+    hasMore: false,
+  }));
   const session = {
     ...t.session,
     directMessages: { ...t.session.directMessages, people },
     channels: { ...t.session.channels, list: () => list },
   };
-  // Neither surface passes inviteAgents, like a Solo chat media comment.
   const publish = vi.fn();
   render(
-    <>
-      <MentionPicker
-        session={session}
-        scope="test"
-        channelId="parent"
-        disabled={false}
-        select={() => true}
-      />
+    <DraftMentionRoster.Provider value={[{ pubkey: t.member, name: "Member" }]}>
       <MentionCompletion
         session={session}
         scope="test"
@@ -1315,24 +1376,16 @@ it("never expands Solo chat candidates from the community directory", async () =
         observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
         publish={publish}
         query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
       />
-    </>,
+    </DraftMentionRoster.Provider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Mention a member" }));
-  fireEvent.change(screen.getByRole("searchbox"), {
-    target: { value: "Out" },
-  });
-  // Past the directory delay, so a search would have started.
-  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS * 2));
-  expect(people).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("button", { name: /Outside/ }),
-  ).not.toBeInTheDocument();
-  const result = publish.mock.lastCall?.[0] as CompletionResult | undefined;
-  expect(result?.items.map((item) => item.label) ?? []).not.toContain(
-    "Outside",
-  );
-  expect(result?.status).toBeUndefined();
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ) ?? [];
+  await waitFor(() => expect(labels()).toContain("Outside"));
+  expect(labels()).not.toContain("Outsider bot");
 });
 
 it("offers outside directory people in a DM, like a channel", async () => {
