@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import type { HostMcpServer } from "../../features/host/service";
 import type { AppServer } from "./rpc";
 import { CodexHooks, hookToolName } from "./hooks";
 it("exposes evaluation but no forged completion, and trusts only its own current hook hash", async () => {
@@ -107,12 +108,7 @@ it("gives concurrent and resumed threads separate transports and releases each i
 });
 
 it("closes a transport whose allocation finishes after process shutdown", async () => {
-  let resolve!: (server: {
-    url: string;
-    headers: never[];
-    close: ReturnType<typeof vi.fn>;
-    closed: Promise<void>;
-  }) => void;
+  let resolve!: (server: HostMcpServer) => void;
   const serve = vi.fn(
     () =>
       new Promise<Parameters<typeof resolve>[0]>((done) => {
