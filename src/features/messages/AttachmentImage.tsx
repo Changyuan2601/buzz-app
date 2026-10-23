@@ -16,6 +16,8 @@ export function AttachmentImage({
   session,
   source,
   cached = false,
+  compact = false,
+  overlayCount = 0,
   onOpenReview,
   onOpenLink,
   keepMounted,
@@ -26,6 +28,10 @@ export function AttachmentImage({
   session?: RelaySession | undefined;
   source: string | undefined;
   cached?: boolean;
+  /** Square thumbnail geometry for a condensed image group. */
+  compact?: boolean;
+  /** Includes the covered image, matching the gallery's remaining count. */
+  overlayCount?: number;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
   onOpenLink?: ((url: string) => boolean) | undefined;
   /** Pins the owning row in a virtualized list; returns the release. */
@@ -76,12 +82,15 @@ export function AttachmentImage({
     : 0;
   const previewWidth = knownDimensions ? Math.max(1, width) : width;
   const previewHeight = knownDimensions ? Math.max(1, height) : height;
-  const style =
-    dimensions &&
-    Number.isFinite(previewWidth) &&
-    Number.isFinite(previewHeight) &&
-    previewWidth >= 1 &&
-    previewHeight >= 1
+  const style = compact
+    ? // Percentage padding reserves square tracks in WebKit too, including when
+      // this grid is measured inside the virtualized, right-aligned message row.
+      { width: "100%", height: 0, paddingBottom: "100%", aspectRatio: "auto" }
+    : dimensions &&
+        Number.isFinite(previewWidth) &&
+        Number.isFinite(previewHeight) &&
+        previewWidth >= 1 &&
+        previewHeight >= 1
       ? {
           width: previewWidth,
           aspectRatio: knownDimensions
@@ -89,7 +98,7 @@ export function AttachmentImage({
             : `${dimensions.width} / ${dimensions.height}`,
         }
       : undefined;
-  if (!source)
+  if (!source && !overlayCount)
     return cached ? (
       <span
         ref={corners}
@@ -104,7 +113,7 @@ export function AttachmentImage({
         style={style}
         role="status"
       >
-        Image unavailable
+        <span>Image unavailable</span>
       </span>
     );
   return (
@@ -113,7 +122,7 @@ export function AttachmentImage({
         ref={corners}
         className={styles.attachmentImage}
         style={style}
-        href={source}
+        href={source ?? attachment.url}
         target="_blank"
         rel="noreferrer"
         aria-label={label}
@@ -132,12 +141,19 @@ export function AttachmentImage({
         {/* Retargeting retires both the DOM pixels and all pending callbacks before
             the new source can paint. Session switches also remount the workspace. */}
         <span className={styles.attachmentImagePixels}>
-          <ImagePixels
-            key={JSON.stringify([source, attachment.blurhash])}
-            source={source}
-            blurhash={attachment.blurhash}
-            onDecoded={onDecoded}
-          />
+          {source && (
+            <ImagePixels
+              key={JSON.stringify([source, attachment.blurhash])}
+              source={source}
+              blurhash={attachment.blurhash}
+              onDecoded={onDecoded}
+            />
+          )}
+          {overlayCount > 0 && (
+            <span className={styles.imageOverflow} aria-hidden="true">
+              +{overlayCount}
+            </span>
+          )}
         </span>
         <svg
           className={styles.imageOutline}

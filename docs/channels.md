@@ -3,9 +3,9 @@
 ## Run the integration
 
 Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
-[development setup](../README.md#relay-channels), then run `just web` or
+[development setup](contributing.md#live-relay-development), then run `just web` or
 `just desktop` (one at a time); the development broker starts with the dev server.
-Add a community using the top-left community switcher, open Messages and click a supported GitHub URL in a message to open its object
+Join a community using the community picker, open Messages and click a supported GitHub URL in a message to open its object
 in a side panel. Pull requests show their change summary and a one-page checklist
 of checks, reviews, unresolved threads and merge state; issues, commits, and
 repositories show their relevant details. On desktop, the panel reads through the
@@ -131,9 +131,9 @@ pending/error presentation survive page switches. Session replacement discards
 that presentation. Cache clear/disposal abort
 pending work but cannot retract an accepted relay publication.
 
-Mark as Read delegates to the [durable unread owner](unread.md), without selecting
+Mark as read delegates to the [durable unread owner](unread.md), without selecting
 the row, and closes after the local transaction commits. Observed unread or a
-manual mark offers **Mark as Read**; otherwise the menu offers **Mark as Unread**
+manual mark offers **Mark as read**; otherwise the menu offers **Mark as unread**
 with its device-only tooltip. An open menu subscribes to the shared projection,
 without fetching history or inventing exact counts. Read errors remain in-menu
 for explicit retry. Focus resolves the current row by identity even if saved
@@ -386,7 +386,7 @@ and modeled upstream I/O; it does not send messages to a live community.
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
 Channel Settings tab; selecting it again never closes the pane. Editing is available
-from that pane, not directly from the menu. **View canvas**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+from that pane, not directly from the menu. **View canvas**, **Move channel**, **Mute/Unmute**, and **Mark as read/unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
@@ -779,7 +779,7 @@ native acceptance.
 
 ## Member administration
 
-**Channel members** has a scoped conversation history visit (`panel: "members"`)
+**Members** has a scoped conversation history visit (`panel: "members"`)
 through the host navigation owner. Opening creates a visit; browser Back dismisses
 and Forward restores the list. Reload restores the same channel and Members,
 including the underlying message/thread address when present. Close, Escape and
@@ -795,10 +795,19 @@ and restore their targets without focusing through the modal. Session conversati
 have no Members surface; a restored/handwritten Members route to a session resolves
 to its underlying conversation/message without that panel.
 
-The existing **Channel members** dialog keeps ordinary invitations and adds
+The header **Access** button opens the one access dialog every conversation uses.
+It is titled **Channel access** in channels and **Chat access** in a Solo chat (see
+[Sharing a Solo chat](solo/sharing.md)). A Solo chat owner can remove people and
+agents there but cannot change roles.
+One search field, with an accessible name but no visible label, filters current
+members and lists people, agents and Teams to invite under **Not in this channel**.
+Each result's **Add** button, or Enter on the highlighted result, adds immediately.
+The footer keeps **Copy link** at its leading edge and **Done** at its trailing edge.
+When adding is unavailable, the field reads **Search members** and a short reason names
+why (DM, archived, connection, or not joined). The dialog keeps ordinary invitations and adds
 verified roles plus per-member administration. Current members appear in separate
-**Owners**, **Admins**, **Members** and **Agents** groups with sticky headings and counts.
-Verified authority alone places someone in Owners or Admins, including agents.
+**People** and **Agents** groups with sticky headings and counts. Verified authority
+alone adds an Owner or Admin tag beside a name.
 Everyone else is grouped by the same agent identity evidence used for avatar shapes:
 agent identities in Agents, other identities in Members, without asserting a default
 protocol role or treating the Bot role as agent identity. Each group is alphabetical
@@ -822,14 +831,9 @@ known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
 manager evidence, presence and invitation state still update through their existing owners.
 Current-member avatars and rows open a profile panel when a plugin contributes one
-(none is bundled now); the Members dialog closes and closing the profile returns focus to the
-Channel members button. Names and smaller, muted inline **managed by** hints sit
-centered at rest with no pills. Hover reveals a longer abbreviated npub underneath
-using the existing 140ms height/opacity transition, just like invitation rows;
-keyboard focus and reduced motion reveal it immediately. The abbreviation shows
-`npub1` plus six leading payload characters and six trailing characters. It stays
-abbreviated: no dwell timer, inline expansion, copy icon, or identity card. Shared
-identity previews on other surfaces remain unchanged. Available presence status
+(none is bundled now); the access dialog closes and closing the profile returns focus to the
+**Access** button. Names sit centered with a smaller, muted **Managed by** line for
+agents with verified ownership; there is no hover public-key reveal. Available presence status
 stays on the profile control. The manager link opens
 the profile panel with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
@@ -844,21 +848,18 @@ waiter blocks duplicate opens, shows pending/error status and allows explicit re
 Closing Members cancels that waiter and suppresses late navigation; a successful
 handoff leaves destination focus alone. Owner/self protection, missing
 writer support and pending/uncertain writes suppress mutations, not the profile
-menu. If no profile panel is available, View profile is disabled. Pointer hover, keyboard
-focus and an open menu reveal the reserved action slot without moving row content;
-non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
+menu. If no profile panel is available, View profile is disabled. The action
+trigger is always visible. Right-click, Context Menu and
 Shift+F10 open the same action list through the shared context menu. The ellipsis
 uses a separate shared Menu root/trigger so each input retains its platform
 interaction owner; only one menu is open per row. The trigger owns toggling and
 outside-press dismissal. Scrolling the member list dismisses either menu without
 resetting the scroll position; scrolling inside a menu does not dismiss it.
-Focus in a portaled menu is not row focus: once hover and physical row focus leave,
-the npub and its reserved space collapse together, recentering the name.
 Escape returns focus to the originating row
 control; profile navigation hands focus to the panel and returns to the external
-Channel members button when closed. Invitation rows reuse the same avatar, name,
-managed-by hint and public-key hover/focus presentation, without a channel-role
-badge. Their avatars and identity rows open the profile panel just like current members;
+**Access** button when closed. Invitation rows reuse the same avatar, name and
+**Managed by** line, without a channel-role badge or public key. Their avatars and
+identity rows open the profile panel just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
 Invitation results expose the same identity menu through right-click, long-press,
 Context Menu or Shift+F10 only, with no ellipsis button. Add stays separate and
@@ -869,7 +870,7 @@ clipping it; profile targets fill the row height, with identity and actions cent
 Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
-one scrolling viewport, with Owners, Admins, Members, Agents and Not in this channel
+one scrolling viewport, with People, Agents and Not in this channel
 separated inside it without extra boxes or fills. Every group heading sticks to the
 top of this viewport while scrolling within its own section, with an opaque matching
 surface so rows do not show through. There is no outer top padding to scroll away:
@@ -895,8 +896,7 @@ Supporting buttons use outline emphasis; **Show more results** uses the small si
 and is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
-present. It defaults to All and offers only populated Owners, Admins, Members and
-Agents groups, with whole-roster counts (including the All total), using the shared
+present. It defaults to All and offers only populated People and Agents groups, with whole-roster counts (including the All total), using the shared
 compact Select with its popup aligned to the trigger’s right edge. The popup has
 an 11.25rem minimum and reserves checkmark space to avoid width jumps on selection.
 Counts form a partition: each identity appears once, with Owners/Admins taking precedence
@@ -919,7 +919,7 @@ The search composition reduces the shared header-to-body gap by `--space-2`
 (16px normally, 8px at the compact breakpoint) without affecting other dialogs.
 The member-list area flexes into the remaining dialog height and owns the only
 scrollbar, including search results and recovery messages. The role groups and
-Not in this channel flow naturally one after the other; only the bordered viewport fills spare
+Not in this channel flow naturally one after the other; empty groups are hidden. Only the bordered viewport fills spare
 height, never a group inside it. The shared Dialog's opt-in flex body
 keeps the outer body non-scrolling; other dialogs are unchanged.
 Agent runtime/access management is not added to the member menu.
@@ -985,6 +985,7 @@ edit their roles or remove someone else's agent. The service verifies signed
 ownership once per removal attempt, independently of display hints.
 
 DMs, archived channels and session channels have no administration actions.
+In a Solo chat only owners and admins can remove members, including other people's agents.
 No ownership transfer, community-admin override or new invitation restriction is
 introduced. Personal Leave remains a separate lifecycle operation; removing a
 member neither deletes their identity nor stops their agents.
@@ -1362,12 +1363,22 @@ and OS notifications are not enabled by this feature.
 
 ### Attachment layout and scrolling
 
-Message rows show every image and GIF in a full-frame preview, whether sent alone
-or alongside text. Multiple images form a vertical list in attachment order, with a
-count below the list. GIF URLs need no file extension or MIME metadata for this
-presentation. Pixels use `contain`, so the whole image stays visible without
-stretching or cropping.
-Inline video previews and their posters fill their bounded frames with `cover`.
+Message rows show images and GIFs in full-frame previews, whether sent alone
+or alongside text. Groups of four or more adjacent images use a two-column grid.
+Where the host supplies the media review, adjacent videos join these groups and
+the grid shows at most four tiles. If more items remain, the fourth displays `+N`,
+counting that tile and the hidden items. The overflow tile keeps every photo/video
+reachable in the viewer, including when its thumbnail is unavailable.
+Files and audio retain their order and separate layout. Surfaces
+without a gallery host keep all previews visible. GIF URLs need no file extension
+or MIME metadata for this presentation. Image and compact video pixels use
+`contain`, so the whole frame stays visible without stretching or cropping.
+Other inline video previews and their posters fill their bounded frames with `cover`.
+The media review header displays the selected file's name, falling back to Image
+or Video when unnamed, and updates as gallery selection changes. While a thread
+read is pending or fails, the viewer preserves the opener's known media and offers
+thread retry independently of media loading. Verified removal or invalidated access
+retires that fallback through retries until a fresh read re-admits the attachment.
 Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas. Large emoji retain their artwork size with the

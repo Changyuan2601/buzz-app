@@ -1714,6 +1714,14 @@ export function createRelaySession(
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
+      // A Solo chat admits people under its share rule; agents join by mention.
+      const solo =
+        (
+          session.channels
+            .list()
+            .channels.find((item) => item.id === channelId) ??
+          session.channels.get?.(channelId)
+        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -1721,6 +1729,7 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
+        solo,
       );
     },
     writes?.local,

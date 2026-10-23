@@ -3,10 +3,9 @@ import type { RelaySession } from "../relay/session";
 import type { KitEntry, Lineup } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import type { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Input } from "../../shared/design-system/ui/Input";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
 import { readView, writeView } from "../../shared/view-state";
 import {
@@ -18,10 +17,9 @@ import {
   workspaceCanvas,
   type Workspace,
 } from "./workspace";
-import { WorkspaceFields } from "./WorkspaceFields";
 import { useLifetime } from "./Lifetime";
+import { ChatInstructions, ChatSettingsDialog } from "./ChatSettingsDialog";
 import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
-import styles from "./WorkspaceSettings.module.css";
 
 type Target =
   | { kind: "project"; id: string; name: string }
@@ -35,14 +33,12 @@ export function WorkspaceSettings({
   close,
   signal,
   finalFocus,
-  focusName = false,
 }: {
   session: RelaySession;
   scope: string;
   target: Target;
   close(): void;
   signal?: AbortSignal | undefined;
-  focusName?: boolean | undefined;
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
@@ -285,178 +281,154 @@ export function WorkspaceSettings({
       : [],
   );
   return (
-    <Dialog
-      open
+    <ChatSettingsDialog
       finalFocus={finalFocus}
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
-      preventClose={busy || lifetime.busy}
-      dismissOnOutsideClick
-      title={target.kind === "project" ? "Workspace settings" : "Chat settings"}
-      actions={
-        <>
-          <Button disabled={busy || lifetime.busy} onClick={close}>
-            Cancel
-          </Button>
-          <Button
-            loading={busy || lifetime.busy || loadingCanvas}
-            disabled={
-              loadingCanvas ||
-              !!signal?.aborted ||
-              (!loaded && !lifetime.eligible) ||
-              (lifetime.available &&
-                !lifetime.checkOnly &&
-                (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
-                (lifetime.blocked || !!lifetime.invalid))
-            }
-            variant="prominent"
-            onClick={() => void save()}
-          >
-            {lifetime.checkOnly
-              ? "Check save status"
-              : `Save ${target.kind === "project" ? "defaults" : "changes"}`}
-          </Button>
-        </>
+      close={close}
+      busy={busy || lifetime.busy}
+      title={target.kind === "project" ? "Workspace settings" : undefined}
+      saveLabel={
+        lifetime.checkOnly
+          ? "Check save status"
+          : `Save ${target.kind === "project" ? "defaults" : "changes"}`
       }
+      saveLoading={busy || lifetime.busy || loadingCanvas}
+      saveDisabled={
+        loadingCanvas ||
+        !!signal?.aborted ||
+        (!loaded && !lifetime.eligible) ||
+        (lifetime.available &&
+          !lifetime.checkOnly &&
+          (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
+          (lifetime.blocked || !!lifetime.invalid))
+      }
+      onSave={() => void save()}
     >
-      <div className={styles.sections} inert={busy}>
-        {lifetime.available && lifetime.base && (
-          <Field label="Chat name" error={lifetime.nameError}>
-            <Input
-              autoFocus={focusName}
-              value={lifetime.name}
-              placeholder={lifetime.base.name}
-              disabled={busy || lifetime.busy || lifetime.blocked}
-              onChange={(event) => lifetime.changeName(event.target.value)}
-            />
-          </Field>
-        )}
-        {loaded && (
-          <>
-            {target.kind === "project" && templates.length > 0 && (
-              <Select
-                label="Start from a template"
-                variant="field"
-                value={selectedTemplate}
-                groups={[
-                  {
-                    label: "",
-                    options: [
-                      { value: "", label: "Custom settings" },
-                      ...templates.map((template) => ({
-                        value: template.id,
-                        label: template.name,
-                      })),
-                    ],
-                  },
-                ]}
-                onValueChange={(id) => {
-                  const template = templates.find(
-                    (template) => template.id === id,
-                  );
-                  if (template) {
-                    setLineup(template);
-                    adopt(template.canvas);
-                  }
-                  if (!id) setLineup(emptyLineup());
-                  setSelectedTemplate(id);
-                }}
-              />
-            )}
-            {raw !== undefined ? (
-              <Field
-                label="Instructions"
-                description="These instructions have custom workspace setup. Edit them directly to keep it."
-              >
-                <Textarea
-                  rows={12}
-                  value={raw}
-                  onChange={(event) => setRaw(event.target.value)}
-                />
-              </Field>
-            ) : (
-              <WorkspaceFields value={workspace} onChange={setWorkspace} />
-            )}
-            {target.kind === "project" &&
-              (lineup.agents.length > 0 || lineup.teamIds.length > 0) && (
-                <p className="text-secondary">
-                  The selected template’s agents and teams are also included in
-                  new chats.
-                </p>
-              )}
-            {canvasError && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  if (reloadConfirmed) void load(true);
-                  else setReloadConfirmed(true);
-                }}
-              >
-                {reloadConfirmed
-                  ? "Discard draft and reload saved settings"
-                  : "Review saved settings"}
-              </Button>
-            )}
-          </>
-        )}
-        {canvasAvailable && !loaded && !loadingCanvas && (
-          <Button onClick={() => void load()}>Retry settings</Button>
-        )}
-        {!canvasAvailable && (
-          <p role="status">Workspace and Canvas are unavailable.</p>
-        )}
-        {lifetime.available && (
-          <>
-            {lifetime.base ? (
-              <ChannelDurationField
-                label="Lifetime"
-                temporary={lifetime.ttl !== undefined}
-                ttlSeconds={lifetime.temporaryTtl}
-                disabled={busy || lifetime.busy || lifetime.blocked}
-                error={lifetime.lifetimeError}
-                onChange={lifetime.change}
-              />
-            ) : (
-              !lifetime.error && <p role="status">Loading chat details…</p>
-            )}
-            {lifetime.base && !lifetime.eligible && (
-              <p role="status">
-                Only a chat you can edit can change its name or lifetime.
-              </p>
-            )}
-            {lifetime.unrelatedAttempt && (
-              <p role="status">
-                Finish the existing channel details change before editing the
-                chat name or lifetime.
-              </p>
-            )}
-            {lifetime.error && !error.includes(lifetime.error) && (
-              <p role="alert">{lifetime.error}</p>
-            )}
-            {lifetime.error && !lifetime.checkOnly && (
-              <Button
-                disabled={busy || lifetime.busy || !!signal?.aborted}
-                onClick={() =>
-                  void lifetime
-                    .run("reload")
-                    .then(() => {
-                      if (!canvasError) setError("");
-                    })
-                    .catch(() => {})
+      {lifetime.available && lifetime.base && (
+        <Field label="Chat name" error={lifetime.nameError}>
+          <Input
+            value={lifetime.name}
+            placeholder={lifetime.base.name}
+            disabled={busy || lifetime.busy || lifetime.blocked}
+            onChange={(event) => lifetime.changeName(event.target.value)}
+          />
+        </Field>
+      )}
+      {loaded && (
+        <>
+          {target.kind === "project" && templates.length > 0 && (
+            <Select
+              label="Start from a template"
+              variant="field"
+              value={selectedTemplate}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    { value: "", label: "Custom settings" },
+                    ...templates.map((template) => ({
+                      value: template.id,
+                      label: template.name,
+                    })),
+                  ],
+                },
+              ]}
+              onValueChange={(id) => {
+                const template = templates.find(
+                  (template) => template.id === id,
+                );
+                if (template) {
+                  setLineup(template);
+                  adopt(template.canvas);
                 }
-              >
-                Reload chat details
-              </Button>
+                if (!id) setLineup(emptyLineup());
+                setSelectedTemplate(id);
+              }}
+            />
+          )}
+          <ChatInstructions
+            workspace={workspace}
+            onWorkspaceChange={setWorkspace}
+            raw={raw}
+            onRawChange={setRaw}
+          />
+          {target.kind === "project" &&
+            (lineup.agents.length > 0 || lineup.teamIds.length > 0) && (
+              <p className="text-secondary">
+                The selected template’s agents and teams are also included in
+                new chats.
+              </p>
             )}
-          </>
-        )}
-        {status && <p role="status">{status}</p>}
-        {error && <p role="alert">{error}</p>}
-      </div>
+          {canvasError && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (reloadConfirmed) void load(true);
+                else setReloadConfirmed(true);
+              }}
+            >
+              {reloadConfirmed
+                ? "Discard draft and reload saved settings"
+                : "Review saved settings"}
+            </Button>
+          )}
+        </>
+      )}
+      {canvasAvailable && !loaded && !loadingCanvas && (
+        <Button onClick={() => void load()}>Retry settings</Button>
+      )}
+      {!canvasAvailable && (
+        <p role="status">Workspace and Canvas are unavailable.</p>
+      )}
+      {lifetime.available && (
+        <>
+          {lifetime.base ? (
+            <ChannelDurationField
+              label="Lifetime"
+              temporary={lifetime.ttl !== undefined}
+              ttlSeconds={lifetime.temporaryTtl}
+              disabled={busy || lifetime.busy || lifetime.blocked}
+              error={lifetime.lifetimeError}
+              onChange={lifetime.change}
+            />
+          ) : (
+            !lifetime.error && <p role="status">Loading chat details…</p>
+          )}
+          {lifetime.base && !lifetime.eligible && (
+            <p role="status">
+              Only a chat you can edit can change its name or lifetime.
+            </p>
+          )}
+          {lifetime.unrelatedAttempt && (
+            <p role="status">
+              Finish the existing channel details change before editing the chat
+              name or lifetime.
+            </p>
+          )}
+          {lifetime.error && !error.includes(lifetime.error) && (
+            <p role="alert">{lifetime.error}</p>
+          )}
+          {lifetime.error && !lifetime.checkOnly && (
+            <Button
+              disabled={busy || lifetime.busy || !!signal?.aborted}
+              onClick={() =>
+                void lifetime
+                  .run("reload")
+                  .then(() => {
+                    if (!canvasError) setError("");
+                  })
+                  .catch(() => {})
+              }
+            >
+              Reload chat details
+            </Button>
+          )}
+        </>
+      )}
+      {status && <p role="status">{status}</p>}
+      {error && <p role="alert">{error}</p>}
       {canvasAvailable && loadingCanvas && !loaded && (
         <p role="status">Loading settings…</p>
       )}
-    </Dialog>
+    </ChatSettingsDialog>
   );
 }

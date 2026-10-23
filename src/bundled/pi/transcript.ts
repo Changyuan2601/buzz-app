@@ -1,18 +1,20 @@
 // A Buzz conversation's Pi conversation, read from the agent's Pi durable
 // storage through the host and shown in the host's turn-transcript model. Pi
 // owns the entries; nothing here writes or keeps them.
-import type {
-  ToolItem,
-  Transcript,
-  TranscriptItem,
-  TranscriptTurn,
+import {
+  promptMessage,
+  promptSections,
+  type ToolItem,
+  type Transcript,
+  type TranscriptItem,
+  type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import { prompt } from "../claude-code/transcript";
 import type { Pi } from "./pi";
 
 /** The latest turns shown; Pi's storage keeps the rest. */
 export const TURN_LIMIT = 50;
 const PREFIX = "buzz_";
+const STEER = "new-message-arrived-while-you-were-working";
 const KINDS: Record<string, string> = {
   read: "read",
   write: "edit",
@@ -46,6 +48,8 @@ type Message = Readonly<{
 export type PiEntry = Readonly<{
   id: number;
   kind: string;
+  /** A tool result Pi wrote for a call an abort cut off. */
+  aborted?: boolean;
   model?: readonly Message[];
 }>;
 /** The Pi conversation of a Buzz thread or channel. */
@@ -70,6 +74,22 @@ const text = (content: Message["content"]) =>
         .filter(Boolean)
         .join("\n");
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+/** A Buzz prompt, or a steer wrapping one, as the turn's opening item. */
+function prompt(id: string, at: number, raw: string): TranscriptItem {
+  let sections = promptSections(raw);
+  const steer = sections.find((section) => section.tag === STEER);
+  if (steer) sections = promptSections(steer.body);
+  const { text, author } = promptMessage(sections);
+  return {
+    id,
+    at,
+    type: "prompt",
+    text: text || raw,
+    ...(author ? { author } : {}),
+    sections,
+    steer: !!steer,
+  };
+}
 /** Whether an entry is a prompt that opens a turn, not a steer into one. */
 const opens = ({ id, kind, model }: PiEntry) => {
   if (kind !== "pi.user") return false;
@@ -137,10 +157,17 @@ export function piTurns(
             type: "status",
             text: `The message above was not posted: ${text(message.content)}`,
           });
+        // A Stop in the tools phase leaves no aborted answer, only these
+        // results; an answer after them means the run went on.
+        if (entry.aborted) current.stopReason = "stopped";
         const tool = tools.get(message.toolCallId ?? "");
         if (!tool) return;
         tool.output = text(message.content);
-        tool.status = message.isError ? "failed" : "completed";
+        tool.status = entry.aborted
+          ? "terminated"
+          : message.isError
+            ? "failed"
+            : "completed";
         tool.completedAt = at;
         return;
       }

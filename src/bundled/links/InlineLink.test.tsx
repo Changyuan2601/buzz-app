@@ -197,3 +197,17 @@ it.each([false, true])(
     expect(textOf(markup)).toBe("the tracker");
   },
 );
+
+it("keeps the icon with the whole first character of a label", () => {
+  const markup = renderToStaticMarkup(
+    <LinkLabelContext value="👩🏽‍💻-builders">
+      <LinkLabel href="buzz://channel/builders" />
+    </LinkLabelContext>,
+  );
+  const container = document.createElement("div");
+  container.innerHTML = markup;
+  expect(container.querySelector(`.${styles.lead}`)?.textContent).toBe(
+    "👩🏽‍💻",
+  );
+  expect(container.textContent).toBe("👩🏽‍💻-builders");
+});

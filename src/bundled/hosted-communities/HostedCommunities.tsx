@@ -826,15 +826,15 @@ export function HostedCommunities({
           )}
           {shown?.copied && (
             <p role="status" className="text-body-sm text-muted">
-              Address copied. Join it with Add a community (+) in the community
-              rail.
+              Address copied. To join, open the community picker and choose Join
+              a community.
             </p>
           )}
           {shown && !shown.copied && (
             <div role="alert" className="text-body-sm">
               <p className="m-0">
-                Couldn’t copy the address. Copy it manually, then join it with
-                Add a community (+) in the community rail:
+                Couldn’t copy the address. Copy it manually, then open the
+                community picker and choose Join a community:
               </p>
               <p className="m-0 select-all break-all font-mono">{shown.url}</p>
               <div className="mt-2">

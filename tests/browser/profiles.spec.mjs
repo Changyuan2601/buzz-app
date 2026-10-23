@@ -423,12 +423,12 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const members = page.getByRole("button", {
-    name: "Channel members",
+    name: "Access",
     exact: true,
   });
   await members.click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Channel access",
     exact: true,
     includeHidden: true,
   });
@@ -447,16 +447,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 320 });
       await expect(surface).toBeInViewport({ ratio: 1 });
-      await expect(surface).toHaveCSS(
-        "background-color",
-        mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
-      );
-      await expect(surface).toHaveCSS("backdrop-filter", "none");
-      await expect(body).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await expect(body).toHaveCSS("border-top-width", "0px");
-      await expect(body).toHaveCSS("overflow-y", "hidden");
-      await expect(body).toHaveCSS("padding-bottom", "0px");
-      // Establish the dialog's actual entrance boundary before saving geometry.
+      // Measure the settled layout, not the open or resize transition.
       await dialog.evaluate(async (element) => {
         await Promise.all(
           element
@@ -468,15 +459,22 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
             .map((animation) => animation.finished),
         );
       });
-      const surfaceBounds = await surface.boundingBox();
-      const frameBounds = await list.boundingBox();
-      // A footerless flex body must not double the outer bottom gutter.
-      expect(
-        surfaceBounds.y +
-          surfaceBounds.height -
-          frameBounds.y -
-          frameBounds.height,
-      ).toBeCloseTo(1, 0);
+      await expect(surface).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
+      );
+      await expect(surface).toHaveCSS("backdrop-filter", "none");
+      await expect(body).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(body).toHaveCSS("border-top-width", "0px");
+      await expect(body).toHaveCSS("overflow-y", "hidden");
+      const bodyBounds = await list.locator("..").boundingBox();
+      const footerBounds = await dialog
+        .locator(".buzz-dialog-actions")
+        .boundingBox();
+      // The roster scrolls inside the body, above the Copy link / Done footer.
+      expect(bodyBounds.y + bodyBounds.height).toBeLessThanOrEqual(
+        footerBounds.y + 1,
+      );
       await expect(list).toHaveCSS("overflow-y", "auto");
       await expect(list).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       // The unframed roster scrolls to the dialog edge with a thin scrollbar.
@@ -493,7 +491,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
         name: "Refresh member data",
       });
       const close = header.getByRole("button", {
-        name: "Close channel members",
+        name: "Close",
       });
       await expect(refresh).toHaveAttribute("data-variant", "ghost");
       await expect(refresh).toHaveAttribute("data-icon-size", "compact");
@@ -532,7 +530,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(list).toHaveCSS("padding-top", "0px");
       const firstHeading = list.getByRole("heading").first();
       const headingBounds = await firstHeading.boundingBox();
-      const leadingContent = headingBounds.y - listBounds.y;
+      const leadingContent = Math.round(headingBounds.y - listBounds.y);
       for (const scrollTop of [0, 1, 8, 16]) {
         await list.evaluate((el, top) => {
           el.scrollTop = top;
@@ -540,9 +538,10 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
         await expect
           .poll(() => list.evaluate((el) => el.scrollTop))
           .toBe(leadingContent + scrollTop);
+        // Sticky headings snap to whole pixels inside a fractional frame.
         await expect
-          .poll(async () => (await firstHeading.boundingBox()).y)
-          .toBe(listBounds.y);
+          .poll(async () => Math.round((await firstHeading.boundingBox()).y))
+          .toBe(Math.round(listBounds.y));
       }
       await list.evaluate((el) => {
         el.scrollTop = el.scrollHeight;
@@ -556,6 +555,8 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       expect((await group.boundingBox()).y).toBeLessThan(groupBounds.y);
       expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
       expect(await dialog.evaluate((el) => el.scrollTop)).toBe(0);
+      // The list owns scrolling. At this short frame, its parent layout is the
+      // only other scroller, a fallback that keeps one row reachable.
       expect(
         await dialog.evaluate((el) =>
           [...el.querySelectorAll("*")]
@@ -564,7 +565,14 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
                 /^(auto|scroll)$/.test(getComputedStyle(child).overflowY) &&
                 child.scrollHeight > child.clientHeight,
             )
-            .map((child) => child.getAttribute("aria-label")),
+            .map(
+              (child) =>
+                child.getAttribute("aria-label") ??
+                (child.querySelector(':scope > [aria-label="Member list"]')
+                  ? "layout"
+                  : "unexpected"),
+            )
+            .filter((label) => label !== "layout"),
         ),
       ).toEqual(["Member list"]);
       await list.evaluate((el) => {
@@ -590,19 +598,14 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const memberRow = row.locator("xpath=ancestor::li[1]");
   const name = memberRow.getByText("Viewer (you)", { exact: true });
   await expect(name).toBeVisible();
-  const npub = memberRow.locator('[aria-hidden="true"].text-mono');
-  const metadata = npub.locator("../..");
   await search.hover();
-  await expect(metadata).toHaveCSS("height", "0px");
-  await expect(npub).toBeHidden();
   const nameAtRest = await name.boundingBox();
   const rowAtRest = await row.boundingBox();
+  // Hover never reveals a second line or moves the identity.
   await row.hover();
-  await expect(npub).toBeVisible();
-  await expect(metadata).toHaveAttribute("style", /height: auto/);
   await expect(name).toBeVisible();
   await expect(name.locator("..")).toHaveCSS("opacity", "1");
-  expect((await name.boundingBox()).y).toBeLessThan(nameAtRest.y);
+  expect(await name.boundingBox()).toEqual(nameAtRest);
   expect(await row.boundingBox()).toEqual(rowAtRest);
   await row.locator("[data-avatar-shape]").click();
   const panel = page.getByRole("complementary", {
@@ -623,13 +626,12 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await expect(members).toBeFocused();
   await members.press("Enter");
   await row.focus();
-  await expect(npub).toBeVisible();
   await row.press("Enter");
   await expect(profileTab).toBeFocused();
   await profileTab.press("Escape");
   await expect(members).toBeFocused();
-  // Every row, including the viewer and protected identities, has one action
-  // slot. Hover/focus only changes visibility, never row or profile geometry.
+  // Every row, including the viewer and protected identities, has one
+  // always-visible action slot. Hover/focus never changes row geometry.
   await members.click();
   const actions = memberRow.getByRole("button", {
     name: "Actions for Viewer",
@@ -638,7 +640,18 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const actionSlot = actions.locator("..");
   await search.focus();
   await search.hover();
-  await expect(actionSlot).toHaveCSS("opacity", "0");
+  await expect(actionSlot).toHaveCSS("opacity", "1");
+  await dialog.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations({ subtree: true })
+        .filter(
+          (animation) =>
+            animation.effect?.getComputedTiming().iterations !== Infinity,
+        )
+        .map((animation) => animation.finished),
+    );
+  });
   const restingBounds = await row.boundingBox();
   await memberRow.hover();
   await expect(actionSlot).toHaveCSS("opacity", "1");
@@ -683,7 +696,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     await expect(members).toBeFocused();
     await members.press("Enter");
   }
-  await dialog.getByRole("button", { name: "Close channel members" }).click();
+  await dialog.getByRole("button", { name: "Close" }).click();
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "buzz.profiles"),
   );
@@ -714,12 +727,12 @@ test.describe("touch member actions", () => {
   test("keeps the ellipsis available without hover", async ({ page }) => {
     await page.goto("/tests/fixtures/profiles.html");
     const members = page.getByRole("button", {
-      name: "Channel members",
+      name: "Access",
       exact: true,
     });
     await members.tap();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     const actions = dialog.getByRole("button", { name: "Actions for Viewer" });
@@ -743,11 +756,9 @@ test("member Send message navigates a human DM without sending or returning focu
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message");
-  await page
-    .getByRole("button", { name: "Channel members", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Access", exact: true }).click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Channel access",
     exact: true,
   });
   const actions = dialog.getByRole("button", {
@@ -775,7 +786,7 @@ test("member Send message navigates a human DM without sending or returning focu
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: "Channel members", exact: true }),
+    page.getByRole("button", { name: "Access", exact: true }),
   ).not.toBeFocused();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),

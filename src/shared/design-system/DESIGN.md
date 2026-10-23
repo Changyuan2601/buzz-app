@@ -180,8 +180,12 @@ viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
 Expanded modals support tables, two-column content, or integrated navigation.
 When a short window or enlarged text leaves too little room below navigation
 chrome, the whole modal scrolls while retaining at least one control-height pane
-inside its insets. Navigation headers and each pane use the same inset; list
-rows retain their shared padding and align through the existing wrapper offset.
+inside its insets. Navigation headers use `space-4` vertically and the shared
+dialog inset horizontally; each pane retains that inset. List rows retain their
+shared padding and align through the existing wrapper offset. Host-contained
+sectioned modals center within their host, capped at 72rem wide and 48rem tall,
+with a `space-4` gutter. At viewport widths up to 30rem they fill the host to
+preserve usable space with enlarged text. Their panes scroll within that surface.
 
 Surface and contents enter together with a `0.75rem` upward fade over
 `duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses
@@ -1447,58 +1451,38 @@ to remain visible on conversation surfaces in both modes.
 
 ### Accent color
 
-One device-local accent choice colors actions, links, and selection states.
-The picker presents six families in one row: Honey, Magenta, Iris, Cobalt, Lime, and Mono. An inset white ring marks the selected
-swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
-Chromatic ramps blend 90% of the original palette with 10% of the Honey-based
-OKLCH lightness/chroma treatment, with solid fills adjusted for readable ink.
-Honey is a brighter golden yellow (`#f5c518`); Lime combines the former Lime and Pear ramps at their OKLCH midpoint.
-Saved Pear and Jade choices map to Lime; Flame maps to Honey. Their ramps keep a consistent hue in OKLCH and retain the established step roles.
-Mono remains achromatic.
-Honey uses golden yellow fills with black ink; Mono uses charcoal fills in light
-mode and pale gray fills in dark mode. Vibe level offers three device-local choices:
-Snoozin’ keeps your messages neutral, with accent actions, links, and subtle row states.
-Hummin’ (the default) adds soft accent fills to your messages and selected navigation.
-Buzzin’ uses solid accent fills for those same states. Received messages, app
-backgrounds, panels, and popovers stay neutral at every level. Saved Low/High
-contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values are ignored.
+One device-local accent choice colors message bubbles and their related content,
+the composer Send button, and sidebar row hover/selection. General buttons,
+checked controls, segmented filters, tabs, menus, links outside bubbles, and drag
+indicators keep their neutral appearance. Status colors, focus, categorical
+purple, shadows, and media-specific roles stay independent.
 
-Persistent control selections use `surface-control-selected` with
-`text-control-selected`: neutral at Snoozin’, soft accent at Hummin’, and solid
-accent with paired ink at Buzzin’. Segmented filters use this pair on neutral
-tracks. Selected ghost icon buttons use `surface-navigation-selected` with
-`text-navigation-selected`, keeping a distinct neutral fill against panels at
-Snoozin’ and the same accent treatment at higher levels. Panel tabs retain an
-underline, using the readable accent mark rather than a filled background.
-Snoozin’ keeps transient row/hover states neutral; Hummin’ and Buzzin’ use soft
-accent hover states. Hover never becomes a competing solid selection. Menus,
-choice cards, disabled controls, focus rings, and semantic status colors retain
-their existing treatments. Primary actions and checked controls carry the accent
-at all three levels; increasing the vibe adds persistent selection, not more
-competing primary actions.
+**Chillin’** (the default) uses soft accent fills for your messages; **Buzzin’**
+uses solid accent fills with the family's reading ink. Received bubbles stay
+neutral at both levels. Vibe changes bubble
+contrast only: sidebar rows keep a solid selected fill with paired ink and a
+quieter hover at both levels, and Send keeps a strong accent fill.
+Saved low or retired quiet contrast maps to Chillin’; high remains Buzzin’.
 
-Use `surface-navigation-selected` with `text-navigation-selected` for selected
-navigation. High contrast pairs solid fills with the family’s contrast ink;
-message prose uses the family’s reading ink. Hover stays subtle and distinct from
-selection. Keep status colors independent; never recolor the whole shell.
+Keep appearance decisions with the existing owners. `SidebarNavigation` scopes
+`surface-sidebar-selected`, `text-sidebar-selected`, `affordance-sidebar-hover`,
+and `text-sidebar-hover` to its row states. General navigation and tabs keep the
+neutral `surface-navigation-selected` / `text-navigation-selected` pair.
+The message renderer uses standard text on received bubbles, with
+`text-message-link` for their links and
+`text-message-link-own` for outgoing bubbles. Neutral code/table insets retain
+their own link pairing. The composer uses the existing `accentButtonStyle` on
+Send; other prominent actions use the neutral prominent roles.
 
-Reuse the existing twelve-step ramps in each mode. Prominent controls use steps
-9–10 with their paired ink; links use the family’s link role. Row hover and
-selection use the authored tint steps and paired row text. Keep these foreground
-and background roles together. Send remains an ordinary prominent button.
-Lime’s strong fill takes black ink in both modes.
+Reuse the existing twelve-step ramps in each mode. Keep the fill and its paired
+ink together. Never recolor the whole shell. Nested dark scopes resolve their
+own ramp. Media pixels, the black viewing canvas, and white-on-dark media glass
+never follow the accent.
 
-
-Status colors, focus, categorical purple, shadows, and media-specific roles stay
-independent. Media pixels, the black viewing canvas, and white-on-dark media glass
-never follow the accent. Shared controls inside a nested dark scope use the dark
-ramp even when the app is light; gallery comments follow the app mode.
-
-Do not mix colors or use opacity to invent lighter shades; choose a ramp step.
-Swatches carry `data-accent` and `data-color-mode`; their inset selection rings
-use the family’s paired `text-on-accent` ink. Appearance uses a compact Mode
-Select for System, Light, and Dark, with a live illustrative preview. The
-contrast check audits every family in both modes.
+Swatches and their tooltips preview each family's strong fill and paired
+`text-on-accent` ink. They carry `data-accent` and `data-color-mode`.
+Appearance uses compact Mode and Vibe level Selects with a live illustrative
+preview. Do not mix colors or use opacity to invent lighter shades.
 
 
 ## Density and rhythm
@@ -1634,11 +1618,17 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
   guard checks these role mappings and status dots separately from text and
   decorative dividers.
 
+Text selection uses `surface-text-selection` with `text-on-selection`, including
+composer tokens. Its neutral fill must remain distinct from app, panel, and
+received/own bubble backgrounds at both vibe levels and in both themes. Own
+bubbles use the `-own` pair, reversing the solid bubble’s ink and fill at Buzzin’.
+
 ### Link contrast
 
-Inline links use `text-link`. Each accent family supplies a readable link color
-at every vibe level. Own messages use `text-message-link-own`, which pairs with that
-level's bubble fill. Components consume `text-link` or `text-message-link-own`;
+General inline links use the neutral `text-link` and a persistent underline.
+Mention chips retain their resting fill instead of an underline. Bubble links use the family’s
+readable `text-message-link` at both vibe levels. Own messages use `text-message-link-own`, which pairs with that
+level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
 Mentions are people, not destinations, so they are chips rather than links.
@@ -1652,8 +1642,7 @@ where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
 solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
 name people as quiet text, never as chips.
 
-Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
-#83c4ff in dark. These pairs have no link-specific contrast exemptions.
+These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including
 hover and pressed fills. Metadata uses neutral 9 (#5f5f5f) in light mode so small
 labels remain readable even on the pressed neutral 4 surface.

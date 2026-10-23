@@ -69,11 +69,18 @@ it("publishes a description-only edit to an existing community profile", async (
     <CommunityDialog communities={communities} mode="join" close={close} />,
   );
   expect(
-    screen.getByRole("dialog", { name: "Add a community" }),
+    screen.getByRole("dialog", { name: "Join a community" }),
   ).toHaveAccessibleDescription(
     "Use your identity across communities. Your profile and conversations stay separate in each one.",
   );
-  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  // Continue contacts the destination with the viewer's identity before joining.
+  expect(screen.getByLabelText("Community URL")).toHaveAccessibleDescription(
+    "Paste your community link. Continue shares your Buzz identity with the community so you can preview it before joining.",
+  );
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   const description = await screen.findByLabelText(
     "Profile description (optional)",
@@ -127,7 +134,10 @@ it("opens with an unchanged over-limit profile and blocks publishing it", async 
   render(
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
   );
-  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   const name = await screen.findByLabelText("Display name");
   await user.type(name, " Renamed");
@@ -168,7 +178,10 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
   render(
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
   );
-  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.type(
     await screen.findByLabelText("Invite code (if required)"),
@@ -229,7 +242,10 @@ it.each([
       />,
     );
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+    await user.type(
+      screen.getByLabelText("Community URL"),
+      "wss://relay.example",
+    );
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(
       await screen.findByRole("button", { name: "Open community" }),
@@ -279,7 +295,10 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
   );
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText("Relay URL"), "wss://relay.example");
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.type(await screen.findByLabelText("Display name"), " changed");
   expect(
@@ -331,7 +350,7 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
     expect(
       screen.getByText(/connecting to communities is not available/),
     ).toBeVisible();
-    expect(screen.queryByLabelText("Relay URL")).toBeNull();
+    expect(screen.queryByLabelText("Community URL")).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     const form = screen.getByRole("dialog").querySelector("form");
     if (!form) throw new Error("Join dialog form is missing");
@@ -381,7 +400,7 @@ it.each(["", "not-a-relay"])(
         close={() => {}}
       />,
     );
-    const input = screen.getByLabelText("Relay URL");
+    const input = screen.getByLabelText("Community URL");
     if (value) await user.type(input, value);
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -432,7 +451,7 @@ it("prefills an invite but requires explicit discovery and claim before membersh
       }}
     />,
   );
-  expect(screen.getByLabelText("Relay URL")).toHaveValue(
+  expect(screen.getByLabelText("Community URL")).toHaveValue(
     "https://relay.example",
   );
   expect(requests).not.toHaveBeenCalled();
@@ -566,7 +585,7 @@ it("opens a checked connection address separately without replacing or removing 
     expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
       "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community.",
     );
-    const address = screen.getByLabelText("Relay URL");
+    const address = screen.getByLabelText("Community URL");
     expect(address).toHaveValue(original);
     fireEvent.change(address, { target: { value: "wss://new.example" } });
     expect(address).toHaveValue("wss://new.example");

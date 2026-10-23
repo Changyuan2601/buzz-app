@@ -64,7 +64,7 @@ const KINDS: Record<string, string> = {
 };
 
 /** A Buzz prompt, or a steer wrapping one, as the turn's opening item. */
-export function prompt(id: string, at: number, raw: string): TranscriptItem {
+function prompt(id: string, at: number, raw: string): TranscriptItem {
   let sections = promptSections(raw);
   const steer = sections.find((section) => section.tag === STEER);
   if (steer) sections = promptSections(steer.body);

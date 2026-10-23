@@ -23,7 +23,7 @@ export type DeepLinkHost = Readonly<{
   navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
-  /** Invite presentation belongs to the community rail, not navigation. */
+  /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;

@@ -149,7 +149,10 @@ export async function readAgentLibrary(
         ),
       ),
     );
-  } catch {
+  } catch (error) {
+    // No saved library yet (or none since the store moved) is an empty one.
+    if (!file && error?.code === "ENOENT")
+      return { definitions: [], identities: [] };
     throw failure();
   } finally {
     buffer.fill(0);

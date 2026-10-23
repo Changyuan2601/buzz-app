@@ -138,6 +138,38 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
+test("long links wrap inside their bubble in a narrow pane", async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/tests/fixtures/message-gallery.html?group=references");
+  await page.evaluate(() => document.fonts.ready);
+  await page
+    .getByRole("button", { name: "Narrow preview", exact: true })
+    .click();
+  const long = specimen(page, "long-links");
+  const bubble = long.locator("[data-message-action-anchor]");
+  const links = long.getByRole("link");
+  await expect(links).toHaveCount(2);
+  // Every line box of every link stays within the bubble's edges.
+  await expect
+    .poll(() =>
+      bubble.evaluate((element) => {
+        const edge = element.getBoundingClientRect();
+        return [...element.querySelectorAll("a")].flatMap((link) =>
+          [...link.getClientRects()]
+            .filter((line) => line.left < edge.left || line.right > edge.right)
+            .map((line) => `${link.textContent}: ${line.left}-${line.right}`),
+        );
+      }),
+    )
+    .toEqual([]);
+  await long.screenshot({ path: info.outputPath("long-links.png") });
+  // A wrapped link still opens its destination.
+  await links.first().click();
+  await expect(long.getByRole("status")).toContainText("Sample link selected");
+});
+
 test("file anchors and native download buttons stay readable and keyboard reachable", async ({
   page,
   browserName,

@@ -4,6 +4,7 @@ import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
+  AgentHandle,
   Delivery,
   StandaloneTurn,
 } from "../../features/agents/service";
@@ -116,12 +117,18 @@ function setup(
     }),
   } as unknown as RelayData;
   const core = vi.fn(async () => null as string | null | undefined);
+  /** Whether `Agents.handle` gives the agent outside a run. */
+  const connection = { live: true };
   const runtime = new PiRuntime(
     { spawn: host.spawn },
     (pubkey) => ownerReads(relay, pubkey),
     core,
     () => added,
     repositories,
+    (pubkey) =>
+      connection.live && pubkey === self
+        ? (agent as unknown as AgentHandle)
+        : undefined,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -196,6 +203,7 @@ function setup(
     agent,
     session,
     solo,
+    connection,
   };
 }
 
@@ -667,6 +675,156 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
   expect(published).toEqual([]);
 });
 
+it("interrupts a run an earlier app left from its thread's session controls", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const stopped = deferred<unknown>();
+  const { host, deliver, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [{ ...left, context: { channel, root: root.id } }],
+    }),
+    wait: ({ submission }) =>
+      submission === left.submission ? stopped.promise : new Promise(() => {}),
+    session: ({ action }) => {
+      if (action === "interrupt")
+        stopped.resolve({ status: "unanswered", reason: "aborted" });
+    },
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  expect(runtime.sessionState(agent, thread)).toBe("idle");
+  await deliver({
+    type: "mention",
+    event: message("5", "@Pi elsewhere", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  }).run;
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+  await runtime.session(agent, thread, "interrupt");
+  expect(host.requests("session")[0]?.params).toEqual({
+    agent: self,
+    key: `${channel}/${root.id}`,
+    action: "interrupt",
+  });
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  expect(published).toEqual([]);
+});
+
+it("compacts or starts a new session only while idle, and hands a mention over once compaction ends", async () => {
+  const compacted = deferred();
+  const { host, deliver, settled, runtime, connection } = setup({
+    wait: () => ({ status: "done", answer: 5, text: "" }),
+    session: ({ action }) => (action === "compact" ? compacted.promise : {}),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  // Without the agent's handle, its left runs could not be taken on first.
+  connection.live = false;
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "isn't connected",
+  );
+  expect(host.requests("session")).toEqual([]);
+  connection.live = true;
+  // No mention is needed first.
+  await runtime.session(agent, thread, "new");
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run;
+  await settled(first);
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  const compacting = runtime.session(agent, thread, "compact");
+  await vi.waitFor(() => expect(host.requests("session")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("compacting");
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "Wait for the active turn",
+  );
+  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  // Released at once, and handed over after compaction.
+  await later.run;
+  expect(host.requests("deliver")).toHaveLength(1);
+  compacted.resolve();
+  await compacting;
+  await settled(later);
+  expect(host.requests("deliver")).toHaveLength(2);
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  await runtime.session(agent, thread, "new");
+  expect(host.requests("session").map((item) => item.params)).toEqual([
+    { agent: self, key: `${channel}/${root.id}`, action: "new" },
+    { agent: self, key: `${channel}/${root.id}`, action: "compact" },
+    { agent: self, key: `${channel}/${root.id}`, action: "new" },
+  ]);
+});
+
+it("refuses Compact or New when a run taken on first is in the same conversation", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const { host, runtime } = setup({
+    unfinished: () => ({
+      submissions: [{ ...left, context: { channel, root: root.id } }],
+    }),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  expect(runtime.sessionState(agent, thread)).toBe("idle");
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "Wait for the active turn",
+  );
+  expect(host.requests("session")).toEqual([]);
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+});
+
+it("sends no Compact that an Interrupt cut off while it was preparing", async () => {
+  const listed = deferred<unknown>();
+  const { host, runtime } = setup({ unfinished: () => listed.promise });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  const compacting = runtime.session(agent, thread, "compact");
+  await vi.waitFor(() => expect(host.requests("unfinished")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("compacting");
+  const interrupting = runtime.session(agent, thread, "interrupt");
+  listed.resolve({ submissions: [] });
+  await expect(compacting).rejects.toThrow("interrupted");
+  await interrupting;
+  expect(host.requests("session").map((item) => item.params)).toEqual([
+    { agent: self, key: `${channel}/${root.id}`, action: "interrupt" },
+  ]);
+});
+
+it("takes on a run an earlier app left before compacting, with no mention since", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const order: string[] = [];
+  const { published, runtime } = setup({
+    unfinished: () => {
+      order.push("unfinished");
+      return {
+        submissions: [{ ...left, context: { channel, root: "other-root" } }],
+      };
+    },
+    wait: () => ({ status: "done", answer: 6, text: "Left answer" }),
+    session: () => {
+      order.push("session");
+    },
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  await runtime.session(
+    agent,
+    { channelId: channel, root: root.id },
+    "compact",
+  );
+  // Taken on before Pi is asked anything that continues it.
+  expect(order).toEqual(["unfinished", "session"]);
+  await vi.waitFor(() =>
+    expect(published.map((event) => event.content)).toEqual(["Left answer"]),
+  );
+  expect(published[0]?.tags).toContainEqual(["e", "other-root", "", "reply"]);
+});
+
 it("lists the agent's sessions from Pi's storage, and whether each works", async () => {
   const answered = deferred<unknown>();
   const key = `${channel}/${root.id}`;
@@ -882,25 +1040,128 @@ it("ends the watch and timer runs an earlier app left once every left mention's 
 });
 
 it("keeps a standalone turn of this app's when it lists left runs again", async () => {
-  let listings = 0;
   let own: string | undefined;
-  const { host, deliver, runOnce } = setup({
+  let waits = 0;
+  const { host, runOnce } = setup({
     once: ({ request }) => {
       own = String(request);
       return { submission: 51, conversation: 9 };
     },
-    unfinished: () => {
-      if (++listings === 1) throw new Error("busy");
-      return {
-        submissions: [{ submission: 51, conversation: 9, request: own }],
-      };
+    unfinished: () => ({
+      submissions: own
+        ? [{ submission: 51, conversation: 9, request: own }]
+        : [],
+    }),
+    // Its storage fails once, so it is opened again and left runs listed again.
+    wait: () =>
+      ++waits === 1
+        ? { status: "reopen" }
+        : { status: "done", answer: 5, text: "Done." },
+  });
+  await expect(runOnce("watch", "Check the build")).resolves.toEqual({
+    ok: true,
+  });
+  expect(host.requests("unfinished")).toHaveLength(2);
+  expect(host.requests("drop")).toEqual([]);
+});
+
+it("hands over no turn and waits for no left run while Pi could not end a left standalone run, and ends it at the next turn first", async () => {
+  // Pi continues every run once asked anything: one left for no one is
+  // ended before any wait, or not continued at all.
+  let drops = 0;
+  const left = {
+    submission: 42,
+    conversation: 6,
+    request: "d".repeat(64),
+    context: { channel, root: root.id },
+  };
+  const { host, deliver, settled, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [
+        { submission: 51, conversation: 9, request: "timer/left" },
+        left,
+      ],
+    }),
+    drop: () => {
+      if (++drops === 1) throw new Error("database is locked");
     },
   });
-  void runOnce("watch", "Check the build");
-  await vi.waitFor(() => expect(own).toBeDefined());
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
-  expect(listings).toBe(2);
-  expect(host.requests("drop")).toEqual([]);
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run.catch(() => undefined);
+  await expect(settled(first)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("deliver")).toEqual([]);
+  expect(host.requests("wait")).toEqual([]);
+  expect(runtime.working(self)).not.toContain(left.conversation);
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("database is locked");
+
+  await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
+  expect(host.requests("drop")).toHaveLength(2);
+  const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
+  expect(methods.lastIndexOf("drop")).toBeLessThan(methods.indexOf("wait"));
+  expect(methods.lastIndexOf("drop")).toBeLessThan(methods.indexOf("deliver"));
+  expect(host.requests("wait").map((item) => item.params.submission)).toContain(
+    left.submission,
+  );
+});
+
+it("ends a standalone run left for no one before it waits again in an agent opened again", async () => {
+  // Its storage failed while a watch's run was abandoned: ended before the
+  // wait that would continue it.
+  let waits = 0;
+  let reopened = false;
+  const { host, deliver, settled } = setup({
+    open: () => {
+      if (host.requests("open").length > 1) reopened = true;
+    },
+    unfinished: () => ({
+      submissions: reopened
+        ? [{ submission: 51, conversation: 9, request: "watch/abandoned" }]
+        : [],
+    }),
+    wait: () =>
+      ++waits === 1
+        ? { status: "reopen" }
+        : { status: "done", answer: 5, text: "Resumed." },
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
+  expect(methods.slice(methods.indexOf("wait") + 1)).toEqual([
+    "open",
+    "unfinished",
+    "drop",
+    "wait",
+  ]);
+});
+
+it("waits for no run again in an agent opened again while Pi could not end a standalone run left for no one", async () => {
+  let reopened = false;
+  const { host, deliver, settled } = setup({
+    open: () => {
+      if (host.requests("open").length > 1) reopened = true;
+    },
+    unfinished: () => ({
+      submissions: reopened
+        ? [{ submission: 51, conversation: 9, request: "watch/abandoned" }]
+        : [],
+    }),
+    drop: () => {
+      throw new Error("database is locked");
+    },
+    wait: () => ({ status: "reopen" }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("wait")).toHaveLength(1);
 });
 
 it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
@@ -993,11 +1254,15 @@ it("answers and reports left runs of a conversation threads share in their menti
       (filters?.[0]?.ids ?? [root.id]).includes(event.id),
     ),
   );
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
-  expect(published).toHaveLength(0);
+  // A turn that could not list them hands nothing over, and says so.
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run.catch(
+    () => undefined,
+  );
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("busy");
   await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
-  await vi.waitFor(() => expect(published).toHaveLength(2));
-  expect(published.map(({ content }) => content)).toEqual([
+  await vi.waitFor(() => expect(published).toHaveLength(3));
+  expect(published.slice(1).map(({ content }) => content)).toEqual([
     "Finished the old one.",
     expect.stringContaining("400 Bad model"),
   ]);
@@ -1025,8 +1290,10 @@ it("waits for a turn again in a new host when the host stops", async () => {
   await turn.run;
   await expect(settled(turn)).resolves.toEqual({ ok: true });
   expect(host.processes).toHaveLength(2);
+  // What the stopped host left for no one is ended before the wait continues it.
   expect(host.processes[1]?.requests.map((request) => request.method)).toEqual([
     "open",
+    "unfinished",
     "wait",
   ]);
   expect(published.map((item) => item.content)).toEqual(["Resumed."]);
@@ -1052,6 +1319,94 @@ it("hands a turn to the next host when the host stops before it answers", async 
   expect(delivered).toHaveLength(2);
   expect(delivered[1]?.params).toEqual(delivered[0]?.params);
   expect(host.processes[1]?.requests[0]?.method).toBe("open");
+});
+
+it("ends what the stopped host left before the retried hand-over", async () => {
+  const left = { submission: 41, conversation: 7, request: "chan/one-off" };
+  const { host, deliver, settled } = setup({
+    deliver: (_params, process) => {
+      if (process === host.processes[0]) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    // Listed only once the next host opens.
+    unfinished: (_params, process) => ({
+      submissions: process === host.processes[0] ? [] : [left],
+    }),
+    wait: () => ({ status: "done", answer: 5, text: "Done." }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(
+    host.processes[1]?.requests.map((request) => request.method).slice(0, 4),
+  ).toEqual(["open", "unfinished", "drop", "deliver"]);
+  expect(host.requests("drop")[0]?.params).toMatchObject({
+    submissions: [{ submission: 41, conversation: 7 }],
+  });
+});
+
+it.each(["mention", "standalone"] as const)(
+  "takes on left runs again after a %s turn gave up on its run",
+  async (kind) => {
+    let waits = 0;
+    const { host, deliver, settled, runOnce } = setup({
+      // The first two hosts stop while it waits, and the turn gives up.
+      wait: (_params, process) => {
+        if (++waits <= 2) {
+          queueMicrotask(() => process.exit(1, "Killed\n"));
+          return new Promise(() => {});
+        }
+        return { status: "done", answer: 5, text: "Done." };
+      },
+    });
+    if (kind === "mention") {
+      const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+      await first.run;
+      await expect(settled(first)).resolves.toMatchObject({ ok: false });
+    } else
+      await expect(runOnce("chan", "check")).resolves.toMatchObject({
+        ok: false,
+      });
+    expect(host.processes).toHaveLength(2);
+    const next = deliver({ type: "mention", event: reply("3", "@Pi again") });
+    await next.run;
+    await expect(settled(next)).resolves.toEqual({ ok: true });
+    const methods =
+      host.processes[2]?.requests.map((item) => item.method) ?? [];
+    expect(methods.indexOf("unfinished")).toBeGreaterThan(-1);
+    expect(methods.indexOf("unfinished")).toBeLessThan(
+      methods.indexOf("deliver"),
+    );
+  },
+);
+
+it("cancels a mention still being handed over when Interrupt is pressed", async () => {
+  const placing = deferred<unknown>();
+  let places = 0;
+  const { host, deliver, settled, published, runtime } = setup({
+    place: () => (++places === 1 ? placing.promise : { seen: 0 }),
+    wait: () => ({ status: "done", answer: 5, text: "Done." }),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+  const interrupting = runtime.session(agent, thread, "interrupt");
+  placing.resolve({ seen: 0 });
+  await first.run;
+  await interrupting;
+  await expect(settled(first)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")).toEqual([]);
+  expect(published).toEqual([]);
+  // A later mention is handed over as usual.
+  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  await later.run;
+  await expect(settled(later)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")).toHaveLength(1);
 });
 
 it("hands over no queued mention of an agent removed while it waited", async () => {

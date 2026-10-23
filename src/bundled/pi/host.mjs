@@ -642,9 +642,13 @@ export function serve({
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
       return {
-        entries: page.items.map(({ id, kind, model }) => ({
+        entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
+          // Pi writes this result itself for a call an abort cut off.
+          ...(data?.diagnostics?.some?.((d) => d.code === "aborted") && {
+            aborted: true,
+          }),
           // System entries hold every tool's schema; a transcript shows none.
           ...(model && kind !== "pi.system" ? { model: model.map(slim) } : {}),
         })),
@@ -789,6 +793,37 @@ export function serve({
     async abort({ agent, conversation }) {
       const { harness } = await agentOf(agent);
       await (await harness.conversation(conversation, context))?.abort(context);
+    },
+    /** A session control on a conversation key's Pi conversation, if it has
+     * one: `interrupt` aborts its run and any compaction, `compact` summarizes
+     * it and settles once the summary is placed, and `new` starts a new
+     * context, shown the whole Buzz conversation at its next turn. */
+    async session({ agent, key, action }) {
+      const { harness } = await agentOf(agent);
+      const place = (await harness.snapshot(Places, context))?.[key];
+      const conversation =
+        place && (await harness.conversation(place.conversation, context));
+      if (!conversation) return;
+      if (action === "interrupt") return conversation.abort(context);
+      if (action === "new") {
+        await conversation.reset(undefined, context);
+        await harness.commit(async (tx) => {
+          const places = await tx.doc(Places);
+          if (places[key]) places[key] = { ...places[key], seen: 0 };
+        }, context);
+        return;
+      }
+      const { outcome } = (
+        await harness.waitForTask(
+          await conversation.compact(undefined, context),
+          context,
+        )
+      ).state;
+      if (outcome.status === "failed") throw new Error(outcome.error.message);
+      if (outcome.status !== "completed") return;
+      const { submissionId } = outcome.result;
+      if (submissionId !== undefined)
+        await (await harness.submission(submissionId, context))?.wait(context);
     },
     /** Closes the agent's storage. Unfinished runs stay, and continue when it
      * opens again. */

@@ -27,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey, signal) => agents.core(pubkey, signal),
     () => agents.tools(),
     repositoriesContext,
+    (pubkey) => agents.handle(pubkey),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -94,6 +95,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         component: ActivityTab,
       },
     ],
+    sessionControls: {
+      scope: (agent) => config(agent.config).scope,
+      state: (agent, place) => runtime.sessionState(agent, place),
+      run: (agent, place, action) => runtime.session(agent, place, action),
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     models: (agent) => runtime.models(agent),
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),

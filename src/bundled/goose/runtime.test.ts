@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -750,6 +750,127 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   const text = solo.goose()?.turns[0]?.text ?? "";
   expect(text).toContain('<plugin-wake plugin="github">');
   expect(text).not.toContain(WAKE_ID);
+});
+
+it("shows a turn a reload stopped what it already posted, and to carry on", async () => {
+  const mention = message("1", "@Gander count to 60");
+  const inThread = (id: string, content: string, pubkey: string) =>
+    message(id, content, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["e", mention.id, "", "reply"],
+      ],
+    });
+  const progress = inThread("2", "Counted to 10", self);
+  const aside = inThread("3", "Looks good so far", alice);
+  const f = setup({ thread: [mention, progress, aside] });
+  await f.deliver(mention);
+  await flush(100);
+  // A first delivery is shown nothing after its mention.
+  const first = f.goose()?.turns[0]?.text ?? "";
+  expect(first).not.toContain("Counted to 10");
+  expect(first).not.toContain(RESUMED_PROMPT);
+
+  const g = setup({ thread: [mention, progress, aside] });
+  await g.run({ type: "mention", event: mention, resumed: true });
+  await flush(100);
+  expect(g.read).toHaveBeenCalledWith(
+    [
+      { ids: [mention.id], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [mention.id], limit: 200 },
+    ],
+    expect.anything(),
+  );
+  const resumed = g.goose()?.turns[0]?.text ?? "";
+  expect(resumed).toContain("Counted to 10");
+  expect(resumed).toContain("Looks good so far");
+  expect(resumed).toContain("Content: @Gander count to 60");
+  expect(resumed).toContain(RESUMED_PROMPT);
+
+  // The session has been shown them, so the thread's next turn is not.
+  await g.deliver(inThread("4", "@Gander faster", alice));
+  await flush(100);
+  const next = g.goose()?.turns[1]?.text ?? "";
+  expect(next).toContain("Content: @Gander faster");
+  expect(next).not.toContain("Looks good so far");
+  expect(next).not.toContain(RESUMED_PROMPT);
+});
+
+it("shows each resumed thread its own progress in one channel session", async () => {
+  const first = message("1", "@Gander count in one");
+  const second = message("2", "@Gander count in two");
+  const progress = (id: string, root: RelayEvent, content: string) =>
+    message(id, content, {
+      pubkey: self,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  // Each thread's progress is newer than both mentions.
+  const replies = [
+    progress("5", second, "Two reached 10"),
+    progress("6", first, "One reached 10"),
+  ];
+  const f = setup({ scope: "channel" });
+  f.read.mockImplementation((async (filters: { "#e"?: string[] }[]) =>
+    replies.filter((reply) =>
+      filters.some((filter) =>
+        filter["#e"]?.includes(reply.tags[1]?.[1] ?? ""),
+      ),
+    )) as never);
+  await f.run({ type: "mention", event: first, resumed: true });
+  await flush(100);
+  await f.run({ type: "mention", event: second, resumed: true });
+  await flush(100);
+  const turns = f.goose()?.turns ?? [];
+  expect(turns).toHaveLength(2);
+  expect(turns[1]?.sessionId).toBe(turns[0]?.sessionId);
+  expect(turns[0]?.text).toContain("One reached 10");
+  // The session's watermark is past it, but it never saw this thread.
+  expect(turns[1]?.text).toContain("Two reached 10");
+});
+
+it("leaves a later thread's context unseen after a resume in a channel session", async () => {
+  const first = message("1", "@Gander count in one");
+  const reply = (
+    id: string,
+    root: RelayEvent,
+    content: string,
+    pubkey: string,
+  ) =>
+    message(id, content, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const second = message("2", "Start of two");
+  // Older than the resumed thread's progress, but never read.
+  const instruction = reply("3", second, "Use the blue palette", alice);
+  const progress = reply("4", first, "One reached 10", self);
+  const mention = reply("5", second, "@Gander go", alice);
+  const events = [first, second, instruction, progress, mention];
+  const f = setup({ scope: "channel" });
+  f.read.mockImplementation((async (filters: { "#e"?: string[] }[]) =>
+    events.filter((event) =>
+      filters.some(
+        (filter) =>
+          filter["#e"]?.includes(event.tags[1]?.[1] ?? "") ||
+          (filter as { ids?: string[] }).ids?.includes(event.id),
+      ),
+    )) as never);
+  await f.run({ type: "mention", event: first, resumed: true });
+  await flush(100);
+  await f.deliver(mention);
+  await flush(100);
+  const turns = f.goose()?.turns ?? [];
+  expect(turns).toHaveLength(2);
+  expect(turns[1]?.sessionId).toBe(turns[0]?.sessionId);
+  expect(turns[0]?.text).toContain("One reached 10");
+  expect(turns[1]?.text).toContain("Use the blue palette");
 });
 
 it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {

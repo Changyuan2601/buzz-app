@@ -34,6 +34,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { validWorkspace } from "../codex/config";
 import {
   type Config,
@@ -1091,13 +1092,19 @@ export function createTabs({
             allowCustomModel
             label="Goose model"
             appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            // A card names its harness before the model, as Pi's does.
+            {...(modelAppearance === "subtle" && {
+              leading: <GooseLogoIcon size={18} />,
+            })}
             models={choices}
             value={current.model}
             defaultModel={fallback}
             defaultLabel={modelLabel(provider, fallback) || "Choose model"}
             effort={current.effort}
+            // A card's chip keeps its room for the model name; its menu
+            // still shows and sets the level.
             effortLabel={
-              thinking.value?.levels.length
+              modelAppearance !== "subtle" && thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)

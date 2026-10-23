@@ -32,6 +32,8 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
 beforeEach(() => {
+  // jsdom lacks it; the agent form reveals a failed setup's error with it.
+  Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
@@ -46,6 +48,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();
   native.invoke.mockReset();
   vi.unstubAllEnvs();
@@ -682,6 +685,21 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       );
       expect(create).toBeEnabled();
       expect(name).toHaveValue("Browser");
+      // The wait itself can be abandoned from the dialog.
+      loginCallback = deferred();
+      await user.click(create);
+      await user.click(
+        await within(createDialog).findByRole("button", {
+          name: "Cancel sign-in",
+        }),
+      );
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Sign-in canceled.",
+      );
+      expect(create).toBeEnabled();
+      expect(
+        within(createDialog).queryByRole("button", { name: "Cancel sign-in" }),
+      ).not.toBeInTheDocument();
       expect(
         requestsTo("register-agent").filter(
           (input) => JSON.parse(input.request.body).agent_name === "Browser",

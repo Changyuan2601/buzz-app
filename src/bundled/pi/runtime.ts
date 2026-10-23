@@ -17,6 +17,7 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
+import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -31,6 +32,9 @@ import type {
   AgentSession,
   Delivery,
   Models,
+  SessionControlAction,
+  SessionPlace,
+  SessionState,
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
@@ -110,6 +114,8 @@ type Waited =
   | { status: "unanswered"; reason?: string; detail?: string }
   | { status: "closed" };
 type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
+  /** Its conversation key, which session controls act on. */
+  key: string;
   /** Where its activity shows: a thread, or a Solo chat's channel. */
   scope: string;
   /** Where a run's answer for it is posted. */
@@ -127,10 +133,16 @@ type Entry = {
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Each conversation's latest posting policy, as in Claude: when its turns
-   * were handed over, and when all of them settled. */
+   * were handed over, and when all of them settled. Interrupt cancels the
+   * handovers still pending. */
   policies: Map<
     string,
-    { topLevel: boolean; handed: Promise<unknown>; settled: Promise<unknown> }
+    {
+      topLevel: boolean;
+      handed: Promise<unknown>;
+      settled: Promise<unknown>;
+      cancel(): void;
+    }
   >;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
@@ -142,8 +154,12 @@ type Entry = {
   sends: Map<number, number>;
   /** The answer each conversation last posted for a turn without `send`. */
   posted: Map<number, number>;
-  /** Runs a stopped app left in Pi's storage, waited for once. */
+  /** The latest taking-on of the runs Pi's storage holds that nothing here
+   * waits for; absent until the agent opens here, or after one failed. */
   adopted?: Promise<void>;
+  /** A turn stopped waiting for a run still unfinished in Pi's storage, so
+   * the next one takes on its left runs again. */
+  abandoned?: boolean;
   /** The agent was removed: its turns wait in its storage. */
   closed: boolean;
 };
@@ -151,6 +167,7 @@ type Entry = {
 export class PiRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly memoryReads = new MemoryReads();
+  private readonly controls = new SessionControls(() => this.notify());
   private readonly listeners = new Set<() => void>();
   /** Each agent's working conversations, as last read, for a stable view. */
   private readonly views = new Map<string, readonly number[]>();
@@ -178,6 +195,9 @@ export class PiRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    /** The agent as a run holds it, outside any run (`Agents.handle`). */
+    private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
+      undefined,
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -318,6 +338,58 @@ export class PiRuntime {
     for (const listener of this.listeners) listener();
   }
 
+  /** A conversation is active from a delivery's handover, or a left run's
+   * taking-on, until its run settles: Interrupt reaches both. */
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    if (this.controls.compacting(control)) return "compacting";
+    const receipts = this.agents.get(agent.pubkey)?.receipts.values() ?? [];
+    return this.controls.active(control) ||
+      [...receipts].some((receipt) => receipt.key === key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const key = controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    // Pi continues every run once asked anything: its left runs are taken on
+    // first, and posting their answers needs the agent's handle.
+    const act = async (signal?: AbortSignal) => {
+      const handle =
+        this.agents.get(agent.pubkey)?.handle ?? this.handle(agent.pubkey);
+      if (!handle)
+        throw new Error("The agent isn't connected yet. Try again shortly.");
+      const entry = this.entry(handle, config(agent.config));
+      entry.handle ??= handle;
+      await this.open(agent.pubkey);
+      await this.adopted(entry, agent.pubkey);
+      // An Interrupt while this prepared, or a left run just taken on here,
+      // stops a Compact or New: both act only on an idle conversation.
+      if (signal) {
+        signal.throwIfAborted();
+        if ([...entry.receipts.values()].some((taken) => taken.key === key))
+          throw new Error("Wait for the active turn to finish first.");
+      }
+      await this.pi.request("session", { agent: agent.pubkey, key, action });
+    };
+    if (action === "interrupt") {
+      this.controls.interrupt(control);
+      this.agents.get(agent.pubkey)?.policies.get(key)?.cancel();
+      return act();
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (signal) => {
+      signal.throwIfAborted();
+      await act(signal);
+    });
+  }
+
   dispose() {
     for (const entry of this.agents.values()) entry.closed = true;
     this.agents.clear();
@@ -378,12 +450,15 @@ export class PiRuntime {
     const request = event.id;
     let submitted!: { submission: number; conversation: number };
     let sends = 0;
-    const handed = (async () => {
+    // A delivery during a session action waits for it, past its handover.
+    const control = `${agent.pubkey}/${key}`;
+    let interrupted = false;
+    const handoff = this.controls.deliver(control, async () => {
       await wait;
+      if (interrupted) return;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
-      entry.adopted ??= this.adopt(entry, agent.pubkey, request);
-      await entry.adopted;
+      await this.adopted(entry, agent.pubkey, { current: request });
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
         key,
@@ -412,6 +487,7 @@ export class PiRuntime {
           : { channel, root };
       // Known before Pi has it, as it can say it joined a run first.
       entry.receipts.set(request, {
+        key,
         scope: topLevel ? channel : root,
         where,
         ...(step ? { step } : {}),
@@ -420,6 +496,7 @@ export class PiRuntime {
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
       this.live(entry, agent.pubkey);
+      if (interrupted) return;
       submitted = await this.deliver(entry, agent.pubkey, {
         agent: agent.pubkey,
         key,
@@ -440,9 +517,12 @@ export class PiRuntime {
         )
       )
         this.notify();
-    })();
+    });
+    const handed = handoff.done;
     const settled = handed
       .then(async (): Promise<TurnResult> => {
+        // Interrupted before Pi had it, it says nothing.
+        if (!submitted) return { ok: true };
         const waited = await this.settle(
           entry,
           agent.pubkey,
@@ -476,6 +556,10 @@ export class PiRuntime {
       });
     const policy = {
       topLevel,
+      cancel() {
+        interrupted = true;
+        prior?.cancel();
+      },
       handed: handed.catch(() => undefined),
       settled: Promise.all([same ? prior?.settled : undefined, settled]).then(
         () => undefined,
@@ -487,12 +571,13 @@ export class PiRuntime {
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
-    if (!wait) await policy.handed;
+    if (!wait && !handoff.deferred) await policy.handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(settled);
     // Stop on its activity stops the run the request is in.
     interruptible?.(async () => {
       await handed;
+      if (!submitted) return;
       await this.pi.request("abort", {
         agent: agent.pubkey,
         conversation: submitted.conversation,
@@ -519,8 +604,7 @@ export class PiRuntime {
     let request: string | undefined;
     try {
       await this.open(agent.pubkey);
-      entry.adopted ??= this.adopt(entry, agent.pubkey);
-      await entry.adopted;
+      await this.adopted(entry, agent.pubkey);
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
@@ -551,6 +635,8 @@ export class PiRuntime {
         ? { ok: false, error: unanswered(waited) }
         : { ok: true };
     } catch (error) {
+      // Pi may hold its run, which nothing waits for now.
+      if (request) entry.abandoned = true;
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
@@ -681,34 +767,56 @@ export class PiRuntime {
       return await this.pi.request("deliver", params);
     } catch (error) {
       if (!(error instanceof PiStopped) || entry.closed) throw error;
-      await this.open(pubkey);
-      this.live(entry, pubkey);
-      return this.pi.request("deliver", params);
+      try {
+        await this.reopen(entry, pubkey);
+        return await this.pi.request("deliver", params);
+      } catch (again) {
+        // The stopped host may have taken it, and nothing waits for it now.
+        entry.abandoned = true;
+        throw again;
+      }
     }
   }
 
-  /** Takes on the runs an earlier app left unfinished in Pi's storage, which
-   * any delivery continues, in whatever thread: they show as working, and
-   * their answers are posted and failures reported as a delivery's are, but
-   * Stop is not restored. Standalone turns' runs are ended instead. `current`
-   * is the request being delivered, which its own run waits for. */
+  /** Takes on the runs Pi's storage holds that nothing here waits for before
+   * anything continues them: once the agent opens here, and `again` once it is
+   * opened again, after any taking-on under way. One that fails stops the
+   * turn that needed it, and the next turn does it again. */
+  private adopted(
+    entry: Entry,
+    pubkey: string,
+    { current, again }: { current?: string; again?: boolean } = {},
+  ) {
+    if (entry.adopted && !again && !entry.abandoned) return entry.adopted;
+    entry.abandoned = false;
+    const prior = entry.adopted?.catch(() => undefined);
+    const adopted = prior
+      ? prior.then(() => this.adopt(entry, pubkey, current))
+      : this.adopt(entry, pubkey, current);
+    entry.adopted = adopted;
+    adopted.catch(() => {
+      if (entry.adopted === adopted) delete entry.adopted;
+    });
+    return adopted;
+  }
+
+  /** Takes on the runs an earlier app, or a host that stopped, left
+   * unfinished in Pi's storage, which any delivery continues, in whatever
+   * thread: they show as working, and their answers are posted and failures
+   * reported as a delivery's are, but Stop is not restored. Standalone turns'
+   * runs are ended instead, and rejects when they could not be, as Pi would
+   * continue them. `current` is the request being delivered, which its own
+   * run waits for. */
   private async adopt(entry: Entry, pubkey: string, current?: string) {
-    let unfinished: readonly {
-      submission: number;
-      conversation: number;
-      request: string;
-      context?: { channel: string; root?: string; topLevel?: boolean };
-    }[];
-    try {
-      ({ submissions: unfinished } = await this.pi.request<{
-        submissions: typeof unfinished;
-      }>("unfinished", { agent: pubkey }));
-    } catch (error) {
-      // Listed again at the next delivery.
-      delete entry.adopted;
-      console.warn("Pi could not list an agent's unfinished runs", error);
-      return;
-    }
+    const { submissions: unfinished } = await this.pi.request<{
+      submissions: readonly {
+        submission: number;
+        conversation: number;
+        request: string;
+        context?: { channel: string; root?: string; topLevel?: boolean };
+      }[];
+    }>("unfinished", { agent: pubkey });
+    const taken: Receipt[] = [];
     const waits: (() => Promise<void>)[] = [];
     const dropped: { submission: number; conversation: number }[] = [];
     for (const { submission, conversation, request, context } of unfinished) {
@@ -737,12 +845,17 @@ export class PiRuntime {
         topLevel: !!context.topLevel,
       };
       const receipt: Receipt = {
+        // Only a thread's own conversation has a root.
+        key: context.root
+          ? `${context.channel}/${context.root}`
+          : context.channel,
         scope: context.topLevel ? context.channel : root,
         where,
       };
       // A delivery of the same request takes it over, and says how it ended.
       const ours = () => entry.receipts.get(request) === receipt;
       entry.receipts.set(request, receipt);
+      taken.push(receipt);
       const active = entry.active.get(conversation) ?? new Map();
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
@@ -776,13 +889,15 @@ export class PiRuntime {
     }
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.
-    // Ending the others continues none.
+    // Ending the others continues none; until they are ended, nothing waits.
     if (dropped.length)
-      await this.pi
-        .request("drop", { agent: pubkey, submissions: dropped })
-        .catch((error: unknown) =>
-          console.warn("Pi could not end left standalone turns", error),
-        );
+      try {
+        await this.pi.request("drop", { agent: pubkey, submissions: dropped });
+      } catch (error) {
+        for (const [request, receipt] of entry.receipts)
+          if (taken.includes(receipt)) this.forget(entry, request);
+        throw error;
+      }
     for (const wait of waits) void wait();
     this.notify();
   }
@@ -801,6 +916,15 @@ export class PiRuntime {
     }
   }
 
+  /** Opens the agent again after its host stopped or its storage failed.
+   * Pi continues every run once asked anything, so what was left for no one
+   * is ended first. */
+  private async reopen(entry: Entry, pubkey: string) {
+    await this.open(pubkey);
+    this.live(entry, pubkey);
+    await this.adopted(entry, pubkey, { again: true });
+  }
+
   private async open(pubkey: string) {
     await this.pi.request("open", {
       agent: pubkey,
@@ -817,19 +941,24 @@ export class PiRuntime {
     pubkey: string,
     submission: number,
   ): Promise<Waited> {
+    // Given up, the run is still unfinished, and nothing waits for it now.
+    const abandon = (error: unknown) => {
+      entry.abandoned = true;
+      return error;
+    };
     for (let attempt = 0; ; attempt++) {
       let waited: Waited | { status: "reopen" };
       try {
-        if (attempt) await this.open(pubkey);
+        if (attempt) await this.reopen(entry, pubkey);
         waited = await this.pi.request("wait", { agent: pubkey, submission });
       } catch (error) {
         if (attempt || !(error instanceof PiStopped) || entry.closed)
-          throw error;
+          throw abandon(error);
         continue;
       }
       if (waited.status !== "reopen") return waited;
       if (attempt || entry.closed)
-        throw new Error("Pi's storage for this agent keeps failing");
+        throw abandon(new Error("Pi's storage for this agent keeps failing"));
     }
   }
 
@@ -1068,6 +1197,13 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
+
+/** The conversation key session controls in `place` act on, as `key` makes
+ * it: a DM or Solo chat has no root here. */
+const controlKey = (agent: Agent, place: SessionPlace) =>
+  config(agent.config).scope === "channel" || !place.root
+    ? place.channelId
+    : `${place.channelId}/${place.root}`;
 
 /** Why Pi left a request unanswered, in words. */
 function unanswered({

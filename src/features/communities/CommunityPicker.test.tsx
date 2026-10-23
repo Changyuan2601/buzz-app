@@ -229,7 +229,7 @@ it("switches using the shared membership owner without acquiring other sessions 
   const add = screen.getByRole("button", { name: "Join a community" });
   fireEvent.click(add);
   expect(
-    screen.getByRole("heading", { name: "Add a community" }),
+    screen.getByRole("heading", { name: "Join a community" }),
   ).toBeInTheDocument();
   expect(h.select).toHaveBeenCalledTimes(2);
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -1071,7 +1071,7 @@ it("opens a deep-link invite on Personal space without claiming until the user c
       onSelect={t.onSelect}
     />,
   );
-  expect(screen.getByLabelText("Relay URL")).toHaveValue(
+  expect(screen.getByLabelText("Community URL")).toHaveValue(
     "https://invited.example",
   );
   expect(
@@ -1101,7 +1101,7 @@ it("labels the existing picker Communities only while no community is saved", as
   await user.click(picker);
   await user.click(screen.getByRole("button", { name: "Join a community" }));
   expect(
-    screen.getByRole("heading", { name: "Add a community" }),
+    screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Close" }));
   await waitFor(() => expect(picker).toHaveFocus());

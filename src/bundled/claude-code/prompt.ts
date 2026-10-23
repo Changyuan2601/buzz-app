@@ -72,7 +72,8 @@ export type TurnInput = Readonly<{
   topLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;
-  /** Earlier messages of the conversation the session has not been shown. */
+  /** Messages of the conversation the session has not been shown: earlier
+   * ones, and for a resumed turn also those after it. */
   context: readonly EventData[];
   /** Messages the conversation has in all, for `total=`. */
   total: number;

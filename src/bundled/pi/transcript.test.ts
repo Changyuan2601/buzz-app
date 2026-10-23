@@ -201,6 +201,53 @@ it("replaces an interrupted run's partial answer with the one that continues it,
   expect(next?.stopReason).toBeUndefined();
 });
 
+it("shows a Stop during a tool call as stopped, unless the run went on", () => {
+  const call = (id: number, name: string) =>
+    assistant(
+      id,
+      [{ type: "toolCall", id: `c${id}`, name, arguments: { command: name } }],
+      { stopReason: "toolUse" },
+    );
+  const cut = (id: number, call: string) => ({
+    ...result(id, call, "[error] Tool bash was aborted", true),
+    aborted: true,
+  });
+  const tool = (turn?: TranscriptTurn) =>
+    turn?.items.flatMap((item) => (item.type === "tool" ? [item.status] : []));
+  const [stopped, failed] = piTurns(
+    [
+      user(1, event("first")),
+      call(2, "bash"),
+      cut(3, "c2"),
+      user(4, event("second")),
+      call(5, "ls"),
+      result(6, "c5", "No such file", true),
+      assistant(7, [{ type: "text", text: "It failed" }], {
+        stopReason: "stop",
+      }),
+    ],
+    PLACE,
+    false,
+  );
+  expect(stopped?.stopReason).toBe("stopped");
+  expect(tool(stopped)).toEqual(["terminated"]);
+  expect(failed?.stopReason).toBeUndefined();
+  expect(tool(failed)).toEqual(["failed"]);
+  // Aborting one call alone lets the run answer after it.
+  const [continued] = piTurns(
+    [
+      user(1, event("first")),
+      call(2, "bash"),
+      cut(3, "c2"),
+      assistant(4, [{ type: "text", text: "Done" }], { stopReason: "stop" }),
+    ],
+    PLACE,
+    false,
+  );
+  expect(continued?.stopReason).toBeUndefined();
+  expect(tool(continued)).toEqual(["terminated"]);
+});
+
 it("reads pages, newest first, until one turn more than it shows", async () => {
   // Two entries a turn, a page of three entries at a time.
   const entries = Array.from({ length: (TURN_LIMIT + 5) * 2 }, (_, index) =>

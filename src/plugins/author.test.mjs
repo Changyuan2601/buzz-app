@@ -32,13 +32,17 @@ test("generated author package in a path with spaces exposes shared message fact
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, DecisionResult, Host, PluginManifest, NamingPolicy, UnreadCapability } from "@buzz/author";
+import type { Context, DecisionResult, Host, PluginManifest, NamingPolicy, UnreadCapability, PageSidebarProps } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
     commands: [{ id: "status", program: "example-cli", args: ["status"], maxOutputBytes: 65536 }],
     networkOrigins: ["https://api.example.com"],
   },
+};
+const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
+  void target.kind;
+  return children;
 };
 export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
@@ -79,6 +83,14 @@ export function apply(ctx: Context) {
     icon: "data:image/png;base64,iVBOR",
     primary: true,
     placement: "toolbar",
+    sidebar: ExampleSidebar,
+  });
+  ctx.pages.register({
+    id: "bad-sidebar",
+    title: "Bad sidebar",
+    component: () => null,
+    // @ts-expect-error A page sidebar must be a React component.
+    sidebar: 1,
   });
   ctx.pages.register({
     id: "other",

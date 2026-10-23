@@ -146,7 +146,7 @@
   @keyframes settings-search-highlight {
     0%,
     35% {
-      background-color: var(--surface-message-highlight);
+      background-color: var(--affordance-selected);
     }
     100% {
       background-color: transparent;

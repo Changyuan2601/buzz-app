@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseInviteLink } from "./invite-link";
+import { parseInviteLink, parsePastedInvite } from "./invite-link";
 
 it.each(["", "/"])(
   "parses the join form with path %j and canonicalizes the relay",
@@ -48,3 +48,36 @@ it.each(["//", "/extra", "/%2F", "/./", "/extra/.."])(
     ).toBeNull();
   },
 );
+
+it.each([
+  [
+    "https://relay.example/invite/v2.invite",
+    { community: "https://relay.example", code: "v2.invite" },
+  ],
+  [
+    "  https://relay.example/invite/v2%2Binvite/ ",
+    { community: "https://relay.example", code: "v2+invite" },
+  ],
+  [
+    "buzz://join?relay=wss%3A%2F%2Frelay.example&code=v2.invite",
+    { community: "https://relay.example", code: "v2.invite" },
+  ],
+  ["wss://relay.example", { community: "https://relay.example", code: "" }],
+])("reads a pasted invite or address: %s", (input, expected) => {
+  expect(parsePastedInvite(input)).toEqual(expected);
+});
+
+it.each([
+  "",
+  "v2.invite",
+  "http://relay.example/invite/x",
+  "https://user@relay.example/invite/x",
+  "https://relay.example/invite/x?redirect=evil",
+  "https://relay.example/invite/x#fragment",
+  "https://relay.example/invite/x/extra",
+  "https://relay.example/other",
+  "https://relay.example/invite/%E0%A4%A",
+  `https://relay.example/invite/${"x".repeat(257)}`,
+])("rejects a pasted value that is not an invite: %j", (input) => {
+  expect(parsePastedInvite(input)).toBeNull();
+});

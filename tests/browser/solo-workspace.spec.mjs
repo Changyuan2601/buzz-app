@@ -51,11 +51,12 @@ async function showSharedMark(page, app, row) {
     });
   });
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Share chat", exact: true });
-  await dialog.getByRole("button", { name: /^Other access/ }).click();
+  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Chat access", exact: true });
   await expect(
-    dialog.getByText("Shared teammate", { exact: true }),
+    dialog
+      .getByRole("region", { name: "People", exact: true })
+      .getByText("Shared teammate", { exact: true }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -381,7 +382,7 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Chat settings…", exact: true }),
+    page.getByRole("menuitem", { name: "Edit…", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);

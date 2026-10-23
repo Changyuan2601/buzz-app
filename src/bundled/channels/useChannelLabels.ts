@@ -53,13 +53,28 @@ export function useChannelLabels(
       void queries.ensure(missing.split(":"), "background").catch(() => {});
   }, [queries, missing, membership]);
   const labelled = useRef(
-    new WeakMap<ChannelSummary, { name: string; channel: ChannelSummary }>(),
+    new WeakMap<
+      ChannelSummary,
+      {
+        name: string;
+        channel: ChannelSummary;
+        profiles: typeof profiles;
+        resolveName: typeof resolveName;
+      }
+    >(),
   );
   const labelledChannels = useMemo(
     () =>
       channels.map((channel) => {
         if (channel.channelType !== "dm" || !channel.participants)
           return channel;
+        // Roster changes keep unchanged channels; their names need no lookup.
+        const previous = labelled.current.get(channel);
+        if (
+          previous?.profiles === profiles &&
+          previous.resolveName === resolveName
+        )
+          return previous.channel;
         const name = channel.participants.length
           ? channel.participants
               .map((id) =>
@@ -71,10 +86,14 @@ export function useChannelLabels(
               )
               .join(", ")
           : "Notes to self";
-        const previous = labelled.current.get(channel);
-        if (previous?.name === name) return previous.channel;
-        const result = { ...channel, name };
-        labelled.current.set(channel, { name, channel: result });
+        const result =
+          previous?.name === name ? previous.channel : { ...channel, name };
+        labelled.current.set(channel, {
+          name,
+          channel: result,
+          profiles,
+          resolveName,
+        });
         return result;
       }),
     [channels, profiles, resolveName],

@@ -232,11 +232,11 @@ it("resolves DM participants once per label pass through one scope per channel",
     expect(labels[0]).toBe(first);
     expect(resolve).toHaveBeenCalledTimes(2);
     // A replaced list with unchanged channels (one per incoming message)
-    // re-resolves each participant but reuses the channel's candidate scope.
+    // reuses their labels without resolving again.
     roster = [...roster];
     await act(async () => root.render(createElement(Probe)));
     expect(labels[0]).toBe(first);
-    expect(resolve).toHaveBeenCalledTimes(4);
+    expect(resolve).toHaveBeenCalledTimes(2);
     expect(provider.scope).toHaveBeenCalledTimes(1);
   } finally {
     await act(async () => root.unmount());

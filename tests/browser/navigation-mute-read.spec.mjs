@@ -51,12 +51,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
     "Mute",
-    "Mark as Read",
+    "Mark as read",
     "Copy link",
     "Retry channel permissions",
   ]);
   await expect(menu.getByRole("separator")).toHaveCount(0);
-  for (const name of ["Mute", "Mark as Read"]) {
+  for (const name of ["Mute", "Mark as read"]) {
     await expect(
       menu
         .getByRole("menuitem", { name, exact: true })
@@ -102,7 +102,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       menu.getByRole("menuitem", { name: "Unmute", exact: true }),
     ).toBeEnabled();
     await expect(
-      menu.getByRole("menuitem", { name: "Mark as Read" }),
+      menu.getByRole("menuitem", { name: "Mark as read" }),
     ).toBeEnabled();
     await page.keyboard.press("Escape");
   } finally {
@@ -145,7 +145,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // page clock on both sides of it rather than tolerating an arbitrary range.
   const seconds = () => page.evaluate(() => Math.floor(Date.now() / 1000));
   const clickedAfter = await seconds();
-  await menu.getByRole("menuitem", { name: "Mark as Read" }).click();
+  await menu.getByRole("menuitem", { name: "Mark as read" }).click();
   await expect(menu).toHaveCount(0);
   const clickedBefore = await seconds();
   await expect(beta).toBeFocused();
@@ -186,12 +186,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(badge(beta)).toHaveCount(0);
   await beta.click({ button: "right" });
   const markUnread = menu.getByRole("menuitem", {
-    name: "Mark as Unread",
+    name: "Mark as unread",
     exact: true,
   });
   await expect(markUnread).toBeVisible();
   await expect(
-    menu.getByRole("menuitem", { name: "Mark as Read", exact: true }),
+    menu.getByRole("menuitem", { name: "Mark as read", exact: true }),
   ).toHaveCount(0);
   await captureActions(page, menu, testInfo.outputPath("mark-unread-menu.png"));
   await markUnread.click();
@@ -217,7 +217,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     await page.keyboard.press("Shift+F10");
     await expect(markUnread).toHaveCount(0);
     await menu
-      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .getByRole("menuitem", { name: "Mark as read", exact: true })
       .click();
     await expect(menu.getByRole("status")).toHaveText("Saving…");
     preferences.release();
@@ -282,7 +282,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
     "Mute",
-    "Mark as Unread",
+    "Mark as unread",
     "Copy link",
     "Retry channel permissions",
   ]);
@@ -353,7 +353,7 @@ async function captureActions(page, menu, path) {
   });
   const first = await menu.getByRole("menuitem").first().boundingBox();
   const last = await menu
-    .getByRole("menuitem", { name: /^Mark as (Read|Unread)$/ })
+    .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
     .boundingBox();
   if (!first || !last) throw new Error("Read/mute actions are not laid out");
   await page.screenshot({

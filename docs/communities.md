@@ -9,7 +9,7 @@ each community's queries, live subscriptions, projections and durable outbox.
 ## Try it
 
 Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
-([setup and safety notes](../README.md#relay-channels)), then run
+([setup and safety notes](contributing.md#live-relay-development)), then run
 `just web` and open the Local URL it prints, or use `just desktop` instead. The
 development broker runs on macOS and Linux and refuses an OS-store identity
 that does not match your explicit public pin.
@@ -17,12 +17,13 @@ Click the avatar → **Settings → Profile**. With a community selected in the
 header's community picker, Save updates only your profile in that community;
 there is no separate profile-destination selector. In Personal space, Save edits
 the local default for new communities without publishing. Open the header's
-community picker, choose **Join a community** and type a **Relay URL**. With no
-community saved, the picker is labeled **Communities**; otherwise it shows the
+community picker, choose **Join a community** and type a **Community URL**. With
+no community saved, the picker is labeled **Communities**; otherwise it shows the
 selected community's icon or the Personal space globe. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
-Buzz-compatible community relays. No community is pre-joined.
+Buzz-compatible community relays. No community is pre-joined; a packaged build
+that sets [`BUZZ_DEFAULT_COMMUNITY_URL`](configuration.md) only preselects one.
 
 Surrounding whitespace, host case, a final DNS dot, default port 443 and a single
 root slash normalize to the same HTTPS origin. Non-default ports are preserved.
@@ -67,9 +68,9 @@ re-reads the effective name/picture/description after the accepted receipt; a fa
 conflicting current profile retains the draft for explicit Save retry instead of
 reporting success. This confirmation is not a transaction against other clients.
 
-Use the persistent left community rail to select a saved community or Personal
+Use the header's community picker to select a saved community or Personal
 space. Personal space
-clears selection without forgetting memberships. The rail’s Add control opens the
+clears selection without forgetting memberships. Its **Join a community** item opens the
 existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them.
 Right-click a saved community (or press the ContextMenu key or Shift+F10 on it)
 for Mark all as read, Copy community URL, Invite to community, Community
@@ -101,7 +102,7 @@ promises nothing about how long; it never calls access revoked for good. Any
 other refusal or an unreachable relay keeps the membership and reports the
 failure so Leave can be tried again. Once the relay has answered, only this
 device can still fail: a device record that will not save keeps the community
-in the rail and says so, naming the storage error so a store that never saves
+in the community picker and says so, naming the storage error so a store that never saves
 is not the same promise every attempt, and leaving it again finishes through
 the not-a-member answer; a store that will not clear is logged by name and the
 success notice says some saved data remains. A left community that was selected
@@ -163,7 +164,7 @@ private keys.
 Storage failure blocks the remote operation. Completing a native join requires
 successful local membership persistence before clearing its recovery record.
 
-After closing or restarting, open **Add a community** to resume the most recent
+After closing or restarting, open **Join a community** to resume the most recent
 unfinished destination. Continue makes a fresh authenticated profile read, with
 strong consistency. Successful access resumes profile setup even if the profile
 does not exist yet; it never requires reusing an expired invite after admission.

@@ -410,16 +410,19 @@ it("switches contrast through the shared select and restores it", async () => {
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Vibe level" }));
+  expect(
+    screen.queryByRole("option", { name: "Snoozin’" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("option", { name: "Hummin’" }),
+  ).not.toBeInTheDocument();
   await user.click(await screen.findByRole("option", { name: "Buzzin’" }));
   expect(appearance.snapshot().contrast).toBe("high");
   expect(localStorage.getItem("buzz-contrast.v1")).toBe("high");
   const restored = createAppearance();
   expect(restored.snapshot().contrast).toBe("high");
   restored.dispose();
-  for (const [label, value] of [
-    ["Snoozin’", "quiet"],
-    ["Hummin’", "low"],
-  ] as const) {
+  for (const [label, value] of [["Chillin’", "low"]] as const) {
     await user.click(screen.getByRole("combobox", { name: "Vibe level" }));
     await user.click(await screen.findByRole("option", { name: label }));
     expect(localStorage.getItem("buzz-contrast.v1")).toBe(value);

@@ -12,6 +12,7 @@ import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
 import {
@@ -303,6 +304,7 @@ export class GooseRuntime {
       return ignored?.();
     // A plugin's wake is the owner's installed code, not a message to check.
     const wake = trigger.type === "plugin" ? trigger : undefined;
+    const resumed = trigger.type === "mention" && !!trigger.resumed;
     // goose runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
       const snapshot = this.relay(agent.pubkey)?.snapshot();
@@ -349,24 +351,27 @@ export class GooseRuntime {
         channel,
         topLevel,
         fresh,
+        resumed,
       );
       const { channel: where } = turn;
+      const text = turnPrompt({
+        ...turn,
+        agent: agent.pubkey,
+        label: "@mention",
+        ...(wake ? { wake } : {}),
+      });
       return {
         key: turn.key,
+        shown: turn.shown,
         place: where.name
           ? `#${where.name}`
           : where.dm
             ? "DM"
             : where.id.slice(0, 8),
-        text: turnPrompt({
-          ...turn,
-          agent: agent.pubkey,
-          label: "@mention",
-          ...(wake ? { wake } : {}),
-        }),
+        text: resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
       };
     };
-    const { key, text: prepared, place } = await prompt(false);
+    const { key, text: prepared, place, shown } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -391,7 +396,7 @@ export class GooseRuntime {
               ? { channel }
               : { channel, root: threadReference(event)?.rootId ?? event.id },
         );
-        const done = entry.sessions.deliver(key, text, event.created_at, {
+        const done = entry.sessions.deliver(key, text, shown, {
           steer: steerPrompt(text),
           fresh: async () =>
             this.review(entry, (await prompt(true)).text, notes),
@@ -520,6 +525,9 @@ export class GooseRuntime {
     channelId: string,
     topLevel: boolean,
     fresh = false,
+    /** Given again after a reload stopped it: it is shown what came after it,
+     * its own replies included, as its new session cannot know them. */
+    resumed = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -536,7 +544,9 @@ export class GooseRuntime {
         : `${channelId}/${rootId}`;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
-    const seen = fresh ? 0 : entry.sessions.seen(key);
+    // A resumed turn's session never saw its thread, its own replies included,
+    // even when another resumed turn already opened it in a channel session.
+    const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
     const reading = topLevel
@@ -552,11 +562,12 @@ export class GooseRuntime {
             : undefined,
         )
       : Promise.resolve(undefined);
+    const threadRead = (thread || (resumed && !dm)) && !topLevel;
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm || topLevel))
+    if (session && (thread || dm || topLevel || resumed))
       try {
         const events = await session.read(
-          thread && !topLevel
+          threadRead
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
@@ -569,7 +580,7 @@ export class GooseRuntime {
             (item) =>
               CHAT.includes(item.kind) &&
               item.id !== event.id &&
-              item.created_at <= event.created_at,
+              (resumed || item.created_at <= event.created_at),
           )
           .sort((a, b) => a.created_at - b.created_at);
       } catch (error) {
@@ -607,6 +618,15 @@ export class GooseRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      /** created_at of the newest event the turn is shown. A thread read in a
+       * channel session stops at the event: the other threads were not read. */
+      shown:
+        threadRead && key === channelId
+          ? event.created_at
+          : Math.max(
+              event.created_at,
+              ...unseen.map((item) => item.created_at),
+            ),
       total: earlier.length + 1,
       name: (pubkey: string) =>
         session?.names.resolve(pubkey, undefined, members) ??

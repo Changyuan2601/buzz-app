@@ -73,8 +73,14 @@ export type ThreadActivitySnapshot = Readonly<{
   error?: string | undefined;
 }>;
 export type ReadingHandle = Readonly<{
-  /** Qualified visible rows only. This publishes no read intent and ends with the lease. */
-  view(messageIds: readonly string[], visible: () => boolean): void;
+  /** Qualified visible rows only. This publishes no read intent and ends with the
+   * lease. `visible` decides each of this channel's rows; `measured` says the
+   * row is among `messageIds`. A consumer that is re-measuring may confirm any
+   * of its rows on demand instead. */
+  view(
+    messageIds: readonly string[],
+    visible: (messageId: string, measured: boolean) => boolean,
+  ): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
   /** Bottom dwell through verified evidence; channel catch-up excludes attention. */
@@ -236,7 +242,11 @@ export function createUnread({
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
-    { ids: ReadonlySet<string>; visible: () => boolean }
+    {
+      channelId: string;
+      ids: ReadonlySet<string>;
+      visible: (messageId: string, measured: boolean) => boolean;
+    }
   >();
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
@@ -680,7 +690,9 @@ export function createUnread({
       lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
         false;
     const viewing = [...views.values()].some(
-      (view) => view.ids.has(messageId) && view.visible(),
+      (view) =>
+        view.channelId === channelId &&
+        view.visible(messageId, view.ids.has(messageId)),
     );
     return Object.freeze({
       status: kind
@@ -1256,6 +1268,7 @@ export function createUnread({
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
+    const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     // Channel archive changes Inbox eligibility, not membership or read intent.
@@ -1269,7 +1282,9 @@ export function createUnread({
       purge();
       // An initial observation made against a display-only roster still owes
       // evidence when membership becomes fresh, including during an active repair.
-      if (requested && confirmed) {
+      // A newly accessible channel has no evidence yet, and the epoch bump
+      // abandons any in-flight observation, so both also observe again.
+      if (requested && (confirmed || gained || refresh)) {
         repairAgain = true;
         if (!refresh) void repair();
       }
@@ -2031,7 +2046,10 @@ export function createUnread({
       };
       return Object.freeze({
         dispose,
-        view(ids: readonly string[], visible: () => boolean) {
+        view(
+          ids: readonly string[],
+          visible: (id: string, measured: boolean) => boolean,
+        ) {
           if (!valid() || ids.length > 128) return;
           const verified = ids.filter((id) => {
             try {
@@ -2042,8 +2060,9 @@ export function createUnread({
             }
           });
           views.set(dispose, {
+            channelId,
             ids: new Set(verified),
-            visible: () => valid() && visible(),
+            visible: (id, measured) => valid() && visible(id, measured),
           });
         },
         async catchUp(id: string, rootId?: string) {

@@ -45,3 +45,33 @@ export function parseInviteLink(input: string): InviteLink | null {
     return null;
   }
 }
+
+/** A pasted invite: the app link, the relay's invite page, or a bare community address. */
+export function parsePastedInvite(input: string): InviteLink | null {
+  const value = input.trim();
+  if (value.length > 4096) return null;
+  const link = parseInviteLink(value);
+  if (link) return link;
+  try {
+    const url = new URL(value);
+    const path = /^\/invite\/([^/]+)\/?$/.exec(url.pathname)?.[1];
+    if (path) {
+      const code = decodeURIComponent(path);
+      return url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash &&
+        code.length <= 256
+        ? { community: communityDestination(url.origin).url, code }
+        : null;
+    }
+  } catch {
+    // Not a URL; a bare address still fails closed below.
+  }
+  try {
+    return { community: communityDestination(value).url, code: "" };
+  } catch {
+    return null;
+  }
+}
