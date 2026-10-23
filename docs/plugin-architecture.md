@@ -1455,6 +1455,8 @@ without changing the original notification recipients.
 
 `replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
 
+`replaceRecipientsIfEmpty` takes the same selection but rejects the change if the current draft contains non-whitespace text outside selected mention spans. Automatic targeting can use this guarded command when available. A false result must not trigger unrestricted replacement. The host checks the current draft at invocation, so a retained command cannot overwrite recipients after typing begins.
+
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label
 (single line, at most 120 code points), requires a navigation-safe URI, and sends

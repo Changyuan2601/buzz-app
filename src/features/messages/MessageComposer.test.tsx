@@ -8538,10 +8538,12 @@ it.each(["disabled", "retarget", "unmount"])(
   (transition) => {
     const h = mount();
     const replace = h.commands().replaceRecipients;
+    const guarded = h.commands().replaceRecipientsIfEmpty;
     if (transition === "disabled") h.retarget({ disabled: true });
     else if (transition === "retarget") h.retarget({ channelId: "other" });
     else h.unmount();
     act(() => expect(replace([second])).toBe(false));
+    act(() => expect(guarded?.([second])).toBe(false));
   },
 );
 
@@ -8565,4 +8567,26 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   expect(before).toEqual([[first.pubkey, 1]]);
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
+});
+
+it("guards automatic recipient changes using the current draft prose", () => {
+  const h = mount();
+  const replace = h.commands().replaceRecipientsIfEmpty;
+  act(() => h.commands().insertMention(first));
+  act(() => expect(replace?.([second])).toBe(true));
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
+  ]);
+  h.fill("Written draft");
+  act(() => h.commands().insertMention(first));
+  const before = h.input().value;
+  act(() => expect(replace?.([second])).toBe(false));
+  expect(h.input()).toHaveValue(before);
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
+  expect(h.input().value).toContain("Written draft");
+  h.fill(" \n ");
+  act(() => expect(replace?.([second])).toBe(true));
 });
