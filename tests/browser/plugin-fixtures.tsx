@@ -9,6 +9,7 @@ import type { PageProps } from "../../src/features/pages/service";
 import type { PageNavigation } from "../../src/features/navigation/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { PanelSubview } from "../../src/features/panels/PanelSubview";
+import { FolderOpenIcon } from "../../src/shared/design-system/icons";
 import type { PanelProps } from "../../src/features/panels/service";
 import type { NotificationInput } from "../../src/features/notifications/service";
 
@@ -55,6 +56,7 @@ declare global {
     fixtureNavigation?: Navigation;
     fixtureNotify?: (input: NotificationInput) => Promise<boolean>;
     fixturePageBroken?: boolean;
+    fixtureSidebarWorkIconThrows?: boolean;
     fixtureSidebarRecovery?: boolean;
     delayFixture?: { started: boolean; release?: () => void };
     stopFixtureDependency?: () => Promise<void>;
@@ -121,7 +123,71 @@ function RetryPage() {
     </button>
   );
 }
+
+function SidebarWorkIcon() {
+  if (window.fixtureSidebarWorkIconThrows)
+    throw new Error("Fixture sidebar icon failure");
+  return <FolderOpenIcon aria-hidden="true" />;
+}
+
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: {
+      id: "fixture.sidebar-sections",
+      name: "Sidebar section fixture",
+      apiVersion: 1,
+    },
+    module: {
+      apply(ctx) {
+        const rows = [
+          {
+            id: "work",
+            label: "Queue",
+            badge: "New",
+            count: 2,
+            status: "Active",
+          },
+        ];
+        const listeners = new Set<() => void>();
+        ctx.reflect.get("sidebarSections")?.register({
+          version: 1,
+          id: "work",
+          title: "Workspace",
+          icon: <SidebarWorkIcon />,
+          rows: {
+            snapshot: () => rows,
+            subscribe(listener) {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+          },
+          select: () => ({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.channels",
+            pageId: "channels",
+          }),
+        });
+        const reviewRows = [{ id: "review", label: "Review queue item" }];
+        ctx.reflect.get("sidebarSections")?.register({
+          version: 1,
+          id: "review",
+          title: "Review queue",
+          icon: <FolderOpenIcon aria-hidden="true" />,
+          rows: {
+            snapshot: () => reviewRows,
+            subscribe: () => () => {},
+          },
+          select: () => ({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.channels",
+            pageId: "channels",
+          }),
+        });
+      },
+    },
+  },
   {
     manifest: {
       id: "fixture.page-placement",

@@ -66,6 +66,7 @@ export const test = base.extend({
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
+  expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
@@ -130,6 +131,7 @@ export const test = base.extend({
       sidebarIcons,
       channelNames,
       expectedPageFailure,
+      expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
       dmLabels,
@@ -2706,6 +2708,10 @@ export const test = base.extend({
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
             !injectedGitHubFailure(message, index) &&
+            !(
+              expectedSidebarIconFailure &&
+              message.includes("Fixture sidebar icon failure")
+            ) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

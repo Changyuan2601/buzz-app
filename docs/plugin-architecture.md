@@ -84,7 +84,9 @@ retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. A page sidebar is isolated by the same owned-contribution
 boundary, so a failure falls back to a concise alert without taking down the page,
 Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
-the page owns its sidebar content and local interaction state.
+the page owns its sidebar content and local interaction state. Sidebar presentation
+helpers remain importable from `bundled/channels`; the conversation sidebar also
+exposes a versioned section contribution for plugins.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -202,6 +204,56 @@ See [foundation status and open gates](status.md) for maintained decisions,
 remaining acceptance work and historical evidence.
 
 ## Starting contracts
+
+### Conversation sidebar sections
+
+A plugin may register a versioned `sidebarSections` contribution. Read it with
+`ctx.reflect.get("sidebarSections")` instead of adding it to required `inject`;
+the lookup returns `undefined` when an older host has not provided the capability. The host
+renders its rows inside the existing Team sidebar using the same collapsible,
+reorderable, resizable section frame as built-in
+sections. It owns presentation and persists contributed section expansion and
+relative order; a plugin supplies row data and actions, not another sidebar.
+
+Each registration is owned by the plugin's Cordis scope and is removed on
+disable, replacement, or teardown. Rows use an external-store snapshot and
+subscription: return a stable immutable array until the data changes, then notify
+listeners. `select` is a pure row-to-`OpenTarget` function used for both active
+selection and opening the row. Optional
+header actions are compact buttons; each has a stable id, accessible label,
+icon, and callback. A render failure replaces only that section with its
+unavailable state, and rejected row/header actions stay local to that section.
+
+```tsx
+import { createElement } from "react";
+
+const rows = [{
+  id: "today",
+  label: "Today",
+  count: 2,
+}];
+const listeners = new Set<() => void>();
+ctx.reflect.get("sidebarSections")?.register({
+  version: 1,
+  id: "work",
+  title: "Work",
+  icon: "W",
+  rows: {
+    snapshot: () => rows,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  },
+  select: () => ({ version: 1, kind: "home" }),
+  actions: [{
+    id: "new",
+    label: "New item",
+    icon: createElement("span", { "aria-hidden": true }, "+"),
+    onSelect: createItem,
+  }],
+});
+```
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with

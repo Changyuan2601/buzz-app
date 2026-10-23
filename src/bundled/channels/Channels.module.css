@@ -97,6 +97,25 @@
   flex: 0 0 1.125rem;
   place-items: center;
 }
+.contributionNavigationItem {
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+}
+.contributionMetadata {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: end;
+  white-space: normal;
+}
+@container (max-width: 17rem) {
+  .contributionNavigationItem [class~="navigation-item-trailing"] {
+    max-width: 40%;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+}
 .channelListFrame {
   position: relative;
   /* Bring the scrollbar near the divider without clipping its native thumb. */
@@ -360,6 +379,13 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+}
+.contributionFeedback {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-danger);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
 }
 .sectionLabel [data-sidebar-group-icon] {
   width: var(--space-5);
