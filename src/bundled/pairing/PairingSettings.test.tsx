@@ -324,14 +324,14 @@ it("copies the pairing code shown in the current QR", async () => {
     screen.getByRole("button", { name: "Couldn’t copy. Try again" }),
   ).toBeTruthy();
 
-  status = { phase: "code", code: "123456", codeEntry: true };
+  status = { phase: "code", code: "123456" };
   await act(async () => {
     await vi.advanceTimersByTimeAsync(400);
   });
   expect(screen.queryByRole("button", { name: /cop/i })).toBeNull();
 });
 
-it("rejects a legacy mismatch and requires explicit retry", async () => {
+it("rejects a mismatch and requires explicit retry", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -350,7 +350,6 @@ it("rejects a legacy mismatch and requires explicit retry", async () => {
   let status: PairingStatus = {
     phase: "code",
     code: "123456",
-    codeEntry: false,
   };
   const native = {
     account: vi.fn(async () => viewer),
@@ -409,7 +408,6 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
   let status: PairingStatus = {
     phase: "code",
     code: "123456",
-    codeEntry: false,
   };
   const native = {
     account: vi.fn(async () => viewer),
@@ -456,55 +454,3 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
     );
   }
 });
-
-it.each([
-  ["cancelled", "Pairing was canceled.", "Try again"],
-  ["uncertain", "Check your phone", "Start a new pairing"],
-] as const)(
-  "explains code-entry %s cancellation before retry",
-  async (outcome, text, retry) => {
-    vi.stubGlobal("matchMedia", () => ({
-      matches: false,
-      addEventListener() {},
-      removeEventListener() {},
-    }));
-    const viewer = "a".repeat(64);
-    const snapshot: ClientSnapshot = {
-      status: "ready",
-      relayAvailable: true,
-      viewer,
-      selected: "https://community.example",
-      profile: { name: "", picture: "" },
-      memberships: [],
-    };
-    const native = {
-      account: vi.fn(async () => viewer),
-      start: vi.fn(async () => {}),
-      status: vi.fn(
-        async (): Promise<PairingStatus> => ({
-          phase: "code",
-          code: "123456",
-          codeEntry: true,
-        }),
-      ),
-      confirm: vi.fn(async () => {}),
-      deny: vi.fn(async () => {}),
-      cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: outcome })),
-    } satisfies PairingNative;
-    render(
-      <PairingSettings
-        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
-        active={() => true}
-        available
-        native={native}
-      />,
-    );
-    await act(async () => {});
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    });
-    expect(native.cancel).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status").textContent).toContain(text);
-    expect(screen.getByRole("button", { name: retry })).toBeTruthy();
-  },
-);
