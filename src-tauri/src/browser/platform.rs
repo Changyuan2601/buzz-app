@@ -163,9 +163,18 @@ mod macos {
         use super::*;
         #[test]
         fn generated_proof_is_host_only_http_only_secure_and_expires() {
+            // Foundation caps far-future cookies. Use a ticket-length date while asserting exact parsing,
+            // rather than testing the engine's unrelated long-term cookie retention policy.
+            let expiry = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                + 60;
+            let date = chrono::DateTime::<chrono::Utc>::from_timestamp(expiry, 0).unwrap();
+            let date = date.format("%a, %d %b %Y %H:%M:%S GMT");
             let value = super::super::super::builderlab::Bootstrap {
                 url: String::new(), root: String::new(), login_origin: "https://login.apps.builderlab.xyz".into(),
-                cookie: zeroize::Zeroizing::new("__Host-bbidentity_native_hosted_site_handoff_hash=proof; Path=/; Expires=Tue, 19 Jan 2038 03:14:07 GMT; Secure; HttpOnly; SameSite=Lax".into()),
+                cookie: zeroize::Zeroizing::new(format!("__Host-bbidentity_native_hosted_site_handoff_hash=proof; Path=/; Expires={date}; Secure; HttpOnly; SameSite=Lax")),
             };
             let cookie = builderlab_binding_cookie(&value).unwrap();
             assert_eq!(cookie.domain().to_string(), "login.apps.builderlab.xyz");
@@ -175,7 +184,7 @@ mod macos {
             assert!(!cookie.isSessionOnly());
             assert_eq!(
                 cookie.expiresDate().unwrap().timeIntervalSince1970(),
-                2147483647.0
+                expiry as f64
             );
         }
     }

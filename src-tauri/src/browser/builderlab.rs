@@ -115,7 +115,7 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
     let verifier = Zeroizing::new(URL_SAFE_NO_PAD.encode(random));
     let hash = URL_SAFE_NO_PAD.encode(Sha256::digest(format!(
         "bbidentity-builderlab-hosted-site-handoff:{}",
-        &*verifier
+        *verifier
     )));
     let client = reqwest::Client::builder()
         .https_only(true)
