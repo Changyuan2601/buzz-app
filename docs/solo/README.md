@@ -116,12 +116,16 @@ behavior on the label, so a rename touches copy only.
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
-  agent for this account/community. **Agents → right-click → Make default agent**
-  changes that choice; its card shows **Default agent**. An unavailable choice
-  falls back to the first managed agent, then the first selectable agent, only
-  after agent evidence is complete and the requested archive read has settled.
-  An available explicitly chosen default does not wait for fallback evidence.
+  already have been shared into the chat. Empty new-chat drafts start tagged with the device's main
+  agent for this account/community. **Agents → right-click or "..." → Make main
+  agent** changes that choice; its card shows **Main agent**. The choice stays
+  until it is changed or the agent is deleted, and it is still tagged when its
+  runtime is signed out or broken. Without a choice, or after the chosen agent
+  is deleted, the first managed agent, then the first selectable agent, becomes
+  the main agent and is saved, only after agent evidence is complete and the
+  requested archive read has settled. A chosen agent missing for another reason
+  is stood in for without replacing the choice; the stand-in can be made main.
+  An available explicit choice does not wait for fallback evidence.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
