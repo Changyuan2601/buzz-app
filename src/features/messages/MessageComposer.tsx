@@ -1914,20 +1914,6 @@ function Composer({
           send();
         }}
       >
-        {editing.target && (
-          <div className={styles.composerEditHeader}>
-            <PencilSimpleIcon size={18} />
-            <span>Editing message</span>
-            <IconButton
-              type="button"
-              size="sm"
-              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-              disabled={editing.busy}
-              onClick={editing.close}
-              icon={<XIcon size={18} />}
-            />
-          </div>
-        )}
         <label className="sr-only" htmlFor={inputId}>
           {label}
         </label>
@@ -1954,9 +1940,24 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        <ComposerReplyContext>
-          {!editing.target && replyContext}
-        </ComposerReplyContext>
+        <ComposerContext key={editing.target ? "edit" : "reply"}>
+          {editing.target ? (
+            <div className={styles.replyContext}>
+              <PencilSimpleIcon size={18} aria-hidden="true" />
+              <div>Editing message</div>
+              <IconButton
+                type="button"
+                size="sm"
+                aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                disabled={editing.busy}
+                onClick={editing.close}
+                icon={<XIcon size={16} aria-hidden="true" />}
+              />
+            </div>
+          ) : (
+            replyContext
+          )}
+        </ComposerContext>
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -2336,8 +2337,8 @@ function Composer({
   );
 }
 
-/** Retain the last preview for collapse; reply semantics clear immediately. */
-function ComposerReplyContext({ children }: { children: ReactNode }) {
+/** Retain the last preview for collapse; context semantics clear immediately. */
+function ComposerContext({ children }: { children: ReactNode }) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);
