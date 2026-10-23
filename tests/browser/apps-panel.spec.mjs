@@ -1,5 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
+test.use({ builderlabOrigin: "https://app.builderlabstaging.xyz" });
+
 // Browser integration: the real Cordis component proxy must not remount the
 // registered Apps panel as sibling tabs change. Native guest I/O is substituted.
 test("Apps keeps its last native URL after Cordis rerenders and pool eviction", async ({
@@ -14,6 +16,11 @@ test("Apps keeps its last native URL after Cordis rerenders and pool eviction", 
   await expect
     .poll(() => page.evaluate(() => window.appsPanelCalls.attached.length))
     .toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.appsPanelCalls.attached[0]?.authenticated),
+    )
+    .toBe(true);
   await address().fill(current);
   await address().press("Enter");
   // This observed address comes from a completed native status poll.
