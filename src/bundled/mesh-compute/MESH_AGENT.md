@@ -48,7 +48,9 @@ operation are removed; existing agent identities and published emoji are not del
 A DM is one conversation. Otherwise **Thread** scope separates thread roots
 (and new top-level mentions), while **Channel** scope orders the whole channel.
 Follow-ups queue behind the current turn; they do not steer an active run.
-Different conversations may proceed independently.
+The host runs one mention turn per agent at a time, including across conversations;
+queued mentions receive their execution deadline when dispatched, not while waiting.
+Separate agents remain independent.
 
 Every turn reads recent Buzz conversation history as the agent: the thread root
 and replies, or the latest channel messages for a whole-channel conversation.

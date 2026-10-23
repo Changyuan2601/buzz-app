@@ -322,6 +322,10 @@ export class MeshAgentRuntime {
       ["p", event.pubkey],
     ];
     let content: string;
+    let lease: string | undefined;
+    let reportingTimeout = false;
+    const timedOut = () =>
+      signal.aborted && signal.reason?.name === "TimeoutError";
     try {
       if (
         signal.aborted ||
@@ -332,6 +336,7 @@ export class MeshAgentRuntime {
       const origin = this.deps.origin(agent.pubkey);
       if (!origin) throw new Error("No community is connected");
       const inference = await untilAborted(this.deps.prepare(origin), signal);
+      lease = inference.lease;
       const wholeChannel = dm || config.scope === "channel";
       const read = () =>
         conversationMessages(delivery, event, channelId, wholeChannel).catch(
@@ -382,12 +387,8 @@ export class MeshAgentRuntime {
         if (result.answered) return;
         reply = result.text;
       }
-      if (
-        signal.aborted ||
-        this.disposed ||
-        (delivery.current && !delivery.current())
-      )
-        return;
+      signal.throwIfAborted();
+      if (this.disposed || (delivery.current && !delivery.current())) return;
       if (!reply) throw new Error("The mesh model returned no text");
       // Already-published tool sends are not undone by this freshness check.
       if (!(await this.deps.current(inference.lease))) {
@@ -396,12 +397,18 @@ export class MeshAgentRuntime {
       }
       content = reply;
     } catch (error) {
-      if (signal.aborted || this.disposed) return;
-      const reason = error instanceof Error ? error.message : String(error);
+      if ((signal.aborted && !timedOut()) || this.disposed) return;
+      if (timedOut() && lease && !(await this.deps.current(lease))) return;
+      reportingTimeout = timedOut();
+      const reason = reportingTimeout
+        ? "The turn exceeded its five-minute deadline. Please try again."
+        : error instanceof Error
+          ? error.message
+          : String(error);
       content = `⚠️ Mesh agent couldn't answer: ${reason.slice(0, 500)}`;
     }
     if (
-      signal.aborted ||
+      (signal.aborted && !reportingTimeout) ||
       this.disposed ||
       (delivery.current && !delivery.current())
     )

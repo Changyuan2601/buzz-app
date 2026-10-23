@@ -84,6 +84,47 @@ function deferred<T>() {
 }
 
 describe("Mesh agent runtime", () => {
+  it.each(["live", "retired", "disposed"])(
+    "reports a deadline only for a %s turn",
+    async (state) => {
+      const started = deferred<void>();
+      const gate = deferred<void>();
+      const controller = new AbortController();
+      const { runtime, delivery, publish } = setup({
+        coreMemory: async (_key, signal) => {
+          started.resolve();
+          await gate.promise;
+          signal.throwIfAborted();
+          return "";
+        },
+      });
+      let current = true;
+      const done = runtime.run({
+        ...delivery(),
+        signal: controller.signal,
+        current: () => current,
+      });
+      await started.promise;
+      try {
+        if (state === "retired") current = false;
+        if (state === "disposed") runtime.dispose();
+        controller.abort(new DOMException("deadline", "TimeoutError"));
+        await done;
+        if (state === "live") {
+          expect(publish).toHaveBeenCalledWith(
+            expect.objectContaining({
+              content: expect.stringContaining("five-minute deadline"),
+            }),
+          );
+          gate.resolve();
+          await runtime.run(delivery());
+          expect(publish).toHaveBeenCalledTimes(2);
+        } else expect(publish).not.toHaveBeenCalled();
+      } finally {
+        gate.resolve();
+      }
+    },
+  );
   it("reports an empty model answer when no Buzz tool answered", async () => {
     const { delivery, publish, inline, runtime } = setup();
     inline.run.mockResolvedValueOnce({ text: "" });

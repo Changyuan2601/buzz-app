@@ -1623,7 +1623,7 @@ it("prepares a background agent against its own community, not the foreground", 
   }
 });
 
-it("releases the host queue while retaining Agent work for mid-turn delivery", async () => {
+it("holds the host queue until Agent and Chat work completes", async () => {
   const { MeshAgentRuntime } = await import("./meshAgent");
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
@@ -1658,8 +1658,8 @@ it("releases the host queue while retaining Agent work for mid-turn delivery", a
         config: { mode: "agent" },
         workingUntil,
       } as unknown as import("../../features/agents/service").Delivery),
-    ).toBeUndefined();
-    expect(workingUntil).toHaveBeenCalledWith(pending);
+    ).toBe(pending);
+    expect(workingUntil).not.toHaveBeenCalled();
     expect(
       run({
         config: { mode: "chat" },

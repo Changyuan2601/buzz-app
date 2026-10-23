@@ -278,12 +278,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
           ],
           // Covers compute startup (native waits up to 120s) plus one reply.
           timeoutMs: 5 * 60_000,
-          run: (delivery) => {
-            const done = runtime.run(delivery);
-            if (delivery.config.mode === "chat") return done;
-            delivery.workingUntil(done);
-            // Release the host queue so a subsequent mention can steer this run.
-          },
+          // Keep queued mentions in the host until their own deadline starts.
+          run: (delivery) => runtime.run(delivery),
         });
       },
       () => {},
