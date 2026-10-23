@@ -114,6 +114,8 @@ type Waited =
   | { status: "unanswered"; reason?: string; detail?: string }
   | { status: "closed" };
 type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
+  /** Recovered work has no delivery; the runner still owns its power demand. */
+  execution?: ReturnType<NonNullable<AgentHandle["execution"]>>;
   /** Its conversation key, which session controls act on. */
   key: string;
   /** Where its activity shows: a thread, or a Solo chat's channel. */
@@ -214,7 +216,11 @@ export class PiRuntime {
     for (const pubkey of new Set([...this.running, ...this.agents.keys()]))
       if (!current.has(pubkey)) {
         const entry = this.agents.get(pubkey);
-        if (entry) entry.closed = true;
+        if (entry) {
+          entry.closed = true;
+          for (const receipt of entry.receipts.values())
+            receipt.execution?.finish();
+        }
         this.agents.delete(pubkey);
         void this.pi.request("close", { agent: pubkey }).catch(() => undefined);
       }
@@ -391,7 +397,11 @@ export class PiRuntime {
   }
 
   dispose() {
-    for (const entry of this.agents.values()) entry.closed = true;
+    for (const entry of this.agents.values()) {
+      entry.closed = true;
+      for (const receipt of entry.receipts.values())
+        receipt.execution?.finish();
+    }
     this.agents.clear();
     void this.pi.dispose();
   }
@@ -850,6 +860,7 @@ export class PiRuntime {
           : context.channel,
         scope: context.topLevel ? context.channel : root,
         where,
+        step: () => receipt.execution?.pulse(),
       };
       // A delivery of the same request takes it over, and says how it ended.
       const ours = () => entry.receipts.get(request) === receipt;
@@ -859,32 +870,33 @@ export class PiRuntime {
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
       const sends = entry.sends.get(conversation) ?? 0;
-      waits.push(() =>
-        this.settle(entry, pubkey, submission)
-          .then(async (waited) => {
-            if (!ours()) return;
-            if (waited.status === "done")
-              await this.answer(
-                entry,
-                handle,
-                conversation,
-                { where, sends },
-                waited,
-              );
-            else if (
-              waited.status === "unanswered" &&
-              waited.reason !== "aborted"
-            )
-              await this.report(handle, where, unanswered(waited));
-          })
-          .catch(async (error: unknown) => {
-            if (ours() && !entry.closed)
-              await this.report(handle, where, errorText(error));
-          })
-          .finally(() => {
-            if (ours()) this.forget(entry, request);
-          }),
-      );
+      waits.push(async () => {
+        try {
+          this.live(entry, pubkey);
+          receipt.execution = handle.execution?.();
+          const waited = await this.settle(entry, pubkey, submission);
+          if (!ours()) return;
+          if (waited.status === "done")
+            await this.answer(
+              entry,
+              handle,
+              conversation,
+              { where, sends },
+              waited,
+            );
+          else if (
+            waited.status === "unanswered" &&
+            waited.reason !== "aborted"
+          )
+            await this.report(handle, where, unanswered(waited));
+        } catch (error) {
+          if (ours() && !entry.closed)
+            await this.report(handle, where, errorText(error));
+        } finally {
+          receipt.execution?.finish();
+          if (ours()) this.forget(entry, request);
+        }
+      });
     }
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.

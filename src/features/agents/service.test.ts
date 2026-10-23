@@ -7640,3 +7640,38 @@ it("accounts for local execution independently of reply display, across handoffs
     turn();
   }
 });
+
+it("fences recovered execution by custody and runner lifetime without a delivery", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  const power = f.service.keepAwake;
+  const first = handle?.execution?.();
+  try {
+    expect(power.snapshot().working).toBe(true);
+    first?.finish();
+    expect(power.snapshot().working).toBe(false);
+    const recovered = handle?.execution?.();
+    expect(power.snapshot().working).toBe(true);
+    f.connect(false);
+    await vi.waitFor(() => expect(f.native.release).toHaveBeenCalledWith(bot));
+    expect(power.snapshot().working).toBe(false);
+    recovered?.pulse();
+    expect(power.snapshot().working).toBe(false);
+    expect(() => handle?.execution?.()).toThrow("ask for its handle again");
+    f.connect(true);
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const fresh = f.plugin.agents.handle(bot)?.execution?.();
+    expect(power.snapshot().working).toBe(true);
+    recovered?.finish();
+    expect(power.snapshot().working).toBe(true);
+    await f.ctx.fiber.dispose();
+    expect(power.snapshot().working).toBe(false);
+    fresh?.pulse();
+    expect(power.snapshot().working).toBe(false);
+  } finally {
+    first?.finish();
+    await f.ctx.fiber.dispose();
+  }
+});

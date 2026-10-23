@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createKeepAwake } from "../../features/agents/keep-awake";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
@@ -1583,3 +1584,82 @@ it("runs a turn at the agent's saved thinking level, apart from a pick", async (
     pick: {},
   });
 });
+
+// The real power owner counts recovered work, not just the operation that
+// discovers it. Deferred host replies establish which operation finishes first.
+it.each([
+  { trigger: "mention", ending: "done" },
+  { trigger: "compact", ending: "done" },
+  { trigger: "mention", ending: "failed" },
+  { trigger: "compact", ending: "dispose" },
+  { trigger: "mention", ending: "removed" },
+] as const)(
+  "keeps recovered work past $trigger and releases it when $ending",
+  async ({ trigger, ending }) => {
+    const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+    const recovered = deferred<unknown>();
+    const power = createKeepAwake();
+    const lifetime = new AbortController();
+    const f = setup({
+      unfinished: () => ({
+        submissions: [{ ...left, context: { channel, root: "other-root" } }],
+      }),
+      wait: ({ submission }) =>
+        submission === left.submission
+          ? recovered.promise
+          : { status: "done", answer: 2, text: "New answer" },
+    });
+    Object.assign(f.agent, { execution: () => power.begin(lifetime.signal) });
+    try {
+      if (trigger === "mention") {
+        const turn = f.deliver({
+          type: "mention",
+          event: reply("5", "@Pi work"),
+        });
+        await turn.run;
+        await f.settled(turn);
+      } else {
+        await f.runtime.session(
+          { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent,
+          { channelId: channel, root: root.id },
+          "compact",
+        );
+      }
+      expect(
+        f.host
+          .requests("wait")
+          .some(({ params }) => params.submission === left.submission),
+      ).toBe(true);
+      expect(power.snapshot().working).toBe(true);
+      const activity = vi.fn();
+      const unsubscribe = power.subscribe(activity);
+      f.runtime.event({
+        type: "step",
+        agent: self,
+        conversation: left.conversation,
+        tool: "bash",
+      });
+      expect(activity).toHaveBeenCalledOnce();
+      unsubscribe();
+      if (ending === "failed") recovered.reject(new Error("Recovered failure"));
+      else if (ending === "dispose") f.runtime.dispose();
+      else if (ending === "removed") f.runtime.sync([]);
+      else
+        recovered.resolve({
+          status: "done",
+          answer: 6,
+          text: "Recovered answer",
+        });
+      await vi.waitFor(() => expect(power.snapshot().working).toBe(false));
+      if (ending === "done" || ending === "failed")
+        expect(f.published.map(({ content }) => content).join("\n")).toContain(
+          ending === "done" ? "Recovered answer" : "Recovered failure",
+        );
+    } finally {
+      recovered.resolve({ status: "closed" });
+      lifetime.abort();
+      f.runtime.dispose();
+      await power.dispose();
+    }
+  },
+);

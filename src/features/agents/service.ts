@@ -305,6 +305,9 @@ export type AgentHandle = Readonly<{
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Counts recovered local work outside a delivery. Finish on settlement;
+   * custody loss or runner retirement releases it even if the harness waits. */
+  execution?(): ReturnType<KeepAwake["begin"]> | undefined;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;

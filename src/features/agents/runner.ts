@@ -2112,6 +2112,16 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
+      execution: () => {
+        if (
+          this.runners.get(runner.pubkey) !== runner ||
+          !this.runs(runner.pubkey)
+        )
+          throw new Error("This copy of Buzz no longer runs the agent.");
+        return this.host.execution?.begin(
+          AbortSignal.any([runner.controller.signal, runner.execution.signal]),
+        );
+      },
       publish: async (event: AgentEventTemplate) => this.publish(runner, event),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),

@@ -263,8 +263,12 @@ communities, including mentions, watches/timers, classifier calls and session
 controls. This is independent of the optional Agent Activity plugin, saved
 telemetry, typing, and idle harness processes. `workingUntil` retains demand;
 Codex also supplies `executingUntil` through actual turn completion so its final
-model call remains covered after reply display ends. Retiring a runner or losing
-its custody releases its demand without changing existing turn-stop semantics.
+model call remains covered after reply display ends. Pi takes a separate
+`AgentHandle.execution()` for each recovered turn, pulses it on harness steps,
+and finishes it when the recovered wait settles or the runtime releases it.
+Recovered work can outlive the delivery or session control that found it.
+Retiring a runner or losing its custody releases its demand without changing
+existing turn-stop semantics.
 
 The native host owns one process-local macOS power assertion and expires it after
 one hour without a new execution transition or harness step. New activity can
@@ -275,7 +279,7 @@ independent native process monitor or a hostile-plugin boundary. Acquisition,
 release and preference-save errors remain visible with explicit Retry.
 
 Focused coverage: `features/agents/keep-awake.test.ts`, the agent service and
-Codex runtime tests, `app/AgentSettings.test.tsx`, native `keep_awake::tests`,
+Codex and Pi runtime tests, `app/AgentSettings.test.tsx`, native `keep_awake::tests`,
 and the generated native-command webview-isolation test. Fixture tests do not
 establish real-provider or laptop power-state acceptance.
 
