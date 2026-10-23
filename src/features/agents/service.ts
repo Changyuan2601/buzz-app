@@ -475,7 +475,9 @@ export type Delivery<Config = unknown> = Readonly<{
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
   /** Keeps the run counted as working after `run` returns, until `done`
-   * settles, for a type that hands its work off and returns early. */
+   * settles, for a type that hands its work off and returns early. `done`
+   * resolving `{ ok: false, error }` fails the request; `{ ok: true,
+   * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;

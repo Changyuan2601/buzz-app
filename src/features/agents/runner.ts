@@ -2252,7 +2252,14 @@ export class AgentRunners {
               ? String(result.error)
               : "Could not finish this request",
         };
-      }
+      } else if (
+        result &&
+        typeof result === "object" &&
+        "stopped" in result &&
+        result.stopped === true &&
+        outcome.ok
+      )
+        outcome = { ok: true, stopped: true };
       if (--holds === 0) {
         work?.finish(outcome);
         stop();

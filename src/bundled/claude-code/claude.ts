@@ -74,6 +74,8 @@ export type Settled = Readonly<{
   error?: string;
   /** The message failed before any turn took it in. */
   undelivered?: true;
+  /** The owner's interrupt ended the turn. */
+  stopped?: true;
 }>;
 
 const STDERR_LIMIT = 4_000;
@@ -119,6 +121,8 @@ export class ClaudeProcess {
   private alive = true;
   /** The owner stopped the running turn, so how it ends is not a failure. */
   private stopping = false;
+  /** Claude ended a turn aborted while the owner was stopping it. */
+  private stopped = false;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   /** It runs a turn of its own, such as one a finished background task starts. */
@@ -435,6 +439,7 @@ export class ClaudeProcess {
     this.activeReceipts.clear();
     this.lastError = undefined;
     this.stopping = false;
+    this.stopped = false;
     this.compacting = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
@@ -551,6 +556,14 @@ export class ClaudeProcess {
       return;
     }
     if (message.type !== "result") return;
+    // A turn that finished before the interrupt took effect is not stopped,
+    // and a stopped turn of its own has no message to settle.
+    if (
+      this.pending &&
+      this.stopping &&
+      (message.is_error || message.terminal_reason === "aborted_streaming")
+    )
+      this.stopped = true;
     // An interrupt is not a failure to report: Claude ends a turn stopped
     // mid-tool as `error_during_execution`.
     if (
@@ -566,7 +579,13 @@ export class ClaudeProcess {
   }
   private done() {
     const error = this.lastError;
-    this.settle(error ? { ok: false, error } : { ok: true });
+    this.settle(
+      error
+        ? { ok: false, error }
+        : this.stopped
+          ? { ok: true, stopped: true }
+          : { ok: true },
+    );
   }
   /** Answers what Claude asks its host: calls to the Buzz tools, the
    * hook after `send`, and, since permissions are bypassed, anything else only

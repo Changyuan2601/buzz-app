@@ -1624,6 +1624,30 @@ it("ends a turn the owner stopped as stopped, not as an interruption failure", a
   expect(f.publish).not.toHaveBeenCalled();
   await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
     ok: true,
+    stopped: true,
+  });
+});
+
+it("does not report a stop that Codex's turn finished before taking", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stopping = interruptible.mock.calls[0]?.[0]();
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true),
+  );
+  // The turn completes on its own before the interrupt lands.
+  await f.complete(0, "");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  accepted.resolve();
+  await stopping;
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
   });
 });
 

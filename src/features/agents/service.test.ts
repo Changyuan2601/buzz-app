@@ -1029,6 +1029,34 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it.each([
+  [{ ok: true, stopped: true }, "stopped"],
+  [{ ok: false, error: "Broke", stopped: true }, "error"],
+])(
+  "records the outcome a handed-off turn reports: %o",
+  async (outcome, state) => {
+    const { service, run, emit, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(Promise.resolve(outcome)),
+    );
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() =>
+      expect(activity.reader.work()[0]?.state).toBe(state),
+    );
+  },
+);
+
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
   /** Once this copy holds the agent. */
