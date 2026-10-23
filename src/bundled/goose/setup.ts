@@ -28,6 +28,8 @@ export type Provider = Readonly<{
   signsIn: boolean;
   steps: readonly string[];
   models: readonly ModelChoice[];
+  /** Why it isn't set up to run, or "" when it is. */
+  needs: string;
 }>;
 
 export type Providers = Readonly<{
@@ -206,17 +208,15 @@ export class GooseSetup {
     const provider = choice.provider.trim();
     const { providers, defaults } = await this.providers();
     const id = provider || defaults.provider;
+    const listed = providers.find((item) => item.id === id);
     const current =
       choice.model.trim() ||
-      (provider
-        ? providers.find((item) => item.id === id)?.defaultModel
-        : defaults.model) ||
+      (provider ? listed?.defaultModel : defaults.model) ||
       "";
-    const models = (id ? await this.models(id) : []).map(({ id, label }) => ({
-      id,
-      label,
-      efforts: [],
-    }));
+    // A provider not set up offers only the model the agent names.
+    const models = (id && !listed?.needs ? await this.models(id) : []).map(
+      ({ id, label }) => ({ id, label, efforts: [] }),
+    );
     // A model its provider does not list is still the one it runs on.
     return !current || models.some((model) => model.id === current)
       ? { current, models }
@@ -257,11 +257,13 @@ export class GooseSetup {
   }
 
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
-   * configured providers use live discovery for both Databricks versions. */
+   * configured providers use live discovery for both Databricks versions.
+   * A provider not set up offers none: its catalog's would not run. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
+    if (listed?.needs) throw new Error(listed.needs);
     const prefixes = PREFIXES[id];
     const models =
       listed?.configured &&
@@ -438,7 +440,7 @@ function provider(entry: Entry): Provider {
   const models = [...(entry.models ?? [])].sort(
     (a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)),
   );
-  return {
+  const listed = {
     id: entry.providerId,
     name: entry.providerName,
     description: entry.description ?? "",
@@ -457,6 +459,23 @@ function provider(entry: Entry): Provider {
     // The exact ID: a catalog name can stand for several models.
     models: models.map((model) => ({ id: model.id, label: model.id })),
   };
+  return { ...listed, needs: needs(listed) };
+}
+
+/** What `provider` still needs before it runs, or "" for nothing: a required
+ * field without a default, or signing in. goose lists Ollama as not configured
+ * without `OLLAMA_HOST`, though it runs on the host's default. */
+function needs(provider: Omit<Provider, "needs">) {
+  if (provider.configured) return "";
+  const fields = provider.keys
+    .filter((key) => key.required && !key.default)
+    .map((key) => `${keyLabel(key.name)} (${key.name})`);
+  const step = fields.length
+    ? `Add ${fields.join(", ")} in Edit configuration, or run goose configure.`
+    : provider.signsIn
+      ? "Run goose configure to sign in."
+      : "";
+  return step && `${provider.name} isn't set up in goose. ${step}`;
 }
 
 /** `ANTHROPIC_API_KEY` reads as `API key`, `OPENAI_HOST` as `Host`. */
