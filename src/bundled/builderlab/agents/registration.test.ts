@@ -32,7 +32,12 @@ it("isolates server and name and stores only the creation intent", () => {
 });
 it("isolates a Bestie request from a generic request for the same name", () => {
   const generic = registrationIntent(target, "account-a", "Helper");
-  const bestie = registrationIntent(target, "account-a", "Helper", "bestie");
+  const bestie = registrationIntent(
+    target,
+    "account-a",
+    "Helper",
+    "AGENT_TYPE_BESTIE",
+  );
   expect(bestie.key).not.toBe(generic.key);
   expect(bestie.storageKey).not.toBe(generic.storageKey);
 });

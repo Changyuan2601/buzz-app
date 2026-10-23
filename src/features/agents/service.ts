@@ -654,9 +654,9 @@ export type RemoteAgentType = Readonly<{
       name: string;
       community: string;
       signal: AbortSignal;
-      /** The hosted kind to register, from `NewAgent.agentType`; absent for
-       * a plain agent. */
-      agentType?: "bestie";
+      /** The provider's own agent type, from `NewAgent.agentType`; absent
+       * for a plain agent. */
+      agentType?: string;
     }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
@@ -785,9 +785,10 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
-  /** Reaches a hosted type's `provision` as-is; a plain create leaves it
-   * unset. Only Bestie setup passes this today. */
-  agentType?: "bestie";
+  /** The hosted provider's own agent-type value, which reaches its
+   * `provision` as-is; a plain create leaves it unset. Only Bestie setup
+   * passes this today. */
+  agentType?: string;
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -1720,7 +1721,7 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
-    agentType?: "bestie",
+    agentType?: string,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);

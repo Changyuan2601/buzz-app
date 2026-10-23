@@ -120,8 +120,10 @@ it.each([
   },
 );
 it.each([
-  ["AGENT_TYPE_BESTIE", "bestie"],
-  [1, "bestie"],
+  ["AGENT_TYPE_BESTIE", "AGENT_TYPE_BESTIE"],
+  [1, "AGENT_TYPE_BESTIE"],
+  ["AGENT_TYPE_GENERIC", undefined],
+  [2, undefined],
   ["AGENT_TYPE_UNSPECIFIED", undefined],
   [0, undefined],
   [undefined, undefined],
@@ -292,17 +294,14 @@ it.each([
   if (error) await expect(deleting).rejects.toThrow(error);
   else await expect(deleting).resolves.toBeUndefined();
 });
-it("turns on Bestie's check-in through the authenticated host", async () => {
+it("posts a plugin's own Beekeeper route through the authenticated host", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValue(
-    response({ status: "succeeded", workflow_id: "wf-1" }),
+    response({ status: "succeeded" }),
   );
-  await h.client.enableBestie(
-    remoteAgent,
-    "wss://community.example",
-    "channel-1",
-    h.signal,
-  );
+  expect(
+    await h.client.beekeeper("enable-bestie", { agent_id: "a" }, h.signal),
+  ).toEqual({ status: "succeeded" });
   expect(h.host.request).toHaveBeenCalledWith({
     url: "https://builderlab.example/api/goose/v3/beekeeper/enable-bestie",
     method: "POST",
@@ -311,59 +310,12 @@ it("turns on Bestie's check-in through the authenticated host", async () => {
       "Content-Type": "application/json",
       "X-BB-Session-Credential": "secret",
     },
-    body: JSON.stringify({
-      agent_id: row.agent_id,
-      community_url: "wss://community.example",
-      channel_id: "channel-1",
-    }),
+    body: JSON.stringify({ agent_id: "a" }),
   });
-});
-it("turns off Bestie's check-in through the authenticated host", async () => {
-  const h = await fixture();
-  vi.mocked(h.host.request).mockResolvedValue(
-    response({ status: "succeeded" }),
-  );
-  await h.client.disableBestie(
-    remoteAgent,
-    "wss://community.example",
-    h.signal,
-  );
-  expect(h.host.request).toHaveBeenCalledWith({
-    url: "https://builderlab.example/api/goose/v3/beekeeper/disable-bestie",
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "X-BB-Session-Credential": "secret",
-    },
-    body: JSON.stringify({
-      agent_id: row.agent_id,
-      community_url: "wss://community.example",
-    }),
-  });
-});
-it("fails to turn check-in on without a confirmed status", async () => {
-  const h = await fixture();
-  vi.mocked(h.host.request).mockResolvedValue(
-    response({ status: "failed", error_message: "No active Buzz agent" }),
-  );
+  vi.mocked(h.host.request).mockResolvedValue(response({}, 404));
   await expect(
-    h.client.enableBestie(
-      remoteAgent,
-      "wss://community.example",
-      "channel-1",
-      h.signal,
-    ),
-  ).rejects.toThrow("No active Buzz agent");
-});
-it("fails to turn check-in off without a confirmed status", async () => {
-  const h = await fixture();
-  vi.mocked(h.host.request).mockResolvedValue(
-    response({ status: "failed", error_message: "No active Buzz agent" }),
-  );
-  await expect(
-    h.client.disableBestie(remoteAgent, "wss://community.example", h.signal),
-  ).rejects.toThrow("No active Buzz agent");
+    h.client.beekeeper("enable-bestie", { agent_id: "a" }, h.signal),
+  ).rejects.toThrow("HTTP 404");
 });
 const turn = {
   community: "wss://agent.example:4443",
@@ -459,7 +411,7 @@ it("requests the hosted Bestie kind only when asked", async () => {
       agent_pubkey: row.agent_pubkey,
     }),
   );
-  await h.client.register("Helper", h.signal, h.retain, "bestie");
+  await h.client.register("Helper", h.signal, h.retain, "AGENT_TYPE_BESTIE");
   const body = JSON.parse(
     vi.mocked(h.host.request).mock.calls[0]?.[0].body ?? "{}",
   );
@@ -483,7 +435,7 @@ it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
     const h = await fixture();
     vi.mocked(h.host.request).mockResolvedValueOnce(response({ status }));
     await expect(
-      h.client.register("Bestie", h.signal, h.retain, "bestie"),
+      h.client.register("Bestie", h.signal, h.retain, "AGENT_TYPE_BESTIE"),
     ).rejects.toBeInstanceOf(BestieAlreadyExistsError);
     expect(h.retain).not.toHaveBeenCalled();
     vi.mocked(h.host.request).mockResolvedValueOnce(
@@ -493,7 +445,7 @@ it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
         agent_pubkey: row.agent_pubkey,
       }),
     );
-    await h.client.register("Bestie", h.signal, h.retain, "bestie");
+    await h.client.register("Bestie", h.signal, h.retain, "AGENT_TYPE_BESTIE");
     const bodies = vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));

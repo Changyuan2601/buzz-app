@@ -6,6 +6,7 @@ import {
   BestieAlreadyExistsError,
   MAX_INSTRUCTIONS_LENGTH,
 } from "../builderlab/agents/client";
+import { disableCheckIn, enableCheckIn } from "./checkin";
 import { bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
@@ -296,7 +297,7 @@ export function createRemoteBestie(
             type: BUILDERLAB_TYPE,
             name: NAME,
             picture: randomAgentAvatar().url,
-            agentType: "bestie",
+            agentType: "AGENT_TYPE_BESTIE",
           });
           remote = await remoteAgents();
         } catch (error) {
@@ -307,7 +308,8 @@ export function createRemoteBestie(
           // be refused the same way.
           remote = await remoteAgents();
           const existing = remote.find(
-            (row) => row.agentType === "bestie" && row.status !== "Revoked",
+            (row) =>
+              row.agentType === "AGENT_TYPE_BESTIE" && row.status !== "Revoked",
           );
           if (!existing)
             throw new Error(
@@ -495,7 +497,8 @@ export function createRemoteBestie(
           );
         // Beekeeper names a community by its relay URL; origins are https.
         const community = `wss://${new URL(connection.origin ?? "").host}`;
-        await builderlab.agents.enableBestie(
+        await enableCheckIn(
+          builderlab.agents,
           row,
           community,
           record.channelId,
@@ -557,13 +560,14 @@ export function createRemoteBestie(
       // Beekeeper names a community by its relay URL; origins are https.
       const community = `wss://${new URL(connection.origin ?? "").host}`;
       if (on)
-        await builderlab.agents.enableBestie(
+        await enableCheckIn(
+          builderlab.agents,
           row,
           community,
           record.channelId,
           signal,
         );
-      else await builderlab.agents.disableBestie(row, community, signal);
+      else await disableCheckIn(builderlab.agents, row, community, signal);
       record.checkIn = on ? "on" : "off";
       record.checkInProblem = undefined;
     } catch (error) {

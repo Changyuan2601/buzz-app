@@ -19,9 +19,13 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
-  /** Set only for a hosted Bestie; absent for a plain agent. */
-  agentType?: "bestie";
+  /** Beekeeper's `AgentType`; absent for a plain agent. */
+  agentType?: AgentType;
 }>;
+
+/** Beekeeper's `AgentType` values other than a plain agent's, as sent in
+ * `agent_type`. */
+export type AgentType = "AGENT_TYPE_BESTIE";
 
 /** The owner already has a live (unattested or active) Bestie; Beekeeper
  * allows only one and refuses to register a second. */
@@ -55,12 +59,12 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   return "Unknown";
 }
 
-/** `agent_type` is absent, `AGENT_TYPE_UNSPECIFIED` or `0` for a plain agent. */
+/** Protobuf JSON may carry the enum by name or number; a plain agent is
+ * `AGENT_TYPE_GENERIC`, `AGENT_TYPE_UNSPECIFIED` or absent. */
 function rowAgentType(value: unknown): RemoteAgent["agentType"] {
-  const type = String(value ?? "")
-    .split("_")
-    .at(-1);
-  return type === "1" || type === "BESTIE" ? "bestie" : undefined;
+  return value === "AGENT_TYPE_BESTIE" || value === 1 || value === "1"
+    ? "AGENT_TYPE_BESTIE"
+    : undefined;
 }
 
 /** Native owner identity: the viewer key and the Builderlab-binding-only signer. */
@@ -327,47 +331,10 @@ export function createAgentClient(
         signal,
       );
     },
-    /** Turns on Bestie's hourly check-in in `channelId`, a relay workflow
-     * Beekeeper signs with Bestie's key. Always deletes and re-saves the
-     * workflow, so calling it again is the retry. */
-    async enableBestie(
-      agent: Pick<RemoteAgent, "id">,
-      community: string,
-      channelId: string,
-      signal: AbortSignal,
-    ): Promise<void> {
-      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
-      const result = await request(
-        "enable-bestie",
-        { agent_id: agent.id, community_url: community, channel_id: channelId },
-        signal,
-      );
-      if (result.status === "succeeded") return;
-      throw new Error(
-        typeof result.error_message === "string" && result.error_message
-          ? result.error_message
-          : "Builderlab could not turn on Bestie's check-in.",
-      );
-    },
-    /** Turns off Bestie's hourly check-in. Succeeds when there was none. */
-    async disableBestie(
-      agent: Pick<RemoteAgent, "id">,
-      community: string,
-      signal: AbortSignal,
-    ): Promise<void> {
-      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
-      const result = await request(
-        "disable-bestie",
-        { agent_id: agent.id, community_url: community },
-        signal,
-      );
-      if (result.status === "succeeded") return;
-      throw new Error(
-        typeof result.error_message === "string" && result.error_message
-          ? result.error_message
-          : "Builderlab could not turn off Bestie's check-in.",
-      );
-    },
+    /** Posts `body` to a Beekeeper route as the signed-in owner, with the
+     * same session and HTTP errors as the methods here. For a plugin's own
+     * routes, such as Bestie's check-in. */
+    beekeeper: request,
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,
@@ -427,8 +394,9 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
-      /** Requests Beekeeper's hosted Bestie kind; omitted for a plain agent. */
-      agentType?: "bestie",
+      /** Beekeeper's `AgentType` value, sent as `agent_type` unchanged;
+       * omitted for a plain agent. */
+      agentType?: string,
     ): Promise<RemoteAgent> {
       signal.throwIfAborted();
       const agentName = name.trim();
@@ -451,9 +419,7 @@ export function createAgentClient(
           {
             agent_name: agentName,
             idempotency_key: intent.key,
-            ...(agentType === "bestie"
-              ? { agent_type: "AGENT_TYPE_BESTIE" }
-              : {}),
+            ...(agentType ? { agent_type: agentType } : {}),
           },
           signal,
         );
