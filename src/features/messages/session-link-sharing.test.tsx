@@ -9,6 +9,7 @@ import { matchesEvent } from "../relay/projection";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
 import { beginSoloShare, finishSoloShare } from "../solo/share-attempt";
+import * as share from "../solo/share";
 import { MessageComposer } from "./MessageComposer";
 import { composerDOMFixture } from "./composer-testing";
 import { writeView } from "../../shared/view-state";
@@ -20,6 +21,7 @@ const root = "a".repeat(64);
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
 });
@@ -42,6 +44,7 @@ async function fixture(
   const published: RelayEvent[] = [];
   let reject = false;
   let hold: Promise<void> | undefined;
+  let onQuery: ((filters: readonly ReadFilter[]) => void) | undefined;
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9000) {
       if (hold) await hold;
@@ -61,8 +64,9 @@ async function fixture(
       relayAuthor: relay.pubkey,
       scope: "https://test.example",
       media: () => undefined,
-      query: async (filters: readonly ReadFilter[]) =>
-        [
+      query: async (filters: readonly ReadFilter[]) => {
+        onQuery?.(filters);
+        return [
           metadata(relay, source, "Work", clock, [
             ["t", "stream"],
             ["t", "buzz.solo"],
@@ -79,7 +83,8 @@ async function fixture(
           ...published,
         ].filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
-        ),
+        );
+      },
       writer: {
         kinds: [9, 9000],
         sign: async (event) => signed(viewer, event),
@@ -119,6 +124,9 @@ async function fixture(
     },
     hold(value: Promise<void>) {
       hold = value;
+    },
+    watchQueries(value: (filters: readonly ReadFilter[]) => void) {
+      onQuery = value;
     },
     addLate() {
       members.get(destination)?.push(late.pubkey);
@@ -260,6 +268,35 @@ it("names the channel and how many members get access", async () => {
   );
 });
 
+it("counts and grants only members who don't already have access", async () => {
+  const f = await fixture(false, { shared: true });
+  f.addLate();
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  expect(dialog).toHaveTextContent("Share gives the 1 other member of #Team");
+  await userEvent.click(screen.getByRole("button", { name: "Share and send" }));
+  await waitFor(() =>
+    expect(f.published.filter((event) => event.kind === 9)).toHaveLength(1),
+  );
+  const grants = f.published.filter((event) => event.kind === 9000);
+  expect(grants).toHaveLength(1);
+  expect(grants[0]?.tags).toContainEqual(["p", f.late.pubkey]);
+});
+
+it("offers only link-only when the viewer can't share the chat", async () => {
+  const f = await fixture();
+  vi.spyOn(share, "canShareConversation").mockReturnValue(false);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("You can’t share access to this chat");
+  expect(screen.queryByRole("button", { name: /share and send/i })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Send link only" }));
+  await waitFor(() => expect(f.published).toHaveLength(1));
+  expect(f.published[0]?.kind).toBe(9);
+});
+
 it("sends a chat link into a DM without asking or granting access", async () => {
   const f = await fixture(false, { destinationType: "dm" });
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -309,6 +346,27 @@ it("stops later grants when the draft changes while the first grant is in flight
   });
   expect(f.publish).toHaveBeenCalledOnce();
   expect(f.published.map((event) => event.kind)).toEqual([9000]);
+});
+
+it("dispatches no grant when the draft changes while a grant is being prepared", async () => {
+  const f = await fixture();
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByRole("dialog", { name: "Share access to this chat?" });
+  let reads = 0;
+  f.watchQueries((filters) => {
+    // The first source roster read is Share's own check; the second is inside the grant.
+    if (
+      filters.some((filter) => filter["#d"]?.includes(source)) &&
+      ++reads === 2
+    )
+      writeView(f.session.scope, f.key, "Something else");
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Share and send" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The draft changed.",
+  );
+  expect(reads).toBe(2);
+  expect(f.publish).not.toHaveBeenCalled();
 });
 
 it.each([

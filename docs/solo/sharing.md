@@ -85,21 +85,22 @@ the existing fresh destination roster and membership grant helpers, including
 channel agents, before the composer queues its original message. It does not
 post a second card or retarget a thread reply. Link-only leaves access unchanged.
 The fresh roster is captured before asking, so the dialog names the channel and
-how many other members Share will grant, and Share grants exactly that audience.
+how many captured members don't yet have access, and Share grants only them.
 When every captured member already has access to the chat, including when no one
-else is in the channel, the message sends without asking.
+else is in the channel, the message sends without asking. If Share can't succeed
+(the viewer can't share the chat, or more than 100 members need access), the
+dialog explains why and offers only link-only.
 
 Consent covers the full chat history and future messages, not just a preview.
 An unsuccessful grant leaves the message unsent and keeps Retry in the dialog;
 that retry preserves its captured audience and existing operation receipts.
 Partial grants remain real access even if the user cancels or sends only the link.
-Leaving the composer cancels further grants and sending, not already dispatched
-writes. Outbox remains their recovery owner. A separate in-progress Share for the
+A changed draft stops before the next grant is dispatched. Leaving the composer
+cancels further grants and sending, not already dispatched writes. Outbox remains their recovery owner. A separate in-progress Share for the
 same chat must finish first. Channel audiences skip known-archived members, including
 ones archived before their grant starts on retry. Other grant failures remain
 visible; direct-person choices still reject archived identities. Sharing never
-unarchives anyone or removes them from the source channel. Existing audience
-bounds still apply.
+unarchives anyone or removes them from the source channel.
 
 This first slice covers staged cards in channels and their threads, not ordinary
 message links, DMs, Solo destinations, editing an already-sent message, or new-chat

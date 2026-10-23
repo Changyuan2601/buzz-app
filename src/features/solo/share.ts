@@ -76,6 +76,7 @@ export async function grantSoloChatAccess(
   includeAgents = false,
   soloParticipant = true,
   skipArchived = false,
+  beforeDispatch?: () => void,
 ) {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
@@ -95,6 +96,7 @@ export async function grantSoloChatAccess(
       session.outbox,
       soloParticipant,
       includeAgents,
+      beforeDispatch,
     );
     onConfirmed(key);
   }
