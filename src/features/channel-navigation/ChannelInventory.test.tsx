@@ -154,7 +154,7 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
-  const snapshot: RelaySnapshot = {
+  let snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
       ? { scope: session.scope, viewer: "a".repeat(64) }
@@ -162,9 +162,13 @@ function fixture(
     generation: 1,
     session,
   };
+  const connectionListeners = new Set<() => void>();
   const relay = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
+    },
     retry() {},
     disconnect() {},
     async clearCache() {},
@@ -205,8 +209,108 @@ function fixture(
       </ChannelNavigationProvider>
     </ToastProvider>
   );
-  return { view, navigator, snapshot, list, session, publish, drop };
+  return {
+    view,
+    navigator,
+    snapshot,
+    list,
+    session,
+    publish,
+    drop,
+    connection(next: RelaySnapshot) {
+      act(() => {
+        snapshot = next;
+        for (const listener of connectionListeners) listener();
+      });
+    },
+  };
 }
+
+it.each(["Retry", "Dismiss"] as const)(
+  "%s restores mute recovery focus after cached-to-live session handoff without remounting",
+  async (action) => {
+    const data: SidebarPreferences = {
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    };
+    let finish: (error?: Error) => void = () => {};
+    const write = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<readonly string[]>((resolve, reject) => {
+            finish = (error) => (error ? reject(error) : resolve(["alpha"]));
+          }),
+      )
+      .mockResolvedValue(["alpha"]);
+    const cached = createSidebarPreferencesStore({
+      read: async () => data,
+      available: true,
+    });
+    const live = createSidebarPreferencesStore({
+      read: async () => data,
+      available: true,
+      writeMute: write,
+    });
+    const user = userEvent.setup();
+    try {
+      await cached.queries.ensure();
+      await live.queries.ensure();
+      const h = fixture(cached.queries);
+      h.connection({ ...h.snapshot, status: "connecting", cached: true });
+      render(h.view("alpha"));
+      const row = await screen.findByRole("button", { name: "alpha" });
+      h.connection({
+        ...h.snapshot,
+        status: "ready",
+        session: { ...h.session, sidebarPreferences: live.queries },
+      });
+      expect(screen.getByRole("button", { name: "alpha" })).toBe(row);
+
+      fireEvent.keyDown(row, { key: "ContextMenu" });
+      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledExactlyOnceWith(
+          { channelId: "alpha", muted: true },
+          expect.any(AbortSignal),
+        ),
+      );
+      await act(async () => finish(new Error("offline")));
+      const notice = await screen.findByRole("dialog", {
+        name: "Couldn’t mute alpha",
+      });
+      expect(notice).toHaveTextContent("offline");
+      if (action === "Retry") {
+        fireEvent.keyDown(screen.getByRole("button", { name: "beta" }), {
+          key: "ContextMenu",
+        });
+        await screen.findByRole("menuitem", { name: "Mute" });
+      }
+      await user.click(within(notice).getByRole("button", { name: action }));
+      expect(row).toHaveFocus();
+      if (action === "Retry") {
+        await waitFor(() =>
+          expect(live.queries.snapshot().data?.muted).toEqual(["alpha"]),
+        );
+        expect(write).toHaveBeenCalledTimes(2);
+        expect(screen.queryByRole("menuitem", { name: "Mute" })).toBeNull();
+      } else {
+        expect(write).toHaveBeenCalledOnce();
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Couldn’t mute alpha" }),
+        ).toBeNull(),
+      );
+    } finally {
+      finish();
+      cached.dispose();
+      live.dispose();
+    }
+  },
+);
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();

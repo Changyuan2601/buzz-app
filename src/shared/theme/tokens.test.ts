@@ -17,7 +17,7 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 function resolvedPalette(
   mode: "light" | "dark",
   accent: Accent = DEFAULT_ACCENT,
-  contrastMode: "quiet" | "low" | "high" = "low",
+  contrastMode: "low" | "high" = "low",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -201,12 +201,12 @@ it.each(ACCENTS)(
   "%s message fill keeps text and send icons readable in both modes",
   (color) => {
     for (const mode of ["light", "dark"] as const)
-      for (const contrastMode of ["quiet", "low", "high"] as const) {
+      for (const contrastMode of ["low", "high"] as const) {
         const palette = resolvedPalette(mode, color, contrastMode);
         const where = `${color}/${mode}`;
         // Highlights come from the family's tint, never a mixed bubble color.
         expect(palette["--surface-message-highlight"], where).toBe(
-          palette["--affordance-accent"],
+          palette["--accent-3"],
         );
         for (const [text, fill] of [
           ["--text-row-selected-detail", "--surface-row-selected-detail"],
@@ -214,11 +214,15 @@ it.each(ACCENTS)(
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],
           ["--text-navigation-selected", "--surface-navigation-selected"],
+          ["--text-sidebar-selected", "--surface-sidebar-selected"],
+          ["--text-sidebar-hover", "--affordance-sidebar-hover"],
+          ["--text-on-accent", "--affordance-accent-prominent"],
           ["--text-control-selected", "--surface-control-selected"],
           ["--text-navigation-selected", "--bg-chrome-selected"],
           // Supported legacy/plugin markup must keep the same paired ink.
           ["--on-primary", "--primary"],
           ["--text-standard", "--surface-message"],
+          ["--text-message-link", "--surface-message"],
         ] as const)
           expect(
             contrast(palette[text], palette[fill]),
@@ -231,8 +235,8 @@ it.each(ACCENTS)(
 it("the default Citrus accent keeps its strong fill and paired black ink", () => {
   for (const mode of ["light", "dark"] as const) {
     const palette = resolvedPalette(mode);
-    expect(palette["--affordance-prominent"]).toBe("#beda36");
-    expect(palette["--text-on-prominent"]).toBe("#000000");
+    expect(palette["--affordance-accent-prominent"]).toBe("#beda36");
+    expect(palette["--text-on-accent"]).toBe("#000000");
   }
 });
 
@@ -258,31 +262,48 @@ it.each(["light", "dark"] as const)(
 );
 
 it.each(ACCENTS)(
-  "%s high contrast uses solid accent on messages and selected navigation",
+  "%s vibe changes bubbles while controls and sidebar states stay consistent",
   (accent) => {
     for (const mode of ["light", "dark"] as const) {
       const high = resolvedPalette(mode, accent, "high");
       const low = resolvedPalette(mode, accent, "low");
-      const quiet = resolvedPalette(mode, accent, "quiet");
-      expect(quiet["--surface-message-own"]).toBe(quiet["--bubble-neutral"]);
-      expect(quiet["--surface-control-selected"]).toBe(
-        quiet["--surface-panel"],
-      );
-      expect(quiet["--text-control-selected"]).toBe(quiet["--text-standard"]);
-      // Ghost buttons sit directly on panels; segmented indicators sit on inset tracks.
-      expect(quiet["--surface-navigation-selected"]).not.toBe(
-        quiet["--surface-panel"],
-      );
+      expect(high["--surface-message-own"]).toBe(high["--accent-9"]);
+      expect(high["--surface-message"]).toBe(high["--bubble-received"]);
+      expect(low["--surface-message"]).toBe(low["--bubble-received"]);
+      expect(low["--surface-message-own"]).toBe(low["--accent-4"]);
+      expect(high["--surface-sidebar-selected"]).toBe(high["--accent-9"]);
+      expect(high["--text-sidebar-selected"]).toBe(high["--accent-contrast"]);
+      const mono = resolvedPalette(mode, "mono");
       for (const role of [
-        "--surface-message-own",
-        "--surface-navigation-selected",
+        "--affordance-prominent",
+        "--affordance-prominent-hover",
+        "--affordance-prominent-pressed",
+        "--text-on-prominent",
         "--surface-control-selected",
+        "--text-control-selected",
+        "--surface-navigation-selected",
+        "--text-navigation-selected",
         "--bg-chrome-selected",
+        "--affordance-floating-hover",
+        "--affordance-floating-selected",
+        "--affordance-popover-selected",
+        "--affordance-panel-hover",
+        "--text-link",
+        "--affordance-link-hover",
+        "--text-accent",
+        "--border-accent",
+        "--affordance-accent",
       ]) {
-        expect(high[role]).toBe(high["--accent-9"]);
-        expect(low[role]).toBe(low["--accent-4"]);
-        expect(low[role]).not.toBe(high[role]);
+        expect(high[role], `${mode}/${role}`).toBe(mono[role]);
+        expect(low[role], `${mode}/${role}`).toBe(mono[role]);
       }
+      for (const role of [
+        "--surface-sidebar-selected",
+        "--text-sidebar-selected",
+        "--affordance-sidebar-hover",
+        "--affordance-accent-prominent",
+      ])
+        expect(high[role], role).toBe(low[role]);
     }
   },
 );
@@ -290,7 +311,7 @@ it.each(ACCENTS)(
 it.each(ACCENTS)(
   "%s mention chips stay readable and apart from every bubble",
   (color) => {
-    for (const level of ["quiet", "low", "high"] as const)
+    for (const level of ["low", "high"] as const)
       for (const mode of ["light", "dark"] as const) {
         const palette = resolvedPalette(mode, color, level);
         const where = `${color}/${level}/${mode}`;
@@ -317,15 +338,15 @@ it.each(ACCENTS)(
         // Ordinary mentions stay neutral at every level; a mention of you
         // takes the strong group (a fill in light, the mark as ink in dark).
         expect(palette["--affordance-mention"], where).toBe(
-          resolvedPalette(mode, color, "quiet")["--affordance-mention"],
+          resolvedPalette(mode, color, "low")["--affordance-mention"],
         );
         if (mode === "light")
           expect(palette["--affordance-mention-self"], where).toBe(
-            palette["--affordance-prominent"],
+            palette["--affordance-accent-prominent"],
           );
         else
           expect(palette["--text-mention-self"], where).toBe(
-            palette["--affordance-prominent-mark"],
+            palette["--accent-11"],
           );
       }
   },

@@ -55,6 +55,7 @@ declare global {
     fixtureNavigation?: Navigation;
     fixtureNotify?: (input: NotificationInput) => Promise<boolean>;
     fixturePageBroken?: boolean;
+    fixtureSidebarRecovery?: boolean;
     delayFixture?: { started: boolean; release?: () => void };
     stopFixtureDependency?: () => Promise<void>;
     startFixtureDependency?: () => void;
@@ -142,6 +143,39 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             primary: true,
             component: () => <h1>{title}</h1>,
           });
+        ctx.pages.register({
+          id: "sidebar",
+          title: "Sidebar playground",
+          primary: true,
+          component: () => <h1>Sidebar playground</h1>,
+          sidebar: ({ target, children }) => {
+            if (window.fixtureSidebarRecovery)
+              throw new Error("Fixture page render failure");
+            return (
+              <div className="shell-sidebar-default">
+                <aside
+                  aria-label="Fixture sidebar"
+                  className="flex h-full min-h-0 flex-col gap-3 bg-surface-panel p-3 text-standard"
+                >
+                  <p>
+                    Target:{" "}
+                    {target.kind === "page" ? target.pageId : target.kind}
+                  </p>
+                  <button type="button">Fixture sidebar action</button>
+                  {children}
+                </aside>
+              </div>
+            );
+          },
+        });
+        if (window.fixtureSidebarRecovery)
+          for (let index = 1; index <= 12; index += 1)
+            ctx.pages.register({
+              id: `recovery-${index}`,
+              title: `Recovery entry ${String(index).padStart(2, "0")}`,
+              primary: true,
+              component: () => <h1>Recovery destination</h1>,
+            });
       },
     },
   },

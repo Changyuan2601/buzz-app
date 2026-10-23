@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
@@ -230,7 +231,6 @@ function ReactionGlyph({
 
 function ReactionEmoji({
   reaction,
-  authorId,
   session,
   profiles,
   disabled,
@@ -243,7 +243,6 @@ function ReactionEmoji({
   onPreviewChange,
 }: {
   reaction: MessageReaction;
-  authorId: string;
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
@@ -257,26 +256,31 @@ function ReactionEmoji({
 }) {
   const [name, setName] = useState(reaction.content);
   const [previewTilt, setPreviewTilt] = useState("0deg");
+  const emojiAnchor = useRef<HTMLSpanElement>(null);
+  const authors = useMemo(
+    () => [...new Set(reaction.events.map((event) => event.authorId))],
+    [reaction.events],
+  );
   const reactorProfiles = useMemo(
-    () => selectProfiles(session.profiles, [authorId]),
-    [session.profiles, authorId],
+    () => selectProfiles(session.profiles, authors),
+    [session.profiles, authors],
   );
   const loadedReactors = useSyncExternalStore(
     reactorProfiles.subscribe,
     reactorProfiles.snapshot,
     reactorProfiles.snapshot,
   );
-  const own = authorId === session.viewer;
-  const mine = reaction.events.some(
-    (event) => event.authorId === session.viewer,
+  const mine = !!session.viewer && authors.includes(session.viewer);
+  const users = authors.map((authorId) =>
+    authorId === session.viewer
+      ? "You"
+      : (loadedReactors.get(authorId)?.name ??
+        profiles?.get(authorId)?.name ??
+        authorId.slice(0, 10)),
   );
-  const user = own
-    ? "You"
-    : (loadedReactors.get(authorId)?.name ??
-      profiles?.get(authorId)?.name ??
-      authorId.slice(0, 10));
+  const user = mine ? "You" : users.join(", ");
   const revealName = () => {
-    void session.profiles.ensure([authorId], "background").catch(() => {});
+    void session.profiles.ensure(authors, "background").catch(() => {});
     if (reaction.emoji) return;
     void import("./reaction-name").then(({ reactionName }) =>
       setName(reactionName(reaction.content)),
@@ -286,6 +290,8 @@ function ReactionEmoji({
     <span className={styles.reactionItem}>
       <PreviewCard
         side="top"
+        align="center"
+        anchor={emojiAnchor}
         open={previewOpen}
         delay={previewDelay}
         className={[
@@ -297,12 +303,12 @@ function ReactionEmoji({
           .join(" ")}
         onOpenChange={onPreviewChange}
         trigger={
-          <IconButton
-            variant="link"
-            size="sm"
+          <Button
+            variant="plain"
+            size="inline"
             data-reaction={reaction.content}
-            data-reaction-author={authorId}
             aria-label={`${reaction.content}: ${user}`}
+            aria-description={`${authors.length} ${authors.length === 1 ? "reaction" : "reactions"}: ${users.join(", ")}`}
             aria-pressed={mine}
             aria-disabled={unavailable}
             disabled={disabled}
@@ -316,16 +322,26 @@ function ReactionEmoji({
             onClick={(event) => {
               if (unavailable) return;
               const losesFocus =
-                own && event.currentTarget === document.activeElement;
+                mine &&
+                authors.length === 1 &&
+                event.currentTarget === document.activeElement;
               if (toggle(reaction.content, reaction.emoji) && losesFocus)
                 onFocusedRemoval?.();
             }}
-            icon={
-              <span className={styles.reactionGlyph} data-reaction-glyph>
+          >
+            <span className={styles.reactionLabel} data-reaction-label>
+              <span
+                ref={emojiAnchor}
+                className={styles.reactionGlyph}
+                data-reaction-glyph
+              >
                 <ReactionGlyph reaction={reaction} session={session} />
               </span>
-            }
-          />
+              <span className={styles.reactionCount} aria-hidden="true">
+                {authors.length}
+              </span>
+            </span>
+          </Button>
         }
       >
         <div className={styles.reactionPreviewContent}>
@@ -335,7 +351,9 @@ function ReactionEmoji({
           >
             <ReactionGlyph reaction={reaction} session={session} />
           </span>
-          <span className={styles.reactionPreviewNames}>{user}</span>
+          <span className={styles.reactionPreviewNames}>
+            {users.join(", ")}
+          </span>
           <span className={styles.reactionPreviewName}>{name}</span>
         </div>
       </PreviewCard>
@@ -369,12 +387,7 @@ export function MessageReactions(
   const select = (content: string) => {
     return action.toggle(content, catalogEmoji(catalog.entries, content));
   };
-  // Keep one visible reaction per person, even if old clients sent duplicates.
-  const reactions = row.reactions.flatMap((reaction) =>
-    [...new Set(reaction.events.map((event) => event.authorId))].map(
-      (authorId) => ({ reaction, authorId }),
-    ),
-  );
+  const reactions = row.reactions;
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
@@ -391,12 +404,8 @@ export function MessageReactions(
       }}
     >
       {active &&
-        reactions.map(({ reaction, authorId }, index) => {
-          const key = JSON.stringify([
-            reaction.content,
-            reaction.emoji?.url,
-            authorId,
-          ]);
+        reactions.map((reaction, index) => {
+          const key = JSON.stringify([reaction.content, reaction.emoji?.url]);
           const slideFrom =
             preview?.key === key ? preview.fromIndex : preview?.index;
           const previewSlide =
@@ -409,7 +418,6 @@ export function MessageReactions(
             <ReactionEmoji
               key={key}
               reaction={reaction}
-              authorId={authorId}
               session={session}
               profiles={props.profiles}
               disabled={props.disabled}

@@ -1,8 +1,8 @@
 import type { CSSProperties } from "react";
 import { ACCENTS } from "../design-system/tokens/brand";
 
-// One device-local accent for actions, links and selection.
-// App surfaces stay neutral; contrast controls messages and selected navigation.
+// Device-local color for messages, send and sidebar row states.
+// Shared controls stay neutral; contrast changes message bubbles.
 export { ACCENTS };
 export type Accent = (typeof ACCENTS)[number];
 export const DEFAULT_ACCENT: Accent = "citrus";
@@ -42,12 +42,12 @@ export function parseLegacyBubbleColor(value: unknown): Accent {
   );
 }
 
-export type Contrast = "quiet" | "low" | "high";
+export type Contrast = "low" | "high";
 export const CONTRAST_KEY = "buzz-contrast.v1";
 export const parseContrast = (value: unknown): Contrast =>
-  value === "quiet" || value === "high" ? value : "low";
+  value === "high" ? "high" : "low";
 
-// Accent swatches always show their family's strong fill, in either mode.
+// Send and accent swatches always show their family's strong fill, in either mode.
 export const accentButtonStyle = {
   "--affordance-prominent": "var(--affordance-accent-prominent)",
   "--affordance-prominent-hover": "var(--affordance-accent-prominent-hover)",

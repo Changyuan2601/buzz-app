@@ -118,7 +118,7 @@ forwarding an OS URL from that bundle to a different running copy is not support
 
 ```sh
 just desktop-bundle
-open "target/debug/bundle/macos/Buzz Foundation.app"
+open "target/debug/bundle/macos/Buzz.app"
 open "buzz://channel/general"
 ```
 

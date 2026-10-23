@@ -318,9 +318,23 @@
     height: 100%;
     max-height: none;
   }
+  /* Sectioned settings need a bounded workspace, even inside a large host. */
+  .buzz-dialog[data-contained][data-navigation][data-placement="center"] {
+    inset: var(--space-4) 0;
+    margin-block: auto;
+    width: min(72rem, calc(100% - 2 * var(--space-4)));
+    height: min(48rem, calc(100% - 2 * var(--space-4)));
+  }
+  @media (max-width: 30rem) {
+    .buzz-dialog[data-contained][data-navigation][data-placement="center"] {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+  }
   .buzz-dialog[data-navigation] > .buzz-dialog-header {
-    align-items: start;
-    padding: var(--dialog-padding);
+    align-items: center;
+    padding: var(--space-4) var(--dialog-padding);
     flex-shrink: 0;
     border-bottom: 1px solid var(--border-standard);
   }

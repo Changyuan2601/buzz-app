@@ -50,6 +50,23 @@ const tool = (
 export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
   tool(
+    "agent_types",
+    "List installed local agent types available for agent_create.",
+    {},
+  ),
+  tool(
+    "agent_create",
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
+    { type: str, name: str },
+    ["type", "name"],
+  ),
+  tool(
+    "agent_update",
+    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str },
+    ["agent"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -298,6 +315,37 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async agent_types({ client }) {
+    if (!client.agentTypes)
+      throw new Error("Agent creation is unavailable on this host");
+    return JSON.stringify(await client.agentTypes());
+  },
+  async agent_create({ client }, args) {
+    if (!client.createAgent)
+      throw new Error("Agent creation is unavailable on this host");
+    const type = text(args.type)?.trim();
+    const name = text(args.name)?.trim();
+    if (!type || !name) throw new Error("type and name are required");
+    return JSON.stringify(await client.createAgent({ type, name }));
+  },
+  async agent_update({ client }, args) {
+    if (!client.updateAgent)
+      throw new Error("Agent changes are unavailable on this host");
+    const agent = text(args.agent);
+    if (!agent) throw new Error("agent is required");
+    const name = text(args.name);
+    const type = text(args.type);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
+    return JSON.stringify(
+      await client.updateAgent({
+        agent,
+        ...(name && { name }),
+        ...(type && { type }),
+        ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
   async shared_sessions({ client, context }, args) {
     if (!context.channel) throw new Error("A current channel is required.");
     const allowed = new Set([

@@ -45,6 +45,11 @@ export type ComposerToolProps = Readonly<{
   replaceRecipients(
     recipients: readonly Readonly<{ pubkey: string; name: string }>[],
   ): boolean;
+  /** Automatic targeting only: reject when text outside selected mentions is nonempty.
+   * Older hosts may omit this command. A rejected edit must not trigger unrestricted replacement. */
+  replaceRecipientsIfEmpty?(
+    recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+  ): boolean;
   /** Atomically insert a host-owned inline resource at the caret. The host validates
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */

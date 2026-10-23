@@ -3,7 +3,7 @@ import {
   expectMessageActionsHidden,
   hoverMessage,
 } from "./message-actions.mjs";
-import { open } from "./timeline.mjs";
+import { open, end, wheel, settle } from "./timeline.mjs";
 import { generateSecretKey, finalizeEvent, getPublicKey } from "nostr-tools";
 
 test.use({
@@ -12,6 +12,44 @@ test.use({
   threadUnread: true,
   historyCounts: { alpha: 2, beta: 1 },
   developmentReact: true,
+});
+
+// Native focus and virtual-list scroll anchoring need the real conversation.
+test("removing a reaction from a tall message preserves the reading position", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "Reaction scroll target");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await expect(row).toBeVisible();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "React with 👍", exact: true }).click();
+  const reaction = row.locator('button[data-reaction="👍"]');
+  await expect(reaction).toHaveAttribute("aria-pressed", "true");
+  app.edit(
+    "primary",
+    "alpha",
+    event,
+    "This long message keeps its reaction below the visible start.\n\n".repeat(
+      60,
+    ),
+  );
+  for (let i = 0; i < 6; i++)
+    app.append("primary", "alpha", `Message after the reaction ${i}`);
+  await end(page);
+  await wheel(page, -120);
+  await reaction.scrollIntoViewIfNeeded();
+  await settle(page);
+  const history = page.getByRole("region", { name: "Channel message history" });
+  const before = await history.evaluate((el) => el.scrollTop);
+  expect(before).toBeGreaterThan(500);
+  await reaction.click();
+  await expect(reaction).toHaveCount(0);
+  await settle(page);
+  expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
 });
 
 // Browser-only boundary: real popup focus/geometry and existing tab navigation
@@ -170,13 +208,11 @@ test("message activity opens a grouped preview and the agent's profile without l
   });
   await expect(requestRow.locator('[data-reaction="✅"]')).toBeVisible();
   const eyes = requestRow.locator('[data-reaction="👀"]');
-  await expect(eyes).toHaveCount(2);
-  await expect(
-    eyes.and(page.locator(`[data-reaction-author="${getPublicKey(keys[0])}"]`)),
-  ).toHaveAccessibleName("👀: Agent 1");
-  await expect(
-    eyes.and(page.locator(`[data-reaction-author="${getPublicKey(human)}"]`)),
-  ).toHaveAccessibleName(`👀: ${getPublicKey(human).slice(0, 10)}`);
+  await expect(eyes).toHaveCount(1);
+  await expect(eyes).toContainText("2");
+  await expect(eyes).toHaveAccessibleName(
+    `👀: Agent 1, ${getPublicKey(human).slice(0, 10)}`,
+  );
   await expect(requestRow.locator('[data-reaction="💬"]')).toBeVisible();
   const typingTags = [
     ["h", "alpha"],

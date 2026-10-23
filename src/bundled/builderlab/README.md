@@ -23,8 +23,10 @@ the agent even while Buzz is closed. On desktop, Create agent and confirmed
 deletion start browser sign-in when needed, then continue the action. Both share
 an existing Settings sign-in attempt; a failed or canceled login leaves the
 action available for retry. Settings still provides sign-in and sign-out.
-Canceling an action's wait does not cancel a shared login; disabling the plugin
-or closing Buzz cancels it.
+While Create agent waits for the browser, its dialog offers Cancel sign-in, which
+cancels the shared login (as Settings' does) and leaves Create available for
+retry. Deletion's wait has no such control; disabling the plugin or closing Buzz
+also cancels it.
 Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
 Builderlab account. After sign-in, and again before each activation, the plugin
 checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this

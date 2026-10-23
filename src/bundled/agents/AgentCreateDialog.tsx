@@ -5,6 +5,9 @@ import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  NewAgent,
+  AgentCreationRequest,
+  AgentUpdateRequest,
 } from "../../features/agents/service";
 import { RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -13,11 +16,16 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { AgentCreateHeader } from "./AgentCreateHeader";
+import { MigrationPreview } from "./AgentSettingsHost";
 import styles from "./AgentCreate.module.css";
 import { useNamePrompt } from "./useNamePrompt";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+// A failed save's error sits below the whole form, often out of view.
+const reveal = (element: HTMLElement | null) => {
+  element?.scrollIntoView({ block: "nearest" });
+};
 
 /** Use each registered provider's icon in creation and library cards. */
 export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
@@ -39,20 +47,62 @@ export function AgentCreateDialog({
   community,
   onClose,
   onCreated,
+  request,
+  onCreate,
+  update,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
   community?: string | undefined;
   onClose(): void;
   onCreated(agent: Agent): void;
+  request?: AgentCreationRequest;
+  onCreate?(input: NewAgent): Promise<Agent>;
+  /** Edits `agent` instead, starting from its settings with the request's
+   * changes. */
+  update?: Readonly<{
+    agent: Agent;
+    request: AgentUpdateRequest;
+    onSave(input: NewAgent): Promise<void>;
+  }>;
 }) {
+  const edited = update?.agent;
   const [open, setOpen] = useState(true);
-  const [name, setName] = useState("");
-  const [picture, setPicture] = useState(() => randomAgentAvatar().url);
-  const [typeKey, setTypeKey] = useState(types[0]?.key ?? "");
+  const [name, setName] = useState(
+    update ? (update.request.name ?? update.agent.name) : (request?.name ?? ""),
+  );
+  const [picture, setPicture] = useState(() =>
+    update ? (update.agent.picture ?? "") : randomAgentAvatar().url,
+  );
+  const [typeKey, setTypeKey] = useState(
+    (update ? (update.request.type ?? update.agent.type) : request?.type) ??
+      types[0]?.key ??
+      "",
+  );
   const type = types.find((item) => item.key === typeKey) ?? types[0];
-  const [config, setConfig] = useState(() => startingConfig(type));
-  const [dirty, setDirty] = useState(false);
+  const migration = (item: RegisteredAgentType | undefined) => {
+    if (!edited || !item || item.key === edited.type) return undefined;
+    try {
+      return agents.previewRetype(edited.pubkey, item.key);
+    } catch {
+      return undefined;
+    }
+  };
+  /** The agent's settings in `item`, with the requested instructions. */
+  const seed = (item: RegisteredAgentType | undefined) => {
+    if (!update) return startingConfig(item);
+    const { agent, request } = update;
+    const config =
+      item?.key === agent.type
+        ? agent.config
+        : (migration(item)?.config ?? startingConfig(item));
+    return request.instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions: request.instructions }, config)
+      : config;
+  };
+  const [config, setConfig] = useState(() => seed(type));
+  const preview = migration(type);
+  const [dirty, setDirty] = useState(Boolean(update));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [avatarActive, setAvatarActive] = useState(false);
@@ -73,7 +123,7 @@ export function AgentCreateDialog({
   };
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
-    if (item && key !== type?.key) chooseModel(item, startingConfig(item));
+    if (item && key !== type?.key) chooseModel(item, seed(item));
   };
   const create = async () => {
     if (!type || pending) return;
@@ -83,14 +133,15 @@ export function AgentCreateDialog({
     }
     setPending(true);
     setError("");
+    const input = {
+      type: type.key,
+      name: name.trim(),
+      ...(picture ? { picture } : {}),
+      ...(config !== undefined ? { config } : {}),
+    };
     try {
-      const agent = await agents.create({
-        type: type.key,
-        name: name.trim(),
-        ...(picture ? { picture } : {}),
-        ...(config !== undefined ? { config } : {}),
-      });
-      onCreated(agent);
+      if (update) await update.onSave(input);
+      else onCreated(await (onCreate ? onCreate(input) : agents.create(input)));
     } catch (reason) {
       setError(message(reason));
       setPending(false);
@@ -108,7 +159,14 @@ export function AgentCreateDialog({
       onOpenChangeComplete={(next) => {
         if (!next) onClose();
       }}
-      title="Create agent"
+      title={edited ? `Edit ${edited.name}` : "Create agent"}
+      description={
+        update
+          ? `${update.request.requesterName} proposed these changes. Nothing changes until you save.`
+          : request
+            ? `${request.requesterName} requested this agent. Review its settings before creating it.`
+            : undefined
+      }
       size="wide"
       height="stable-tall"
       chromeSpacing="padded"
@@ -143,7 +201,7 @@ export function AgentCreateDialog({
               loading={pending}
               disabled={avatarBusy || !type || pending}
             >
-              Create agent
+              {update ? "Save changes" : "Create agent"}
             </Button>
           )}
         </>
@@ -153,7 +211,7 @@ export function AgentCreateDialog({
         id={form}
         className={styles.form}
         data-avatar-active={avatarActive || undefined}
-        aria-label="New agent"
+        aria-label={edited ? `Edit ${edited.name}` : "New agent"}
         onSubmit={(event) => {
           event.preventDefault();
           if (!avatarActive) void create();
@@ -178,7 +236,9 @@ export function AgentCreateDialog({
           nameError={
             namePrompt.attempts
               ? {
-                  message: "Add a name to create your agent",
+                  message: update
+                    ? "Name the agent"
+                    : "Add a name to create your agent",
                   attempt: namePrompt.attempts,
                 }
               : undefined
@@ -232,6 +292,14 @@ export function AgentCreateDialog({
               )}
             </SettingsGroup>
           </div>
+          {preview && type && (
+            <MigrationPreview
+              source={types.find((item) => item.key === edited?.type)}
+              target={type}
+              preview={preview}
+              discardDraft={false}
+            />
+          )}
           {Create ? (
             <Create
               key={type.key}
@@ -251,7 +319,12 @@ export function AgentCreateDialog({
           )}
         </div>
         {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
+          <p
+            key={error}
+            ref={reveal}
+            role="alert"
+            className="m-0 text-body-sm text-danger"
+          >
             {error}
           </p>
         )}

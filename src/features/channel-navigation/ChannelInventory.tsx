@@ -49,7 +49,6 @@ import {
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
-import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import type { UnreadDmPreview } from "../../bundled/channels/SidebarUnread";
 import {
@@ -130,7 +129,8 @@ export function ChannelInventory({
   useEffect(() => {
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
   }, [list.activityStatus]);
-  const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
+  const handoff = useChannelNavigation();
+  const mute = handoff?.session === queries ? handoff.mute : undefined;
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
@@ -198,7 +198,6 @@ export function ChannelInventory({
     () => new Set<string>(JSON.parse(workingIds)),
     [workingIds],
   );
-  const handoff = useChannelNavigation();
   const lifecycleDialog = handoff?.lifecycleDialog;
   const composingMessage =
     target.kind === "page" &&
@@ -689,7 +688,7 @@ export function ChannelInventory({
     const muteable =
       queries.sidebarPreferences.muteWritable && !!preferences.data;
     const readable = queries.unread.sync().capability === "frontier-sync";
-    if (muteable) {
+    if (muteable && mute) {
       const intent = mute.intents.get(channel.id);
       const muted = intent?.pending
         ? intent.muted
@@ -798,6 +797,15 @@ export function ChannelInventory({
     readAction.reset();
     closeMenu();
   }, [closeMenu, readAction.reset]);
+  const muteRecovery = handoff?.muteRecovery;
+  useLayoutEffect(() => {
+    if (!muteRecovery) return;
+    const callbacks = { focus: setRowFocus, closeMenu: closeRowMenu };
+    muteRecovery.current = callbacks;
+    return () => {
+      if (muteRecovery.current === callbacks) muteRecovery.current = undefined;
+    };
+  }, [muteRecovery, closeRowMenu]);
   const rowMenuClosed = useCallback((channelId: string) => {
     if (pendingCreate.current?.id === channelId) {
       setCreatingFor({ channel: pendingCreate.current });
@@ -869,6 +877,7 @@ export function ChannelInventory({
     muted: boolean,
     surface?: ChannelMenuSurface,
   ) => {
+    if (!mute) return;
     mute.change(channelId, name, muted);
     if (surface) {
       surface.close();
@@ -1345,36 +1354,6 @@ export function ChannelInventory({
             </div>
           ),
         )}
-        {[...mute.intents.values()]
-          .filter((intent) => !intent.pending)
-          .map((intent) => (
-            <ToastNotice
-              key={intent.channelId}
-              title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
-              description={intent.error ?? "Please try again."}
-              tone="warning"
-            >
-              <Button
-                type="button"
-                size="sm"
-                onClick={() =>
-                  changeMute(intent.channelId, intent.name, intent.muted)
-                }
-              >
-                Retry
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  mute.dismiss(intent.channelId);
-                  setRowFocus(intent.channelId);
-                }}
-              >
-                Dismiss
-              </Button>
-            </ToastNotice>
-          ))}
         {preferences.orderError && (
           <div className={styles.preferenceNotice} role="alert">
             <p>

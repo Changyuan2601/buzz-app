@@ -211,14 +211,13 @@ export function AppearanceSettings({
                   {
                     label: "Vibe level",
                     options: [
-                      { value: "quiet", label: "Snoozin’" },
-                      { value: "low", label: "Hummin’" },
+                      { value: "low", label: "Chillin’" },
                       { value: "high", label: "Buzzin’" },
                     ],
                   },
                 ]}
                 onValueChange={(value) => {
-                  if (value === "quiet" || value === "low" || value === "high")
+                  if (value === "low" || value === "high")
                     appearance.setContrast(value);
                 }}
               />

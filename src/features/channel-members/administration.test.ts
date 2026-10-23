@@ -171,6 +171,48 @@ it.each(["owner", "admin"])(
     );
   },
 );
+it.each(["admin", "guest"] as const)(
+  "confirms a requested member from %s when the relay stores bot for an owned agent",
+  async (expectedRole) => {
+    const h = harness("owner", expectedRole);
+    h.publish.mockImplementationOnce(async () => h.setRoles("owner", "bot"));
+    await h.owner.capability.run(id, {
+      ...change,
+      expectedRole,
+      role: "member",
+    });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.owner.capability.snapshot(id).authority.roles[target]).toBe("bot");
+    await h.owner.capability.run(id, {
+      ...change,
+      expectedRole: "bot",
+      role: "admin",
+    });
+    expect(h.publish).toHaveBeenCalledTimes(2);
+  },
+);
+it("confirms an uncertain requested member on refresh when the relay stores bot", async () => {
+  const h = harness("owner", "admin");
+  h.publish.mockImplementationOnce(async () => {
+    throw new Error("Connection lost");
+  });
+  const demote = { ...change, expectedRole: "admin", role: "member" } as const;
+  await h.owner.capability.run(id, demote);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+  h.setRoles("owner", "bot");
+  await h.owner.capability.refresh(id);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it.each(["admin", "guest"] as const)(
+  "never confirms a requested %s from a stored bot",
+  async (role) => {
+    const h = harness("owner", "member");
+    h.publish.mockImplementationOnce(async () => h.setRoles("owner", "bot"));
+    await h.owner.capability.run(id, { ...change, role });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+  },
+);
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {

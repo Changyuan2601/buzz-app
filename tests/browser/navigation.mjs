@@ -148,6 +148,18 @@ export async function settlePanelMotion(page) {
   );
 }
 
+// Dialogs enter with a short upward transform (overlays.css). Positions
+// compared across separate reads must wait for it, as for panels above: two
+// controls in one row can otherwise appear vertically misaligned.
+export async function settleDialogMotion(dialog) {
+  await expect(dialog).not.toHaveAttribute("data-starting-style");
+  await dialog.evaluate((element) =>
+    Promise.allSettled(
+      element.getAnimations().map((animation) => animation.finished),
+    ),
+  );
+}
+
 export async function openCommunityPicker(page) {
   await page.getByRole("button", { name: /^Community switcher:/ }).click();
   const picker = page.getByRole("dialog", {

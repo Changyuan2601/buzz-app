@@ -244,12 +244,14 @@ it("keeps reaction hover separate from message actions without losing keyboard a
     const rowRef = useRef<HTMLDivElement>(null);
     return (
       <div ref={rowRef} data-testid="message">
-        <span data-message-action-anchor>Message body</span>
-        <MessageActionBar rowRef={rowRef} copyText={() => "Message body"} />
-        <div data-message-reactions>
-          <button type="button">Existing reaction</button>
-          <button type="button">Add reaction</button>
+        <div data-message-action-anchor>
+          <span>Message body</span>
+          <div data-message-reactions>
+            <button type="button">Existing reaction</button>
+            <button type="button">Add reaction</button>
+          </div>
         </div>
+        <MessageActionBar rowRef={rowRef} copyText={() => "Message body"} />
         <div>
           <span data-message-reactions>
             <button type="button">First reaction</button>

@@ -164,6 +164,7 @@ export type ChannelTimelineProps = {
     attachment: Attachment,
     seconds: number,
     hasComments?: boolean,
+    initialAttachments?: readonly Attachment[],
   ): void;
 };
 

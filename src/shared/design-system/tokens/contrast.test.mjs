@@ -63,14 +63,14 @@ describe("semantic contrast contract", () => {
   it.each([
     [
       "light foreground",
-      "--blue-11: #0b5fa8;",
-      "--blue-11: #0d74ce;",
+      "--text-link: var(--text-standard);",
+      "--text-link: var(--neutral-7);",
       "on --affordance-selected",
     ],
     [
       "dark foreground",
-      "--blue-11: #83c4ff;",
-      "--blue-11: #70b8ff;",
+      "--text-link: var(--text-standard);",
+      "--text-link: var(--neutral-8);",
       "on --surface-panel",
     ],
     [
@@ -82,7 +82,7 @@ describe("semantic contrast contract", () => {
     [
       "dark surface",
       "--neutral-raised: #282828;",
-      "--neutral-raised: #595959;",
+      "--neutral-raised: #a4a4a4;",
       "on --surface-popover",
     ],
     [
@@ -93,14 +93,14 @@ describe("semantic contrast contract", () => {
     ],
     [
       "hover role",
-      "--affordance-link-hover: var(--blue-3);",
-      "--affordance-link-hover: var(--blue-8);",
+      "--affordance-link-hover: var(--affordance-subtle-hover);",
+      "--affordance-link-hover: var(--neutral-7);",
       "on --affordance-link-hover",
     ],
     [
       "hover color",
-      "--blue-3: #0d2847;",
-      "--blue-3: #595959;",
+      "--neutral-quiet-hover: #f1f1f2;",
+      "--neutral-quiet-hover: #737373;",
       "on --affordance-link-hover",
     ],
   ])(
@@ -129,10 +129,10 @@ describe("semantic contrast contract", () => {
       "magenta/neutral/light: unresolved accent pair",
     ],
     [
-      "faint insertion line",
-      "--magenta-11-light: #6c3149;",
-      "--magenta-11-light: #feedf3;",
-      "magenta/neutral/light: --border-accent",
+      "faint sidebar label",
+      "--magenta-12-light: #42242f;",
+      "--magenta-12-light: #feedf3;",
+      "magenta/neutral/light --text-sidebar-hover",
     ],
   ])(
     "rejects a non-default accent family's %s",
@@ -144,28 +144,55 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it.each(["--surface-base", "--surface-panel", "--surface-message"])(
+    "rejects text selection that disappears on %s",
+    (surface) => {
+      const result = check(
+        tokens.replaceAll(
+          "--surface-text-selection: var(--neutral-12);",
+          `--surface-text-selection: var(${surface});`,
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(`--surface-text-selection on ${surface}`);
+    },
+  );
+
+  it("rejects selection that disappears on a solid own bubble", () => {
+    const result = check(
+      tokens.replaceAll(
+        "--surface-text-selection-own: var(--accent-ink);",
+        "--surface-text-selection-own: var(--surface-message-own);",
+      ),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      "--surface-text-selection-own on --surface-message-own",
+    );
+  });
+
   it("checks shared color groups at every applicable level", () => {
-    const from = "--text-row-subtle: var(--accent-11);";
+    const from = "--text-sidebar-hover: var(--accent-12);";
     expect(tokens).toContain(from);
     const result = check(
-      tokens.replaceAll(from, "--text-row-subtle: var(--accent-6);"),
+      tokens.replaceAll(from, "--text-sidebar-hover: var(--accent-6);"),
     );
     expect(result.status, result.output).toBe(1);
     for (const level of ["touch", "high"])
       expect(result.output).toContain(
-        `citrus/${level}/light --text-row-subtle`,
+        `citrus/${level}/light --text-sidebar-hover`,
       );
   });
 
   it("rejects a gray role left on an accent ground", () => {
-    const from = "--text-row-subtle: var(--accent-11);";
+    const from = "--text-sidebar-selected: var(--accent-contrast);";
     expect(tokens).toContain(from);
     const result = check(
-      tokens.replaceAll(from, "--text-row-subtle: var(--neutral-10);"),
+      tokens.replaceAll(from, "--text-sidebar-selected: var(--neutral-10);"),
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
-      "citrus/touch/light: --text-row-subtle #525252 is gray on --affordance-selected",
+      "citrus/touch/light: --text-sidebar-selected #525252 is gray on --surface-sidebar-selected",
     );
   });
 
@@ -176,22 +203,21 @@ describe("semantic contrast contract", () => {
   ])(
     "distinguishes black ink %s from gray on the brand-filled selection",
     (ink, gray) => {
-      const from =
-        "--text-row-selected-subtle: var(--text-navigation-selected);";
+      const from = "--text-sidebar-selected: var(--accent-contrast);";
       expect(tokens).toContain(from);
       const result = check(
-        tokens.replaceAll(from, `--text-row-selected-subtle: ${ink};`),
+        tokens.replaceAll(from, `--text-sidebar-selected: ${ink};`),
       );
       if (gray) {
         expect(result.status, result.output).toBe(1);
         expect(result.output).toContain(
-          `citrus/high/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
+          `citrus/high/light: --text-sidebar-selected ${ink} is gray on --surface-sidebar-selected`,
         );
       } else {
         // A literal ink applies to every family, so saturated accents may fail
         // contrast; only the gray verdict is under test here.
         expect(result.output).not.toContain(
-          "is gray on --affordance-navigation-selected",
+          "is gray on --surface-sidebar-selected",
         );
       }
     },
@@ -211,7 +237,7 @@ describe("semantic contrast contract", () => {
   it("checks other text roles without a link exception", () => {
     const result = check(
       tokens.replaceAll(
-        "--text-accent: var(--accent-11);",
+        "--text-accent: var(--text-standard);",
         "--text-accent: var(--blue-9);",
       ),
     );
@@ -343,8 +369,8 @@ describe("semantic contrast contract", () => {
       const [from, to] =
         role === "accent"
           ? [
-              "--affordance-accent: var(--accent-3);",
-              "--affordance-accent: var(--accent-9);",
+              "--affordance-accent: var(--affordance-subtle);",
+              "--affordance-accent: var(--neutral-7);",
             ]
           : [
               `--affordance-${role}: var(--${role === "warning" ? "amber" : "green"}-3);`,

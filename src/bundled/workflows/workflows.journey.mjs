@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { watchPageErrors } from "../../../tests/browser/page-errors.mjs";
+import { settleDialogMotion } from "../../../tests/browser/navigation.mjs";
 
 let server;
 let url;
@@ -274,6 +275,8 @@ test("existing workflow enablement uses the inspector switch beside header actio
   const enable = dialog
     .getByRole("complementary", { name: "Workflow settings" })
     .getByRole("switch", { name: "Enabled in configuration", exact: true });
+  // Compare header controls in the settled frame, not during entrance motion.
+  await settleDialogMotion(dialog);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     const runBox = await run.boundingBox();

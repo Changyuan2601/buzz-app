@@ -7,6 +7,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentUpdateInput,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -368,6 +369,15 @@ export type RunnerHost = {
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
+  agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
+  createAgent(
+    agent: Agent,
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent(
+    agent: Agent,
+    input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2077,6 +2087,8 @@ export class AgentRunners {
     agent: Agent,
     signal: AbortSignal,
   ): AgentHandle {
+    // Taken now, as a type change replaces the controller.
+    const lifetime = runner.controller.signal;
     return Object.freeze({
       pubkey: agent.pubkey,
       name: agent.name,
@@ -2118,6 +2130,17 @@ export class AgentRunners {
         );
         this.host.remembered(agent.pubkey, slug, body);
         return event;
+      },
+      agentTypes: () => this.host.agentTypes(),
+      // Drafts outlive the run's handover deadline, as a turn still working may
+      // submit one, but not the agent or its type.
+      createAgent: async (input: Readonly<{ type: string; name: string }>) => {
+        lifetime.throwIfAborted();
+        return this.host.createAgent(agent, input);
+      },
+      updateAgent: async (input: AgentUpdateInput) => {
+        lifetime.throwIfAborted();
+        return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),

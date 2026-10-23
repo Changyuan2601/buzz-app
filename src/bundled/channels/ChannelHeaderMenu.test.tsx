@@ -51,6 +51,7 @@ function harness(value: ChannelSummary | undefined = channel) {
       subscribe: () => () => {},
     },
     channelLifecycle: { available: true, load: lifecycleLoad, run },
+    sidebarPreferences: { setMute: vi.fn(async () => []) },
   } as unknown as RelaySession;
   const snapshot = { session, status: "ready", scope: "menu-test" };
   const relay = {

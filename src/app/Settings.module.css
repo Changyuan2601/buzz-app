@@ -606,25 +606,19 @@
   font-family: var(--font-mono);
 }
 
+/* The full-page layout also includes navigation. The modal pane does not;
+   keep its catalog and details side by side until the narrow takeover below. */
 @container (max-width: 64rem) {
-  .layout[data-plugin-detail] {
+  :where(.root) .layout[data-plugin-detail] {
     grid-template-columns: var(--size-navigator) minmax(0, 1fr);
   }
 
-  .layout[data-plugin-detail] > .pluginAside {
+  :where(.root) .layout[data-plugin-detail] > .pluginAside {
     position: absolute;
     z-index: 1;
     inset-block: 0;
     inset-inline-end: 0;
     width: min(22rem, calc(100% - var(--size-navigator)));
-  }
-
-  .navigationPane .layout[data-plugin-detail] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .navigationPane .layout[data-plugin-detail] > .pluginAside {
-    width: min(22rem, 100%);
   }
 }
 
