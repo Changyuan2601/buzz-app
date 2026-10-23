@@ -501,10 +501,10 @@ test("session changes discard the previous sidebar targets and manual unread sti
       .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
-    const panel = page.getByRole("complementary", {
-      name: "Sidebar",
-      exact: true,
-    });
+    // The Messages view, below the sidebar's navigation, owns its loading state.
+    const panel = page
+      .getByRole("complementary", { name: "Sidebar", exact: true })
+      .locator('[data-messages-nav="buzz.messages-nav/messages"] > div');
     await expect(panel).toHaveAttribute("aria-busy", "true");
     // A new session reveals its roster after the bounded startup wait even if
     // preferences are still blocked. Scrolling the empty loading view is a no-op.
