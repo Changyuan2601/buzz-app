@@ -210,7 +210,12 @@ export function BrowserHostView({
       try {
         const next = await platform.status(sessionId);
         if (!disposed && session.current === sessionId) {
-          if (next.url) resumeUrl.current = next.url;
+          // A lost auth/consent page must bootstrap again from the app, never replay its one-use ticket.
+          if (
+            next.url &&
+            (!builderlab || new URL(next.url).origin === new URL(url).origin)
+          )
+            resumeUrl.current = next.url;
           sessions.rememberTitle(titleKey, next.title);
           setStatus(next);
         }
