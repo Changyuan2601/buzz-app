@@ -20,7 +20,7 @@ const toml = (value: unknown): string => {
 /** An authenticated host transport. Only pre-tool evaluation is exposed over
  * MCP: a model calling this tool cannot forge a successful tool completion. */
 export class CodexHooks {
-  private server: HostMcpServer | undefined;
+  private readonly servers = new Set<HostMcpServer>();
   private closed = false;
   constructor(
     private readonly serve: NonNullable<Host["serveMcp"]>,
@@ -29,6 +29,45 @@ export class CodexHooks {
     ) => Promise<string | undefined>,
   ) {}
   async open() {
+    const input = Object.fromEntries(
+      ["session_id", "turn_id", "tool_use_id", "tool_name", "tool_input"].map(
+        (key) => [key, `\${${key}}`],
+      ),
+    );
+    return [
+      "-c",
+      `hooks.PreToolUse=${toml([{ matcher: ".*", hooks: [{ type: "mcp_tool", server: SERVER, tool: TOOL, input, timeout: 30 }] }])}`,
+    ];
+  }
+  /** Trust only the exact bridge definition returned by this running binary.
+   * Keep it in thread config; never write the user's persisted hook trust. */
+  async config(rpc: AppServer, cwd: string) {
+    if (this.closed) throw new Error("The Codex hook bridge was closed");
+    const listed = await rpc.request<{
+      data: {
+        hooks: {
+          key: string;
+          currentHash: string;
+          source: string;
+          server?: string;
+          tool?: string;
+          eventName: string;
+        }[];
+      }[];
+    }>("hooks/list", { cwds: [cwd] });
+    const own = listed.data
+      .flatMap((row) => row.hooks)
+      .filter(
+        (hook) =>
+          hook.server === SERVER &&
+          hook.tool === TOOL &&
+          hook.eventName === "preToolUse" &&
+          hook.source === "sessionFlags",
+      );
+    if (own.length !== 1)
+      throw new Error(
+        "This Codex version did not register Buzz's pre-tool hook",
+      );
     const server = await this.serve(async (value) => {
       const wire = value as {
         id?: string | number;
@@ -83,51 +122,16 @@ export class CodexHooks {
       await server.close();
       throw new Error("The Codex hook bridge was closed");
     }
-    this.server = server;
-    const input = Object.fromEntries(
-      ["session_id", "turn_id", "tool_use_id", "tool_name", "tool_input"].map(
-        (key) => [key, `\${${key}}`],
-      ),
-    );
-    return [
-      "-c",
-      `hooks.PreToolUse=${toml([{ matcher: ".*", hooks: [{ type: "mcp_tool", server: SERVER, tool: TOOL, input, timeout: 30 }] }])}`,
-    ];
-  }
-  /** Trust only the exact bridge definition returned by this running binary.
-   * Keep it in thread config; never write the user's persisted hook trust. */
-  async config(rpc: AppServer, cwd: string) {
-    if (!this.server) throw new Error("The Codex hook bridge is unavailable");
-    const listed = await rpc.request<{
-      data: {
-        hooks: {
-          key: string;
-          currentHash: string;
-          source: string;
-          server?: string;
-          tool?: string;
-          eventName: string;
-        }[];
-      }[];
-    }>("hooks/list", { cwds: [cwd] });
-    const own = listed.data
-      .flatMap((row) => row.hooks)
-      .filter(
-        (hook) =>
-          hook.server === SERVER &&
-          hook.tool === TOOL &&
-          hook.eventName === "preToolUse" &&
-          hook.source === "sessionFlags",
-      );
-    if (own.length !== 1)
-      throw new Error(
-        "This Codex version did not register Buzz's pre-tool hook",
-      );
+    this.servers.add(server);
+    const close = async () => {
+      if (this.servers.delete(server)) await server.close();
+    };
     return {
+      close,
       server: {
-        url: this.server.url,
+        url: server.url,
         http_headers: Object.fromEntries(
-          this.server.headers.map(({ name, value }) => [name, value]),
+          server.headers.map(({ name, value }) => [name, value]),
         ),
         enabled: true,
         required: true,
@@ -142,9 +146,9 @@ export class CodexHooks {
   }
   async close() {
     this.closed = true;
-    const server = this.server;
-    this.server = undefined;
-    await server?.close();
+    const servers = [...this.servers];
+    this.servers.clear();
+    await Promise.all(servers.map((server) => server.close()));
   }
 }
 export const HOOK_SERVER = SERVER;
