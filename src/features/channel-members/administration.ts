@@ -7,7 +7,6 @@ import { PublishRejected } from "../relay/outbox";
 import { lifecycleChannelId } from "../relay/channel-lifecycle-protocol";
 import {
   authorizeMemberChange,
-  canManageMember,
   canRemoveMember,
   memberAdministrationTemplate,
   memberAuthority,
@@ -31,6 +30,7 @@ const empty: MemberAdministrationState = Object.freeze({
   authority: Object.freeze({
     roles: Object.freeze({}),
     canManage: false,
+    canRemove: false,
     canRemoveOwnedAgent: false,
   }),
 });
@@ -190,7 +190,7 @@ export function createMemberAdministration({
             if (
               change.role === "remove" &&
               owner === undefined &&
-              !canManageMember(authority, viewer, change.pubkey) &&
+              !canRemoveMember(authority, viewer, change.pubkey) &&
               canRemoveMember(authority, viewer, change.pubkey, viewer)
             ) {
               // Verify provenance once per attempt, never from display/inventory hints.

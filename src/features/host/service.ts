@@ -8,6 +8,24 @@ export type HostRequest = Readonly<{
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /** Native deadline in milliseconds, 1–180000. Defaults to 30000. */
+  timeoutMs?: number;
+}>;
+/** A multipart POST of one local `.tar.gz` file in the home directory, with
+ * text fields beside it, to an origin the plugin declares. */
+export type HostUpload = Readonly<{
+  url: string;
+  headers?: Readonly<Record<string, string>>;
+  fields?: Readonly<Record<string, string>>;
+  file: Readonly<{
+    /** The form field it is sent as. */
+    field: string;
+    /** An absolute path. */
+    path: string;
+    /** The file name the form gives it. */
+    name: string;
+    contentType: string;
+  }>;
 }>;
 export type HostResponse = Readonly<{
   status: number;
@@ -85,6 +103,8 @@ export interface Host {
    * `host.files`. Desktop only. */
   resolveDirectory?: (path: string) => Promise<string>;
   request(input: HostRequest): Promise<HostResponse>;
+  /** Uploads a file as `request` sends a body. Desktop only. */
+  upload?: (input: HostUpload) => Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
     signal?: AbortSignal,
@@ -366,7 +386,18 @@ export class HostService extends Service implements Host {
       id: owner.id,
       revision: owner.revision,
       request: input,
-    });
+    }).catch(rethrow);
+  }
+
+  async upload(input: HostUpload): Promise<HostResponse> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Host uploads require an installed desktop plugin");
+    return invoke<HostResponse>("plugin_host_upload", {
+      id: owner.id,
+      revision: owner.revision,
+      upload: input,
+    }).catch(rethrow);
   }
 }
 

@@ -43,6 +43,8 @@ export type Settled = Readonly<{
   text?: string;
   /** The message gave up before any turn took it in. */
   undelivered?: true;
+  /** The owner's interrupt ended the turn. */
+  stopped?: true;
 }>;
 
 export type ActivityReceipt = Readonly<{
@@ -495,9 +497,10 @@ export class GooseSession {
   private closed = false;
   /** The work the owner stopped, while goose ends it: the messages it had
    * taken, and their activity. What goose wrote meanwhile is not posted, and
-   * messages sent since wait for a turn of their own. */
+   * messages sent since wait for a turn of their own. `ended` is set once
+   * the cancel ended the turn, not when the turn finished on its own. */
   private stopped:
-    | { waiters: Waiter[]; receipts: Set<ActivityReceipt> }
+    | { waiters: Waiter[]; receipts: Set<ActivityReceipt>; ended?: true }
     | undefined;
   private idlers: (() => void)[] = [];
 
@@ -684,11 +687,15 @@ export class GooseSession {
         try {
           await this.select(model);
           // The owner stopped it while its provider switch was going.
-          if (this.stopped) continue;
+          if (this.stopped) {
+            this.cancelEnded();
+            continue;
+          }
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],
           })) as { stopReason?: string };
+          if (stopReason === "cancelled") this.cancelEnded();
           if (stopReason === "refusal")
             this.lastError = "goose refused the request";
         } catch (error) {
@@ -779,7 +786,12 @@ export class GooseSession {
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
       ...(text ? { text } : {}),
+      ...(!error && this.stopped?.ended ? { stopped: true } : {}),
     });
+  }
+  /** The owner's cancel ended the turn, if it was stopping it. */
+  private cancelEnded() {
+    if (this.stopped) this.stopped.ended = true;
   }
   /** Settles the work the owner stopped, leaving messages sent since. */
   private endStopped() {
@@ -803,7 +815,12 @@ export class GooseSession {
     this.pending = this.waiters.length;
     for (const resolve of stopped.waiters)
       resolve(
-        resolve === owner && error ? { ok: false, error } : { ok: !error },
+        resolve === owner && error
+          ? { ok: false, error }
+          : {
+              ok: !error,
+              ...(!error && stopped.ended ? { stopped: true } : {}),
+            },
       );
   }
   private settle(settled: Settled) {
@@ -816,7 +833,11 @@ export class GooseSession {
     const owner = this.owner ?? this.waiters.at(-1);
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))
-      resolve(resolve === owner ? settled : { ok: settled.ok });
+      resolve(
+        resolve === owner
+          ? settled
+          : { ok: settled.ok, ...(settled.stopped ? { stopped: true } : {}) },
+      );
     this.wake();
   }
   private quiet() {

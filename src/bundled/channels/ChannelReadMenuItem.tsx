@@ -56,7 +56,7 @@ export function ChannelReadMenuItem({
           <EnvelopeIcon size={14} />
         )}
       </MenuIcon>
-      {hasUnread ? "Mark as Read" : "Mark as Unread"}
+      {hasUnread ? "Mark as read" : "Mark as unread"}
     </MenuItem>
   );
 }

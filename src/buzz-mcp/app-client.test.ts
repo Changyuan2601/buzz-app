@@ -89,3 +89,23 @@ it("binds current audience decisions to the connected community and fences turn 
     client.authorizeAudience?.(destination, [source]),
   ).rejects.toThrow();
 });
+
+it("refuses creation after the calling turn ends and surfaces native failures", async () => {
+  const createAgent = vi.fn(async () => {
+    throw new Error("Native creation failed");
+  });
+  const controller = new AbortController();
+  const client = appClient({ createAgent } as unknown as AgentHandle, {
+    read: vi.fn(),
+    signal: controller.signal,
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  await expect(
+    client.createAgent?.({ type: "codex/codex", name: "Child" }),
+  ).rejects.toThrow("Native creation failed");
+  controller.abort(new Error("Turn ended"));
+  await expect(
+    client.createAgent?.({ type: "codex/codex", name: "Child" }),
+  ).rejects.toThrow("Turn ended");
+  expect(createAgent).toHaveBeenCalledOnce();
+});

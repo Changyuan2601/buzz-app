@@ -34,12 +34,12 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 }
 .input::selection,
 .input ::selection {
-  background-color: var(--affordance-accent);
-  color: var(--text-accent);
+  background-color: var(--surface-text-selection);
+  color: var(--text-on-selection);
 }
 .input:focus .token[data-editor-selected] {
-  background-color: var(--affordance-accent);
-  color: var(--text-accent);
+  background-color: var(--surface-text-selection);
+  color: var(--text-on-selection);
 }
 .input:focus .token[data-editor-selected] * {
   background-color: transparent;

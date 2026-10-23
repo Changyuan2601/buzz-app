@@ -461,7 +461,9 @@ it("edits instructions below the identity card without a separate editing step",
   );
 });
 
-it("shows a failed create's error, stays open, and lets it be tried again", async () => {
+it("shows a failed create's error in view, stays open, and lets it be tried again", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
   let attempts = 0;
   const { agents, onCreated, onClose, dialog, user } = setup(
     [echo],
@@ -473,9 +475,11 @@ it("shows a failed create's error, stays open, and lets it be tried again", asyn
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(createButton());
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Credential store refused",
-  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Credential store refused");
+  // Below a long form, the error would otherwise be out of sight.
+  expect(scrollIntoView.mock.contexts).toEqual([alert]);
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   expect(screen.getByRole("dialog", { name: "Create agent" })).toBeVisible();
   expect(createButton()).toBeEnabled();
   expect(within(dialog).getByLabelText("Name")).toBeEnabled();
@@ -490,6 +494,7 @@ it("shows a failed create's error, stays open, and lets it be tried again", asyn
 });
 
 it("clears a shown error when the name changes", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
   const { dialog, user } = setup([echo], async () => {
     throw new Error("Nope");
   });

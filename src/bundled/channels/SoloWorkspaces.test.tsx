@@ -146,7 +146,7 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+    await screen.findByRole("menuitem", { name: "Edit…" }),
   ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
@@ -391,14 +391,14 @@ it("marks a chat read from its row menu and reports a failed save", async () => 
     });
     await user.click(actions);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+      await screen.findByRole("menuitem", { name: "Mark as read" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Read state unavailable",
     );
     await user.click(actions);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+      await screen.findByRole("menuitem", { name: "Mark as read" }),
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(screen.queryByRole("menu")).toBeNull();

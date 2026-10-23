@@ -56,6 +56,22 @@ function decode(view: ReturnType<typeof render>) {
   };
 }
 
+it("keeps compact geometry through decoding and unavailable sources", async () => {
+  const attachment = { url: source, kind: "image" as const, dimensions };
+  const view = render(
+    <AttachmentImage attachment={attachment} source={source} compact />,
+  );
+  const square = { width: "100%", height: "0px", paddingBottom: "100%" };
+  expect(view.getByRole("link")).toHaveStyle(square);
+  await decode(view).release();
+  expect(view.getByRole("link")).toHaveStyle(square);
+  view.rerender(
+    <AttachmentImage attachment={attachment} source={undefined} compact />,
+  );
+  expect(view.getByRole("status")).toHaveTextContent("Image unavailable");
+  expect(view.getByRole("status")).toHaveStyle(square);
+});
+
 for (const metadata of [undefined, { width: 700, height: 900 }]) {
   it(`retains learned geometry across remount with ${metadata ? "wrong" : "missing"} metadata, but still decodes pixels`, async () => {
     const owner = session();

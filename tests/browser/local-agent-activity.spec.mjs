@@ -265,12 +265,17 @@ test("Stop in a message's activity ends its local work quietly", async ({
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([event.id]);
-  // Stopped work is neither finished nor failed: its activity just goes, and a
-  // toast confirms the stop.
+  // Stopped work is neither finished nor failed: its live activity goes, a
+  // toast confirms the stop, and the message keeps a note that it stopped.
   await expect(activity).toHaveCount(0);
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  const note = row.getByText("Local tester · Stopped", { exact: true });
+  await expect(note).toBeVisible();
+  await row.screenshot({
+    path: testInfo.outputPath("local-activity-stopped.png"),
+  });
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);
@@ -327,6 +332,19 @@ test("Stop in a thread summary's activity stops its work", async ({
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  // With no replies there is no thread summary left; the note stays instead,
+  // following the outgoing bubble's edge like its other metadata.
+  const note = row.locator("[data-activity-stopped]");
+  await expect(note).toContainText("Local tester · Stopped");
+  const [bubble, noted] = await Promise.all([
+    row.locator("[data-bubble]").first().boundingBox(),
+    note.boundingBox(),
+  ]);
+  // Hugging its text at the bubble's end, not stretched across the row.
+  expect(noted.x).toBeGreaterThan(bubble.x);
+  expect(
+    Math.abs(noted.x + noted.width - (bubble.x + bubble.width)),
+  ).toBeLessThan(1);
 });
 
 // Real host composition: one summary combines replies and exact-message work.

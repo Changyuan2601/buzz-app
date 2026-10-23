@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -15,10 +16,12 @@ import { StrictMode } from "react";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 import { matchesEvent } from "../features/relay/projection";
-import type { ReadFilter } from "../features/relay/events";
+import type { ReadFilter, RelayEvent } from "../features/relay/events";
+import { metadata, roster } from "../features/relay/testing";
 import type { ComposerInputElement } from "../features/messages/composer-dom";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import * as communityApi from "../features/communities/api";
+import { sidebarFixtureState } from "./sidebar-plugin.fixture";
 
 composerDOMFixture();
 
@@ -38,6 +41,14 @@ vi.mock("../bundled", async () => {
       {
         manifest: { id: "buzz.repos", name: "Repositories", apiVersion: 1 },
         module: await import("../bundled/repos"),
+      },
+      {
+        manifest: {
+          id: "test.sidebar",
+          name: "Sidebar fixture",
+          apiVersion: 1,
+        },
+        module: await import("./sidebar-plugin.fixture"),
       },
       {
         manifest: { id: "buzz.profiles", name: "Profiles", apiVersion: 1 },
@@ -61,6 +72,11 @@ vi.mock("../bundled", async () => {
 const key = new Uint8Array(32).fill(6),
   viewer = getPublicKey(key),
   origin = "https://community.example";
+const channelId = "11111111-1111-4111-8111-111111111111";
+const channelEvents = [
+  metadata({ secret: key, pubkey: viewer }, channelId, "Planning"),
+  roster({ secret: key, pubkey: viewer }, channelId, [viewer]),
+];
 const profile = finalizeEvent(
   {
     kind: 0,
@@ -88,10 +104,18 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   localStorage.clear();
+  sidebarFixtureState.broken = true;
+  sidebarFixtureState.onTarget = undefined;
   window.history.replaceState(null, "", "/");
 });
 
-async function setup(connectionError = false) {
+async function setup(
+  connectionError = false,
+  muteWrite?: (intent: {
+    channelId: string;
+    muted: boolean;
+  }) => Promise<Response>,
+) {
   // jsdom has no media queries; responsive shell geometry is covered in browsers.
   vi.stubGlobal("matchMedia", (media: string) => ({
     media,
@@ -116,6 +140,8 @@ async function setup(connectionError = false) {
       selected: origin,
     }),
   );
+  const events: RelayEvent[] = [profile, recipient];
+  if (muteWrite) events.push(...channelEvents);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
@@ -128,12 +154,23 @@ async function setup(connectionError = false) {
           relayUrl: origin,
           writeKinds: [9],
           directMessages: true,
+          sidebarPreferences: !!muteWrite,
+          sidebarMuteWrites: !!muteWrite,
         });
       }
+      if (url.endsWith("/sidebar-preferences"))
+        return Response.json({
+          sections: [],
+          assignments: {},
+          starred: [],
+          muted: [],
+        });
+      if (url.endsWith("/sidebar-mute") && muteWrite)
+        return muteWrite(JSON.parse(String(options?.body)));
       if (url.endsWith("/query")) {
         const filters = JSON.parse(String(options?.body)) as ReadFilter[];
         return Response.json(
-          [profile, recipient].filter((event) =>
+          events.filter((event) =>
             filters.some((filter) => matchesEvent(event, filter)),
           ),
         );
@@ -157,6 +194,356 @@ async function setup(connectionError = false) {
   return user;
 }
 
+async function openSidebarPage(pageId: string, params?: string) {
+  await act(async () => {
+    await services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "test.sidebar",
+      pageId,
+      ...(params === undefined ? {} : { route: { version: 1, params } }),
+    });
+  });
+}
+
+it("updates an owned page sidebar target without remounting its healthy draft", async () => {
+  await setup();
+  await openSidebarPage("main", "first");
+  expect(await screen.findByText("Beacon page content")).toBeVisible();
+  expect(
+    screen.getByRole("complementary", { name: "Beacon sidebar" }),
+  ).toHaveTextContent("main:first");
+  const sidebarDraft = screen.getByRole("textbox", { name: "Sidebar draft" });
+  fireEvent.change(sidebarDraft, { target: { value: "keep this draft" } });
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Beacon sidebar" }),
+    ).getByRole("navigation", { name: "Pages" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
+
+  await openSidebarPage("main", "second");
+  expect(
+    await within(
+      screen.getByRole("complementary", { name: "Beacon sidebar" }),
+    ).findByText("main:second"),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toHaveValue(
+    "keep this draft",
+  );
+  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
+    sidebarDraft,
+  );
+});
+
+it("retains an owned page sidebar and its draft through Settings sections and Close", async () => {
+  const user = await setup();
+  await openSidebarPage("main", "first");
+  const sidebarDraft = await screen.findByRole("textbox", {
+    name: "Sidebar draft",
+  });
+  fireEvent.change(sidebarDraft, { target: { value: "keep this draft" } });
+
+  await act(async () => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  expect(sidebarDraft).toBeInTheDocument();
+  expect(sidebarDraft).toHaveValue("keep this draft");
+  await user.click(
+    within(settings).getByRole("button", { name: "Notifications" }),
+  );
+  await within(settings).findByRole("heading", { name: "Notifications" });
+  expect(sidebarDraft).toBeInTheDocument();
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
+    sidebarDraft,
+  );
+  expect(sidebarDraft).toHaveValue("keep this draft");
+});
+
+it("isolates a sidebar failure and recovers it on target change before restoring the default sidebar", async () => {
+  await setup();
+  await openSidebarPage("main", "first");
+  await screen.findByRole("textbox", { name: "Sidebar draft" });
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await openSidebarPage("main", "broken-sidebar");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This page’s sidebar is unavailable.",
+    );
+    expect(screen.getByText("Beacon page content")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+
+    await openSidebarPage("main", "recovered");
+    expect(
+      await screen.findByRole("complementary", { name: "Beacon sidebar" }),
+    ).toHaveTextContent("main:recovered");
+
+    await openSidebarPage("plain");
+    expect(await screen.findByText("Plain page content")).toBeVisible();
+    expect(
+      screen.getByRole("complementary", { name: "Sidebar" }),
+    ).toBeVisible();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it("recovers a failed sidebar registration after disabling and re-enabling its plugin", async () => {
+  await setup();
+  await openSidebarPage("plain");
+  await screen.findByText("Plain page content");
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await openSidebarPage("broken");
+    expect(await screen.findByText("Broken Beacon page content")).toBeVisible();
+    const fallback = screen.getByRole("complementary", {
+      name: "Broken Beacon sidebar",
+    });
+    expect(fallback).toContainElement(within(fallback).getByRole("alert"));
+    expect(
+      within(fallback).getByRole("navigation", { name: "Pages" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
+
+    await act(async () => {
+      await services?.plugins.change("disable", "test.sidebar");
+    });
+    sidebarFixtureState.broken = false;
+    await act(async () => {
+      await services?.plugins.change("enable", "test.sidebar");
+    });
+    expect(
+      await screen.findByRole("complementary", {
+        name: "Recovered Beacon sidebar",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("Broken Beacon page content")).toBeVisible();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it.each([
+  { when: "before leaving", action: "Dismiss", from: "Messages" },
+  { when: "while away", action: "Retry", from: "Messages" },
+  { when: "while away", action: "Retry", from: "the contributed page" },
+  { when: "while away", action: "Dismiss", from: "the contributed page" },
+] as const)(
+  "keeps mute recovery when saving rejects $when, then $action from $from",
+  async ({ when, action, from }) => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const write = vi
+      .fn()
+      .mockReturnValueOnce(pending)
+      .mockResolvedValue(
+        Response.json({
+          version: 1,
+          channels: { [channelId]: { muted: true, updatedAt: 1 } },
+        }),
+      );
+    const user = await setup(false, write);
+    try {
+      const sidebar = await screen.findByRole("complementary", {
+        name: "Sidebar",
+      });
+      const row = await within(sidebar).findByRole("button", {
+        name: "Planning",
+      });
+      fireEvent.keyDown(row, { key: "ContextMenu" });
+      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledExactlyOnceWith({
+          channelId,
+          muted: true,
+        }),
+      );
+      const fail = async () => {
+        await act(async () => {
+          release(Response.json({ error: "relay offline" }, { status: 503 }));
+        });
+      };
+      if (when === "before leaving") {
+        await fail();
+        await screen.findByRole("dialog", { name: "Couldn’t mute Planning" });
+      }
+      await openSidebarPage("main", "mute-recovery");
+      const contributed = await screen.findByRole("complementary", {
+        name: "Beacon sidebar",
+      });
+      expect(row).not.toBeInTheDocument();
+      if (from === "the contributed page") {
+        // jsdom lacks the native focus fallback after the focused row unmounts.
+        await user.click(
+          within(contributed).getByRole("textbox", { name: "Sidebar draft" }),
+        );
+      }
+      if (when === "while away") await fail();
+      if (when === "before leaving") {
+        expect(
+          screen.getByRole("dialog", { name: "Couldn’t mute Planning" }),
+        ).toHaveTextContent("Relay request failed (503)");
+      }
+      const returnToMessages = async () => {
+        await act(async () => {
+          await services?.navigation.open({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.channels",
+            pageId: "channels",
+          });
+        });
+        const sidebar = await screen.findByRole("complementary", {
+          name: "Sidebar",
+        });
+        return within(sidebar).findByRole("button", { name: "Planning" });
+      };
+      const returnedRow =
+        from === "Messages" ? await returnToMessages() : undefined;
+      const notice = await screen.findByRole("dialog", {
+        name: "Couldn’t mute Planning",
+      });
+      expect(notice).toHaveTextContent("Relay request failed (503)");
+      expect(
+        within(notice).getByRole("button", { name: "Retry" }),
+      ).toBeVisible();
+      if (action === "Dismiss") {
+        await user.click(
+          within(notice).getByRole("button", { name: "Dismiss" }),
+        );
+        expect(write).toHaveBeenCalledOnce();
+      } else {
+        await user.click(within(notice).getByRole("button", { name: "Retry" }));
+        await waitFor(() =>
+          expect(
+            services?.relay.snapshot().session.sidebarPreferences.snapshot()
+              .data?.muted,
+          ).toEqual([channelId]),
+        );
+        expect(write).toHaveBeenCalledTimes(2);
+        expect(write).toHaveBeenLastCalledWith({ channelId, muted: true });
+      }
+      if (returnedRow) expect(returnedRow).toHaveFocus();
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Couldn’t mute Planning" }),
+        ).toBeNull(),
+      );
+      if (from === "the contributed page") {
+        expect(
+          screen.getByRole("complementary", { name: "Beacon sidebar" }),
+        ).toBeVisible();
+        expect(screen.getByText("Beacon page content")).toBeVisible();
+        await returnToMessages();
+        expect(
+          screen.queryByRole("dialog", { name: "Couldn’t mute Planning" }),
+        ).toBeNull();
+      }
+    } finally {
+      release(Response.json({ error: "relay offline" }, { status: 503 }));
+    }
+  },
+);
+
+it.each([
+  {
+    name: "rejected route parameters",
+    params: 42,
+    scope: undefined,
+    reason: "unavailable",
+  },
+  {
+    name: "a foreign viewer",
+    params: "foreign-viewer",
+    scope: { viewer: recipient.pubkey, communityOrigin: origin },
+    reason: "denied",
+  },
+  {
+    name: "an unjoined community",
+    params: "unjoined-community",
+    scope: { viewer, communityOrigin: "https://other.example" },
+    reason: "denied",
+  },
+])("withholds a page sidebar for $name", async ({ params, scope, reason }) => {
+  await setup();
+  const current = services;
+  if (!current) throw new Error("Missing services");
+  const delivered = vi.fn();
+  sidebarFixtureState.onTarget = delivered;
+  await act(async () => {
+    expect(
+      await current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params },
+        ...(scope !== undefined ? { scope } : {}),
+      }),
+    ).toMatchObject({ status: "failed", reason });
+  });
+  expect(
+    await screen.findByRole("heading", {
+      name: "This destination couldn’t open",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Beacon page content")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("complementary", { name: "Beacon sidebar" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+  expect(delivered).not.toHaveBeenCalled();
+});
+
+it("delivers a page sidebar target only after selecting its personal scope", async () => {
+  await setup();
+  const current = services;
+  if (!current) throw new Error("Missing services");
+  const observed: {
+    selected: string | null;
+    relayScope: string | undefined;
+  }[] = [];
+  sidebarFixtureState.onTarget = () => {
+    observed.push({
+      selected: current.communities.snapshot().selected,
+      relayScope: current.relay.snapshot().scope,
+    });
+  };
+  await act(async () => {
+    expect(
+      await current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "personal-space" },
+        scope: null,
+      }),
+    ).toMatchObject({ status: "opened" });
+  });
+  expect(await screen.findByText("Beacon page content")).toBeVisible();
+  expect(observed.length).toBeGreaterThan(0);
+  for (const observation of observed) {
+    expect(observation.selected).toBeNull();
+    expect(observation.relayScope).toBeUndefined();
+  }
+});
+
 it("opens profile settings from the account menu header", async () => {
   const user = await setup();
   await user.click(screen.getByRole("button", { name: "Your profile" }));
@@ -176,8 +563,54 @@ it("opens profile settings from the account menu header", async () => {
   expect(
     await within(settings).findByRole("textbox", { name: "Display name" }),
   ).toHaveValue("Community name");
-  // Dismiss/reopen belongs to the unsaved-edits journey below; cached loading
-  // is covered with a held refresh in ProfileSettings.test.tsx.
+});
+
+it("reopens profile settings from the same session cache while refreshing", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing services");
+  const current = services;
+  const openProfile = () =>
+    act(async () => {
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "profile",
+      });
+    });
+  await openProfile();
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await within(settings).findByRole("textbox", { name: "Display name" });
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  let release = () => {};
+  const read = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inspect = communityApi.inspectProfile;
+  const refresh = vi
+    .spyOn(communityApi, "inspectProfile")
+    .mockImplementation(async (...args) => {
+      await read;
+      return inspect(...args);
+    });
+  try {
+    await openProfile();
+    expect(refresh).toHaveBeenCalledWith(
+      origin,
+      current.relay.snapshot().session,
+    );
+    const reopened = screen.getByRole("dialog", { name: "Settings" });
+    expect(
+      within(reopened).getByRole("textbox", { name: "Display name" }),
+    ).toHaveValue("Community name");
+    expect(within(reopened).queryByText(/Loading your profile/)).toBeNull();
+  } finally {
+    await act(async () => release());
+  }
 });
 
 it("opens Plugins from the account menu and switches back to profile settings", async () => {

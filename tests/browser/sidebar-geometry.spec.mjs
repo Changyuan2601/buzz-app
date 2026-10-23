@@ -109,9 +109,7 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   app.presence("away");
   const avatar = row.locator(".buzz-avatar-status");
   await expect(avatar).toHaveAttribute("data-status", "away");
-  await page
-    .getByRole("button", { name: "Channel members", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Access", exact: true }).click();
   await page
     .getByRole("button", { name: /^Open profile for Alice Fixture/ })
     .click();

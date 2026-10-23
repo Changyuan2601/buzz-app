@@ -671,8 +671,40 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
     agent: self,
     conversation: CONVERSATION,
   });
-  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  await expect(settled(turn)).resolves.toEqual({ ok: true, stopped: true });
   expect(published).toEqual([]);
+});
+
+it("settles a run that finishes despite the owner's stop as done, not stopped", async () => {
+  const answered = deferred<unknown>();
+  const { deliver, settled } = setup({
+    wait: () => answered.promise,
+    abort: () => {
+      answered.resolve({ status: "done", answer: 5, text: "" });
+      return {};
+    },
+  });
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const turn = deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    { interruptible },
+  );
+  await turn.run;
+  await interruptible.mock.calls[0]?.[0]();
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+});
+
+it("settles a removed agent's aborted run as done, not stopped", async () => {
+  const answered = deferred<unknown>();
+  const { runtime, host, deliver, settled } = setup({
+    wait: () => answered.promise,
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await vi.waitFor(() => expect(host.requests("wait")).toHaveLength(1));
+  runtime.sync([]);
+  answered.resolve({ status: "unanswered", reason: "aborted" });
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
 });
 
 it("interrupts a run an earlier app left from its thread's session controls", async () => {

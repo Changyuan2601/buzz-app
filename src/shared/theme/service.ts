@@ -87,7 +87,7 @@ export function createAppearance(
     }
     root.dataset.colorMode = state.mode;
     root.dataset.accent = state.accent;
-    // Keep the existing low-accent scope; old vibe preferences are ignored.
+    // Preserve the existing soft-bubble selector for Chillin’.
     root.dataset.colorLevel =
       state.contrast === "low" ? "touch" : state.contrast;
     if (transitionGuard) {

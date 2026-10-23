@@ -27,7 +27,7 @@ export type DialogProps = {
   children?: ReactNode;
   /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
   navigation?: { label: string; content: ReactNode };
-  /** Fill a positioned host frame; null waits for its callback ref on cold opens. */
+  /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
   container?: HTMLElement | null;
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */

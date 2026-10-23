@@ -16,6 +16,15 @@ test("settings share a centered, bounded column and keep controls contained acro
 }, info) => {
   await page.goto(app.origin);
   await openSettings(page);
+  // A desktop Settings surface stays bounded instead of filling the workspace.
+  await expect
+    .poll(() =>
+      settingsDialog(page).evaluate((root) => {
+        const { width, height } = root.getBoundingClientRect();
+        return { width, height };
+      }),
+    )
+    .toEqual({ width: 1152, height: 768 });
   await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.

@@ -176,7 +176,13 @@ function fixture() {
       <ToastProvider>
         <ChannelsPage
           relay={relay}
-          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          panels={{
+            ...contribution,
+            register() {},
+            resolve: () => undefined,
+            requestOpen: () => false,
+            handleOpenRequests: () => () => {},
+          }}
           navigation={navigation}
         />
       </ToastProvider>
@@ -196,11 +202,10 @@ function fixture() {
 }
 async function openConversion() {
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Share" });
+  const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
-  const share = await screen.findByRole("dialog", { name: "Share chat" });
   await user.click(
-    within(share).getByRole("button", { name: "Convert to channel" }),
+    await screen.findByRole("menuitem", { name: "Convert to channel" }),
   );
   const dialog = await screen.findByRole("dialog", {
     name: "Convert to channel",
@@ -220,7 +225,7 @@ it("Messages conversion survives signed type replacement, announces completion a
       await t.confirmed;
     });
     expect(
-      screen.getByRole("button", { name: "Channel members", hidden: true }),
+      screen.getByRole("button", { name: "Access", hidden: true }),
     ).toBeInTheDocument();
     expect(
       t.session.channels.list().channels.find((channel) => channel.id === id)
@@ -244,7 +249,7 @@ it("Messages conversion survives signed type replacement, announces completion a
   expect(t.sign).toHaveBeenCalledOnce();
   expect(t.publish).toHaveBeenCalledOnce();
 });
-it("Messages conversion Cancel restores Share without publishing", async () => {
+it("Messages conversion Cancel restores chat actions without publishing", async () => {
   const t = fixture();
   const { user, dialog, trigger } = await openConversion();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));

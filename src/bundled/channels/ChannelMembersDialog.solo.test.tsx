@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import {
   keypair,
@@ -34,24 +34,72 @@ import {
   saveShareHistory,
   shareHistoryKey,
 } from "../../features/solo/share-history";
-import {
-  ChatAccessIndicator,
-  ChatSharedMark,
-  SoloShare,
-  soloSharedMarkId,
-} from "./SoloShare";
+import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
+import { ChannelMembersDialog } from "./ChannelMembersDialog";
+import { useRef, useState, useSyncExternalStore } from "react";
+import type { RelaySession } from "../../features/relay/session";
 import { SoloWorkspaces } from "./SoloWorkspaces";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
 
+/** The Solo header entry point: the people icon opens the shared access dialog. */
+function SoloShare({
+  session,
+  channel,
+  signal,
+  onClose,
+}: {
+  session: RelaySession;
+  channel: { id: string };
+  signal?: AbortSignal;
+  onClose?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
+  return (
+    <>
+      <button ref={trigger} type="button" onClick={() => setOpen(true)}>
+        Access
+      </button>
+      <ChatSharedMark
+        session={session}
+        channel={list.channels.find((item) => item.id === channel.id)}
+      />
+      {open && (
+        <ChannelMembersDialog
+          session={session}
+          channelId={channel.id}
+          signal={signal}
+          trigger={trigger}
+          close={() => {
+            setOpen(false);
+            onClose?.();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 const source = "11111111-1111-4111-8111-111111111111";
 const destination = "22222222-2222-4222-8222-222222222222";
 const owners: ReturnType<typeof createRelaySession>[] = [];
+// jsdom lacks scrollIntoView; the search highlight keeps its row in view.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
 });
@@ -168,6 +216,15 @@ function fixture(direct = false) {
       members.set(id, [...new Set([...(members.get(id) ?? []), key])]);
       clock++;
     }
+    if (event.kind === 9001) {
+      const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      const key = event.tags.find(([name]) => name === "p")?.[1] ?? "";
+      members.set(
+        id,
+        (members.get(id) ?? []).filter((member) => member !== key),
+      );
+      clock++;
+    }
   });
   const detailsSign = vi.fn(
     async (event: import("nostr-tools").EventTemplate) => signed(viewer, event),
@@ -240,6 +297,10 @@ function fixture(direct = false) {
       },
       channelDetails: {
         sign: detailsSign,
+        publish,
+      },
+      memberAdministration: {
+        sign: async (event) => signed(viewer, event),
         publish,
       },
       writer: {
@@ -341,13 +402,7 @@ function fixture(direct = false) {
       owner.session.channels.ensureList();
       await waitFor(() => expect(channel()?.channelType).toBe("solo"));
     },
-    mount(
-      props: {
-        signal?: AbortSignal;
-        onClose?: () => void;
-        onConvert?: (trigger: HTMLElement | null) => void;
-      } = {},
-    ) {
+    mount(props: { signal?: AbortSignal; onClose?: () => void } = {}) {
       const initial = channel();
       if (!initial) throw new Error("Chat not loaded");
       return render(
@@ -357,61 +412,57 @@ function fixture(direct = false) {
   };
 }
 
+const search = (dialog: HTMLElement) =>
+  within(dialog).getByRole("searchbox", { name: "Search people and channels" });
 async function chooseDestination(
   user: ReturnType<typeof userEvent.setup>,
   dialog: HTMLElement,
 ) {
+  await user.clear(search(dialog));
+  await user.type(search(dialog), "Plan");
   await user.click(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-  );
-  await user.click(await screen.findByRole("option", { name: "Planning" }));
-}
-async function choosePerson(
-  user: ReturnType<typeof userEvent.setup>,
-  dialog: HTMLElement,
-  name: string,
-) {
-  const input = within(dialog).getByRole("combobox", {
-    name: "People or channel",
-  });
-  await user.clear(input);
-  await user.type(input, name);
-  await user.click(
-    await screen.findByRole("option", { name: new RegExp(name) }),
+    await within(dialog).findByRole("button", { name: "Select #Planning" }),
   );
 }
+const waitForAccess = (dialog: HTMLElement) =>
+  waitFor(() =>
+    expect(
+      within(dialog).queryByRole("status", { name: "Loading members" }),
+    ).toBeNull(),
+  );
 
-it("preserves the people query on popup dismissal, reopens and selects the exact key", async () => {
+it("adds a person at once under the chat's share rule, by Add or Enter", async () => {
   const t = fixture();
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const input = within(dialog).getByRole("combobox", {
-    name: "People or channel",
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  await waitForAccess(dialog);
+  await user.type(search(dialog), "Aria");
+  const results = await within(dialog).findByRole("region", {
+    name: "Not in this chat",
   });
-  await user.type(input, "Aria");
-  await screen.findByRole("option", { name: /Aria/ });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-  expect(dialog).toBeVisible();
-  expect(input).toHaveValue("Aria");
-  await user.keyboard("{ArrowDown}");
-  await screen.findByRole("option", { name: /Aria/ });
+  await within(results).findByRole("button", { name: /^Add Aria/ });
+  expect(results).not.toHaveTextContent(formatPublicKey(t.aria.pubkey) ?? "");
   await user.keyboard("{Enter}");
-  const selected = within(dialog).getByRole("region", {
-    name: "Selected people",
-  });
-  expect(selected).toHaveTextContent("Aria");
-  expect(selected).not.toHaveTextContent(formatPublicKey(t.aria.pubkey) ?? "");
-  expect(input).toHaveValue("");
-  await user.click(
-    within(selected).getByRole("button", { name: "Remove Aria" }),
+  await waitFor(() =>
+    expect(t.published.map((event) => event.kind)).toEqual([9000]),
   );
+  expect(t.published[0]?.tags).toContainEqual(["p", t.aria.pubkey]);
+  expect(await within(dialog).findByText("Aria is in the chat.")).toBeVisible();
+  await user.clear(search(dialog));
   expect(
-    within(dialog).queryByRole("region", { name: "Selected people" }),
-  ).toBeNull();
+    await within(dialog).findByRole("region", { name: "People" }),
+  ).toHaveTextContent("Aria");
+  await user.type(search(dialog), "Dev");
+  await user.click(
+    await within(dialog).findByRole("button", { name: /^Add Dev/ }),
+  );
+  await waitFor(() => expect(t.members.get(source)).toContain(t.dev.pubkey));
+  // People are added; nothing waits for a footer Share.
+  expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
+  expect(soloShareAttempt(t.session, source)).toBeUndefined();
 });
 
 it("Copy alone neither saves selections nor grants access", async () => {
@@ -419,8 +470,8 @@ it("Copy alone neither saves selections nor grants access", async () => {
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   const clipboard = vi
     .spyOn(navigator.clipboard, "writeText")
     .mockResolvedValue();
@@ -442,15 +493,12 @@ it("Copy alone neither saves selections nor grants access", async () => {
   expect(within(dialog).queryByRole("alert")).toBeNull();
   expect(t.publish).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
-  await user.click(screen.getByRole("button", { name: "Share" }));
+  await user.click(screen.getByRole("button", { name: "Access" }));
   expect(
-    within(screen.getByRole("dialog", { name: "Share chat" })).getByRole(
-      "combobox",
-      { name: "People or channel" },
-    ),
+    search(screen.getByRole("dialog", { name: "Chat access" })),
   ).toHaveValue("");
   expect(
-    within(screen.getByRole("dialog", { name: "Share chat" })).getByRole(
+    within(screen.getByRole("dialog", { name: "Chat access" })).getByRole(
       "button",
       { name: "Copy link" },
     ),
@@ -465,8 +513,8 @@ it("shares a frozen channel snapshot to confirmed destination members, reports o
   t.failGrant(true);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
@@ -488,33 +536,30 @@ it("shares a frozen channel snapshot to confirmed destination members, reports o
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
 });
 
-it("keeps exact selected chat recipients over close/reopen after posting fails", async () => {
+it("keeps the selected channel over close/reopen after posting fails", async () => {
   const t = fixture();
   await t.ready();
+  t.addDestination(t.aria.pubkey);
   const user = userEvent.setup();
   const view = t.mount();
   t.failLink(true);
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
-  await user.type(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-    "Aria",
-  );
-  await user.click(await screen.findByRole("option", { name: /Aria/ }));
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Post refused",
   );
   expect(t.members.get(source)).toContain(t.aria.pubkey);
-  expect(t.members.get(destination)).not.toContain(t.aria.pubkey);
   expect(t.published.map((item) => item.kind)).toEqual([9000]);
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   view.unmount();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const reopened = screen.getByRole("dialog", { name: "Share chat" });
-  expect(reopened).toHaveTextContent("Aria");
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const reopened = screen.getByRole("dialog", { name: "Chat access" });
+  expect(
+    within(reopened).getByRole("region", { name: "Selected channel" }),
+  ).toHaveTextContent("#Planning");
   t.failLink(false);
   await user.click(
     within(reopened).getByRole("button", { name: "Retry share" }),
@@ -529,8 +574,8 @@ it("shows Start over only for recovery and keeps the footer actions stable while
   t.addDestination(t.aria.pubkey);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   const footer = dialog.querySelector("footer");
   if (!footer) throw new Error("Share footer missing");
@@ -556,9 +601,6 @@ it("shows Start over only for recovery and keeps the footer actions stable while
     expect(
       within(dialog).queryByRole("button", { name: "Start over" }),
     ).toBeNull();
-    expect(
-      within(dialog).getByRole("button", { name: "Convert to channel" }),
-    ).toBeDisabled();
     expect(
       within(dialog).getByRole("button", { name: "Share" }),
     ).toHaveAttribute("aria-busy", "true");
@@ -613,8 +655,8 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
   const initial = t.channel();
   if (!initial) throw new Error("Chat not loaded");
   const first = render(<SoloShare session={t.session} channel={initial} />);
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -641,8 +683,8 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
     // Remount while the first attempt awaits the host; the shared attempt stays locked.
     first.unmount();
     const otherView = t.mount();
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    const other = screen.getByRole("dialog", { name: "Share chat" });
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    const other = screen.getByRole("dialog", { name: "Chat access" });
     await user.click(
       within(other).getByRole("button", { name: "Retry share" }),
     );
@@ -678,9 +720,9 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
     // Closing the settled dialog is separate from deliberately starting over.
     await user.click(within(other).getByRole("button", { name: "Close" }));
     await user.click(
-      within(otherView.container).getByRole("button", { name: "Share" }),
+      within(otherView.container).getByRole("button", { name: "Access" }),
     );
-    const fresh = screen.getByRole("dialog", { name: "Share chat" });
+    const fresh = screen.getByRole("dialog", { name: "Chat access" });
     expect(within(fresh).getByRole("button", { name: "Done" })).toBeEnabled();
     await chooseDestination(user, fresh);
     expect(within(fresh).getByRole("button", { name: "Share" })).toBeEnabled();
@@ -699,8 +741,8 @@ it("does not let a stale dialog resume a replacement attempt", async () => {
     chatPeople: [],
   });
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   expect(
     within(dialog).getByRole("button", { name: "Retry share" }),
   ).toBeEnabled();
@@ -737,8 +779,8 @@ it.each(["abort", "unmount"] as const)(
         onClose={closed}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    const dialog = screen.getByRole("dialog", { name: "Share chat" });
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    const dialog = screen.getByRole("dialog", { name: "Chat access" });
     await chooseDestination(user, dialog);
     let resolve!: () => void;
     let reject!: (reason: Error) => void;
@@ -786,8 +828,8 @@ it("shows the submitted channel audience after members leave or join, including 
   t.failLink(true);
   const user = userEvent.setup();
   const view = t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  let dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  let dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   await within(dialog).findByText(/Link posting is not confirmed/);
@@ -802,8 +844,8 @@ it("shows the submitted channel audience after members leave or join, including 
     if (reopen) {
       view.unmount();
       t.mount();
-      await user.click(screen.getByRole("button", { name: "Share" }));
-      dialog = screen.getByRole("dialog", { name: "Share chat" });
+      await user.click(screen.getByRole("button", { name: "Access" }));
+      dialog = screen.getByRole("dialog", { name: "Chat access" });
     }
     const selected = within(dialog).getByRole("region", {
       name: "Selected channel",
@@ -832,8 +874,8 @@ it("freezes an oversized channel audience across Retry until Start over chooses 
     t.addDestination(i.toString(16).padStart(64, "0"));
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -865,17 +907,14 @@ it("freezes an oversized channel audience across Retry until Start over chooses 
   await user.click(within(dialog).getByRole("button", { name: "Start over" }));
   expect(soloShareAttempt(t.session, source)).toBeUndefined();
   expect(within(dialog).queryByRole("alert")).toBeNull();
-  expect(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-  ).toBeEnabled();
-  await user.type(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-    "Aria",
+  expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
+  await user.type(search(dialog), "Aria");
+  await user.click(
+    await within(dialog).findByRole("button", { name: /^Add Aria/ }),
   );
-  await user.click(await screen.findByRole("option", { name: /Aria/ }));
-  await user.click(within(dialog).getByRole("button", { name: "Share" }));
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]);
+  await waitFor(() =>
+    expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]),
+  );
   expect(t.published.map((event) => event.kind)).toEqual([9000]);
 });
 
@@ -886,8 +925,8 @@ it("starting over preserves access and lets Outbox finish the exact link before 
   t.failLink(true);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -910,9 +949,7 @@ it("starting over preserves access and lets Outbox finish the exact link before 
       .find((item) => item.event.id === saved?.messageId),
   ).toEqual(receipt);
   expect(t.publish).toHaveBeenCalledTimes(writes);
-  expect(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-  ).toHaveValue("");
+  expect(search(dialog)).toHaveValue("");
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   const outbox = t.session.outbox;
   if (!outbox || !receipt) throw new Error("Missing link receipt");
@@ -942,8 +979,8 @@ it("starting over preserves access and lets Outbox finish the exact link before 
       outbox.snapshot().find((item) => item.event.id === receipt.event.id),
     ).toBeUndefined(),
   );
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const next = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const next = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, next);
   await user.click(within(next).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(next).not.toBeInTheDocument());
@@ -961,8 +998,8 @@ it("a stale Start over cannot discard a replacement attempt", async () => {
   };
   const original = beginSoloShare(t.session, source, intent);
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   finishSoloShare(t.session, source);
   const replacement = beginSoloShare(t.session, source, intent);
   expect(replacement).not.toBe(original);
@@ -981,8 +1018,8 @@ it("retries a rejected, expired grant only after its failed Outbox item is dismi
   t.failGrant(true);
   const user = userEvent.setup();
   const view = t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  let dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  let dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -1008,8 +1045,8 @@ it("retries a rejected, expired grant only after its failed Outbox item is dismi
     ).toBe(true);
     t.failGrant(false);
     t.mount();
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    dialog = screen.getByRole("dialog", { name: "Share chat" });
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    dialog = screen.getByRole("dialog", { name: "Chat access" });
     await user.click(
       within(dialog).getByRole("button", { name: "Retry share" }),
     );
@@ -1026,159 +1063,26 @@ it("retries a rejected, expired grant only after its failed Outbox item is dismi
   }
 });
 
-it("A Solo chat offers explicit conversion from Share while Done never promotes or removes it", async () => {
+it("Done never promotes or removes a Solo chat, and conversion stays in the chat menu", async () => {
   const t = fixture(true);
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   expect(within(dialog).queryByRole("textbox", { name: "Name" })).toBeNull();
   expect(within(dialog).queryByRole("switch")).toBeNull();
+  expect(
+    within(dialog).queryByRole("button", { name: "Convert to channel" }),
+  ).toBeNull();
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(t.publish).not.toHaveBeenCalled();
   expect(t.placement).not.toHaveBeenCalled();
   expect(t.channel()?.channelType).toBe("solo");
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const share = screen.getByRole("dialog", { name: "Share chat" });
-  await choosePerson(user, share, "Aria");
-  await user.click(
-    within(share).getByRole("button", { name: "Convert to channel" }),
-  );
-  const conversion = await screen.findByRole("dialog", {
-    name: "Convert to channel",
-  });
-  await waitFor(() =>
-    expect(
-      within(conversion).getByRole("button", { name: "Convert to channel" }),
-    ).toBeEnabled(),
-  );
-  expect(screen.queryByRole("dialog", { name: "Share chat" })).toBeNull();
-  expect(
-    within(conversion).getByRole("radio", { name: "Private" }),
-  ).toBeChecked();
-  await user.click(within(conversion).getByRole("radio", { name: "Public" }));
-  expect(t.publish).not.toHaveBeenCalled();
-  await user.click(
-    within(conversion).getByRole("button", { name: "Convert to channel" }),
-  );
-  await waitFor(() => expect(conversion).not.toBeInTheDocument());
-  expect(t.published.map((event) => event.kind)).toEqual([9002]);
-  expect(t.published[0]?.tags).toEqual([
-    ["h", source],
-    ["name", "Work"],
-    ["about", ""],
-    ["visibility", "open"],
-    ["t", ""],
-  ]);
-  expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
-  expect(t.placement).toHaveBeenCalledExactlyOnceWith(source, undefined);
-  expect(t.channel()?.channelType).toBe("stream");
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  expect(
-    within(screen.getByRole("dialog", { name: "Share chat" })).queryByRole(
-      "button",
-      { name: "Convert to channel" },
-    ),
-  ).toBeNull();
 });
 
-it("clears unsubmitted choices when handing conversion to the Messages host", async () => {
-  const t = fixture();
-  await t.ready();
-  const user = userEvent.setup();
-  const onConvert = vi.fn();
-  t.mount({ onConvert });
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  await chooseDestination(user, dialog);
-  await choosePerson(user, dialog, "Aria");
-  await user.type(within(dialog).getByRole("combobox"), "Dev");
-  await user.keyboard("{Escape}");
-  await user.click(
-    within(dialog).getByRole("button", { name: "Convert to channel" }),
-  );
-  expect(onConvert).toHaveBeenCalledOnce();
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  // The host can cancel its conversion while this Share owner stays mounted.
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const reopened = screen.getByRole("dialog", { name: "Share chat" });
-  expect(within(reopened).getByRole("combobox")).toHaveValue("");
-  expect(
-    within(reopened).queryByRole("region", { name: "Selected channel" }),
-  ).toBeNull();
-  expect(
-    within(reopened).queryByRole("button", { name: "Remove Aria" }),
-  ).toBeNull();
-  expect(within(reopened).getByRole("button", { name: "Done" })).toBeEnabled();
-  expect(t.publish).not.toHaveBeenCalled();
-});
-
-it("row Share conversion retains its captured visit when the sidebar survives navigation", async () => {
-  const t = fixture(true);
-  await t.ready();
-  const visit = new AbortController();
-  const nextVisit = new AbortController();
-  const user = userEvent.setup();
-  const view = (signal: AbortSignal) => (
-    <ToastProvider>
-      <SoloWorkspaces
-        visit={signal}
-        session={t.session}
-        scope={t.session.scope}
-        chats={[{ id: source, title: "Work" }]}
-        renderChat={(item) => <button type="button">{item.title}</button>}
-      />
-    </ToastProvider>
-  );
-  const mounted = render(view(visit.signal));
-  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Share" }));
-  await user.click(
-    within(screen.getByRole("dialog", { name: "Share chat" })).getByRole(
-      "button",
-      { name: "Convert to channel" },
-    ),
-  );
-  const conversion = await screen.findByRole("dialog", {
-    name: "Convert to channel",
-  });
-  const confirm = within(conversion).getByRole("button", {
-    name: "Convert to channel",
-  });
-  await waitFor(() => expect(confirm).toBeEnabled());
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const original = t.session.channelDetails;
-  // Hold only the external signer. The actual details owner supplies lifecycle admission.
-  t.detailsSign.mockImplementationOnce(async (event) => {
-    await held;
-    return signed(t.viewer, event);
-  });
-  try {
-    await user.click(confirm);
-    await waitFor(() => expect(t.detailsSign).toHaveBeenCalledOnce());
-    act(() => {
-      visit.abort();
-    });
-    mounted.rerender(view(nextVisit.signal));
-  } finally {
-    await act(async () => {
-      release();
-      await held;
-    });
-  }
-  await waitFor(() => expect(original.snapshot(source)).toBeUndefined());
-  expect(t.publish).not.toHaveBeenCalled();
-  expect(t.channel()?.channelType).toBe("solo");
-  expect(conversion).toBeVisible();
-  expect(screen.queryByText("Now a channel. Find it in Messages.")).toBeNull();
-});
-
-it("unions direct people and one channel snapshot, retains confirmed partial access and exact link retry", async () => {
+it("shares one channel snapshot, retains confirmed partial access and exact link retry", async () => {
   const t = fixture(true);
   await t.ready();
   t.addDestination(t.aria.pubkey);
@@ -1186,41 +1090,33 @@ it("unions direct people and one channel snapshot, retains confirmed partial acc
   t.failLink(true);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  await choosePerson(user, dialog, "Aria");
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
-  expect(
-    within(dialog).getByRole("region", { name: "Selected people" }),
-  ).toHaveTextContent("Aria");
   const selectedChannel = within(dialog).getByRole("region", {
     name: "Selected channel",
   });
   const channelParticipants = await within(selectedChannel).findByRole(
     "button",
-    {
-      name: /#Planning.*3 members/,
-    },
+    { name: /#Planning.*3 members/ },
   );
   expect(channelParticipants).toHaveAttribute("aria-expanded", "false");
   expect(within(selectedChannel).queryByText("Dev")).toBeNull();
   await user.click(channelParticipants);
   await within(selectedChannel).findByText("Dev");
   await user.click(channelParticipants);
-  await user.click(
-    within(dialog).getByRole("combobox", { name: "People or channel" }),
-  );
-  expect(screen.queryByRole("option", { name: "Planning" })).toBeNull();
-  await user.keyboard("{Escape}");
+  // One channel per share: the chosen channel leaves the results.
+  await user.type(search(dialog), "Plan");
+  expect(within(dialog).queryByRole("region", { name: "Channels" })).toBeNull();
+  await user.clear(search(dialog));
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Access confirmed for 2 recipients",
   );
   const attempt = soloShareAttempt(t.session, source);
-  expect(attempt?.audienceKeys).toEqual([t.aria.pubkey, t.dev.pubkey]);
-  expect(channelParticipants).toHaveAttribute("aria-expanded", "false");
-  expect(within(dialog).queryByText("Dev")).toBeNull();
-  expect(dialog).not.toHaveTextContent("Retry keeps the");
+  expect([...(attempt?.audienceKeys ?? [])].sort()).toEqual(
+    [t.aria.pubkey, t.dev.pubkey].sort(),
+  );
   const id = attempt?.messageId;
   const late = keypair();
   t.addDestination(late.pubkey);
@@ -1234,7 +1130,6 @@ it("unions direct people and one channel snapshot, retains confirmed partial acc
       name: /#Planning.*3 members.*Submitted audience/,
     }),
   ).toHaveAttribute("aria-expanded", "false");
-  expect(attempt?.audienceKeys).toEqual([t.aria.pubkey, t.dev.pubkey]);
   t.failLink(false);
   await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
@@ -1253,68 +1148,29 @@ it("unions direct people and one channel snapshot, retains confirmed partial acc
   expect(t.published.some((event) => event.kind === 9002)).toBe(false);
   cleanup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const reopened = screen.getByRole("dialog", { name: "Share chat" });
-  const segment = await within(reopened).findByRole("button", {
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const reopened = screen.getByRole("dialog", { name: "Chat access" });
+  const shared = await within(reopened).findByRole("region", {
+    name: "Shared with channels",
+  });
+  const segment = within(shared).getByRole("button", {
     name: /#Planning.*3 members/,
   });
   expect(segment).toHaveAttribute("aria-expanded", "false");
-  const individual = within(reopened).getByRole("region", {
-    name: "Individual access",
-  });
-  expect(individual).toHaveTextContent("Aria");
-  expect(individual).not.toHaveTextContent("Dev");
   await user.click(segment);
-  await within(reopened).findByText("Dev");
+  await within(shared).findByText("Dev");
   expect(reopened).not.toHaveTextContent(
     formatPublicKey(late.pubkey) ?? "late",
   );
-  await user.click(segment);
-  expect(within(reopened).queryByText("Dev")).toBeNull();
-  t.setDestinationMembers([t.viewer.pubkey, t.aria.pubkey, late.pubkey]);
-  await chooseDestination(user, reopened);
-  await within(reopened).findByRole("button", { name: /#Planning.*3 members/ });
-  await user.click(
-    await within(reopened).findByRole("button", {
-      name: /Other access.*1 member/,
-    }),
-  );
-  await within(reopened).findByText("Dev");
-  await user.click(
-    within(reopened).getByRole("button", { name: "Remove #Planning" }),
-  );
-  const restored = await within(reopened).findByRole("button", {
-    name: /#Planning.*3 members/,
-  });
-  expect(restored).toHaveAttribute("aria-expanded", "false");
   t.setSourceMembers([t.viewer.pubkey, t.aria.pubkey]);
   await act(async () => {
     await t.session.channels.refreshRoster?.(source, { consistency: "strong" });
   });
-  expect(restored).toHaveAccessibleName(/#Planning.*2 members/);
+  expect(segment).toHaveAccessibleName(/#Planning.*2 members/);
   expect(t.published.filter((event) => event.kind === 9000)).toHaveLength(2);
 });
 
-it("blocks a combined audience over 100 distinct keys before granting anyone", async () => {
-  const t = fixture();
-  await t.ready();
-  for (let i = 1; i <= 100; i++)
-    t.addDestination(i.toString(16).padStart(64, "0"));
-  const user = userEvent.setup();
-  t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  await choosePerson(user, dialog, "Aria");
-  await chooseDestination(user, dialog);
-  await user.click(within(dialog).getByRole("button", { name: "Share" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "100 distinct recipients",
-  );
-  expect(t.publish).not.toHaveBeenCalled();
-  expect(soloShareAttempt(t.session, source)?.audienceKeys).toHaveLength(101);
-});
-
-it("excludes known agents from people but includes channel bots without waking them", async () => {
+it("leaves agents to mentions but includes channel bots without waking them", async () => {
   const t = fixture();
   await t.ready();
   const bot = keypair();
@@ -1322,27 +1178,26 @@ it("excludes known agents from people but includes channel bots without waking t
   t.addDestination(bot.pubkey);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const input = within(dialog).getByRole("combobox", {
-    name: "People or channel",
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  await waitForAccess(dialog);
+  await user.type(search(dialog), "Helper");
+  const results = await within(dialog).findByRole("region", {
+    name: "Not in this chat",
   });
-  await user.type(input, "Helper");
-  await screen.findByText("No matching people or channels.");
-  expect(screen.queryByRole("option", { name: /Helper/ })).toBeNull();
-  await user.clear(input);
+  await within(results).findByText("To add an agent, mention it in the chat.");
+  expect(results).toHaveTextContent("No other matching people.");
+  expect(within(results).queryByRole("button", { name: /Helper/ })).toBeNull();
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
   expect(t.published[0]?.tags).toContainEqual(["role", "bot"]);
   expect(t.published[1]?.tags.some(([name]) => name === "p")).toBe(false);
-  expect(
-    screen.queryByRole("button", { name: "Shared · Manage access" }),
-  ).toBeNull();
+  expect(document.querySelector("[data-solo-shared]")).toBeNull();
 });
 
-it("shows loading and failed current access with Retry, never an empty roster", async () => {
+it("shows loading and failed current access with refresh, never an empty roster", async () => {
   const t = fixture();
   await t.ready();
   let release!: () => void;
@@ -1355,26 +1210,28 @@ it("shows loading and failed current access with Retry, never an empty roster", 
   const user = userEvent.setup();
   t.mount();
   try {
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    const dialog = screen.getByRole("dialog", { name: "Share chat" });
-    const access = within(dialog).getByRole("region", {
-      name: "People or channel",
-    });
-    expect(within(access).getByRole("status")).toHaveTextContent(
-      "Loading current access",
-    );
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    const dialog = screen.getByRole("dialog", { name: "Chat access" });
+    const access = within(dialog).getByRole("region", { name: "Member list" });
+    expect(
+      within(access).getByRole("status", { name: "Loading members" }),
+    ).toBeVisible();
     release();
     expect(await within(access).findByRole("alert")).toHaveTextContent(
       "Roster unavailable",
     );
+    // A failed roster read never presents verified roles.
+    expect(within(access).queryByText("Owner", { exact: true })).toBeNull();
     t.failRoster(false);
     t.holdRoster(undefined);
-    await user.click(
-      within(access).getByRole("button", { name: "Retry access" }),
-    );
+    const refresh = within(dialog).getByRole("button", {
+      name: "Refresh member data",
+    });
     await waitFor(() =>
-      expect(within(access).queryByRole("status")).toBeNull(),
+      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
     );
+    await user.click(refresh);
+    await within(access).findByRole("region", { name: "People" });
     expect(within(access).queryByRole("alert")).toBeNull();
     t.failRoster(true);
     await chooseDestination(user, dialog);
@@ -1408,23 +1265,24 @@ it("shows loading and failed current access with Retry, never an empty roster", 
 it("resumes a submitted existing destination after remount without replacing its link ID", async () => {
   const t = fixture();
   await t.ready();
+  t.addDestination(t.aria.pubkey);
   const attempt = beginSoloShare(t.session, source, {
     destination,
-    chatPeople: [t.aria.pubkey],
+    chatPeople: [],
   });
   t.failLink(true);
   const user = userEvent.setup();
   const view = t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
   await within(dialog).findByRole("alert");
   const id = attempt.messageId;
   view.unmount();
   t.failLink(false);
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const reopened = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const reopened = screen.getByRole("dialog", { name: "Chat access" });
   await user.click(
     within(reopened).getByRole("button", { name: "Retry share" }),
   );
@@ -1437,7 +1295,7 @@ it("resumes a submitted existing destination after remount without replacing its
   ).toEqual([id, id]);
 });
 
-it("lists existing agents directly while only verified additional humans mark the chat Shared", async () => {
+it("groups agents and people by role while only verified additional humans mark the chat Shared", async () => {
   const t = fixture();
   const bot = keypair(),
     unknown = keypair();
@@ -1446,46 +1304,38 @@ it("lists existing agents directly while only verified additional humans mark th
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  let dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const individual = within(dialog).getByRole("region", {
-    name: "Individual access",
-  });
-  await within(individual).findByText("Helper Bot");
-  expect(
-    within(dialog).queryByRole("button", { name: /Other access/ }),
-  ).toBeNull();
-  expect(
-    within(individual).queryByRole("button", { name: /Remove/ }),
-  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  let dialog = screen.getByRole("dialog", { name: "Chat access" });
+  const agents = await within(dialog).findByRole("region", { name: "Agents" });
+  await within(agents).findByText("Helper Bot");
+  expect(within(agents).getByRole("heading")).toHaveTextContent("Agents · 1");
+  const people = within(dialog).getByRole("region", { name: "People" });
+  expect(people).toHaveTextContent("(you)");
+  expect(people).not.toHaveTextContent("Helper Bot");
 
   t.setSourceMembers([t.viewer.pubkey, bot.pubkey, unknown.pubkey]);
   await act(async () => {
     await t.session.channels.refreshRoster?.(source, { consistency: "strong" });
   });
-  const other = await within(dialog).findByRole("button", {
-    name: /Other access.*1 member/,
-  });
-  expect(other).toHaveAttribute("aria-expanded", "false");
-  await user.click(other);
+  await waitFor(() =>
+    expect(
+      within(
+        within(dialog).getByRole("region", { name: "People" }),
+      ).getAllByRole("listitem"),
+    ).toHaveLength(2),
+  );
   expect(within(dialog).getAllByText("Helper Bot")).toHaveLength(1);
-  expect(dialog).not.toHaveTextContent("The original sharing destination");
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
-  expect(
-    screen.queryByRole("button", { name: "Shared · Manage access" }),
-  ).toBeNull();
+  expect(document.querySelector("[data-solo-shared]")).toBeNull();
   t.addProfile(unknown, "Guest Human");
   await t.session.profiles.ensure([unknown.pubkey], "foreground");
-  const indicator = await screen.findByRole("button", {
-    name: "Shared · Manage access",
-  });
-  await user.click(indicator);
-  dialog = screen.getByRole("dialog", { name: "Share chat" });
-  await user.click(
-    await within(dialog).findByRole("button", { name: /Other access/ }),
+  await waitFor(() =>
+    expect(document.querySelector("[data-solo-shared]")).not.toBeNull(),
   );
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  dialog = screen.getByRole("dialog", { name: "Chat access" });
   expect(
-    within(dialog).getByRole("region", { name: "People or channel" }),
+    await within(dialog).findByRole("region", { name: "People" }),
   ).toHaveTextContent("Guest Human");
   expect(t.publish).not.toHaveBeenCalled();
 
@@ -1495,35 +1345,27 @@ it("lists existing agents directly while only verified additional humans mark th
     name: "Planning",
     members: [t.viewer.pubkey, bot.pubkey],
   });
-  await user.click(indicator);
-  dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const recorded = await within(dialog).findByRole("button", {
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  dialog = screen.getByRole("dialog", { name: "Chat access" });
+  const shared = await within(dialog).findByRole("region", {
+    name: "Shared with channels",
+  });
+  const recorded = within(shared).getByRole("button", {
     name: /#Planning.*2 members/,
   });
-  expect(within(dialog).queryByText("Helper Bot")).toBeNull();
+  expect(within(shared).queryByText("Helper Bot")).toBeNull();
   await user.click(recorded);
-  await within(dialog).findByText("Helper Bot");
-  expect(within(dialog).getAllByText("Helper Bot")).toHaveLength(1);
-  expect(
-    within(dialog).getByRole("region", { name: "Individual access" }),
-  ).toBeEmptyDOMElement();
-  await user.click(recorded);
-  await act(async () => {
-    saveShareHistory(t.session.scope, source, [bot.pubkey]);
-  });
-  await within(
-    within(dialog).getByRole("region", { name: "Individual access" }),
-  ).findByText("Helper Bot");
+  await within(shared).findByText("Helper Bot");
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("never posts a zero-recipient channel share and allows choosing a real person after Start over", async () => {
+it("never posts a zero-recipient channel share and Start over clears the channel", async () => {
   const t = fixture();
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -1531,8 +1373,9 @@ it("never posts a zero-recipient channel share and allows choosing a real person
   );
   expect(t.publish).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Start over" }));
-  await choosePerson(user, dialog, "Aria");
-  await user.click(within(dialog).getByRole("button", { name: "Remove Aria" }));
+  expect(
+    within(dialog).queryByRole("region", { name: "Selected channel" }),
+  ).toBeNull();
   expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
   expect(t.publish).not.toHaveBeenCalled();
@@ -1548,18 +1391,7 @@ it("shows Shared on cold render from verified members and cached human evidence 
     "ready",
   );
   expect(channel?.cached).not.toBe(true);
-  render(
-    <ChatAccessIndicator
-      session={t.session}
-      channel={channel}
-      onClick={() => {}}
-    />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Shared · Manage access" }),
-  ).toBeEnabled();
-  cleanup();
-  // The sidebar's status mark reads the same evidence but is not an action.
+  // The sidebar's status mark is not an action; Access manages sharing.
   render(
     <>
       <button type="button" aria-describedby={soloSharedMarkId(source)}>
@@ -1578,20 +1410,16 @@ it("shows Shared on cold render from verified members and cached human evidence 
 it("explains access changes and disables a saved Retry until current access recovers", async () => {
   const t = fixture();
   await t.ready();
+  t.addDestination(t.aria.pubkey);
   const attempt = beginSoloShare(t.session, source, {
-    destination: source,
-    chatPeople: [t.aria.pubkey],
+    destination,
+    chatPeople: [],
   });
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const audience = within(dialog).getByRole("region", {
-    name: "People or channel",
-  });
-  await waitFor(() =>
-    expect(within(audience).queryByRole("status")).toBeNull(),
-  );
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  await waitForAccess(dialog);
   t.setArchived(true);
   await waitFor(() => expect(t.channel()?.archived).toBe(true));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -1615,10 +1443,10 @@ it("explains access changes and disables a saved Retry until current access reco
   expect(within(dialog).queryByRole("alert")).toBeNull();
   await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(t.published.map((event) => event.kind)).toEqual([9000]);
+  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
 });
 
-it("lists channels before people and combines current members with draft choices without redundant keys or roles", async () => {
+it("offers matching people and channels as labelled results without public keys", async () => {
   const t = fixture();
   const planningPerson = keypair();
   t.addProfile(planningPerson, "Planning Person");
@@ -1626,50 +1454,40 @@ it("lists channels before people and combines current members with draft choices
   await t.ready();
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const audience = within(dialog).getByRole("region", {
-    name: "People or channel",
-  });
-  const otherAccess = await within(audience).findByRole("button", {
-    name: /Other access.*1 member/,
-  });
-  expect(otherAccess).toHaveAttribute("aria-expanded", "false");
-  expect(within(audience).queryByText("Aria")).toBeNull();
-  await user.click(otherAccess);
-  await within(audience).findByText("Aria");
-  const input = within(dialog).getByRole("combobox", {
-    name: "People or channel",
-  });
-  await user.type(input, "Planning");
-  await screen.findByRole("option", { name: "Planning Person" });
-  const options = screen.getAllByRole("option");
-  expect(options).toHaveLength(2);
-  expect(options[0]).toHaveAccessibleName("Planning");
-  expect(options[1]).toHaveAccessibleName("Planning Person");
-  await user.click(screen.getByRole("option", { name: "Planning" }));
-  await choosePerson(user, dialog, "Dev");
-  expect(audience).toHaveTextContent("Aria");
-  expect(audience).toHaveTextContent("Dev");
-  expect(audience).toHaveTextContent("#Planning");
-  expect(audience).toHaveTextContent("1 member");
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   expect(
-    within(audience).queryByRole("button", { name: "Remove Aria" }),
-  ).toBeNull();
-  expect(dialog).not.toHaveTextContent("Has access");
-  expect(dialog).not.toHaveTextContent("Can participate");
-  expect(dialog).not.toHaveTextContent("Future joins");
+    await within(dialog).findByRole("region", { name: "People" }),
+  ).toHaveTextContent("Aria");
+  await user.type(search(dialog), "Planning");
+  const people = await within(dialog).findByRole("region", {
+    name: "Not in this chat",
+  });
+  await within(people).findByRole("button", { name: /^Add Planning Person/ });
+  const channels = within(dialog).getByRole("region", { name: "Channels" });
+  expect(
+    within(channels).getByRole("button", { name: "Select #Planning" }),
+  ).toHaveTextContent("Select");
   expect(dialog).not.toHaveTextContent(formatPublicKey(t.aria.pubkey) ?? "");
-  expect(dialog).not.toHaveTextContent(formatPublicKey(t.dev.pubkey) ?? "");
-  await user.click(
-    within(audience).getByRole("button", { name: "Remove Dev" }),
+  expect(dialog).not.toHaveTextContent(
+    formatPublicKey(planningPerson.pubkey) ?? "",
   );
-  expect(audience).not.toHaveTextContent("Dev");
-  expect(audience).toHaveTextContent("Aria");
+  await user.click(
+    within(channels).getByRole("button", { name: "Select #Planning" }),
+  );
+  expect(search(dialog)).toHaveValue("");
+  expect(
+    within(dialog).getByRole("region", { name: "Selected channel" }),
+  ).toHaveTextContent("#Planning");
+  expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove #Planning" }),
+  );
+  expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("distinguishes transient namesakes without a naming plugin and grants only the selected identity", async () => {
+it("distinguishes namesakes in results and adds only the chosen identity", async () => {
   const t = fixture();
   const first = keypair(),
     second = keypair();
@@ -1677,33 +1495,33 @@ it("distinguishes transient namesakes without a naming plugin and grants only th
   t.addProfile(second, "Morgan");
   await t.ready();
   const labels = publicKeyLabels([first.pubkey, second.pubkey]);
-  const firstName = `Morgan · ${labels.get(first.pubkey)}`;
-  const secondName = `Morgan · ${labels.get(second.pubkey)}`;
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
-  const input = within(dialog).getByRole("combobox", {
-    name: "People or channel",
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  await waitForAccess(dialog);
+  await user.type(search(dialog), "Morgan");
+  const firstAdd = await within(dialog).findByRole("button", {
+    name: `Add Morgan (${labels.get(first.pubkey)})`,
   });
-  await user.type(input, "Morgan");
-  await screen.findByRole("option", { name: firstName });
-  expect(screen.getByRole("option", { name: secondName })).toBeVisible();
-  await user.click(screen.getByRole("option", { name: firstName }));
-  // Removing the query must not erase the selected recipient's identity facts.
   expect(
-    within(dialog).getByRole("region", { name: "Selected people" }),
-  ).toHaveTextContent("Morgan");
-  await user.type(input, "Morgan");
-  await screen.findByRole("option", { name: secondName });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-  expect(
-    within(dialog).getByRole("region", { name: "Selected people" }),
-  ).toHaveTextContent(firstName);
-  await user.click(within(dialog).getByRole("button", { name: "Share" }));
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(t.published.map((event) => event.kind)).toEqual([9000]);
+    within(dialog).getByRole("button", {
+      name: `Add Morgan (${labels.get(second.pubkey)})`,
+    }),
+  ).toBeVisible();
+  // Without a naming plugin the rows still differ visibly, by key only.
+  const shown = within(dialog)
+    .getAllByText(/^npub…/)
+    .map((node) => node.textContent);
+  expect(shown).toHaveLength(2);
+  expect(new Set(shown).size).toBe(2);
+  expect(shown).toContain(
+    firstAdd.getAttribute("aria-label")?.match(/\((npub…\w+)\)/)?.[1],
+  );
+  await user.click(firstAdd);
+  await waitFor(() =>
+    expect(t.published.map((event) => event.kind)).toEqual([9000]),
+  );
   expect(t.published[0]?.tags).toContainEqual(["p", first.pubkey]);
   expect(t.published[0]?.tags).not.toContainEqual(["p", second.pubkey]);
 });
@@ -1714,8 +1532,8 @@ it("keeps completed access/link work out of Retry when device-local history cann
   t.addDestination(t.aria.pubkey);
   const user = userEvent.setup();
   t.mount();
-  await user.click(screen.getByRole("button", { name: "Share" }));
-  const dialog = screen.getByRole("dialog", { name: "Share chat" });
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
   await chooseDestination(user, dialog);
   const original = Storage.prototype.setItem;
   const storage = vi
@@ -1734,10 +1552,9 @@ it("keeps completed access/link work out of Retry when device-local history cann
     expect(
       within(dialog).queryByRole("button", { name: "Retry share" }),
     ).toBeNull();
-    await user.click(
-      await within(dialog).findByRole("button", { name: /Other access/ }),
-    );
-    await within(dialog).findByText("Aria");
+    expect(
+      await within(dialog).findByRole("region", { name: "People" }),
+    ).toHaveTextContent("Aria");
     expect(t.members.get(source)).toContain(t.aria.pubkey);
     expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
@@ -1783,4 +1600,31 @@ it("updates the row conversion guard for a share owned by another mounted entry 
   expect(
     await screen.findByRole("dialog", { name: "Convert to channel" }),
   ).toBeVisible();
+});
+
+it("lets the chat owner remove someone with access from the row menu", async () => {
+  const t = fixture(true);
+  t.members.set(source, [t.viewer.pubkey, t.aria.pubkey]);
+  await t.ready();
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  const people = await within(dialog).findByRole("region", { name: "People" });
+  await user.click(
+    await within(people).findByRole("button", { name: "Actions for Aria" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove from chat" }),
+  );
+  const confirm = await within(dialog).findByRole("button", {
+    name: "Remove member",
+  });
+  expect(dialog).toHaveAccessibleName("Remove member from chat");
+  await waitFor(() => expect(confirm).toBeEnabled());
+  await user.click(confirm);
+  await waitFor(() =>
+    expect(t.published.map((event) => event.kind)).toEqual([9001]),
+  );
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
 });

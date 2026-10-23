@@ -50,6 +50,7 @@ export type MediaReview = Pick<
   ComponentProps<typeof MediaReviewViewer>,
   | "messageId"
   | "attachment"
+  | "initialAttachments"
   | "initialTime"
   | "hasComments"
   | "restoreFocus"
@@ -66,12 +67,19 @@ export function useMediaReview() {
     attachment,
     initialTime,
     hasComments = false,
+    initialAttachments,
   ) => {
     trigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setMedia({ messageId, attachment, initialTime, hasComments });
+    setMedia({
+      messageId,
+      attachment,
+      initialTime,
+      hasComments,
+      initialAttachments,
+    });
   };
   const review: MediaReview | undefined = media && {
     ...media,

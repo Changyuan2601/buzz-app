@@ -44,6 +44,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
+  useChosenAgent,
   useDefaultAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
@@ -597,6 +598,8 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
+  /** False while another agent stands in for a missing chosen one. */
+  defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
 };
@@ -608,6 +611,7 @@ function DefaultAgentInventory({
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
   const current = useDefaultAgent(session, scope);
+  const chosen = useChosenAgent(scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
   return (
@@ -615,6 +619,7 @@ function DefaultAgentInventory({
       <Inventory
         {...props}
         defaultAgent={current?.pubkey}
+        defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
@@ -622,7 +627,7 @@ function DefaultAgentInventory({
           setError(
             setDefaultAgent(scope, pubkey)
               ? ""
-              : "The default agent couldn't be saved on this device.",
+              : "The main agent couldn't be saved on this device.",
           );
         }}
       />
@@ -642,6 +647,7 @@ function Inventory({
   onBuild,
   newAgent,
   defaultAgent,
+  defaultPinned,
   defaultChoices,
   onMakeDefault,
 }: InventoryProps) {
@@ -703,28 +709,29 @@ function Inventory({
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
-            const isDefault = agent.pubkey === defaultAgent;
+            const isMain = agent.pubkey === defaultAgent;
             return (
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
                 <InventoryCard
-                  tag={isDefault ? "Default agent" : undefined}
-                  defaultChoice={
-                    onMakeDefault && {
-                      isDefault,
-                      available: !!defaultChoices?.has(agent.pubkey),
-                      onMake: () => onMakeDefault(agent.pubkey),
-                    }
+                  tag={isMain ? "Main agent" : undefined}
+                  main={
+                    onMakeDefault
+                      ? {
+                          isMain,
+                          pinned: isMain && !!defaultPinned,
+                          available: !!defaultChoices?.has(agent.pubkey),
+                          onMake: () => onMakeDefault(agent.pubkey),
+                        }
+                      : undefined
                   }
                   service={service}
                   type={type}
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
                   role="gridcell"
-                  aria-label={
-                    isDefault ? `${agent.name}, Default agent` : agent.name
-                  }
+                  aria-label={isMain ? `${agent.name}, Main agent` : agent.name}
                   data-selected={active}
                   aria-selected={active}
                   tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
@@ -767,7 +774,7 @@ function InventoryCard({
   type,
   onBuild,
   onRemoved,
-  defaultChoice,
+  main,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -775,9 +782,9 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
-  /** Present where this community's default agent can be chosen. */
-  defaultChoice?:
-    | { isDefault: boolean; available: boolean; onMake(): void }
+  /** Whether it is the community's main agent and can be made it. */
+  main?:
+    | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
     | undefined;
 }) {
   const agent = props.agent;
@@ -796,60 +803,46 @@ function InventoryCard({
       setSaving(false);
     }
   };
-  const menu = (remove?: () => void) => (
-    <MenuRoot>
-      <MenuTrigger
-        render={
-          <IconButton
-            aria-label={`Actions for ${agent.name}`}
-            size="sm"
-            icon={<DotsThreeIcon size={16} />}
-          />
-        }
-      />
-      <MenuPopup align="end">
-        {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
-        <MenuItem
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(agent.pubkey)
-              .catch((reason) => setError(message(reason)));
-          }}
-        >
-          Copy public key
-        </MenuItem>
-        {defaultChoice && !defaultChoice.isDefault && (
-          <MenuItem
-            disabled={!defaultChoice.available}
-            onClick={defaultChoice.onMake}
-          >
-            Make default agent
-          </MenuItem>
-        )}
-        {remove && (
-          <MenuItem tone="danger" onClick={remove}>
-            Delete agent
-          </MenuItem>
-        )}
-      </MenuPopup>
-    </MenuRoot>
-  );
-  return (
+  const card = (remove?: () => void) => (
     <AgentCard
       {...props}
       icon={Model ? undefined : props.icon}
       detail={Model ? undefined : props.detail}
       menu={
-        agent.place === "elsewhere" ? (
-          menu()
-        ) : (
-          <AgentDelete
-            agents={service}
-            agent={agent}
-            onRemoved={onRemoved}
-            trigger={menu}
+        <MenuRoot>
+          <MenuTrigger
+            render={
+              <IconButton
+                aria-label={`Actions for ${agent.name}`}
+                size="sm"
+                icon={<DotsThreeIcon size={16} />}
+              />
+            }
           />
-        )
+          <MenuPopup align="end">
+            {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+            <MenuItem
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(agent.pubkey)
+                  .catch((reason) => setError(message(reason)));
+              }}
+            >
+              Copy public key
+            </MenuItem>
+            {main && !main.pinned && (
+              // A stand-in for a missing chosen agent can be made main for good.
+              <MenuItem disabled={!main.available} onClick={main.onMake}>
+                Make main agent
+              </MenuItem>
+            )}
+            {remove && (
+              <MenuItem tone="danger" onClick={remove}>
+                Delete agent
+              </MenuItem>
+            )}
+          </MenuPopup>
+        </MenuRoot>
       }
     >
       {(Model || error) && (
@@ -873,6 +866,16 @@ function InventoryCard({
         </div>
       )}
     </AgentCard>
+  );
+  return agent.place === "elsewhere" ? (
+    card()
+  ) : (
+    <AgentDelete
+      agents={service}
+      agent={agent}
+      onRemoved={onRemoved}
+      trigger={card}
+    />
   );
 }
 

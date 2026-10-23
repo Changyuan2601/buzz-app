@@ -3,6 +3,7 @@ import {
   DownloadIcon,
 } from "../../shared/design-system/icons/index";
 import { FileTypeIcon } from "./FileTypeIcon";
+import fileIconStyles from "./FileTypeIcon.module.css";
 import type { Attachment } from "../relay/contracts";
 import {
   isNativeMediaSource,
@@ -54,7 +55,9 @@ export function FileAttachment({
 
   const content = (
     <>
-      <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+      <span className={fileIconStyles.slot}>
+        <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+      </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>
@@ -140,7 +143,9 @@ function UnavailableFileAttachment({
 }) {
   return (
     <span className={styles.fileAttachment} role="status" title={displayName}>
-      <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+      <span className={fileIconStyles.slot}>
+        <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+      </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>File unavailable</span>

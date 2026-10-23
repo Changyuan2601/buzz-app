@@ -54,7 +54,7 @@
   inset-block-start: 50%;
   height: 100%;
   border-radius: var(--radius-pill);
-  background: var(--affordance-accent-prominent);
+  background: var(--affordance-prominent);
   overflow: hidden;
   transform: translateY(-50%);
   transition: width var(--duration-settle) var(--easing-settle);
@@ -79,7 +79,7 @@
   pointer-events: none;
 }
 .stop[data-filled] {
-  background: var(--text-on-accent);
+  background: var(--text-on-prominent);
 }
 .thumb {
   width: var(--thumb-width);

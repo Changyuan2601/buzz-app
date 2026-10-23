@@ -1,3 +1,5 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
@@ -6,6 +8,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -69,6 +72,10 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+}));
+vi.mock("../solo/default-agent", async (original) => ({
+  ...(await original<typeof import("../solo/default-agent")>()),
+  forgetDefaultAgent: vi.fn(),
 }));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
@@ -1021,6 +1028,34 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     finish();
   }
 });
+
+it.each([
+  [{ ok: true, stopped: true }, "stopped"],
+  [{ ok: false, error: "Broke", stopped: true }, "error"],
+])(
+  "records the outcome a handed-off turn reports: %o",
+  async (outcome, state) => {
+    const { service, run, emit, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(Promise.resolve(outcome)),
+    );
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() =>
+      expect(activity.reader.work()[0]?.state).toBe(state),
+    );
+  },
+);
 
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
@@ -2520,13 +2555,16 @@ it("stops refreshing core memory for a community once it is left", async () => {
 });
 
 it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {
-  const { service, native, archives, recover } = await setup();
+  const { service, native, archives, recover, session } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   leaveChannels.mockRejectedValueOnce(new Error("offline"));
   await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
   expect(service.find(bot)?.deleting).toBe(true);
+  // Only a finished Delete hands the main agent role on.
+  expect(forgetDefaultAgent).not.toHaveBeenCalled();
+  expect(session.agentChoices.refresh).not.toHaveBeenCalled();
   expect(native.remove).not.toHaveBeenCalled();
   // Reconnecting retries nothing.
   recover();
@@ -2548,6 +2586,17 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "forget",
   ]);
   expect(service.find(bot)).toBeUndefined();
+  // Cached choices are reread first, so the deleted agent can't be saved
+  // again as its own replacement.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  expect(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(forgetDefaultAgent).mock.invocationCallOrder[0] ?? 0,
+  );
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -6807,6 +6856,94 @@ it("does not label still-running work failed when only its handover deadline exp
   }
 });
 
+it("submits both draft kinds after the run's handover deadline expires", async () => {
+  const f = await setup({ timeoutMs: 100 });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  let delivery!: Delivery<Config>;
+  const expired = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      accepted.signal.addEventListener("abort", () => resolve(), {
+        once: true,
+      });
+      return new Promise<void>(() => {});
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await expired;
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    expect(f.service.creationRequests()).toHaveLength(1);
+    expect(f.service.updateRequests()).toHaveLength(1);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("refuses drafts through a delivery handle its replaced type kept", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  f.ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "" } }),
+      adopt: (carry, saved) => ({ prompt: carry.instructions ?? saved.prompt }),
+      run: vi.fn(),
+    });
+  let delivery!: Delivery<Config>;
+  const delivered = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      resolve();
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await delivered;
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    await f.service.retype(bot, "other/relay");
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).rejects.toThrow();
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).rejects.toThrow();
+    expect(f.service.creationRequests()).toEqual([]);
+    expect(f.service.updateRequests()).toEqual([]);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("clears declined requests and removed agents without late outcomes reviving activity", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
@@ -7109,4 +7246,288 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+it("submits an unsaved creation draft and creates only after owner review", async () => {
+  const { service, native, plugin, select, second } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  select(second.origin);
+  const result = JSON.parse(
+    (await callTool(client, {}, "agent_create", {
+      type: "example/echo",
+      name: " Child ",
+    })) as string,
+  );
+  expect(result).toEqual({ requestId: expect.any(String), saved: false });
+  expect(native.create).toHaveBeenCalledTimes(1);
+  const [draft] = service.creationRequests();
+  expect(draft).toMatchObject({
+    id: result.requestId,
+    type: "example/echo",
+    name: "Child",
+    requester: bot,
+    community: "https://relay.example.test",
+  });
+  await service.approveCreation(result.requestId, {
+    type: "example/echo",
+    name: "Reviewed",
+    config: { reply: "reviewed" },
+  });
+  expect(native.create).toHaveBeenLastCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Reviewed",
+  );
+  expect(service.creationRequests()).toEqual([]);
+  await expect(
+    service.approveCreation(result.requestId, {
+      type: "example/echo",
+      name: "Again",
+    }),
+  ).rejects.toThrow();
+  select("https://relay.example.test");
+  expect(service.find(sibling)?.config).toEqual({ reply: "reviewed" });
+});
+
+it("dismisses a creation draft without creating an identity", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const result = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  service.dismissCreation(result.requestId);
+  expect(service.creationRequests()).toEqual([]);
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("refuses agent creation through a stale handle or an unavailable type", async () => {
+  const { service, native, plugin, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  await expect(
+    handle.createAgent?.({ type: "missing", name: "Child" }),
+  ).rejects.toThrow("not available");
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: " " }),
+  ).rejects.toThrow("Name the agent");
+  connect(false);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Child" }),
+  ).rejects.toThrow();
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a failed review for retry and rejects concurrent approvals", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const { requestId } = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  await expect(
+    service.approveCreation(requestId, { type: "missing", name: "Child" }),
+  ).rejects.toThrow("not available");
+  expect(service.creationRequests()).toHaveLength(1);
+  const create = native.create;
+  if (!create) throw new Error("Missing native creation");
+  let release = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  native.create = vi.fn(async (...args: Parameters<typeof create>) => {
+    await waiting;
+    return create(...args);
+  });
+  const saving = service.approveCreation(requestId, {
+    type: "example/echo",
+    name: "Child",
+  });
+  await expect(
+    service.approveCreation(requestId, {
+      type: "example/echo",
+      name: "Duplicate",
+    }),
+  ).rejects.toThrow("pending");
+  release();
+  await saving;
+  expect(service.creationRequests()).toEqual([]);
+});
+
+it("refuses approval after leaving the requesting community", async () => {
+  const { service, native, plugin, leave } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const { requestId } = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  leave("https://relay.example.test");
+  await expect(
+    service.approveCreation(requestId, { type: "example/echo", name: "Child" }),
+  ).rejects.toThrow("community");
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("submits an unsaved change draft and applies only the owner's reviewed changes", async () => {
+  const { service, native, plugin, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string; model: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "", model: "small" } }),
+      adopt: (carry, saved) => ({
+        ...saved,
+        prompt: carry.instructions ?? saved.prompt,
+      }),
+      carry: ({ prompt }) => ({ instructions: prompt }),
+      run: vi.fn(),
+    });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const result = JSON.parse(
+    (await callTool(client, {}, "agent_update", {
+      agent: "Child",
+      name: " Kid ",
+      type: "other/relay",
+      instructions: "Review PRs.",
+    })) as string,
+  );
+  expect(result).toEqual({ requestId: expect.any(String), saved: false });
+  expect(service.updateRequests()).toEqual([
+    {
+      id: result.requestId,
+      requester: bot,
+      requesterName: "Parent",
+      owner: viewer,
+      community: "https://relay.example.test",
+      agent: sibling,
+      agentName: "Child",
+      agentType: "example/echo",
+      name: "Kid",
+      type: "other/relay",
+      instructions: "Review PRs.",
+    },
+  ]);
+  expect(native.setType).not.toHaveBeenCalled();
+  expect(service.find(sibling)).toMatchObject({
+    name: "Child",
+    type: "example/echo",
+  });
+  await service.approveUpdate(result.requestId, {
+    name: "Reviewer",
+    type: "other/relay",
+    config: { prompt: "Review carefully.", model: "small" },
+  });
+  expect(service.find(sibling)).toMatchObject({
+    name: "Reviewer",
+    type: "other/relay",
+    config: { prompt: "Review carefully.", model: "small" },
+  });
+  expect(service.find(bot)).toMatchObject({
+    name: "Parent",
+    type: "example/echo",
+  });
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    service.approveUpdate(result.requestId, {
+      name: "Again",
+      type: "example/echo",
+    }),
+  ).rejects.toThrow("No such pending");
+});
+
+it("changes instructions in place and discards a dismissed change draft", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  const { requestId } = await handle.updateAgent({
+    agent: sibling,
+    instructions: "Triage.",
+  });
+  await service.approveUpdate(requestId, {
+    name: "Child",
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
+  expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
+  const draft = await handle.updateAgent({ agent: "Child", name: "Kid" });
+  service.dismissUpdate(draft.requestId);
+  expect(service.updateRequests()).toEqual([]);
+  expect(service.find(sibling)?.name).toBe("Child");
+  expect(native.setType).not.toHaveBeenCalled();
+});
+
+it("releases a deleted agent's pending change requests", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  for (let i = 0; i < 16; i++)
+    await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
+  await expect(
+    handle.updateAgent({ agent: sibling, name: "Kid" }),
+  ).rejects.toThrow("pending agent requests");
+  await service.remove(sibling);
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Kid" }),
+  ).resolves.toMatchObject({ requestId: expect.any(String) });
+});
+
+it("refuses change drafts it cannot apply", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  await expect(
+    handle.updateAgent({ agent: "Nobody", name: "Kid" }),
+  ).rejects.toThrow("no agent here");
+  await expect(handle.updateAgent({ agent: "Child" })).rejects.toThrow(
+    "at least one change",
+  );
+  await expect(
+    handle.updateAgent({ agent: "Child", name: " Child " }),
+  ).rejects.toThrow("at least one change");
+  await expect(
+    handle.updateAgent({ agent: "Child", type: "missing" }),
+  ).rejects.toThrow("not available");
+  await service.save(bot, { name: "Child" });
+  await expect(
+    handle.updateAgent({ agent: "Child", name: "Kid" }),
+  ).rejects.toThrow("use its pubkey");
+  expect(service.updateRequests()).toEqual([]);
 });

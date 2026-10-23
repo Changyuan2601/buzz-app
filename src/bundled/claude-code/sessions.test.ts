@@ -373,6 +373,28 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
 });
 
+it("bounds a channel session's thread history while retaining recently used threads", async () => {
+  const { pool, store, claudes } = sessions();
+  try {
+    // This dataset exercises the 200-entry retention bound.
+    for (let index = 0; index < 200; index++)
+      await pool.deliver("channel", "work", index + 1, {
+        contextRoot: `root-${index}`,
+      });
+    await pool.deliver("channel", "continue", 201, { contextRoot: "root-0" });
+    await pool.deliver("channel", "new thread", 202, {
+      contextRoot: "root-200",
+    });
+    const saved = store.get("channel");
+    expect(Object.keys(saved?.threads ?? {})).toHaveLength(200);
+    expect(saved?.threads).toMatchObject({ "root-0": 201, "root-200": 202 });
+    expect(saved?.threads).not.toHaveProperty("root-1");
+    expect(claudes()).toHaveLength(1);
+  } finally {
+    pool.dispose();
+  }
+});
+
 it("saves when a session takes in a message or ends a turn, not while a long turn keeps it open", async () => {
   vi.useFakeTimers();
   const store = memoryStore();

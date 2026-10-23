@@ -304,7 +304,7 @@ function TypeField({
   );
 }
 
-function MigrationPreview({
+export function MigrationPreview({
   source,
   target,
   preview,

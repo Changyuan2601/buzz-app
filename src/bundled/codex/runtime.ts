@@ -83,8 +83,9 @@ type Request = {
   model?: string;
   effort?: string;
   /** Called once a final send answers this request, or one steered after it,
-   * a steering rejection is posted in its place, or the turn ends normally. */
-  answered: () => void;
+   * a steering rejection is posted in its place, or the turn ends normally.
+   * `stopped` is that the owner's interrupt ended the turn. */
+  answered: (stopped?: boolean) => void;
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
@@ -613,8 +614,9 @@ export class CodexRuntime {
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools; v7 added the shared note tools.
-    return `buzz.codex.sessions.v7:${scope}:${pubkey}`;
+    // added the shared session tools; v7 added the shared note tools; v8 added
+    // the agent creation and change tools.
+    return `buzz.codex.sessions.v8:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -690,7 +692,8 @@ export class CodexRuntime {
     const replied = new Promise<WorkOutcome>((resolve) => {
       finishActivity = resolve;
     });
-    const answered = () => finishActivity({ ok: true });
+    const answered = (stopped?: boolean) =>
+      finishActivity(stopped ? { ok: true, stopped: true } : { ok: true });
     const failActivity = (error: string) =>
       finishActivity({ ok: false, error });
     delivery.workingUntil(replied);
@@ -1576,7 +1579,7 @@ export class CodexRuntime {
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted" && active.stopped) {
-        for (const taken of active.requests) taken.answered();
+        for (const taken of active.requests) taken.answered(true);
         await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
         this.status(agent.pubkey, key, "Stopped");
       } else if (status === "interrupted") {

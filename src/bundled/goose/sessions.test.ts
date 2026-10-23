@@ -194,7 +194,7 @@ describe("AgentSessions", () => {
     await sessions.interrupt("a");
     await flush();
     expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
-    await expect(one).resolves.toMatchObject({ ok: true });
+    await expect(one).resolves.toEqual({ ok: true, stopped: true });
     second?.finish();
     await expect(other).resolves.toMatchObject({ ok: true });
   });

@@ -5,6 +5,7 @@ import {
   type EventTemplate,
 } from "nostr-tools";
 import type { ReadFilter, RelayEvent } from "./events";
+import { PublishRejected } from "./outbox";
 import type { ReadTransport, Signer } from "./transport";
 
 /** Test-only signing helpers. Real signatures so the transport's verification stays on. */
@@ -175,6 +176,8 @@ export function archiveRelay(
   channels: Record<string, string[]> = {},
 ) {
   const archived = new Set<string>();
+  /** Channel IDs whose metadata is archived; the relay refuses 9001 there. */
+  const archivedChannels = new Set<string>();
   /** NIP-09 coordinates the relay accepted for deletion. */
   const deleted = new Set<string>();
   const published: RelayEvent[] = [];
@@ -241,6 +244,7 @@ export function archiveRelay(
                 tags: [
                   ["d", id],
                   ["name", id.slice(0, 8)],
+                  ...(archivedChannels.has(id) ? [["archived", "true"]] : []),
                 ],
               }),
             );
@@ -276,6 +280,10 @@ export function archiveRelay(
         }
         const tag = (name: string) =>
           event.tags.find(([key]) => key === name)?.[1] ?? "";
+        if (archivedChannels.has(tag("h"))) {
+          published.pop();
+          throw new PublishRejected("invalid: channel is archived");
+        }
         channels[tag("h")] = (channels[tag("h")] ?? []).filter(
           (key) => key !== tag("p"),
         );
@@ -317,6 +325,7 @@ export function archiveRelay(
     signedBy,
     script,
     channels,
+    archivedChannels,
     removal,
     deleted,
   };

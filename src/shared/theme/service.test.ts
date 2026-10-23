@@ -401,10 +401,10 @@ it.each(["quiet", "low", "high"] as const)(
       matchMedia: b.host.matchMedia,
     });
     expect(b.root.dataset.colorLevel).toBe(
-      contrast === "low" ? "touch" : contrast,
+      contrast === "high" ? "high" : "touch",
     );
     const app = createAppearance(b.host);
-    expect(app.snapshot().contrast).toBe(contrast);
+    expect(app.snapshot().contrast).toBe(contrast === "high" ? "high" : "low");
     app.dispose();
   },
 );
