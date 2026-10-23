@@ -29,6 +29,7 @@ import { createLocalAgentActivity } from "../features/agents/local-activity";
 import type { AgentReads } from "../features/agents/reads";
 import { communityDestination } from "../features/communities/destination";
 import type { Checkpoint } from "../features/agents/catch-up";
+import type { Interrupted } from "../features/agents/interrupted";
 import { AgentRunners } from "../features/agents/runner";
 import {
   type Agent,
@@ -59,8 +60,8 @@ import { stateStorage } from "./storage";
  * attestation: agent-controller app_agent.rs `KINDS`, which a test keeps this
  * list equal to. The relay decides which channel changes it may make. */
 export const KINDS: readonly number[] = Object.freeze([
-  5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 40003, 40100,
-  41010,
+  5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003,
+  40100, 41010,
 ]);
 /** Throws for a kind the app's custody would not sign. */
 export function checkKind(kind: number) {
@@ -239,6 +240,7 @@ export function host(options: HostOptions): () => Promise<void> {
   // (its own key in agent storage): as before catch-up, it hears what happens
   // while it is connected.
   let checkpoints: Readonly<Record<string, Checkpoint>> = {};
+  let interrupted: Interrupted = {};
   const runners = new AgentRunners({
     ready: (agent) => (live && agent === pubkey ? agentView() : undefined),
     agent: (agent) => (agent === pubkey ? agentView() : undefined),
@@ -258,6 +260,15 @@ export function host(options: HostOptions): () => Promise<void> {
       write: (next) => {
         checkpoints = next;
       },
+    },
+    // Turns cut off by a stop, kept as checkpoints are: this host does not
+    // resume them when it starts again.
+    interrupted: {
+      read: () => interrupted,
+      write: (agent, turns) => {
+        interrupted = { ...interrupted, [agent]: turns };
+      },
+      changed: () => {},
     },
     scope: () => scope,
     saved: (agent) => (agent === pubkey ? stored : undefined),
@@ -307,8 +318,8 @@ export function host(options: HostOptions): () => Promise<void> {
     // The classifier key is in the app's Keychain entry: no event watch here
     // is checked by a classifier, as in an app without one.
     classifier: () => "unavailable",
-    jev: () => undefined,
-    jevStatus: () => undefined,
+    decisions: () => undefined,
+    keyStatus: () => undefined,
     classifierKey: () => "missing",
     classifierKeyGeneration: () => 0,
     setClassifierKey: () => {},
@@ -360,6 +371,11 @@ export function host(options: HostOptions): () => Promise<void> {
       media: (agent, url) => {
         mine(agent);
         return client.media(url);
+      },
+      // The app signs Git access with the agent's custody; this host does
+      // not yet.
+      gitAuth: async () => {
+        throw new Error("Git access needs Buzz Desktop.");
       },
       remember: async (agent, slug, body, after) => {
         mine(agent);
