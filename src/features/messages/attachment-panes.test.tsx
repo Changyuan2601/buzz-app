@@ -218,6 +218,8 @@ it.each([false, true])(
               subscribe: () => () => {},
               register() {},
               resolve: () => undefined,
+              requestOpen: () => false,
+              handleOpenRequests: () => () => {},
             }}
             relay={relayData}
             extensions={extensions}

@@ -4,6 +4,7 @@ import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -11,7 +12,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type {
+  Panels,
+  PanelOpenRequest,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import type { PageNavigation } from "../../features/navigation/service";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { matchesEvent } from "../../features/relay/projection";
@@ -28,6 +34,9 @@ import { setThreadPlacementPreference } from "../../features/messages/thread-pre
 import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
+import { BrowserHostView } from "../../features/browser/BrowserHostView";
+import { BrowserSessions } from "../../features/browser/sessions";
+import type { BrowserPlatform } from "../../features/browser/platform";
 
 composerDOMFixture();
 
@@ -59,6 +68,8 @@ afterEach(() => {
 async function page(
   type: "stream" | "solo" = "stream",
   navigator?: Navigation,
+  routed = false,
+  appComponent?: RegisteredPanel["component"],
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -95,6 +106,14 @@ async function page(
   );
   owners.push(owner);
   const scope = `https://relay.test:${viewer.pubkey}`;
+  const root = routed
+    ? signed(viewer, {
+        kind: 9,
+        tags: [["h", channelId]],
+        content: "Initiating thread",
+      })
+    : undefined;
+  if (root) events.push(root);
   writeView(scope, "selected-channel", channelId);
   owner.session.channels.ensureList();
   await vi.waitFor(() =>
@@ -129,17 +148,65 @@ async function page(
     ),
     component: () => <input aria-label="Notes draft" />,
   };
-  const available = [panel];
+  const app: RegisteredPanel = {
+    id: "app",
+    key: "fixture:app",
+    pluginId: "fixture",
+    revision: "1",
+    title: "App",
+    keepOpen: true,
+    matches: (target) => target === "https://app.example/",
+    component: appComponent ?? (() => <p>App content</p>),
+  };
+  const available = [panel, app];
+  let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
   const panels: Panels = {
     snapshot: () => available,
     subscribe: () => () => {},
-    resolve: () => undefined,
+    resolve: (target) => available.find((entry) => entry.matches(target)),
     register() {},
+    requestOpen: (request) => handleOpen?.(request) ?? false,
+    handleOpenRequests: (handler) => {
+      handleOpen = handler;
+      return () => {
+        handleOpen = undefined;
+      };
+    },
   };
-  render(<ChannelsPage relay={relay} panels={panels} navigator={navigator} />);
+  const navigation: PageNavigation | undefined = root
+    ? {
+        entryId: "thread-visit",
+        target: {
+          version: 1,
+          kind: "conversation",
+          scope: {
+            viewer: viewer.pubkey,
+            communityOrigin: "https://relay.test",
+          },
+          channelId,
+          messageId: root.id,
+          threadRootId: root.id,
+        },
+        signal: new AbortController().signal,
+        forSession() {
+          return this;
+        },
+        resolve: () => true,
+        complete: () => true,
+      }
+    : undefined;
+  render(
+    <ChannelsPage
+      relay={relay}
+      panels={panels}
+      navigator={navigator}
+      navigation={navigation}
+    />,
+  );
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
+    hidden: routed,
   });
   const open = () =>
     user.click(screen.getByRole("button", { name: "Open notes" }));
@@ -150,8 +217,158 @@ async function page(
     session: owner.session,
     scope,
     viewer: viewer.pubkey,
+    panels,
+    root: root?.id,
   };
 }
+
+it.each(["side", "main"] as const)(
+  "agent-opened apps preserve their routed %s thread",
+  async (pane) => {
+    setThreadPlacementPreference(pane);
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    const h = await page(
+      "stream",
+      {
+        open,
+        snapshot: () => ({ entry: { id: "thread-visit" }, attempt: {} }),
+      } as unknown as Navigation,
+      true,
+    );
+    const root = h.root;
+    if (!root) throw new Error("Routed thread root unavailable");
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    await screen.findByRole("tab", { name: "Initiating thread" });
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          rootId: root,
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    expect(screen.getByRole("tab", { name: "App" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(tabs.result.current.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "thread", messageId: root }),
+      ]),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
+    const thread = screen.getByRole("tab", { name: "Initiating thread" });
+    expect(thread).toHaveAttribute("aria-selected", "true");
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+it("moving the last side app adopts its guest before the dock exit finishes", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 500),
+  );
+  let finishExit = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finishExit = resolve;
+  });
+  const originalAnimations = HTMLElement.prototype.getAnimations;
+  const getAnimations = vi.fn(() => [{ finished }]);
+  Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+    configurable: true,
+    value: getAnimations,
+  });
+  const pages = new Map<string, string>();
+  const attached = vi.fn(async (url: string) => {
+    const id = `guest-${pages.size + 1}`;
+    pages.set(id, url);
+    return id;
+  });
+  const detached = vi.fn(async (id: string) => {
+    pages.delete(id);
+  });
+  const observed: string[] = [];
+  const platform: BrowserPlatform = {
+    available: true,
+    attach: attached,
+    detach: detached,
+    setBounds: async () => {},
+    navigate: async (id, url) => {
+      pages.set(id, url);
+    },
+    action: async () => {},
+    status: async (id) => {
+      const url = pages.get(id) ?? "";
+      observed.push(url);
+      return { url, title: "App", loading: false, error: null };
+    },
+  };
+  const sessions = new BrowserSessions(platform);
+  const App = () => (
+    <BrowserHostView
+      url="https://app.example/"
+      storage="builderlab-apps"
+      platform={platform}
+      sessions={sessions}
+    />
+  );
+  try {
+    const h = await page("stream", undefined, false, App);
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
+    const address = screen.getByRole("textbox", { name: "Address" });
+    await h.user.clear(address);
+    await h.user.type(address, "https://app.example/second.html{Enter}");
+    await vi.waitFor(() =>
+      expect(observed).toContain("https://app.example/second.html"),
+    );
+    const source = document.querySelector("[data-panel-dock]");
+    const sourceGuest = source
+      ?.querySelector("[data-browser-session]")
+      ?.getAttribute("data-browser-session");
+    expect(sourceGuest).toBe("guest-1");
+    screen.getByRole("tab", { name: "App" }).focus();
+    await h.user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    const main = document.querySelector<HTMLElement>("[data-main-workspace]");
+    if (!main) throw new Error("Main workspace unavailable");
+    fireEvent.animationEnd(within(main).getByRole("tabpanel", { name: "App" }));
+    await vi.waitFor(() =>
+      expect(main.querySelector("[data-browser-session]")).not.toBeNull(),
+    );
+    expect(getAnimations).toHaveBeenCalled();
+    expect(source).toHaveAttribute("data-closing");
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+    expect(detached).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        within(main).getByRole("textbox", { name: "Address" }),
+      ).toHaveValue("https://app.example/second.html"),
+    );
+    await act(async () => finishExit());
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => finishExit());
+    if (originalAnimations)
+      HTMLElement.prototype.getAnimations = originalAnimations;
+    else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
+  }
+});
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;

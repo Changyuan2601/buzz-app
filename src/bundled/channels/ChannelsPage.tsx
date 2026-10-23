@@ -1276,6 +1276,16 @@ function ChannelWorkspace({
       panelTrigger,
     ],
   );
+  // An agent's request to show something here opens as a link would.
+  useEffect(
+    () =>
+      panels.handleOpenRequests(({ target, channelId, rootId }) =>
+        channelId === linkContext.current.channelId
+          ? openLink(target, rootId ? { rootId, fromThread: true } : {})
+          : false,
+      ),
+    [panels, openLink],
+  );
   const hasChannelPanel =
     !composingMessage &&
     !draft &&
@@ -1665,8 +1675,8 @@ function ChannelWorkspace({
                         {current && (
                           <IconButton
                             size="sm"
-                            aria-label="Channel members"
-                            title="Channel members"
+                            aria-label="Access"
+                            title="Access"
                             aria-haspopup="dialog"
                             ref={membersHeaderTrigger}
                             aria-expanded={membersOpen}
@@ -1834,7 +1844,9 @@ function ChannelWorkspace({
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
-        keepMounted={!!hasPanel && !tabState.paneOpen}
+        keepMounted={
+          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+        }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >

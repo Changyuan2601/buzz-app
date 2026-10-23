@@ -48,12 +48,14 @@ test("a confirmed share opens the durable title-first channel index", async ({
     channelId: "beta",
     scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
   });
-  await page.getByRole("button", { name: "Share", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Share chat" });
+  await page.getByRole("button", { name: "Access", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Chat access" });
   await dialog
-    .getByRole("combobox", { name: "People or channel" })
+    .getByRole("searchbox", { name: "Search people and channels" })
     .fill("Alpha");
-  await page.getByRole("option", { name: "Alpha", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Select #Alpha", exact: true })
+    .click();
   await dialog.getByRole("button", { name: "Share", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "View", exact: true }).click();

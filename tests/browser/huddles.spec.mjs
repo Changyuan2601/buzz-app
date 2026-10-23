@@ -788,7 +788,7 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
   await expect(
     page.getByRole("dialog", { name: "Huddle members" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close channel members" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Switch conversation" }).click();
   await expect(
     page.getByRole("heading", { name: "Alex", exact: true }),

@@ -62,8 +62,27 @@ mod macos {
         Ok(delegate)
     }
 
+    /// Named website data stores exist from macOS 14. Earlier, Wry falls
+    /// back to the default store, which the app's own webview also uses.
+    pub fn named_stores() -> bool {
+        objc2_foundation::NSProcessInfo::processInfo()
+            .operatingSystemVersion()
+            .majorVersion
+            >= 14
+    }
+
     pub fn loading(guest: &WebView) -> bool {
         unsafe { guest.webview().isLoading() }
+    }
+
+    pub fn focused(guest: &WebView) -> bool {
+        let view = guest.webview();
+        let Some(responder) = view.window().and_then(|window| window.firstResponder()) else {
+            return false;
+        };
+        responder
+            .downcast_ref::<objc2_app_kit::NSView>()
+            .is_some_and(|focused| focused.isDescendantOf(&view))
     }
 
     pub fn current_url(guest: &WebView) -> Result<Option<String>, String> {
@@ -173,7 +192,7 @@ pub(super) fn resize_guest(
 }
 
 #[cfg(target_os = "macos")]
-pub(super) use macos::{back, current_url, deny_permissions, forward, loading};
+pub(super) use macos::{back, current_url, deny_permissions, focused, forward, loading};
 #[cfg(target_os = "macos")]
 pub(super) type Permissions = objc2::rc::Retained<macos::PermissionDelegate>;
 
@@ -183,6 +202,30 @@ pub(super) struct Permissions;
 #[cfg(not(target_os = "macos"))]
 pub(super) fn current_url(guest: &WebView) -> Result<Option<String>, String> {
     guest.url().map(Some).map_err(|error| error.to_string())
+}
+
+/// Keeps the guest's website storage under `storage` between sessions where
+/// the platform can hold it apart from the app's; otherwise it stays private.
+#[cfg(target_os = "macos")]
+pub(super) fn with_storage(
+    builder: WebViewBuilder<'_>,
+    storage: Option<[u8; 16]>,
+) -> WebViewBuilder<'_> {
+    use wry::WebViewBuilderExtDarwin;
+    match storage {
+        Some(identifier) if macos::named_stores() => builder
+            .with_incognito(false)
+            .with_data_store_identifier(identifier),
+        _ => builder.with_incognito(true),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn with_storage(
+    builder: WebViewBuilder<'_>,
+    _storage: Option<[u8; 16]>,
+) -> WebViewBuilder<'_> {
+    builder.with_incognito(true)
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]

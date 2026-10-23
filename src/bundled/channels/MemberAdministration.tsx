@@ -1,11 +1,9 @@
-import { motion } from "motion/react";
 import {
   useEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
-  type FocusEvent,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -26,22 +24,6 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
-
-/** Row-wide hover includes the separate action; focus includes both profile links. */
-function useMemberReveal() {
-  const [focused, setFocused] = useState(false);
-  return {
-    initial: false as const,
-    animate: focused ? "focused" : "rest",
-    whileHover: focused ? "focused" : "revealed",
-    // React focus bubbles through portals; only physical row controls reveal it.
-    onFocusCapture: (event: FocusEvent<HTMLElement>) =>
-      setFocused(event.currentTarget.contains(event.target)),
-    onBlurCapture: (event: FocusEvent<HTMLElement>) => {
-      if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
-    },
-  };
-}
 
 export function useMemberAdministration(
   session: RelaySession,
@@ -83,6 +65,7 @@ export function MemberRow({
   onViewOwnerProfile,
   onSendMessage,
   messagePending,
+  place,
   invitationAction,
   highlight,
   children,
@@ -99,6 +82,8 @@ export function MemberRow({
   onViewOwnerProfile?: (() => boolean) | undefined;
   onSendMessage?: (() => void) | undefined;
   messagePending?: boolean | undefined;
+  /** Names the conversation in actions: Remove from chat or channel. */
+  place: "chat" | "channel";
   invitationAction?: ReactNode;
   /** The search highlight, for rows a picker can choose with Enter. */
   highlight?:
@@ -110,7 +95,6 @@ export function MemberRow({
     | undefined;
   children: ReactNode;
 }) {
-  const reveal = useMemberReveal();
   const capability = session.memberAdministration;
   const state = useSyncExternalStore(
     capability.subscribe,
@@ -194,7 +178,7 @@ export function MemberRow({
           {canEdit && <MenuSeparator />}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
-              Remove from channel
+              Remove from {place}
             </MenuItem>
           )}
         </>
@@ -215,13 +199,7 @@ export function MemberRow({
       }}
     >
       <ContextMenuTrigger
-        render={
-          invitationAction ? (
-            <motion.div {...reveal} />
-          ) : (
-            <motion.li {...reveal} />
-          )
-        }
+        render={invitationAction ? <div /> : <li />}
         className={styles.member}
         id={highlight?.id}
         data-highlighted={highlight?.active || undefined}

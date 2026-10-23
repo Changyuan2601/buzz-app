@@ -100,7 +100,7 @@ use host_mcp::{
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
 };
-use host_request::plugin_host_request;
+use host_request::{plugin_host_request, plugin_host_upload};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -561,6 +561,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_host_upload,
         plugin_host_process_spawn,
         plugin_host_process_write,
         plugin_host_process_kill,

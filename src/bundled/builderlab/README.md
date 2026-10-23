@@ -12,6 +12,36 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 
 # Builderlab
 
+## Apps pilot
+
+Local agents can create, deploy, inspect readiness, share and open Apps Platform
+apps using the Settings Builderlab sign-in. `apps_contract` reports the selected
+tenant's runtimes and schema location. Creation checks that contract and supports
+`static` and `fetch-js`; it repeats the selected runtime through reservation and
+initialization. The executable profile returns the required asset manifest and
+bindings, even when its handler serves all content itself.
+
+BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
+boundary: the server must grant Builderlab access to the current workspace/account.
+Existing workspace early-preview enablement can provide that access; these tools
+do not enable a workspace or bypass its policy. A denied request preserves the
+server's permission error. Check the contract before choosing a profile because
+BBPublic need not support static hosting.
+
+After an accepted deployment, readiness errors preserve its app, version,
+deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
+again. A failed reservation or initialization names the planned app ID; inspect or
+resume that app before creating another one. Automatic reservation recovery and
+hosted tool declarations are separate work.
+
+The app panel uses the existing native browser and persistent website store on
+macOS 14+. Website login is separate from Settings login, including sign-out and
+account switching. Confirm the website account when testing. Earlier macOS uses a
+private store; other platforms do not expose the embedded app panel. CLI-to-site
+SSO is a separate integration.
+
+## Remote agents
+
 The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.

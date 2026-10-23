@@ -465,11 +465,13 @@ test.describe("filter action focus", () => {
       await page.getByRole("menuitemradio", { name, exact: true }).click();
     };
     await expect(row).toBeVisible();
+    // Unreads keeps only rows with observed unread history; wait for it first.
+    await expect(row.getByRole("img", { name: /unread/ })).toBeVisible();
     await filter(channels, "Channels", "Unreads");
     await expect(row).toBeVisible();
     await row.click({ button: "right" });
     await page
-      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .getByRole("menuitem", { name: "Mark as read", exact: true })
       .click();
     await expect(row).toHaveCount(0);
     await expect(channels.locator("details > summary")).toBeFocused();

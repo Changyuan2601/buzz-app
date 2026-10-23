@@ -1,6 +1,7 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { SoloShare, ChatSharedMark } from "./SoloShare";
+import { ChatSharedMark } from "./ChatSharedMark";
+import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -148,7 +149,6 @@ export function SoloWorkspaces({
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
   const [chatSettings, setChatSettings] = useState<{
-    rename?: boolean;
     item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
@@ -527,9 +527,6 @@ export function SoloWorkspaces({
                           onMove={(projectId) => move(item.id, projectId)}
                           onNewWorkspace={() => setCreatingFor(item)}
                           onCopy={copy}
-                          onRename={() =>
-                            setChatSettings({ item, visit, rename: true })
-                          }
                           onSettings={() => setChatSettings({ item, visit })}
                           onLifecycle={
                             handoff &&
@@ -649,26 +646,22 @@ export function SoloWorkspaces({
         />
       )}
       {sharing && sharingChannel && (
-        <SoloShare
+        <ChannelMembersDialog
           key={sharing.id}
-          navigator={navigationController}
           session={session}
-          channel={sharingChannel}
+          channelId={sharing.id}
+          navigator={navigationController}
           signal={sharing.visit}
-          onConverted={() => onConverted?.(sharing.id)}
-          finalFocus={() =>
-            document.querySelector<HTMLElement>(
+          trigger={{
+            current: document.querySelector<HTMLElement>(
               `[data-solo-menu-id="${sharing.id}"] button`,
-            ) ?? false
-          }
-          initialOpen
-          renderTrigger={() => null}
-          onClose={() => setSharing(undefined)}
+            ),
+          }}
+          close={() => setSharing(undefined)}
         />
       )}
       {chatSettings && (
         <WorkspaceSettings
-          focusName={chatSettings.rename}
           key={chatSettings.item.id}
           signal={chatSettings.visit}
           finalFocus={() =>

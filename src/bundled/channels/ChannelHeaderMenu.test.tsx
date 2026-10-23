@@ -237,22 +237,22 @@ it("keeps shared read pending/errors in the header and retires dismissed complet
       disabled={surface.pending}
       onClick={() => void surface.runRead(write)}
     >
-      Mark as Read
+      Mark as read
     </MenuItem>,
   ]);
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Channel actions" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    await screen.findByRole("menuitem", { name: "Mark as read" }),
   );
   expect(screen.getByRole("status")).toHaveTextContent("Saving…");
   expect(
-    screen.getByRole("menuitem", { name: "Mark as Read" }),
+    screen.getByRole("menuitem", { name: "Mark as read" }),
   ).toHaveAttribute("aria-disabled", "true");
   await act(async () => reject(new Error("Read failed")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Read failed");
-  await user.click(screen.getByRole("menuitem", { name: "Mark as Read" }));
+  await user.click(screen.getByRole("menuitem", { name: "Mark as read" }));
   expect(write).toHaveBeenCalledTimes(2);
   await user.keyboard("{Escape}");
   await waitFor(() =>
