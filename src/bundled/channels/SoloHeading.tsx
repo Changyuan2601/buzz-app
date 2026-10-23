@@ -20,13 +20,15 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
-import { ChannelMembersButton } from "./ChannelMembersDialog";
+import {
+  ChannelMembersButton,
+  ChannelMembersDialog,
+} from "./ChannelMembersDialog";
 import {
   NewWorkspaceDialog,
   SoloChatMenuItems,
   useChatCopy,
 } from "./SoloChatMenu";
-import { SoloShare } from "./SoloShare";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 
 /** The header of a conversation shown with the Solo treatment. */
@@ -59,7 +61,6 @@ export function SoloHeading({
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
     trigger: RefObject<HTMLButtonElement | null>;
-    rename?: boolean;
   }>();
   const [sharing, setSharing] = useState<{ visit: AbortSignal | undefined }>();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
@@ -112,13 +113,6 @@ export function SoloHeading({
                     }}
                     onNewWorkspace={() => setCreatingWorkspace(true)}
                     onCopy={copy}
-                    onRename={() =>
-                      setSettingsOpen({
-                        visit: signal,
-                        trigger: actionsTrigger,
-                        rename: true,
-                      })
-                    }
                     onSettings={() =>
                       setSettingsOpen({
                         visit: signal,
@@ -137,16 +131,13 @@ export function SoloHeading({
           </>
         }
       >
-        <ChannelMembersButton session={session} channelId={channel.id} />
-        {children}
-        <SoloShare
-          key={channel.id}
-          navigator={navigator}
+        <ChannelMembersButton
           session={session}
-          channel={channel}
+          channelId={channel.id}
+          navigator={navigator}
           signal={signal}
-          onConvert={onConvert}
         />
+        {children}
         <IconButton
           ref={settingsTrigger}
           size="toolbar"
@@ -163,16 +154,14 @@ export function SoloHeading({
         />
       </SoloTitle>
       {sharing && (
-        <SoloShare
-          navigator={navigator}
+        <ChannelMembersDialog
+          key={channel.id}
           session={session}
-          channel={channel}
+          channelId={channel.id}
+          navigator={navigator}
           signal={sharing.visit}
-          onConvert={onConvert}
-          finalFocus={() => actionsTrigger.current ?? false}
-          initialOpen
-          renderTrigger={() => null}
-          onClose={() => setSharing(undefined)}
+          trigger={actionsTrigger}
+          close={() => setSharing(undefined)}
         />
       )}
       {creatingWorkspace && (
@@ -223,7 +212,6 @@ export function SoloHeading({
       {settingsOpen && (
         <WorkspaceSettings
           signal={settingsOpen.visit}
-          focusName={settingsOpen.rename}
           finalFocus={settingsOpen.trigger}
           key={channel.id}
           session={session}

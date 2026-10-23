@@ -20,6 +20,7 @@ export type MemberChange = Readonly<{
 export type MemberAuthority = Readonly<{
   roles: Readonly<Record<string, MemberRole>>;
   canManage: boolean;
+  canRemove: boolean;
   canRemoveOwnedAgent: boolean;
 }>;
 const PUBKEY = /^[0-9a-f]{64}$/;
@@ -89,15 +90,15 @@ export function memberAuthority(
     throw new Error(
       "Member roles are inconsistent. Refresh members and roles.",
     );
-  const activeChannel =
-    type !== "dm" &&
-    archived !== "true" &&
-    !soloLabels(channelIdentity(metadata).labels);
+  const activeChannel = type !== "dm" && archived !== "true";
+  // In Solo chats only owners and admins remove people; nobody changes roles.
+  const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
-    canManage: activeChannel && elevated.has(viewer),
+    canManage: activeChannel && !solo && elevated.has(viewer),
+    canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:
-      activeChannel && !!roles[viewer] && roles[viewer] !== "unknown",
+      activeChannel && !solo && !!roles[viewer] && roles[viewer] !== "unknown",
   });
 }
 
@@ -123,14 +124,13 @@ export function canRemoveMember(
   key: string,
   owner?: string,
 ) {
+  const role = state.roles[key];
   return (
-    canManageMember(state, viewer, key) ||
-    (state.canRemoveOwnedAgent &&
-      owner === viewer &&
-      key !== viewer &&
-      !!state.roles[key] &&
-      state.roles[key] !== "owner" &&
-      state.roles[key] !== "unknown")
+    (state.canRemove || (state.canRemoveOwnedAgent && owner === viewer)) &&
+    key !== viewer &&
+    !!role &&
+    role !== "owner" &&
+    role !== "unknown"
   );
 }
 

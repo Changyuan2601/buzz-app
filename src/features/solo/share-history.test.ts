@@ -61,7 +61,7 @@ it("preserves malformed history and surfaces denied storage rather than silently
   });
   const original = viewRevision(scope, key);
   expect(() => saveShareHistory(scope, source, [person])).toThrow(
-    "Sharing history is unavailable on this device. Unrecorded people appear under Other access.",
+    "Sharing history is unavailable on this device.",
   );
   expect(viewRevision(scope, key)).toBe(original);
   localStorage.clear();
@@ -87,8 +87,6 @@ it("bounds the total serialized history and leaves the last saved segments intac
       name: "Large",
       members,
     }),
-  ).toThrow(
-    "Sharing history is full on this device. Access is unchanged; unrecorded people appear under Other access.",
-  );
+  ).toThrow("Sharing history is full on this device. Access is unchanged.");
   expect(viewRevision(scope, shareHistoryKey(source))).toBe(original);
 });
