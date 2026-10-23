@@ -6,11 +6,15 @@ import { trackMemberAdditionReceipts } from "../channel-members/operations";
 import {
   canShareConversation,
   destinationShareAudience,
+  accessFailureNotice,
   grantSoloChatAccess,
 } from "../solo/share";
 import { soloShareAttempt } from "../solo/share-attempt";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { useChannelIdentityNames } from "../identity-names/react";
+import { formatPublicKey } from "../../shared/identity/public-key";
 
 type Pending = {
   sources: readonly string[];
@@ -42,6 +46,8 @@ export function useChatLinkSharing(
   const [pending, setPending] = useState<Pending>();
   const adding = useRef(false);
   const safeAction = useRef<HTMLButtonElement>(null);
+  const notify = useToastNotification();
+  const name = useChannelIdentityNames(session, channelId);
   async function share() {
     if (!session || !pending || adding.current) return;
     const request = pending;
@@ -74,6 +80,7 @@ export function useChatLinkSharing(
         if (soloShareAttempt(session, source.id)) throw new Error(competing);
       }
       request.started = true;
+      const failed: { key: string; error: string }[] = [];
       for (const source of sources) {
         check();
         const grants = request.grants.get(source.id);
@@ -81,7 +88,7 @@ export function useChatLinkSharing(
           throw new Error(
             "Sharing intent is unavailable. Close and send again.",
           );
-        await grantSoloChatAccess(
+        const missed = await grantSoloChatAccess(
           session,
           source.id,
           request.audience.filter(
@@ -97,9 +104,31 @@ export function useChatLinkSharing(
           // A dispatched addition may finish; a changed draft stops the next one.
           check,
         );
+        // A chat nobody could be granted keeps Retry; a partial share sends
+        // and reports who was missed.
+        if (
+          missed[0] &&
+          ![...grants.values()].some((intent) => intent.confirmed)
+        )
+          throw new Error(missed[0].error);
+        failed.push(
+          ...missed.filter((miss) => !failed.some((f) => f.key === miss.key)),
+        );
       }
       check();
       request.finish(true);
+      if (failed.length)
+        notify(
+          accessFailureNotice(failed, (key) =>
+            name(
+              key,
+              session.profiles.snapshot().get(key)?.name ??
+                formatPublicKey(key) ??
+                "Member",
+            ),
+          ),
+          "error",
+        );
     } catch (reason) {
       if (!request.signal.aborted) {
         const message =

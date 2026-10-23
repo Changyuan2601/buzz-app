@@ -39,6 +39,7 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { SoloWorkspaces } from "./SoloWorkspaces";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   formatPublicKey,
   publicKeyLabels,
@@ -139,7 +140,7 @@ function fixture(direct = false) {
   const published: RelayEvent[] = [];
   let failLink = false;
   let holdLink: Promise<void> | undefined;
-  let failGrant = false;
+  let failGrant: boolean | string = false;
   let failDetails = false;
   let failRoster = false;
   let holdRoster: Promise<void> | undefined;
@@ -165,7 +166,11 @@ function fixture(direct = false) {
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9) await holdLink;
     if (event.kind === 9 && failLink) throw new PublishRejected("Post refused");
-    if (event.kind === 9000 && failGrant)
+    if (
+      event.kind === 9000 &&
+      (failGrant === true ||
+        event.tags.some(([tag, key]) => tag === "p" && key === failGrant))
+    )
       throw new PublishRejected("Chat invite refused");
     if (event.kind === 9002 && failDetails)
       throw new PublishRejected("Settings refused");
@@ -381,7 +386,7 @@ function fixture(direct = false) {
     holdLink(value: Promise<void> | undefined) {
       holdLink = value;
     },
-    failGrant(value: boolean) {
+    failGrant(value: boolean | string) {
       failGrant = value;
     },
     setSourceMembers(keys: string[]) {
@@ -407,6 +412,7 @@ function fixture(direct = false) {
       if (!initial) throw new Error("Chat not loaded");
       return render(
         <SoloShare session={session} channel={initial} {...props} />,
+        { wrapper: ToastProvider },
       );
     },
   };
@@ -534,6 +540,27 @@ it("shares a frozen channel snapshot to confirmed destination members, reports o
   expect(t.members.get(source)).toContain(t.aria.pubkey);
   expect(t.members.get(source)).not.toContain(t.dev.pubkey);
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+});
+
+it("posts a partial channel share and reports who couldn't get access", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  t.addDestination(t.dev.pubkey);
+  t.failGrant(t.aria.pubkey);
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const dialog = screen.getByRole("dialog", { name: "Chat access" });
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.members.get(source)).toContain(t.dev.pubkey);
+  expect(t.members.get(source)).not.toContain(t.aria.pubkey);
+  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  expect(
+    await screen.findByText(/^Couldn’t give .+ access to the chat\.$/),
+  ).toBeVisible();
 });
 
 it("keeps the selected channel over close/reopen after posting fails", async () => {

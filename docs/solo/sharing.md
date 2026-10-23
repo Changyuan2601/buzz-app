@@ -96,8 +96,11 @@ else is in the channel, the message sends without asking. If Share can't succeed
 dialog explains why and offers only link-only.
 
 Consent covers the full chat history and future messages, not just a preview.
-An unsuccessful grant leaves the message unsent and keeps Retry in the dialog;
-that retry preserves its captured audience and existing operation receipts.
+Grants are opportunistic: everyone is tried, and when at least one succeeds the
+message sends and a toast names who couldn't get access. When none succeeds the
+message stays unsent and the dialog keeps Retry; that retry preserves its captured
+audience and existing operation receipts. Losing the right to add anyone stops the
+remaining grants instead of trying each person.
 Partial grants remain real access even if the user cancels or sends only the link.
 A changed draft stops before the next grant is dispatched. Leaving the composer
 cancels further grants and sending, not already dispatched writes. Outbox remains their recovery owner. A separate in-progress Share for the
@@ -128,6 +131,9 @@ over-capacity evidence. An oversized snapshot sends no grants; Retry keeps that
 snapshot even after destination membership changes. **Start over** is required to
 capture a different audience. Confirmed grants are skipped. Saved grant IDs, link IDs, unknown delivery, concurrent
 remount guards, stale Retry/Start over guards and chat lifetime fencing remain.
+Grants here are opportunistic too: if anyone was granted, the link posts, the
+share finishes and a toast names who couldn't get access; reopen Share to try them
+again. If nobody was granted, the error and Retry stay in the dialog.
 Partial failures distinguish confirmed access from unconfirmed link posting. Pending
 buttons retain their label and block duplicate activation. The first pending share
 keeps its existing footer actions: saving an in-flight receipt does not insert a

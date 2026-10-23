@@ -65,7 +65,10 @@ export function isSoloChatLinkReceipt(item: OutgoingEvent) {
   );
 }
 
-/** Exact selected people are grants to the chat, not the destination or its parent. */
+/** Exact selected people are grants to the chat, not the destination or its parent.
+ * Opportunistic: everyone is tried and per-person failures are returned, not
+ * thrown. Abort, lost add rights and a throwing `beforeDispatch` or
+ * `onConfirmed` stop the rest. */
 export async function grantSoloChatAccess(
   session: RelaySession,
   channelId: string,
@@ -77,9 +80,19 @@ export async function grantSoloChatAccess(
   soloParticipant = true,
   skipArchived = false,
   beforeDispatch?: () => void,
-) {
+): Promise<{ key: string; error: string }[]> {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
+  const failed: { key: string; error: string }[] = [];
+  let stopped = false;
+  const dispatch = () => {
+    try {
+      beforeDispatch?.();
+    } catch (reason) {
+      stopped = true;
+      throw reason;
+    }
+  };
   for (const key of people) {
     signal.throwIfAborted();
     // Channel audiences omit archived identities; direct selections still fail explicitly.
@@ -87,19 +100,52 @@ export async function grantSoloChatAccess(
       continue;
     const intent = intents.get(key) ?? {};
     intents.set(key, intent);
-    await addChannelMember(
-      session,
-      channelId,
-      key,
-      signal,
-      intent,
-      session.outbox,
-      soloParticipant,
-      includeAgents,
-      beforeDispatch,
-    );
+    try {
+      await addChannelMember(
+        session,
+        channelId,
+        key,
+        signal,
+        intent,
+        session.outbox,
+        soloParticipant,
+        includeAgents,
+        dispatch,
+      );
+    } catch (reason) {
+      signal.throwIfAborted();
+      // Losing the right to add anyone is not a per-person failure.
+      const chat =
+        session.channels
+          .list()
+          .channels.find((item) => item.id === channelId) ??
+        session.channels.get?.(channelId);
+      if (
+        stopped ||
+        !(soloParticipant
+          ? canShareSoloChat(session, chat)
+          : canAddMembers(session, chat))
+      )
+        throw reason;
+      failed.push({
+        key,
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
+      continue;
+    }
     onConfirmed(key);
   }
+  return failed;
+}
+
+/** One line naming who a partial share missed; access for the rest stands. */
+export function accessFailureNotice(
+  failed: readonly { key: string }[],
+  name: (key: string) => string,
+) {
+  const shown = failed.slice(0, 3).map(({ key }) => name(key));
+  const more = failed.length - shown.length;
+  return `Couldn’t give ${shown.join(", ")}${more ? ` and ${more} more` : ""} access to the chat.`;
 }
 
 /** Capture validated destination keys, including oversized rosters. The share

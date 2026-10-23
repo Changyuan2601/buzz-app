@@ -13,6 +13,7 @@ import * as share from "../solo/share";
 import { MessageComposer } from "./MessageComposer";
 import { composerDOMFixture } from "./composer-testing";
 import { writeView } from "../../shared/view-state";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 composerDOMFixture();
 const source = "11111111-1111-4111-8111-111111111111";
@@ -42,15 +43,16 @@ async function fixture(
     ],
   ]);
   const published: RelayEvent[] = [];
-  let reject = false;
+  let reject: boolean | string = false;
   let hold: Promise<void> | undefined;
   let onQuery: ((filters: readonly ReadFilter[]) => void) | undefined;
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9000) {
       if (hold) await hold;
-      if (reject) throw new PublishRejected("Invite refused");
       const channel = event.tags.find((tag) => tag[0] === "h")?.[1] ?? "";
       const key = event.tags.find((tag) => tag[0] === "p")?.[1] ?? "";
+      if (reject === true || reject === key)
+        throw new PublishRejected("Invite refused");
       members.set(channel, [
         ...new Set([...(members.get(channel) ?? []), key]),
       ]);
@@ -109,6 +111,7 @@ async function fixture(
       channelName="Team"
       {...(thread ? { threadRootId: root } : {})}
     />,
+    { wrapper: ToastProvider },
   );
   return {
     view,
@@ -119,7 +122,7 @@ async function fixture(
     person,
     late,
     key,
-    reject(value: boolean) {
+    reject(value: boolean | string) {
       reject = value;
     },
     hold(value: Promise<void>) {
@@ -210,6 +213,29 @@ it("retains the captured audience on grant failure and retries the existing rece
   expect(f.published[0]?.id).toBe(first);
   expect(f.members.get(source)).toContain(f.person.pubkey);
   expect(f.members.get(source)).not.toContain(f.late.pubkey);
+});
+
+it("a partial share sends the message and reports who couldn't get access", async () => {
+  const f = await fixture();
+  f.addLate();
+  f.reject(f.person.pubkey);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Share and send" }),
+  );
+  await waitFor(() =>
+    expect(f.published.filter((event) => event.kind === 9)).toHaveLength(1),
+  );
+  expect(f.members.get(source)).toContain(f.late.pubkey);
+  expect(f.members.get(source)).not.toContain(f.person.pubkey);
+  expect(
+    await screen.findByText(/^Couldn’t give .+ access to the chat\.$/),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Share access to this chat?" }),
+    ).toBeNull(),
+  );
 });
 
 it("blocks competing Share intent but still permits link-only sending", async () => {

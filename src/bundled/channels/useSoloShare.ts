@@ -32,6 +32,7 @@ import {
 } from "../../shared/identity/public-key";
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
+  accessFailureNotice,
   canShareConversation,
   destinationShareAudience,
   grantSoloChatAccess,
@@ -408,7 +409,7 @@ export function useSoloShare({
         throw new Error("Choose at most 100 distinct recipients.");
       progress("Confirming chat access…");
       // A confirmed grant is never replayed, even if its recipient later leaves.
-      await grantSoloChatAccess(
+      const failed = await grantSoloChatAccess(
         session,
         channelId,
         keys.filter((key) => !exact.grants.get(key)?.confirmed),
@@ -419,6 +420,12 @@ export function useSoloShare({
         source?.channelType === "solo",
         true,
       );
+      // Nothing granted keeps Retry; a partial share posts and reports who was missed.
+      if (
+        failed[0] &&
+        ![...exact.grants.values()].some((intent) => intent.confirmed)
+      )
+        throw new Error(failed[0].error);
       const historySaved = remember();
       progress("Posting chat link…");
       const messageId = await publishSoloChatLink(
@@ -476,6 +483,7 @@ export function useSoloShare({
         /* Sharing is already confirmed; the tab can be opened from its launcher. */
       }
       finishSoloShare(session, channelId);
+      if (failed.length) notify(accessFailureNotice(failed, names), "error");
       if (visible()) {
         if (historySaved) close();
         else {

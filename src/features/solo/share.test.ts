@@ -35,10 +35,14 @@ function setup() {
   let clock = 1_700_000_000;
   let failLink = false;
   let chosenName: string | undefined;
-  let rejectGrant = false;
+  let rejectGrant: boolean | string = false;
   let records: readonly import("../relay/outbox").OutgoingEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
-    if (event.kind === 9000 && rejectGrant)
+    if (
+      event.kind === 9000 &&
+      (rejectGrant === true ||
+        event.tags.some(([tag, key]) => tag === "p" && key === rejectGrant))
+    )
       throw new PublishRejected("Invite denied");
     if (event.kind === 9 && failLink) throw new PublishRejected("Post denied");
     if (event.kind === 9000) {
@@ -159,7 +163,7 @@ function setup() {
       query.mockImplementationOnce(async () => [archive]);
       await owner.session.archives.refresh();
     },
-    rejectGrant: (value: boolean) => {
+    rejectGrant: (value: boolean | string) => {
       rejectGrant = value;
     },
     removeViewer: () => {
@@ -329,8 +333,8 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
   await t.chooseName("PR_45 & <fix>");
   t.rejectGrant(true);
   const intents = new Map();
-  await expect(
-    grantSoloChatAccess(
+  expect(
+    await grantSoloChatAccess(
       t.session,
       chatId,
       [t.human.pubkey],
@@ -338,7 +342,7 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
       new AbortController().signal,
       () => {},
     ),
-  ).rejects.toThrow();
+  ).toEqual([{ key: t.human.pubkey, error: expect.any(String) }]);
   expect(t.published).toHaveLength(0);
   t.rejectGrant(false);
   await grantSoloChatAccess(
@@ -457,13 +461,50 @@ it("reconciles a retired link receipt by exact ID, and fences missing evidence w
   expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
 });
 
+it("tries everyone and returns per-person failures instead of throwing", async () => {
+  const t = setup();
+  await t.ready();
+  t.rejectGrant(t.human.pubkey);
+  const confirmed: string[] = [];
+  expect(
+    await grantSoloChatAccess(
+      t.session,
+      chatId,
+      [t.human.pubkey, t.late.pubkey],
+      new Map(),
+      new AbortController().signal,
+      (key) => confirmed.push(key),
+    ),
+  ).toEqual([{ key: t.human.pubkey, error: expect.any(String) }]);
+  expect(confirmed).toEqual([t.late.pubkey]);
+  expect(t.members.get(chatId)).toContain(t.late.pubkey);
+  expect(t.members.get(chatId)).not.toContain(t.human.pubkey);
+});
+
+it("stops instead of trying the rest once the viewer can no longer add anyone", async () => {
+  const t = setup();
+  await t.ready();
+  t.removeViewer();
+  await expect(
+    grantSoloChatAccess(
+      t.session,
+      chatId,
+      [t.human.pubkey, t.late.pubkey],
+      new Map(),
+      new AbortController().signal,
+      () => {},
+    ),
+  ).rejects.toThrow("Could not refresh channel membership");
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it("refuses a known agent and prevents posting after loss of chat membership", async () => {
   const t = setup();
   await t.ready();
   // Known agent classification is an admission rule, not a name-based distinction.
   await t.setAgent();
-  await expect(
-    grantSoloChatAccess(
+  expect(
+    await grantSoloChatAccess(
       t.session,
       chatId,
       [t.bot.pubkey],
@@ -471,7 +512,9 @@ it("refuses a known agent and prevents posting after loss of chat membership", a
       new AbortController().signal,
       () => {},
     ),
-  ).rejects.toThrow(/tagging them/);
+  ).toEqual([
+    { key: t.bot.pubkey, error: expect.stringMatching(/tagging them/) },
+  ]);
   expect(t.published).toHaveLength(0);
   t.removeViewer();
   await expect(
@@ -528,8 +571,8 @@ it.each(["accepted", "unknown"] as const)(
     receipts = [];
     for (const listener of subscribers) listener();
     try {
-      await expect(
-        grantSoloChatAccess(
+      expect(
+        await grantSoloChatAccess(
           t.session,
           chatId,
           [t.human.pubkey],
@@ -537,7 +580,14 @@ it.each(["accepted", "unknown"] as const)(
           new AbortController().signal,
           () => {},
         ),
-      ).rejects.toThrow("original addition receipt is unavailable");
+      ).toEqual([
+        {
+          key: t.human.pubkey,
+          error: expect.stringContaining(
+            "original addition receipt is unavailable",
+          ),
+        },
+      ]);
       expect(resumed.grants.get(t.human.pubkey)?.dismissed).not.toBe(true);
       expect(t.publish).not.toHaveBeenCalled();
     } finally {
