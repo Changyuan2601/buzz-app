@@ -522,17 +522,27 @@ export class CodexRuntime {
     const bridge =
       this.hooks &&
       new CodexHooks(this.hooks.serve, async (input) => {
-        const active = [...this.entries.values()]
+        const entries = [...this.entries.values()];
+        const active = entries
           .flatMap((entry) => [...entry.lanes.values()])
           .map((lane) => lane.active)
           .find((turn) => turn?.threadId === input.session_id);
-        if (!active) return undefined; // Standalone turns have no mentions to acknowledge.
-        await active.ready;
-        if (active.turnId !== input.turn_id || active.finished)
+        const turn =
+          active ??
+          entries
+            .flatMap((entry) => [...entry.onces])
+            .find((turn) => turn.threadId === input.session_id);
+        if (!turn) return undefined; // Background titles have no agent tools.
+        if (active) await active.ready;
+        if (
+          turn.turnId !== input.turn_id ||
+          turn.finished ||
+          turn.signal.aborted
+        )
           return "The Codex turn has ended";
         return this.hooks?.run(
           this.hookEvent(
-            active,
+            turn,
             String(input.tool_use_id),
             hookToolName(String(input.tool_name)),
             (input.tool_input ?? {}) as Record<string, unknown>,
@@ -1271,10 +1281,13 @@ export class CodexRuntime {
             : {}),
         }
       : {};
-    const event =
-      active &&
-      this.hookEvent(active, call.callId, `mcp__buzz__${call.tool}`, args);
-    const denied = event && (await this.hooks?.run(event));
+    const event = this.hookEvent(
+      turn,
+      call.callId,
+      `mcp__buzz__${call.tool}`,
+      args,
+    );
+    const denied = await this.hooks?.run(event);
     if (denied) throw new Error(denied);
     let reply: Awaited<ReturnType<typeof callSessionTool>>;
     try {
@@ -1286,12 +1299,10 @@ export class CodexRuntime {
         this.added(),
       );
     } catch (error) {
-      if (event)
-        await this.hooks?.run({ ...event, phase: "after", success: false });
+      await this.hooks?.run({ ...event, phase: "after", success: false });
       throw error;
     }
-    if (event)
-      await this.hooks?.run({ ...event, phase: "after", success: true });
+    await this.hooks?.run({ ...event, phase: "after", success: true });
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -1313,25 +1324,28 @@ export class CodexRuntime {
     };
   }
   private hookEvent(
-    active: Active,
+    turn: Active | Once,
     callId: string,
     tool: string,
     input: Record<string, unknown>,
   ): AgentToolHookEvent {
-    const request = active.reply;
+    const active = "reply" in turn ? turn : undefined;
+    const request = active?.reply;
     return {
       phase: "before",
-      agent: request.agent.pubkey,
-      session: active.threadId ?? "",
+      agent: (request ?? (turn as Once)).agent.pubkey,
+      session: turn.threadId ?? "",
       callId,
       tool,
       input,
-      context: {
-        channel: request.conversation.channelId,
-        ...(request.toolRoot ? { root: request.toolRoot } : {}),
-        ...(request.conversation.topLevel ? { topLevel: true } : {}),
-      },
-      messages: active.requests
+      context: request
+        ? {
+            channel: request.conversation.channelId,
+            ...(request.toolRoot ? { root: request.toolRoot } : {}),
+            ...(request.conversation.topLevel ? { topLevel: true } : {}),
+          }
+        : {},
+      messages: (active?.requests ?? [])
         .filter((request) => !request.wake)
         .map((request) => ({
           id: request.event.id,

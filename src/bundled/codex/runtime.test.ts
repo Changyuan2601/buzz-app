@@ -11,6 +11,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
+import type { AgentToolHooks } from "../../features/agents/tool-hooks";
 import type { Host, HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
@@ -55,7 +56,7 @@ function fixture(
   repositories?: (scope: string | undefined) => string,
   hooks?: {
     serve: NonNullable<Host["serveMcp"]>;
-    run: () => Promise<undefined>;
+    run: AgentToolHooks["toolHook"];
   },
 ) {
   let terminals = remainingTerminals;
@@ -4397,9 +4398,12 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
 });
 
 function hookFixture() {
+  const run = vi.fn<AgentToolHooks["toolHook"]>(async () => undefined);
+  const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
   const servers: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
   const f = fixture([], undefined, false, {}, undefined, {
-    serve: async () => {
+    serve: async (handler) => {
+      handlers.push(handler);
       const server = {
         url: `http://127.0.0.1:${1234 + servers.length}/mcp`,
         headers: [],
@@ -4409,7 +4413,80 @@ function hookFixture() {
       servers.push(server);
       return server;
     },
-    run: async () => undefined,
+    run,
   });
-  return { f, servers };
+  return { f, servers, handlers, run };
 }
+
+it("enforces native and Buzz tool policies for standalone turns without mention obligations", async () => {
+  const { f, handlers, run } = hookFixture();
+  f.wake(watchDelivery(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const { threadId } = (f.starts()[0]?.params ?? {}) as { threadId: string };
+  run.mockResolvedValue("Blocked by policy");
+  const native = (await handlers[0]?.({
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "before_tool",
+      arguments: {
+        session_id: threadId,
+        turn_id: "turn-1",
+        tool_use_id: "native",
+        tool_name: "Bash",
+        tool_input: { cmd: "pwd" },
+      },
+    },
+  })) as { result: { content: { text: string }[] } };
+  expect(JSON.parse(native.result.content[0]?.text ?? "")).toEqual({
+    decision: "block",
+    reason: "Blocked by policy",
+  });
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "before",
+      agent: pubkey,
+      session: threadId,
+      tool: "Bash",
+      context: {},
+      messages: [],
+    }),
+  );
+  const denied = await f.tool("send", {
+    channel: "channel",
+    audience: "everyone",
+    text: "blocked",
+  });
+  expect(denied?.result).toMatchObject({
+    success: false,
+    contentItems: [{ text: "Blocked by policy" }],
+  });
+  expect(f.publish).not.toHaveBeenCalled();
+  run.mockResolvedValue(undefined);
+  await f.tool("send", { audience: "everyone", text: "missing destination" });
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "after",
+      success: false,
+      context: {},
+      messages: [],
+    }),
+  );
+  await f.tool("send", {
+    channel: "channel",
+    audience: "everyone",
+    text: "allowed",
+  });
+  expect(f.publish).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      phase: "after",
+      success: true,
+      tool: "mcp__buzz__send",
+      context: {},
+      messages: [],
+    }),
+  );
+  await f.complete(0, "");
+  await f.workingUntil.mock.calls[0]?.[0];
+});
