@@ -170,9 +170,9 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
         app_domain(origin).unwrap(),
         &hash,
     )?;
-    let expires = chrono::DateTime::parse_from_rfc3339(&reply.expires_at)
-        .map_err(|_| "Invalid Builderlab sign-in expiry")?
-        .timestamp();
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&reply.expires_at)
+        .map_err(|_| "Invalid Builderlab sign-in expiry")?;
+    let expires = expires_at.timestamp();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Invalid system clock")?
@@ -181,9 +181,13 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
     if !(1..=120).contains(&lifetime) {
         return Err("Builderlab sign-in expired. Reopen this app".into());
     }
+    // Absolute expiry keeps the proof bounded by the ticket even if native cookie installation is delayed.
+    let cookie_expiry = expires_at
+        .with_timezone(&chrono::Utc)
+        .format("%a, %d %b %Y %H:%M:%S GMT");
     Ok(Bootstrap {
         login_origin: url.origin().ascii_serialization(), url: url.into(), root,
-        cookie: Zeroizing::new(format!("{BINDING_COOKIE}_{hash}={}; Path=/; Max-Age={lifetime}; Secure; HttpOnly; SameSite=Lax", &*verifier)),
+        cookie: Zeroizing::new(format!("{BINDING_COOKIE}_{hash}={}; Path=/; Expires={cookie_expiry}; Secure; HttpOnly; SameSite=Lax", *verifier)),
     })
 }
 

@@ -42,7 +42,7 @@ restricted hosted-site cookie. App authorization and consent still run at ingres
 Opening a different tenant's app never forwards the current account's credential.
 
 Each sign-in has separate website storage. Signing out or changing accounts closes
-live and retained guests; deliberate sign-out also revokes the server CLI parent.
+live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
 Canceling sign-in or disposing the plugin closes its local guests without logging
 out an existing server session. Other platforms do not expose the app panel.
 The server's native handoff feature must be enabled after its schema and auth

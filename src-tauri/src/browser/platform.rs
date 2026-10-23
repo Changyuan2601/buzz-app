@@ -120,25 +120,6 @@ mod macos {
         Ok(receiver)
     }
 
-    #[cfg(test)]
-    mod binding_tests {
-        use super::*;
-        #[test]
-        fn generated_proof_is_host_only_http_only_secure_and_expires() {
-            let value = super::super::super::builderlab::Bootstrap {
-                url: String::new(), root: String::new(), login_origin: "https://login.apps.builderlab.xyz".into(),
-                cookie: zeroize::Zeroizing::new("__Host-bbidentity_native_hosted_site_handoff_hash=proof; Path=/; Max-Age=60; Secure; HttpOnly; SameSite=Lax".into()),
-            };
-            let cookie = builderlab_binding_cookie(&value).unwrap();
-            assert_eq!(cookie.domain().to_string(), "login.apps.builderlab.xyz");
-            assert_eq!(cookie.path().to_string(), "/");
-            assert!(cookie.isHTTPOnly());
-            assert!(cookie.isSecure());
-            assert!(!cookie.isSessionOnly());
-            assert!(cookie.expiresDate().is_some());
-        }
-    }
-
     pub fn loading(guest: &WebView) -> bool {
         unsafe { guest.webview().isLoading() }
     }
@@ -176,6 +157,27 @@ mod macos {
             guest.webview().goForward();
         }
         Ok(())
+    }
+    #[cfg(test)]
+    mod binding_tests {
+        use super::*;
+        #[test]
+        fn generated_proof_is_host_only_http_only_secure_and_expires() {
+            let value = super::super::super::builderlab::Bootstrap {
+                url: String::new(), root: String::new(), login_origin: "https://login.apps.builderlab.xyz".into(),
+                cookie: zeroize::Zeroizing::new("__Host-bbidentity_native_hosted_site_handoff_hash=proof; Path=/; Expires=Tue, 19 Jan 2038 03:14:07 GMT; Secure; HttpOnly; SameSite=Lax".into()),
+            };
+            let cookie = builderlab_binding_cookie(&value).unwrap();
+            assert_eq!(cookie.domain().to_string(), "login.apps.builderlab.xyz");
+            assert_eq!(cookie.path().to_string(), "/");
+            assert!(cookie.isHTTPOnly());
+            assert!(cookie.isSecure());
+            assert!(!cookie.isSessionOnly());
+            assert_eq!(
+                cookie.expiresDate().unwrap().timeIntervalSince1970(),
+                2147483647.0
+            );
+        }
     }
 }
 
