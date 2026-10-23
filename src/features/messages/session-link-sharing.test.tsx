@@ -281,6 +281,36 @@ it("grants nothing and sends nothing when the draft changes while consent is ope
   expect(f.publish).not.toHaveBeenCalled();
 });
 
+it("stops later grants when the draft changes while the first grant is in flight", async () => {
+  const f = await fixture();
+  f.addLate();
+  let release!: () => void;
+  f.hold(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByRole("dialog", {
+    name: "Share access to this chat?",
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Share and send" }));
+  try {
+    await waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    act(() => writeView(f.session.scope, f.key, "Something else"));
+  } finally {
+    await act(async () => release());
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The draft changed.",
+  );
+  await act(async () => {
+    await f.session.outbox?.ready();
+  });
+  expect(f.publish).toHaveBeenCalledOnce();
+  expect(f.published.map((event) => event.kind)).toEqual([9000]);
+});
+
 it.each([
   ["no one else is in the channel", { alone: true }],
   ["everyone in the channel already has access", { shared: true }],

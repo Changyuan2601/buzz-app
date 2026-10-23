@@ -84,7 +84,8 @@ export function useSessionLinkSharing(
           request.audience.filter((key) => !grants.get(key)?.confirmed),
           grants,
           request.signal,
-          () => {},
+          // A dispatched addition may finish; a changed draft stops the next one.
+          check,
           true,
           source?.channelType === "solo",
           true,
