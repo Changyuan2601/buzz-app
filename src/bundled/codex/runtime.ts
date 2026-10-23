@@ -1332,16 +1332,18 @@ export class CodexRuntime {
         ...(request.toolRoot ? { root: request.toolRoot } : {}),
         ...(request.conversation.topLevel ? { topLevel: true } : {}),
       },
-      messages: active.requests.map((request) => ({
-        id: request.event.id,
-        channel: request.conversation.channelId,
-        ...(request.conversation.topLevel
-          ? { topLevel: true }
-          : request.toolRoot
-            ? { root: request.toolRoot }
-            : {}),
-        deliveredAt: request.deliveredAt ?? 0,
-      })),
+      messages: active.requests
+        .filter((request) => !request.wake)
+        .map((request) => ({
+          id: request.event.id,
+          channel: request.conversation.channelId,
+          ...(request.conversation.topLevel
+            ? { topLevel: true }
+            : request.toolRoot
+              ? { root: request.toolRoot }
+              : {}),
+          deliveredAt: request.deliveredAt ?? 0,
+        })),
     };
   }
   /** The agent's memory, or only entry `slug`, as its community's reads give

@@ -65,6 +65,7 @@ function setup(
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
+    toolHook?: import("../../features/agents/tool-hooks").AgentToolHooks["toolHook"];
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -166,6 +167,7 @@ function setup(
     config,
     () => added,
     options.repositories,
+    options.toolHook,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -2421,4 +2423,53 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     release();
     f.runtime.dispose();
   }
+});
+
+it("passes real mention snapshots to tool hooks without treating plugin wakes as mentions", async () => {
+  const seen: import("../../features/agents/tool-hooks").AgentToolHookEvent[] =
+    [];
+  const f = setup([], {
+    toolHook: async (event) => {
+      seen.push(event);
+      return undefined;
+    },
+  });
+  const root = message("1", "original");
+  await f.deliver(pluginWake(root.id));
+  await flush(10);
+  const process = f.claudes().find((process) => process.prompts.length);
+  if (!process) throw new Error("Claude did not start");
+  const hook = (id: string) =>
+    process.emit({
+      type: "control_request",
+      request_id: id,
+      request: {
+        subtype: "hook_callback",
+        callback_id: "tools",
+        input: {
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_use_id: id,
+          tool_input: { command: "pwd" },
+        },
+      },
+    });
+  hook("wake");
+  await flush();
+  expect(seen[0]?.messages).toEqual([]);
+  const mention = message("2", "@Claude continue", {
+    created_at: 210,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  await f.deliver({ type: "mention", event: mention });
+  await flush(10);
+  hook("mention");
+  await flush();
+  expect(seen[1]?.messages.map(({ id }) => id)).toEqual([mention.id]);
+  expect(seen[1]?.context).toEqual({ channel, root: root.id });
+  f.runtime.dispose();
 });

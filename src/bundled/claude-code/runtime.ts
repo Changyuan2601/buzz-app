@@ -471,7 +471,13 @@ export class ClaudeRuntime {
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const { key, dm } = await this.key(entry, agent.pubkey, event, channel, topLevel);
+    const { key, dm } = await this.key(
+      entry,
+      agent.pubkey,
+      event,
+      channel,
+      topLevel,
+    );
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -546,11 +552,20 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
-          entry.hookMessages.set(key, [...(entry.hookMessages.get(key) ?? []).slice(-199), {
-            id: event.id, channel,
-            ...(topLevel ? { topLevel } : dm ? {} : { root: threadReference(event)?.rootId ?? event.id }),
-            deliveredAt: Date.now(),
-          }]);
+          if (trigger.type === "mention")
+            entry.hookMessages.set(key, [
+              ...(entry.hookMessages.get(key) ?? []).slice(-199),
+              {
+                id: event.id,
+                channel,
+                ...(topLevel
+                  ? { topLevel }
+                  : dm
+                    ? {}
+                    : { root: threadReference(event)?.rootId ?? event.id }),
+                deliveredAt: Date.now(),
+              },
+            ]);
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             current: () => !interrupted && (!current || current()),
             ...(wake

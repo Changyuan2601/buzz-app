@@ -71,7 +71,4 @@ export class ToolHookCallbacks {
     this.calls.delete(callId);
     if (event) await this.run({ ...event, phase: "after", success });
   }
-  clear() {
-    this.calls.clear();
-  }
 }
