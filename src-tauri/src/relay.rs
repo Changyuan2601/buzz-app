@@ -3,8 +3,8 @@ pub(crate) mod agent;
 mod huddle;
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
-    relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
-    relay_agent_resolve,
+    own_memories_read, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
+    relay_agent_observer, relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};

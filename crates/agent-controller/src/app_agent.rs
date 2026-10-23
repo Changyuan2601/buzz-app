@@ -205,6 +205,23 @@ impl AppAgent {
         }
         key.profile_auth(url, body)
     }
+    /// Its NIP-42 login to its own community, with its owner attestation.
+    pub fn login(&self, key: &Secret, relay: &str, challenge: &str) -> Result<serde_json::Value> {
+        if relay != self.relay {
+            return Err("Agents sign in only to their community".into());
+        }
+        if challenge.is_empty() || challenge.len() > 256 {
+            return Err("Invalid login challenge".into());
+        }
+        let tags = self.attested(
+            key,
+            vec![
+                vec!["relay".into(), relay.into()],
+                vec!["challenge".into(), challenge.into()],
+            ],
+        )?;
+        key.signed(22242, String::new(), tags)
+    }
     /// NIP-98 authorization for Git over HTTP to repository `repo` of `owner`
     /// in its community, and the URL it is bound to. Git reuses it for every
     /// request of one clone, fetch or push; the community honors it for a minute.

@@ -164,63 +164,69 @@ export type AgentsNative = {
   release(pubkey: string): Promise<void>;
 };
 
+/** Native custody through `call`: the app's own commands, or the same
+ * commands as the app serves them to `buzz-agent-host`. */
+export type NativeCall = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
 export const nativeAgents = (): AgentsNative | undefined =>
-  isTauri()
-    ? {
-        list: () => invoke("app_agent_list"),
-        create: (destination, owner, agentType, name) =>
-          invoke("app_agent_create", { destination, owner, agentType, name }),
-        portable: () => invoke("app_agent_portable"),
-        port: (source, pubkey, destination, owner, agentType) =>
-          invoke("app_agent_port", {
-            source,
-            pubkey,
-            destination,
-            owner,
-            agentType,
-          }),
-        rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
-        setPicture: (pubkey, picture) =>
-          invoke("app_agent_set_picture", { pubkey, picture }),
-        setType: (pubkey, agentType) =>
-          invoke("app_agent_set_type", { pubkey, agentType }),
-        beginDelete: (pubkey) => invoke("app_agent_begin_delete", { pubkey }),
-        remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
-        forget: (pubkey) => invoke("app_agent_forget", { pubkey }),
-        publish: (pubkey, event) =>
-          invoke("app_agent_publish", {
-            pubkey,
-            event: {
-              kind: event.kind,
-              content: event.content,
-              tags: event.tags ?? [],
-            },
-          }),
-        query: async (pubkey, filters) =>
-          eventsDto(await invoke("app_agent_query", { pubkey, filters })),
-        audienceAuthority: (pubkey, destination, sources) =>
-          invoke("app_agent_query", {
-            pubkey,
-            filters: audienceAuthorityFilter(destination, sources),
-          }),
-        searchProfiles: async (pubkey, query, limit) => {
-          const found = await invoke("app_agent_search_profiles", {
-            pubkey,
-            query,
-            limit,
-          });
-          return found == null ? undefined : eventsDto(found);
-        },
-        upload: (pubkey, data, mime) =>
-          invoke("app_agent_upload", { pubkey, data, mime }),
-        media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),
-        gitAuth: (pubkey, owner, repo) =>
-          invoke("app_agent_git_auth", { pubkey, owner, repo }),
-        remember: (pubkey, slug, body, after) =>
-          invoke("app_agent_remember", { pubkey, slug, body, after }),
-        publishProfile: (pubkey) =>
-          invoke("app_agent_publish_profile", { pubkey }),
-        claim: (pubkey) => invoke("app_agent_claim", { pubkey }),
-        release: (pubkey) => invoke("app_agent_release", { pubkey }),
-      }
-    : undefined;
+  isTauri() ? agentsNative(invoke) : undefined;
+
+export const agentsNative = (invoke: NativeCall): AgentsNative => ({
+  list: () => invoke("app_agent_list"),
+  create: (destination, owner, agentType, name) =>
+    invoke("app_agent_create", { destination, owner, agentType, name }),
+  portable: () => invoke("app_agent_portable"),
+  port: (source, pubkey, destination, owner, agentType) =>
+    invoke("app_agent_port", {
+      source,
+      pubkey,
+      destination,
+      owner,
+      agentType,
+    }),
+  rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
+  setPicture: (pubkey, picture) =>
+    invoke("app_agent_set_picture", { pubkey, picture }),
+  setType: (pubkey, agentType) =>
+    invoke("app_agent_set_type", { pubkey, agentType }),
+  beginDelete: (pubkey) => invoke("app_agent_begin_delete", { pubkey }),
+  remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
+  forget: (pubkey) => invoke("app_agent_forget", { pubkey }),
+  publish: (pubkey, event) =>
+    invoke("app_agent_publish", {
+      pubkey,
+      event: {
+        kind: event.kind,
+        content: event.content,
+        tags: event.tags ?? [],
+      },
+    }),
+  query: async (pubkey, filters) =>
+    eventsDto(await invoke("app_agent_query", { pubkey, filters })),
+  audienceAuthority: (pubkey, destination, sources) =>
+    invoke("app_agent_query", {
+      pubkey,
+      filters: audienceAuthorityFilter(destination, sources),
+    }),
+  searchProfiles: async (pubkey, query, limit) => {
+    const found = await invoke("app_agent_search_profiles", {
+      pubkey,
+      query,
+      limit,
+    });
+    return found == null ? undefined : eventsDto(found);
+  },
+  upload: (pubkey, data, mime) =>
+    invoke("app_agent_upload", { pubkey, data, mime }),
+  media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),
+  gitAuth: (pubkey, owner, repo) =>
+    invoke("app_agent_git_auth", { pubkey, owner, repo }),
+  remember: (pubkey, slug, body, after) =>
+    invoke("app_agent_remember", { pubkey, slug, body, after }),
+  publishProfile: (pubkey) => invoke("app_agent_publish_profile", { pubkey }),
+  claim: (pubkey) => invoke("app_agent_claim", { pubkey }),
+  release: (pubkey) => invoke("app_agent_release", { pubkey }),
+});

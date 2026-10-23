@@ -14,6 +14,7 @@ use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
 };
+mod agent_host;
 mod agent_state;
 mod app_agents;
 mod decisions;
@@ -628,6 +629,18 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Serves custody of one agent for `buzz-agent-host`; see `agent_host`.
+pub fn agent_host(pubkey: Option<String>) -> i32 {
+    let Some(pubkey) = pubkey.filter(|key| {
+        key.len() == 64 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }) else {
+        eprintln!("Usage: agent-host <pubkey>");
+        return 2;
+    };
+    let identifier = app_context::<tauri::Wry>().config().identifier.clone();
+    agent_host::serve(&identifier, &pubkey)
+}
+
 pub fn run() {
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.

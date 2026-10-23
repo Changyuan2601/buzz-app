@@ -273,6 +273,9 @@ pub(crate) struct Ported {
 pub(crate) async fn app_agent_list(
     state: tauri::State<'_, AppAgentHost>,
 ) -> Result<Vec<AppAgentSummary>, String> {
+    list(&state).await
+}
+pub(crate) async fn list(state: &AppAgentHost) -> Result<Vec<AppAgentSummary>, String> {
     let agents = state.agents.clone()?;
     blocking(move || Ok(agents.list()?.into_iter().map(Into::into).collect())).await
 }
@@ -467,6 +470,9 @@ pub(crate) async fn app_agent_claim(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
 ) -> Result<bool, String> {
+    claim(&state, pubkey).await
+}
+pub(crate) async fn claim(state: &AppAgentHost, pubkey: String) -> Result<bool, String> {
     let hosting = state.hosting.clone();
     blocking(move || hosting.claim(&pubkey)).await
 }
@@ -474,7 +480,10 @@ pub(crate) async fn app_agent_claim(
 /// Lets another copy of the app run the agent, as when this one cannot.
 #[tauri::command]
 pub(crate) fn app_agent_release(state: tauri::State<'_, AppAgentHost>, pubkey: String) {
-    state.hosting.held().remove(&pubkey);
+    release(&state, &pubkey);
+}
+pub(crate) fn release(state: &AppAgentHost, pubkey: &str) {
+    state.hosting.held().remove(pubkey);
 }
 
 #[derive(Deserialize)]
@@ -490,6 +499,13 @@ pub(crate) struct AppAgentEvent {
 #[tauri::command]
 pub(crate) async fn app_agent_publish(
     state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    event: AppAgentEvent,
+) -> Result<Value, String> {
+    publish(&state, pubkey, event).await
+}
+pub(crate) async fn publish(
+    state: &AppAgentHost,
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
@@ -537,6 +553,13 @@ pub(crate) async fn app_agent_publish_profile(
 #[tauri::command]
 pub(crate) async fn app_agent_query(
     state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    filters: Vec<Value>,
+) -> Result<Value, String> {
+    query(&state, pubkey, filters).await
+}
+pub(crate) async fn query(
+    state: &AppAgentHost,
     pubkey: String,
     filters: Vec<Value>,
 ) -> Result<Value, String> {
@@ -595,6 +618,14 @@ pub(crate) async fn app_agent_search_profiles(
     query: String,
     limit: u32,
 ) -> Result<Option<Value>, String> {
+    find_profiles(&state, pubkey, query, limit).await
+}
+pub(crate) async fn find_profiles(
+    state: &AppAgentHost,
+    pubkey: String,
+    query: String,
+    limit: u32,
+) -> Result<Option<Value>, String> {
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     search_profiles(&agent, &key, &query, limit).await
 }
@@ -647,6 +678,14 @@ fn mime_type(value: &str) -> Option<String> {
 #[tauri::command]
 pub(crate) async fn app_agent_upload(
     state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    data: String,
+    mime: String,
+) -> Result<Value, String> {
+    upload_blob(&state, pubkey, data, mime).await
+}
+pub(crate) async fn upload_blob(
+    state: &AppAgentHost,
     pubkey: String,
     data: String,
     mime: String,
@@ -715,6 +754,14 @@ pub(crate) async fn app_agent_git_auth(
     owner: String,
     repo: String,
 ) -> Result<Value, String> {
+    git_auth(&state, pubkey, owner, repo).await
+}
+pub(crate) async fn git_auth(
+    state: &AppAgentHost,
+    pubkey: String,
+    owner: String,
+    repo: String,
+) -> Result<Value, String> {
     use base64::Engine;
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let (url, auth) = agent.git_auth(&key, &owner, &repo)?;
@@ -756,6 +803,13 @@ pub(crate) struct AgentMedia {
 #[tauri::command]
 pub(crate) async fn app_agent_media(
     state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    url: String,
+) -> Result<AgentMedia, String> {
+    media(&state, pubkey, url).await
+}
+pub(crate) async fn media(
+    state: &AppAgentHost,
     pubkey: String,
     url: String,
 ) -> Result<AgentMedia, String> {
@@ -863,9 +917,82 @@ pub(crate) async fn app_agent_remember(
     body: String,
     after: u64,
 ) -> Result<Value, String> {
+    remember(&state, pubkey, slug, body, after).await
+}
+pub(crate) async fn remember(
+    state: &AppAgentHost,
+    pubkey: String,
+    slug: String,
+    body: String,
+    after: u64,
+) -> Result<Value, String> {
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let signed = agent.memory(&key, &slug, &body, after)?;
     post(&agent, &key, signed).await
+}
+
+/// The agent's login to its own community's live connection, for a host
+/// that hears its community as the agent.
+pub(crate) async fn login(
+    state: &AppAgentHost,
+    pubkey: String,
+    relay: String,
+    challenge: String,
+) -> Result<Value, String> {
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    agent.login(&key, &relay, &challenge)
+}
+
+/// The headers that post `body` to the agent's community as the agent: a
+/// read (`/query`) or a profile name search (`/profiles/search`) only, so the
+/// caller can send it and read the whole response itself.
+pub(crate) async fn read_auth(
+    state: &AppAgentHost,
+    pubkey: String,
+    url: String,
+    body: String,
+) -> Result<Value, String> {
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    if url != agent.query_url() && url != agent.profile_search_url() {
+        return Err("Agents read only from their community".into());
+    }
+    Ok(serde_json::json!({
+        "authorization": authorization(agent.http_auth(&key, &url, body.as_bytes())?)?,
+        "authTag": agent.auth,
+    }))
+}
+
+/// The agent's memory, read as the agent: every entry it wrote for its owner,
+/// or only entry `slug`.
+pub(crate) async fn memories(
+    state: &AppAgentHost,
+    pubkey: String,
+    slug: Option<String>,
+) -> Result<Value, String> {
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let secret = zeroize::Zeroizing::new(
+        nostr::key::SecretKey::from_hex(&key.hex())
+            .map_err(|_| "Invalid identity")?
+            .to_secret_bytes(),
+    );
+    crate::relay::own_memories_read(
+        secret,
+        agent.pubkey.clone(),
+        agent.owner.clone(),
+        slug,
+        |body| {
+            let (agent, key) = (&agent, &key);
+            async move {
+                let (status, body) =
+                    signed_read(agent, key, agent.query_url(), body.into_bytes()).await?;
+                Ok((
+                    status.as_u16(),
+                    String::from_utf8(body).map_err(|_| "Memory read failed")?,
+                ))
+            }
+        },
+    )
+    .await
 }
 
 /// One client for every agent request, so frequent small posts such as
@@ -1224,6 +1351,56 @@ mod tests {
             Err("The community refused the profile search: profile search error".into())
         );
         served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_host_reads_and_signs_in_as_its_agent_but_posts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = Secret::generate().unwrap();
+        let mut agent = agent_at("wss://relay.example".into(), &key);
+        agent.auth = r#"["auth","owner","","sig"]"#.into();
+        std::fs::write(
+            dir.path().join("identities.json"),
+            serde_json::to_vec(&[&agent]).unwrap(),
+        )
+        .unwrap();
+        let host = AppAgentHost {
+            agents: Ok(AppAgents::open(dir.path().join("identities.json"))),
+            old: Err("unused".into()),
+            credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(0))),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), false)),
+        };
+        let pubkey = agent.pubkey.clone();
+        for url in [agent.query_url(), agent.profile_search_url()] {
+            let auth = read_auth(&host, pubkey.clone(), url, "[]".into())
+                .await
+                .unwrap();
+            assert!(auth["authorization"]
+                .as_str()
+                .unwrap()
+                .starts_with("Nostr "));
+            assert_eq!(auth["authTag"], agent.auth);
+        }
+        // Its writes go through custody, which checks each kind.
+        assert!(
+            read_auth(&host, pubkey.clone(), agent.events_url(), "{}".into())
+                .await
+                .is_err()
+        );
+        let signed = login(
+            &host,
+            pubkey.clone(),
+            agent.relay.clone(),
+            "challenge".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(signed["kind"], 22242);
+        assert!(login(&host, pubkey, "wss://elsewhere".into(), "c".into())
+            .await
+            .is_err());
     }
 
     fn hosting(dir: Result<PathBuf, String>, packaged: bool) -> Hosting {

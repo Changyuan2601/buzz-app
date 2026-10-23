@@ -3,9 +3,6 @@
 // the app does not run it. The app's own claim protocol decides which copy
 // runs the agent, so opening the installed app takes it over, and quitting
 // the app lets this host take it back.
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { getPublicKey } from "nostr-tools/pure";
 import claudeManifest from "../bundled/claude-code/manifest.json";
 import { claudeRun } from "../bundled/claude-code/run";
 import { withScript as claudeScript } from "../bundled/claude-code/setup";
@@ -23,16 +20,24 @@ import codexManifest from "../bundled/codex/manifest.json";
 import { codexRun } from "../bundled/codex/run";
 import { withScript as codexScript } from "../bundled/codex/setup";
 import { CodexRuntime } from "../bundled/codex/runtime";
-import { nodeClient } from "../buzz-mcp/node";
 import { CoreMemoryCache } from "../features/agents/core-memory-cache";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
-import { type AgentReads, ownerReads } from "../features/agents/reads";
+import {
+  type AgentReads,
+  type MemoryListing,
+  ownerReads,
+} from "../features/agents/reads";
 import { RecordChanges } from "../features/agents/record-changes";
 import { rosterDm, rosterMember } from "../features/agents/roster";
 import { soloChannel } from "../features/agents/solo-chat";
 import { communityDestination } from "../features/communities/destination";
 import type { Checkpoint } from "../features/agents/catch-up";
 import type { Interrupted } from "../features/agents/interrupted";
+import {
+  type AgentIdentity,
+  agentsNative,
+  type NativeCall,
+} from "../features/agents/native";
 import { AgentRunners } from "../features/agents/runner";
 import {
   type Agent,
@@ -42,39 +47,19 @@ import {
 import {
   type AgentRecord,
   type AgentStore,
-  localStore,
   readOne,
   readTeams,
   recordKey,
   setAttention,
   writeRecord,
 } from "../features/agents/store";
-import { eventsDto, type RelayEvent } from "../features/relay/events";
+import { fileStore, nativeFiles } from "../features/agents/state";
 import { relayPartition } from "../features/relay/partition";
-import { Claims } from "./claim";
-import { checkSaved, type Identity, readNames } from "./identity";
 import { type AgentSession, connectAgentSession } from "./session";
 import { type Declared, processHost } from "./spawn";
-import { stateStorage } from "./storage";
 
-/** The kinds the app's custody signs for an agent, with its owner
- * attestation: agent-controller app_agent.rs `KINDS`, which a test keeps this
- * list equal to. The relay decides which channel changes it may make. */
-export const KINDS: readonly number[] = Object.freeze([
-  5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003,
-  40100, 41010,
-]);
-/** Throws for a kind the app's custody would not sign. */
-export function checkKind(kind: number) {
-  if (!KINDS.includes(kind))
-    throw new Error(`Agents cannot publish kind ${kind}`);
-}
 /** How often due timers are looked for, as in the app. */
 const TICK_MS = 5_000;
-
-/** Events checked as the app checks what custody gives back. */
-const verified = (events: readonly unknown[]): RelayEvent[] =>
-  eventsDto([...events]);
 
 /** An agent's `core` memory, as `Agents.core` gives it. */
 type Core = (
@@ -90,34 +75,70 @@ type TypeRun = Readonly<{
 }>;
 
 export type HostOptions = Readonly<{
-  identity: Identity;
-  secret: Uint8Array;
-  /** The app's agents directory: `identities.json`, the `hosts` locks, and
-   * the agent storage the app and this host share. */
-  dir: string;
+  identity: AgentIdentity;
+  /** The app's custody of the agent (`custody.ts`): its key, the agents the
+   * app saved, the hosting locks, and the agent storage the app shares. */
+  call: NativeCall;
   log(message: string): void;
   /** Called once the agent is deleted, erased or changed in the app: this
    * host has stopped hosting it, and must stop. */
   onGone(reason: string): void;
 }>;
 
+/** Agent storage as the app keeps it, read again at each check, since the app
+ * may save while this host runs. A read that a write of this host's own
+ * overlaps is dropped, so it cannot put back what the write replaced. */
+async function agentFiles(call: NativeCall) {
+  const files = nativeFiles(call);
+  const items = new Map(Object.entries(await files.load()));
+  const store = fileStore(items, files.set, files.add);
+  let writes = 0;
+  let pending = 0;
+  const counted = <T>(write: Promise<T>) => {
+    writes++;
+    pending++;
+    return write.finally(() => pending--);
+  };
+  const storage: AgentStore = Object.freeze({
+    ...store,
+    set: (key: string, value: string | null) => counted(store.set(key, value)),
+    add: (key: string, value: string) => counted(store.add(key, value)),
+  });
+  const reload = async () => {
+    const before = writes;
+    if (pending) return;
+    const saved = await files.load();
+    if (pending || writes !== before) return;
+    items.clear();
+    for (const [key, value] of Object.entries(saved)) items.set(key, value);
+  };
+  return { storage, reload };
+}
+
+/** Why this host must stop running `identity`, by the agents the app saved
+ * here now: it was deleted, an erase removed it, or the app changed it. */
+export function changed(
+  identity: AgentIdentity,
+  saved: readonly AgentIdentity[],
+): string | undefined {
+  const now = saved.find((agent) => agent.pubkey === identity.pubkey);
+  if (!now || now.deleted || now.deleting)
+    return "The agent is no longer saved on this machine";
+  for (const field of ["type", "owner", "relay"] as const)
+    if (now[field] !== identity[field])
+      return `The agent's ${field} changed on this machine`;
+  return undefined;
+}
+
 /** Connects as the agent, then runs it until the returned stop is called. */
 export async function host(options: HostOptions): Promise<() => Promise<void>> {
-  const { identity, secret, dir, log, onGone } = options;
+  const { identity, call, log, onGone } = options;
   const { pubkey } = identity;
-  if (getPublicKey(secret) !== pubkey)
-    throw new Error("The key is not this agent's");
-  const home = join(dir, "standalone", pubkey);
-  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const native = agentsNative(call);
   // The app's agent storage: the agent's settings, teams and sessions are the
-  // ones the app shows and saves. Each write here is saved before it settles.
-  const storage = localStore(stateStorage(join(dir, "state")));
-  const client = nodeClient({
-    relay: identity.relay,
-    key: Buffer.from(secret).toString("hex"),
-    ...(identity.auth ? { auth: identity.auth } : {}),
-    root: home,
-  });
+  // ones the app shows and saves.
+  const files = await agentFiles(call);
+  const { storage } = files;
   // As the app scopes the agent's community, so saved sessions match.
   const scope = relayPartition(
     communityDestination(identity.relay).url,
@@ -132,12 +153,8 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
     try {
       connected = await connectAgentSession({
         relay: identity.relay,
-        secret,
         pubkey,
-        ...(identity.auth
-          ? { auth: JSON.parse(identity.auth) as string[] }
-          : {}),
-        client,
+        call,
         scope,
       });
     } catch (error) {
@@ -151,14 +168,16 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
   const { session } = connection;
   const reads: AgentReads = {
     ...(ownerReads(connection.relay, pubkey) as AgentReads),
-    // The agent's own client decrypts its memory. It skips entries it cannot
-    // decrypt, so it cannot show that a listing is complete; a turn then
-    // never takes a missing core as none.
+    // Memory is encrypted to the owner; the app's custody reads it as the
+    // agent, with the agent's key, as the owner's session reads it in the app.
     memoryListing: async (signal, slug) => {
       signal.throwIfAborted();
-      const { entries } = await client.memories(slug);
+      const listing = await call<MemoryListing>("app_agent_memories", {
+        pubkey,
+        slug,
+      });
       signal.throwIfAborted();
-      return { entries, partial: true };
+      return listing;
     },
     // The channel's Solo label decides, as for every member and agent.
     soloChat: async (_owner, channel, signal) => {
@@ -176,7 +195,6 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
 
   const [pluginId = "", typeId = ""] = identity.type.split("/");
   const run = typeRun(typeId, pluginId, identity.type, readsOf, core, storage);
-  const claims = new Claims(join(dir, "hosts"));
   const activity = createLocalAgentActivity();
 
   // The agent's record as last read, and the stored text it was read from:
@@ -226,7 +244,7 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
     return view;
   };
   /** Shows the agent's newest record to its runner. */
-  const changed = () => {
+  const show = () => {
     view = undefined;
     run.sync([agentView()]);
   };
@@ -245,16 +263,19 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
       mine(agent);
       stored = next;
     },
-    changed,
+    changed: show,
     settled: () => runners.wake(pubkey),
   });
   // Whether the app deleted, erased or changed the agent: then this host
   // stops, and tells its caller why.
   let gone = false;
-  const isGone = () => {
+  // Every agent the app saved here, named in team instructions.
+  let names: readonly AgentIdentity[] = [];
+  const isGone = async () => {
     let reason: string | undefined;
     try {
-      reason = checkSaved(dir, identity);
+      names = await native.list();
+      reason = changed(identity, names);
     } catch (error) {
       log(`Could not read the saved agent: ${String(error)}`);
     }
@@ -319,7 +340,12 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
     // app binds no synced config to them: the synced copies are in the app's
     // web storage, which this host cannot read.
     start: (agent) => ({ ok: true, config: agent.config, revisions: [] }),
-    team: (agent) => teamPrompt(readTeams(storage), readNames(dir), agent),
+    team: (agent) =>
+      teamPrompt(
+        readTeams(storage),
+        names.filter((saved) => !saved.deleted),
+        agent,
+      ),
     // Channel templates live in the app's web storage, which this host
     // cannot read; its agent offers none.
     templates: () => [],
@@ -342,9 +368,9 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
         mine(agent);
         // Checked here too, not only each tick, so an event cannot start a
         // turn for an agent the app has deleted.
-        if (gone || isGone()) return false;
+        if (gone || (await isGone())) return false;
         try {
-          return await claims.claim(agent);
+          return await native.claim(agent);
         } catch (error) {
           // Unlike the app, which always runs its agents, this host runs one
           // only when it knows no other copy does.
@@ -352,47 +378,14 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
           return false;
         }
       },
-      release: (agent) => claims.release(agent),
-      publish: async (agent, event) => {
-        mine(agent);
-        checkKind(event.kind);
-        const posted = await client.publish({
-          kind: event.kind,
-          content: event.content,
-          tags: event.tags ?? [],
-        });
-        return verified([posted])[0] as RelayEvent;
-      },
-      query: async (agent, filters) => {
-        mine(agent);
-        return verified(
-          await client.query(filters as readonly Record<string, unknown>[]),
-        );
-      },
-      searchProfiles: async (agent, query, limit) => {
-        mine(agent);
-        const found = await client.searchProfiles?.(query, limit);
-        return found && verified(found);
-      },
-      upload: (agent, data, mime) => {
-        mine(agent);
-        return client.upload(Buffer.from(data, "base64"), mime);
-      },
-      media: (agent, url) => {
-        mine(agent);
-        return client.media(url);
-      },
-      // The app signs Git access with the agent's custody; this host does
-      // not yet.
-      gitAuth: async () => {
-        throw new Error("Git access needs Buzz Desktop.");
-      },
-      remember: async (agent, slug, body, after) => {
-        mine(agent);
-        return verified([
-          await client.remember(slug, body, after),
-        ])[0] as RelayEvent;
-      },
+      release: native.release,
+      publish: native.publish,
+      query: native.query,
+      searchProfiles: native.searchProfiles,
+      upload: native.upload,
+      media: native.media,
+      gitAuth: native.gitAuth,
+      remember: native.remember,
     },
     activity,
     // Typing goes where the turn answers, read the same way.
@@ -435,16 +428,22 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
   const stopRosters = session.channels.subscribeList?.(() =>
     runners.releaseHeld(() => true),
   );
-  const tick = setInterval(() => {
-    if (gone || isGone()) return;
+  let ticking = false;
+  const tick = setInterval(async () => {
+    if (ticking) return;
+    ticking = true;
     try {
+      if (gone || (await isGone())) return;
+      await files.reload();
       reread();
     } catch (error) {
       log(`Could not read the agent's settings: ${String(error)}`);
+    } finally {
+      ticking = false;
     }
-    runners.tick();
+    if (!gone) runners.tick();
   }, TICK_MS);
-  log(`Running ${identity.name} (${identity.type}) from ${home}`);
+  log(`Running ${identity.name} (${identity.type})`);
 
   let stopped: Promise<void> | undefined;
   const stop = () => (stopped ??= stopHosting());
@@ -459,8 +458,7 @@ export async function host(options: HostOptions): Promise<() => Promise<void>> {
     runners.clear();
     // Only once its processes have exited may another copy run the agent.
     await run.dispose();
-    await claims.release(pubkey);
-    claims.dispose();
+    await native.release(pubkey);
   }
 }
 

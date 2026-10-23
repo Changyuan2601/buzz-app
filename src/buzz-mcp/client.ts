@@ -111,7 +111,7 @@ export interface BuzzClient {
   /** The agent's memory entries, decrypted; only entry `slug` when given. */
   memories(slug?: string): Promise<Memories>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
-  remember(slug: string, body: string, after: number): Promise<unknown>;
+  remember(slug: string, body: string, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the

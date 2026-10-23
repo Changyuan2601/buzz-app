@@ -426,6 +426,34 @@ fn signs_git_auth_for_one_repository_in_its_own_community() {
 }
 
 #[test]
+fn signs_a_login_only_to_its_own_community() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let login = agent.login(&key, &agent.relay, "challenge").unwrap();
+    assert_eq!(login["kind"], 22242);
+    assert_eq!(login["pubkey"], agent.pubkey);
+    let tags: Vec<Vec<String>> = serde_json::from_value(login["tags"].clone()).unwrap();
+    assert_eq!(
+        tags,
+        [
+            vec!["relay".to_owned(), agent.relay.clone()],
+            vec!["challenge".to_owned(), "challenge".to_owned()],
+            saved
+        ]
+    );
+    assert!(agent
+        .login(&key, "wss://elsewhere.test", "challenge")
+        .is_err());
+    assert!(agent.login(&key, &agent.relay, "").is_err());
+    assert!(agent.login(&key, &agent.relay, &"c".repeat(257)).is_err());
+    let other = Secret::generate().unwrap();
+    assert!(agent.login(&other, &agent.relay, "challenge").is_err());
+}
+
+#[test]
 fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();

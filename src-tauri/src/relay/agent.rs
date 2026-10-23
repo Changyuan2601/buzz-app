@@ -427,6 +427,40 @@ pub(crate) async fn relay_agent_memories_read(
             })
         })
     };
+    memory_listing(
+        budget,
+        filter,
+        slug,
+        |body| {
+            let url = url.clone();
+            let host = host.inner();
+            async move {
+                let response =
+                    send(host, url, "POST", Some(body), true, MEMORY_RESPONSE_BYTES).await?;
+                Ok((response.status, response.body))
+            }
+        },
+        decode,
+    )
+    .await
+}
+
+/// The memory listing `filter` selects, paged with `send` (one `/query` body
+/// to the status and body it got) and decoded with `decode`; only entry `slug`
+/// when given.
+async fn memory_listing<S, F, D, G>(
+    budget: MemoryBudget,
+    filter: Value,
+    slug: Option<String>,
+    send: S,
+    decode: D,
+) -> Result<Value>
+where
+    S: Fn(String) -> F,
+    F: std::future::Future<Output = Result<(u16, String)>>,
+    D: Fn(Vec<Option<Value>>, MemoryDecoding, std::time::Instant) -> G,
+    G: std::future::Future<Output = Result<()>>,
+{
     let mut listing = read_memories(
         budget,
         |cursor| {
@@ -435,31 +469,19 @@ pub(crate) async fn relay_agent_memories_read(
                 page["until"] = json!(until);
                 page["before_id"] = json!(before_id);
             }
-            let url = url.clone();
-            let host = host.inner();
+            let sent = send(json!([page]).to_string());
             async move {
-                let response = send(
-                    host,
-                    url,
-                    "POST",
-                    Some(json!([page]).to_string()),
-                    true,
-                    MEMORY_RESPONSE_BYTES,
-                )
-                .await?;
-                if response.status == 429 {
+                let (status, body) = sent.await?;
+                if status == 429 {
                     return Ok(MemoryPage::Limited);
                 }
-                if response.status == 401 || response.status == 403 {
+                if status == 401 || status == 403 {
                     return Err("MemoryDenied".into());
                 }
-                if response.status != 200 || response.body.len() > MEMORY_RESPONSE_BYTES {
+                if status != 200 || body.len() > MEMORY_RESPONSE_BYTES {
                     return Err("Memory read failed".into());
                 }
-                Ok(MemoryPage::Records(
-                    memory_wire_records(&response.body)?,
-                    response.body.len(),
-                ))
+                Ok(MemoryPage::Records(memory_wire_records(&body)?, body.len()))
             }
         },
         decode,
@@ -471,6 +493,63 @@ pub(crate) async fn relay_agent_memories_read(
         }
     }
     Ok(listing)
+}
+
+/// The agent's own memory, read with its key as its owner reads it with
+/// theirs: the entries it wrote for `owner`, paged with `send` as the agent.
+pub(crate) async fn own_memories_read<S, F>(
+    secret: zeroize::Zeroizing<[u8; 32]>,
+    agent: String,
+    owner: String,
+    slug: Option<String>,
+    send: S,
+) -> Result<Value>
+where
+    S: Fn(String) -> F,
+    F: std::future::Future<Output = Result<(u16, String)>>,
+{
+    if !key(&agent)
+        || !key(&owner)
+        || agent == owner
+        || slug.as_deref().is_some_and(|name| !self::slug(name))
+    {
+        return Err("Invalid memory target".into());
+    }
+    let mut filter = json!({"kinds":[30174], "authors":[agent], "#p":[owner], "limit":MEMORY_PAGE});
+    if let Some(name) = &slug {
+        let secret = NostrSecretKey::from_slice(&secret[..]).map_err(|_| "Invalid identity")?;
+        let peer = NostrPublicKey::from_hex(&owner).map_err(|_| "Invalid memory target")?;
+        filter["#d"] = json!([memory_address(
+            &ConversationKey::derive(&secret, &peer).map_err(|_| "Invalid memory target")?,
+            name,
+        )?]);
+    }
+    let secret = std::sync::Arc::new(secret);
+    memory_listing(
+        MemoryBudget::new(),
+        filter,
+        slug,
+        send,
+        |records, decoder, stop| {
+            let (secret, owner, agent) = (secret.clone(), owner.clone(), agent.clone());
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    decode_memory_events(
+                        &decoder,
+                        &secret,
+                        &owner,
+                        &owner,
+                        &agent,
+                        &records,
+                        || std::time::Instant::now() >= stop,
+                    )
+                })
+                .await
+                .map_err(|_| "Memory read failed")?
+            }
+        },
+    )
+    .await
 }
 
 type MemoryDecoding = std::sync::Arc<std::sync::Mutex<MemoryDecoder>>;
@@ -660,7 +739,17 @@ fn decode_memory_events(
     }
 
     let secret_key = NostrSecretKey::from_slice(secret).map_err(|_| "Invalid identity")?;
-    let public_key = NostrPublicKey::from_hex(agent).map_err(|_| "Invalid memory target")?;
+    // The owner decrypts with its key and the agent's; the agent itself with
+    // its key and the owner's.
+    let own = Keypair::from_secret_key(
+        &Secp256k1::signing_only(),
+        &secp256k1::SecretKey::from_byte_array(*secret).map_err(|_| "Invalid identity")?,
+    )
+    .x_only_public_key()
+    .0
+    .to_string();
+    let peer = if own == agent { viewer } else { agent };
+    let public_key = NostrPublicKey::from_hex(peer).map_err(|_| "Invalid memory target")?;
     let conversation =
         ConversationKey::derive(&secret_key, &public_key).map_err(|_| "Invalid memory target")?;
     let lock = || decoder.lock().unwrap_or_else(|e| e.into_inner());
@@ -1011,6 +1100,61 @@ mod tests {
         assert_eq!(listing["entries"][0]["body"], "private fixture core");
         assert_eq!(listing["entries"][1]["body"], "private fixture entry");
         assert_ne!(agent, owner);
+    }
+
+    #[tokio::test]
+    async fn an_agent_reads_its_own_memory_with_its_key() {
+        let agent_key = buzz_agent_controller::Secret::generate().unwrap();
+        let agent = agent_key.pubkey().to_owned();
+        let owner = signed_event(&[2; 32], 1, vec![], String::new()).pubkey;
+        let events = [("core", "my core"), ("mem/one", "my entry")]
+            .into_iter()
+            .map(|(slug, body)| {
+                agent_key
+                    .memory_event(&owner, slug, body, 1_700_000_001)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let secret = || {
+            zeroize::Zeroizing::new(
+                NostrSecretKey::from_hex(&agent_key.hex())
+                    .unwrap()
+                    .to_secret_bytes(),
+            )
+        };
+        let sent = std::sync::Mutex::new(Vec::<Value>::new());
+        let send = |body: String| {
+            sent.lock()
+                .unwrap()
+                .push(serde_json::from_str(&body).unwrap());
+            let page = json!(events).to_string();
+            async move { Ok((200, page)) }
+        };
+        let listing = own_memories_read(secret(), agent.clone(), owner.clone(), None, &send)
+            .await
+            .unwrap();
+        assert_eq!(listing["entries"][0]["body"], "my core");
+        assert_eq!(listing["entries"][1]["body"], "my entry");
+        let filter = sent.lock().unwrap()[0][0].clone();
+        assert_eq!(filter["authors"], json!([agent]));
+        assert_eq!(filter["#p"], json!([owner]));
+        // One entry is read by the address its owner would read it by.
+        let listing = own_memories_read(
+            secret(),
+            agent.clone(),
+            owner.clone(),
+            Some("mem/one".into()),
+            &send,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listing["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(sent.lock().unwrap()[1][0]["#d"][0], events[1]["tags"][0][1]);
+        assert!(
+            own_memories_read(secret(), agent.clone(), agent, None, &send)
+                .await
+                .is_err()
+        );
     }
 
     #[test]

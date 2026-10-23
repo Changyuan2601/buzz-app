@@ -3,12 +3,12 @@
 //   buzz-agent-host run <pubkey>
 //
 // The agent is one the app saved here, and it runs with the settings, teams
-// and sessions the app saved for it. Its key comes from BUZZ_AGENT_KEY or the
-// app's Keychain item; BUZZ_AGENTS_DIR overrides where the app keeps its
-// agents. While the installed app runs the agent, this host waits. It runs
-// agents only on macOS, where it can take the app's hosting locks.
+// and sessions the app saved for it. The app's own executable holds its key
+// and its claim on the agent (`custody.ts`): BUZZ_APP names it, or else it is
+// the installed app. While the installed app runs the agent, this host waits.
+import { agentsNative } from "../features/agents/native";
+import { appExecutable, startCustody } from "./custody";
 import { host } from "./host";
-import { agentsDir, readIdentity, readKey } from "./identity";
 
 const usage = "Usage: buzz-agent-host run <pubkey>";
 const log = (message: string) =>
@@ -25,27 +25,33 @@ async function main(args: readonly string[]) {
     console.error(usage);
     process.exit(2);
   }
-  const dir = agentsDir();
-  const identity = readIdentity(dir, pubkey);
-  const secret = readKey(identity);
+  const custody = startCustody(appExecutable(), pubkey, (reason) => {
+    log(`${reason}; stopped`);
+    process.exit(1);
+  });
+  const identity = (await agentsNative(custody.call).list()).find(
+    (agent) => agent.pubkey === pubkey && !agent.deleted,
+  );
+  if (!identity) throw new Error(`No agent ${pubkey} is saved on this machine`);
   let stopping = false;
   let stop: (() => Promise<void>) | undefined;
   const quit = () => {
     if (stopping || !stop) process.exit(stop ? 1 : 0);
     stopping = true;
     log("Stopping");
-    void stop().finally(() => process.exit(0));
+    void stop()
+      .then(() => custody.close())
+      .finally(() => process.exit(0));
   };
   process.on("SIGINT", quit);
   process.on("SIGTERM", quit);
   stop = await host({
     identity,
-    secret,
-    dir,
+    call: custody.call,
     log,
     onGone: (reason) => {
       log(`${reason}; stopped`);
-      process.exit(0);
+      void custody.close().finally(() => process.exit(0));
     },
   });
 }

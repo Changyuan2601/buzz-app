@@ -1,48 +1,24 @@
 // @vitest-environment node
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../bundled/claude-code/runtime";
 import { defaults as codexDefaults } from "../bundled/codex/config";
-import { localStore } from "../features/agents/store";
-import { checkKind, claudeResolver, codexResolver, KINDS } from "./host";
-import { stateStorage } from "./storage";
+import type { AgentIdentity } from "../features/agents/native";
+import { fileStore } from "../features/agents/state";
+import { changed, claudeResolver, codexResolver } from "./host";
 
-it("publishes the kinds the app's custody signs, and no others", () => {
-  const source = readFileSync(
-    join(__dirname, "../../crates/agent-controller/src/app_agent.rs"),
-    "utf8",
-  );
-  const native = /const KINDS: \[u16; \d+\] = \[([^\]]*)\]/.exec(source)?.[1];
-  expect(native).toBeDefined();
-  expect(KINDS).toEqual(
-    native
-      ?.split(",")
-      .map((kind) => kind.trim())
-      .filter(Boolean)
-      .map(Number),
-  );
-  // A channel tool's creation and edit, and typing.
-  for (const kind of [9007, 9002, 20002])
-    expect(() => checkKind(kind)).not.toThrow();
-  expect(() => checkKind(0)).toThrow("Agents cannot publish kind 0");
-  expect(() => checkKind(1)).toThrow("Agents cannot publish kind 1");
-});
-
-it("resolves blank settings from the owner's saved defaults, as they are now", () => {
-  const storage = stateStorage(mkdtempSync(join(tmpdir(), "agent-host-")));
-  const claude = claudeResolver(localStore(storage));
-  const codex = codexResolver(localStore(storage));
+it("resolves blank settings from the owner's saved defaults, as they are now", async () => {
+  const storage = fileStore(new Map(), async () => {});
+  const claude = claudeResolver(storage);
+  const codex = codexResolver(storage);
   // Without saved defaults, the CLI's own.
   expect(claude(DEFAULT_CONFIG).model).toBe("");
   expect(codex(codexDefaults)).toMatchObject({ model: "", effort: "" });
   // The app saves defaults while the host runs.
-  storage.setItem(
+  await storage.set(
     "buzz.claude-code.provider-defaults.v1",
     JSON.stringify({ version: 1, model: "sonnet" }),
   );
-  storage.setItem(
+  await storage.set(
     "buzz.codex.provider-defaults.v1",
     JSON.stringify({ version: 1, model: "gpt-5", effort: "high" }),
   );
@@ -55,5 +31,31 @@ it("resolves blank settings from the owner's saved defaults, as they are now", (
   expect(claude({ ...DEFAULT_CONFIG, model: "opus" }).model).toBe("opus");
   expect(codex({ ...codexDefaults, model: "o3", effort: "low" })).toMatchObject(
     { model: "o3", effort: "low" },
+  );
+});
+
+it("stops when the app deletes, erases or changes the agent", () => {
+  const agent: AgentIdentity = {
+    pubkey: "a".repeat(64),
+    relay: "wss://relay.example.test",
+    owner: "b".repeat(64),
+    type: "buzz.claude-code/claude-code",
+    name: "Ada",
+    deleted: false,
+  };
+  expect(changed(agent, [{ ...agent, name: "Renamed" }])).toBeUndefined();
+  for (const saved of [
+    [],
+    [{ ...agent, deleted: true }],
+    [{ ...agent, deleting: true as const }],
+  ])
+    expect(changed(agent, saved)).toBe(
+      "The agent is no longer saved on this machine",
+    );
+  expect(changed(agent, [{ ...agent, type: "buzz.codex/codex" }])).toBe(
+    "The agent's type changed on this machine",
+  );
+  expect(changed(agent, [{ ...agent, owner: "c".repeat(64) }])).toBe(
+    "The agent's owner changed on this machine",
   );
 });

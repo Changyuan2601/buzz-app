@@ -12,6 +12,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { CONFIG_STORAGE_KEY } from "./agent-config";
 import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
 import { INTERRUPTED_PREFIX } from "./interrupted";
+import type { NativeCall } from "./native";
 import {
   localStore,
   type AgentStore,
@@ -64,14 +65,17 @@ type Native = Readonly<{
   add?(key: string, value: string): Promise<string | null>;
 }>;
 
-const native: Native = {
-  load: () => invoke("app_agent_state_load"),
+/** The agent storage files through `call`, as `nativeAgents` uses them. */
+export const nativeFiles = (call: NativeCall): Native => ({
+  load: () => call("app_agent_state_load"),
   set: async (key, value) => {
-    await invoke("app_agent_state_set", { key, value });
+    await call("app_agent_state_set", { key, value });
   },
   add: (key, value) =>
-    invoke("app_agent_state_set", { key, value, absent: true }),
-};
+    call("app_agent_state_set", { key, value, absent: true }),
+});
+// Looked up per call, so a module that mocks only part of Tauri still loads.
+const native = nativeFiles((command, args) => invoke(command, args));
 
 /** Agent storage holds this key once every agent key in localStorage was
  * moved into it. */

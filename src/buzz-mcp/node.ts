@@ -37,17 +37,6 @@ const MEDIA_FILE_LIMIT = 500 * 1024 * 1024;
 /** Images an agent can be shown. */
 const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-/** A BuzzClient whose memory writes give back the event they posted. */
-export type NodeClient = Omit<BuzzClient, "remember"> & {
-  remember(slug: string, body: string, after: number): Promise<BuzzEvent>;
-  /** POSTs `body` to one of the community's URLs, signed as the agent. */
-  signedRequest(
-    url: string,
-    body: string,
-    signal?: AbortSignal,
-  ): Promise<Response>;
-};
-
 export function nodeClient(
   options: Readonly<{
     relay: string;
@@ -60,7 +49,7 @@ export function nodeClient(
     /** Where fetched media is saved; a temporary directory by default. */
     media?: string;
   }>,
-): NodeClient {
+): BuzzClient {
   const secret = options.key.startsWith("nsec1")
     ? (decode(options.key as `nsec1${string}`).data as Uint8Array)
     : hexToBytes(options.key);
@@ -95,7 +84,7 @@ export function nodeClient(
     return JSON.parse(text) as unknown;
   }
 
-  function send(path: string, body: string, signal?: AbortSignal) {
+  function send(path: string, body: string) {
     const url = `${base}${path}`;
     const nip98 = sign({
       kind: 27235,
@@ -115,7 +104,6 @@ export function nodeClient(
         ...(options.auth ? { "x-auth-tag": options.auth } : {}),
       },
       body,
-      signal: signal ?? null,
     });
   }
 
@@ -136,11 +124,6 @@ export function nodeClient(
 
   return {
     pubkey,
-    signedRequest(url, body, signal) {
-      if (!url.startsWith(`${base}/`))
-        throw new Error("Not a URL of the agent's community");
-      return send(url.slice(base.length), body, signal);
-    },
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async searchProfiles(query, limit) {
@@ -338,7 +321,7 @@ export function nodeClient(
       const plaintext = JSON.stringify(
         slug === "core" ? { slug, profile: body } : { slug, value: body },
       );
-      return post(
+      await post(
         sign(
           {
             kind: 30174,

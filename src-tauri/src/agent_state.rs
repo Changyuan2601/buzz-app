@@ -223,6 +223,14 @@ pub(crate) async fn app_agent_state_set(
     value: Option<String>,
     absent: Option<bool>,
 ) -> Result<Option<String>, String> {
+    save(&state, key, value, absent)
+}
+pub(crate) fn save(
+    state: &AgentState,
+    key: String,
+    value: Option<String>,
+    absent: Option<bool>,
+) -> Result<Option<String>, String> {
     match (value, absent.unwrap_or(false)) {
         (Some(value), true) => state.add(&key, &value),
         (value, _) => state.set(&key, value.as_deref()).map(|_| None),
