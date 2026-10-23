@@ -11,6 +11,12 @@ export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
 export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
 export type {
+  SidebarSectionAction,
+  SidebarSectionContribution,
+  SidebarSectionRow,
+  SidebarSections,
+} from "../features/channel-navigation/sidebar-sections-service";
+export type {
   Panel,
   Panels,
   ChannelPanelContext,
