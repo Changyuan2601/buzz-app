@@ -11,7 +11,7 @@ const chat = (
 ): ChannelSummary => ({
   id,
   name: id,
-  channelType: "solo",
+  channelType: "dm",
   creator: viewer,
   members: [viewer, bestie],
   lastActivityAt: 10,
@@ -53,17 +53,21 @@ it("takes the most recently active chat, and never reorders on a tie", () => {
   expect(bestieChat(unknown, viewer, bestie)?.id).toBe("new");
 });
 
-it("only counts the viewer's own unarchived Solo chats", () => {
+it("only counts verified unarchived DMs the viewer belongs to", () => {
   const wrong: readonly ChannelSummary[] = [
     chat("archived", { archived: true }),
     chat("stream", { channelType: "stream" }),
     without(chat("unclassified"), "channelType"),
-    chat("theirs", { creator: other }),
-    without(chat("creatorless"), "creator"),
+    chat("Solo history", { channelType: "solo" }),
+    chat("cached", { cached: true }),
+    chat("other people", { members: [bestie, other] }),
   ];
   for (const channel of wrong)
     expect(bestieChat([channel], viewer, bestie)).toBeUndefined();
-  expect(bestieChat([...wrong, chat("mine")], viewer, bestie)?.id).toBe("mine");
+  expect(
+    bestieChat([...wrong, chat("mine", { creator: other })], viewer, bestie)
+      ?.id,
+  ).toBe("mine");
 });
 
 it("requires the Bestie to be the one other member", () => {

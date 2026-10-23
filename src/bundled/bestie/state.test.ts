@@ -12,7 +12,7 @@ const viewer = "a".repeat(64),
 const agent = (pubkey: string, name: string) => ({
   pubkey,
   name,
-  managed: false,
+  managed: true,
 });
 
 function choices({
@@ -50,7 +50,7 @@ const channels = (
 const chat: ChannelSummary = {
   id: "chat",
   name: "Pollen",
-  channelType: "solo",
+  channelType: "dm",
   creator: viewer,
   members: [viewer, pollen],
   lastActivityAt: 4,
@@ -116,6 +116,35 @@ it("offers the agents a failed read did return, and says the list may be short",
   ).toEqual(["Pollen"]);
 });
 
+it("treats one failed source among ready ones as a short list, not as loading", () => {
+  // The shape createAgentChoices produces when a source fails and another
+  // succeeds: ready, with that source's error and incomplete evidence.
+  const source = {
+    status: "ready" as const,
+    complete: false,
+    error: "Buzz couldn’t read one agent source.",
+  };
+  expect(
+    state({
+      choices: choices({ ...source, selectable: [agent(pollen, "Pollen")] }),
+    }),
+  ).toMatchObject({ kind: "choose", partial: source.error });
+  // A chosen agent missing from the source that did answer is still named,
+  // rather than waiting on evidence that has already failed.
+  expect(
+    state({
+      chosen: fizz,
+      choices: choices({ ...source, selectable: [agent(pollen, "Pollen")] }),
+    }),
+  ).toMatchObject({ kind: "choose", missing: expect.stringMatching(/^npub…/) });
+  // With nothing to offer, the failure is reported instead of an empty chooser.
+  expect(state({ choices: choices({ ...source, selectable: [] }) })).toEqual({
+    kind: "unavailable",
+    source: "agents",
+    error: source.error,
+  });
+});
+
 it("honors an explicit choice as soon as its agent is present", () => {
   const early = state({
     chosen: pollen,
@@ -172,18 +201,16 @@ it("starts the first chat only once the chat list is known", () => {
   });
 });
 
-it("opens a chat this page just started before its metadata arrives", () => {
-  const pending: ChannelSummary = { id: "new", name: "", pending: true };
+it("does not offer library-only agents or resolve their existing chat as a Bestie", () => {
+  const libraryOnly = { ...agent(pollen, "Pollen"), managed: false };
   expect(
     state({
       chosen: pollen,
-      channels: channels("loading", [pending]),
-      started: "new",
+      choices: choices({
+        selectable: [libraryOnly],
+        identities: [libraryOnly],
+      }),
+      channels: channels("ready", [chat]),
     }),
-  ).toMatchObject({ kind: "chat", channel: pending });
-  // A started id that is not in the list yet does not strand the page.
-  expect(
-    state({ chosen: pollen, channels: channels("ready", []), started: "new" })
-      .kind,
-  ).toBe("start");
+  ).toMatchObject({ kind: "choose", agents: [], missing: "Pollen" });
 });

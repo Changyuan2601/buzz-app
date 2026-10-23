@@ -21,6 +21,7 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import styles from "./PrimarySidebar.module.css";
+import { useBestieConversation } from "./bestie-context";
 
 import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
@@ -71,6 +72,7 @@ function ScopedSidebar({
   scope: string;
   connection: ReturnType<typeof useRelayConnection>;
 }) {
+  const bestieConversation = useBestieConversation(connection.session);
   const attempt = useSyncExternalStore(
     props.navigator.subscribe,
     () => props.navigator.snapshot().attempt.id,
@@ -179,6 +181,7 @@ function ScopedSidebar({
           agents={props.agents}
           target={props.target}
           queries={connection.session}
+          promotedDm={bestieConversation}
           scope={scope}
           viewer={connection.viewer}
           cached={!!connection.cached}

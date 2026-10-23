@@ -1,0 +1,6 @@
+/* The Solo column and composer read their narrow-pane widths from this named
+ * query container, the same contract the conversation pane declares for Solo
+ * chats. Without it both the chat and its draft keep their wide-pane width. */
+.work {
+  container: solo-conversation / inline-size;
+}

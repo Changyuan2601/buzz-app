@@ -20,6 +20,20 @@ import { bestieName, type BestieAgent } from "./state";
 
 type Size = "small" | "default" | "large";
 
+/** Resolve the same agent artwork in the page and host navigation. */
+export function useBestieAvatar(
+  agent: BestieAgent | undefined,
+  community?: string,
+) {
+  const pack = agentAvatars.find((avatar) => avatar.url === agent?.avatar);
+  const picture = useAvatarPreview(
+    pack ? "" : (agent?.avatar ?? ""),
+    community,
+    "small",
+  );
+  return pack?.preview ?? picture;
+}
+
 /** An agent's own portrait, through this community's media access. It says
  * nothing about whether the agent is owned, online or running. */
 export function BestiePortrait({
@@ -31,15 +45,10 @@ export function BestiePortrait({
   community?: string | undefined;
   size?: Size;
 }) {
-  const pack = agentAvatars.find((avatar) => avatar.url === agent.avatar);
-  const picture = useAvatarPreview(
-    pack ? "" : (agent.avatar ?? ""),
-    community,
-    "small",
-  );
+  const picture = useBestieAvatar(agent, community);
   return (
     <Avatar
-      src={pack?.preview ?? picture}
+      src={picture}
       alt=""
       fallback={bestieName(agent)}
       size={size}

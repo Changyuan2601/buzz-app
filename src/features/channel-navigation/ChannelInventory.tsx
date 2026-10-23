@@ -102,6 +102,7 @@ export function ChannelInventory({
   target,
   queries,
   cached,
+  promotedDm,
   layoutReady = true,
   connectionError,
   scope,
@@ -114,6 +115,8 @@ export function ChannelInventory({
   target: OpenTarget;
   queries: RelaySession;
   cached: boolean;
+  /** A conversation presented at a dedicated shell destination, not hidden. */
+  promotedDm?: string | undefined;
   /** Other inventories sharing this viewport must settle before restoring it. */
   layoutReady?: boolean;
   connectionError?: string | undefined;
@@ -139,6 +142,12 @@ export function ChannelInventory({
     queries.channelKit.snapshot,
   );
   const hiddenDms = useHiddenDms(scope, queries, list);
+  // Promotion is not a hide. Clear an earlier local removal so releasing this
+  // destination restores its normal row, including after reload.
+  const showDm = hiddenDms.show;
+  useEffect(() => {
+    if (promotedDm) showDm([promotedDm]);
+  }, [promotedDm, showDm]);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(
     lifecycle.subscribe,
@@ -206,6 +215,7 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
+      channel.id !== promotedDm &&
       !channel.huddle &&
       !channel.metadataPending &&
       inTeamInventory(channel) &&

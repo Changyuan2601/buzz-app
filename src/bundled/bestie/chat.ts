@@ -1,9 +1,7 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
 
-/** The viewer's one chat with their Bestie: the most recently active chat they
- * started whose only other member is that agent. Resolved from the relay-signed
- * roster instead of a stored channel id, so every device agrees on which chat
- * it is, and an unknown roster never stands in for a match. */
+/** The verified one-to-one DM with this Bestie. Solo chats are separate
+ * conversations: never reuse or convert their history as a DM. */
 export function bestieChat(
   channels: readonly ChannelSummary[],
   viewer: string | undefined,
@@ -13,9 +11,10 @@ export function bestieChat(
   return channels
     .filter(
       (channel) =>
-        channel.channelType === "solo" &&
+        channel.channelType === "dm" &&
+        !channel.cached &&
         !channel.archived &&
-        channel.creator === viewer &&
+        channel.members?.includes(viewer) &&
         onlyOther(channel.members, viewer) === bestie,
     )
     .sort(

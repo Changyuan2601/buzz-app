@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
   type Ref,
 } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -23,6 +24,7 @@ import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
+import { BestieNavigationProvider } from "./BestieNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   PopoverRoot,
@@ -36,7 +38,18 @@ import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
-export function AppShell({
+export function AppShell(props: ComponentProps<typeof AppShellContent>) {
+  return (
+    <BestieNavigationProvider
+      pages={props.pages}
+      relay={props.communities.relay}
+    >
+      <AppShellContent {...props} />
+    </BestieNavigationProvider>
+  );
+}
+
+function AppShellContent({
   pages,
   selected,
   navigationAttempt,

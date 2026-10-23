@@ -22,7 +22,7 @@ export type BestieState =
       /** Some agents could not be read: this list may be incomplete. */
       partial?: string;
     }
-  /** Chosen, with no chat yet: the first message starts it. */
+  /** Chosen, with no verified DM yet: open through the shared DM owner. */
   | { kind: "start"; bestie: BestieAgent; agents: readonly BestieAgent[] }
   | {
       kind: "chat";
@@ -40,24 +40,25 @@ export function bestieState({
   choices,
   channels,
   viewer,
-  started,
 }: {
   chosen: string | undefined;
   choices: AgentChoicesSnapshot;
   channels: ChannelList;
   viewer: string | undefined;
-  /** A chat this page just started, before the relay confirms its metadata. */
-  started?: string | undefined;
 }): BestieState {
-  const agents = choices.selectable;
+  const agents = choices.selectable.filter((agent) => agent.managed);
   const bestie = chosen
     ? agents.find((agent) => agent.pubkey === chosen)
     : undefined;
   if (!bestie) {
     // A read that failed, and a host with no agent source at all, both leave
-    // evidence that will never complete on its own.
+    // evidence that will never complete on its own. One source failing while
+    // another succeeds stays `ready` and reports its error alongside the agents
+    // it did return, so an error is evidence of failure whatever the status.
     const failed =
-      choices.status === "error" || choices.status === "unavailable";
+      choices.status === "error" ||
+      choices.status === "unavailable" ||
+      !!choices.error;
     // An explicit choice is honored as soon as its agent is present, so only
     // its absence waits for complete evidence. A failed read that still
     // produced agents offers them, and says the list may be short.
@@ -74,9 +75,7 @@ export function bestieState({
         : {}),
     };
   }
-  const channel =
-    (started && channels.channels.find(({ id }) => id === started)) ||
-    bestieChat(channels.channels, viewer, bestie.pubkey);
+  const channel = bestieChat(channels.channels, viewer, bestie.pubkey);
   if (channel) return { kind: "chat", bestie, agents, channel };
   // Starting a second chat because the first could not be read would strand
   // the conversation this page is for.
