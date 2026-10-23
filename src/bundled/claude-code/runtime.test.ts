@@ -2470,6 +2470,10 @@ it("passes real mention snapshots to tool hooks without treating plugin wakes as
   hook("mention");
   await flush();
   expect(seen[1]?.messages.map(({ id }) => id)).toEqual([mention.id]);
+  expect(seen[1]?.messages[0]).toMatchObject({
+    authorIsAgent: false,
+    audience: "everyone",
+  });
   expect(seen[1]?.context).toEqual({ channel, root: root.id });
   f.runtime.dispose();
 });

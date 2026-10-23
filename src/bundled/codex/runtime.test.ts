@@ -4490,3 +4490,30 @@ it("enforces native and Buzz tool policies for standalone turns without mention 
   await f.complete(0, "");
   await f.workingUntil.mock.calls[0]?.[0];
 });
+
+it("passes an agents-only mention audience to tool hooks", async () => {
+  const { f, run } = hookFixture();
+  const delivery = f.delivery("coordination");
+  if (delivery.trigger.type !== "mention") throw new Error("Expected mention");
+  const work = f.runtime.run({
+    ...delivery,
+    trigger: {
+      ...delivery.trigger,
+      event: {
+        ...delivery.trigger.event,
+        tags: [...delivery.trigger.event.tags, ["audience", "agents"]],
+      },
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("send", { audience: "agents", text: "working" });
+  expect(run).toHaveBeenCalledWith(
+    expect.objectContaining({
+      messages: [
+        expect.objectContaining({ authorIsAgent: false, audience: "agents" }),
+      ],
+    }),
+  );
+  await f.complete();
+  await work;
+});

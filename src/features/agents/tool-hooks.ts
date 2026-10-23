@@ -1,3 +1,6 @@
+import type { EventData } from "../relay/events";
+import { agentAudience } from "../relay/audience";
+import { foldProfiles } from "../relay/profiles";
 import type { Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 
@@ -9,7 +12,21 @@ export type AgentHookMessage = Readonly<{
   root?: string;
   topLevel?: boolean;
   deliveredAt: number;
+  /** Profile hint, not an authorization decision. Absent on older hosts. */
+  authorIsAgent?: boolean;
+  audience?: "everyone" | "agents";
 }>;
+/** Shared sender facts for policies in either harness. */
+export function hookMessageSource(event: EventData, profile?: EventData) {
+  return {
+    authorIsAgent: !!(
+      profile && foldProfiles([profile]).get(event.pubkey)?.isAgent
+    ),
+    audience: agentAudience(event)
+      ? ("agents" as const)
+      : ("everyone" as const),
+  };
+}
 export type AgentToolHookEvent = Readonly<{
   phase: "before" | "after";
   agent: string;

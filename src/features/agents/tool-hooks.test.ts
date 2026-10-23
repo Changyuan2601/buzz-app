@@ -2,6 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import {
   createAgentToolHooks,
+  hookMessageSource,
   ToolHookCallbacks,
   type AgentToolHookEvent,
 } from "./tool-hooks";
@@ -75,4 +76,31 @@ it("does not record a denied call as an executable tool", async () => {
   expect(await callbacks.before(event)).toBe("denied");
   await callbacks.after("c", true);
   expect(run).toHaveBeenCalledOnce();
+});
+
+it("exposes sender and audience facts without imposing a reply policy", () => {
+  const message = {
+    id: "m",
+    kind: 9,
+    pubkey: "a",
+    content: "hi",
+    tags: [],
+    created_at: 1,
+  };
+  const profile = {
+    ...message,
+    kind: 0,
+    content: JSON.stringify({ is_agent: true }),
+  };
+  expect(hookMessageSource(message, profile)).toEqual({
+    authorIsAgent: true,
+    audience: "everyone",
+  });
+  expect(
+    hookMessageSource({ ...message, tags: [["audience", "agents"]] }),
+  ).toEqual({ authorIsAgent: false, audience: "agents" });
+  expect(hookMessageSource(message)).toEqual({
+    authorIsAgent: false,
+    audience: "everyone",
+  });
 });

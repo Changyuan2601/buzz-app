@@ -1,3 +1,4 @@
+import { hookMessageSource } from "../../features/agents/tool-hooks";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -556,6 +557,10 @@ export class ClaudeRuntime {
             entry.hookMessages.set(key, [
               ...(entry.hookMessages.get(key) ?? []).slice(-199),
               {
+                ...hookMessageSource(
+                  event,
+                  this.reads(agent.pubkey)?.profile(event.pubkey),
+                ),
                 id: event.id,
                 channel,
                 ...(topLevel

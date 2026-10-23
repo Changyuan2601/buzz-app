@@ -1,3 +1,4 @@
+import { hookMessageSource } from "../../features/agents/tool-hooks";
 import type { Host } from "../../features/host/service";
 import type {
   AgentToolHookEvent,
@@ -1348,6 +1349,10 @@ export class CodexRuntime {
       messages: (active?.requests ?? [])
         .filter((request) => !request.wake)
         .map((request) => ({
+          ...hookMessageSource(
+            request.event,
+            this.reads(request.agent.pubkey)?.profile(request.event.pubkey),
+          ),
           id: request.event.id,
           channel: request.conversation.channelId,
           ...(request.conversation.topLevel
