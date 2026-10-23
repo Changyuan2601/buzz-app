@@ -222,13 +222,13 @@ test("a message link's context menu opens its thread as a tab without leaving th
   );
   const link = row.getByRole("link", { name: "Beta", exact: true });
   await expect(link).toBeVisible();
-  await virtuaIdle(page);
   const before = (await state(page)).entry;
-  // Target the link itself instead of a cached coordinate: under load WebKit can
-  // spend the first pointer move opening the preview and toolbar, shifting the
-  // actionable point before the contextmenu event. The test is about the link's
-  // composed context-menu owner, not stale coordinate hit-testing.
-  await link.click({ button: "right" });
+  // Exercise the composed menu/tab action by keyboard. A pointer gesture can
+  // cross Virtua's scroll hold while the preview and message toolbar appear;
+  // an idle check before that gesture cannot establish its eventual hit target.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Shift+F10");
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open link",
