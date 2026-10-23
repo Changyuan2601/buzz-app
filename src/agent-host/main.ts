@@ -14,7 +14,7 @@ const usage = "Usage: buzz-agent-host run <pubkey>";
 const log = (message: string) =>
   console.error(`${new Date().toISOString()} ${message}`);
 
-function main(args: readonly string[]) {
+async function main(args: readonly string[]) {
   const [command, pubkey, ...rest] = args;
   if (
     command !== "run" ||
@@ -28,7 +28,17 @@ function main(args: readonly string[]) {
   const dir = agentsDir();
   const identity = readIdentity(dir, pubkey);
   const secret = readKey(identity);
-  const stop = host({
+  let stopping = false;
+  let stop: (() => Promise<void>) | undefined;
+  const quit = () => {
+    if (stopping || !stop) process.exit(stop ? 1 : 0);
+    stopping = true;
+    log("Stopping");
+    void stop().finally(() => process.exit(0));
+  };
+  process.on("SIGINT", quit);
+  process.on("SIGTERM", quit);
+  stop = await host({
     identity,
     secret,
     dir,
@@ -38,20 +48,9 @@ function main(args: readonly string[]) {
       process.exit(0);
     },
   });
-  let stopping = false;
-  const quit = () => {
-    if (stopping) process.exit(1);
-    stopping = true;
-    log("Stopping");
-    void stop().finally(() => process.exit(0));
-  };
-  process.on("SIGINT", quit);
-  process.on("SIGTERM", quit);
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (error) {
+main(process.argv.slice(2)).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
-}
+});

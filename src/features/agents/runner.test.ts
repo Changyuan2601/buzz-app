@@ -1,13 +1,6 @@
 // AgentRunners through a host other than AgentsService, as the standalone
 // agent host (src/agent-host) gives it: the RunnerHost contract alone.
-import {
-  finalizeEvent,
-  generateSecretKey,
-  getPublicKey,
-} from "nostr-tools/pure";
 import { expect, it, vi } from "vitest";
-import { listen } from "../../agent-host/listen";
-import { LiveSocket } from "../../agent-host/test-socket";
 import type { RelayEvent } from "../relay/events";
 import { createLocalAgentActivity } from "./local-activity";
 import { AgentRunners, type RunnerHost } from "./runner";
@@ -164,80 +157,4 @@ it("releases the agent once its community is no longer live", async () => {
   await vi.waitFor(() =>
     expect(f.custody.release).toHaveBeenCalledWith(pubkey),
   );
-});
-
-it("runs every mention the standalone host's live client hears, through the runner's backlog", async () => {
-  const f = fixture();
-  const secret = generateSecretKey();
-  const viewer = getPublicKey(secret);
-  const sockets: LiveSocket[] = [];
-  const read = vi.fn();
-  const listener = listen({
-    relay: "wss://relay.example.test",
-    secret,
-    pubkey: viewer,
-    query: async () => [
-      finalizeEvent(
-        {
-          kind: 39002,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ["d", "channel"],
-            ["p", viewer],
-          ],
-          content: "",
-        },
-        generateSecretKey(),
-      ) as unknown as RelayEvent,
-    ],
-    onEvents: (batch) => f.runners.dispatch(batch, () => true, 0),
-    onStatus: () => {},
-    onChannels: read,
-    log: () => {},
-    socket: () => {
-      const socket = new LiveSocket();
-      sockets.push(socket);
-      return socket as unknown as WebSocket;
-    },
-  });
-  try {
-    await vi.waitFor(() => expect(read).toHaveBeenCalled());
-    const socket = sockets.at(-1) as LiveSocket;
-    await socket.auth();
-    const [wire] = socket.channelWires();
-    // Signed, as the client checks.
-    const sender = generateSecretKey();
-    const burst = Array.from(
-      { length: 40 },
-      (_, index) =>
-        finalizeEvent(
-          {
-            kind: 9,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [
-              ["h", "channel"],
-              ["p", pubkey],
-            ],
-            content: `hello ${index}`,
-          },
-          sender,
-        ) as unknown as RelayEvent,
-    );
-    // What the subscription sends before it is live: a replay.
-    for (const event of burst) await socket.receive(["EVENT", wire, event]);
-    await socket.receive(["EOSE", wire]);
-    await vi.waitFor(() => {
-      f.runners.tick();
-      expect(f.ran).toHaveLength(burst.length);
-    });
-    expect(
-      new Set(
-        f.ran.map(
-          (delivery) => (delivery.trigger as { event: RelayEvent }).event.id,
-        ),
-      ),
-    ).toEqual(new Set(burst.map((event) => event.id)));
-  } finally {
-    listener.stop();
-  }
 });

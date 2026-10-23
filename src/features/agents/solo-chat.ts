@@ -1,3 +1,4 @@
+import type { RelaySession } from "../relay/session";
 import type { RelayData } from "../relay/service";
 
 /** Whether a native agent's mention continues a Solo chat: one
@@ -14,7 +15,12 @@ export async function soloChat(
   const snapshot = relay()?.snapshot();
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner) return false;
   signal.throwIfAborted();
-  const { channels } = snapshot.session;
+  return soloChannel(snapshot.session, channelId);
+}
+
+/** Whether the session lists the channel as a Solo chat, by its label. */
+export function soloChannel(session: RelaySession, channelId: string) {
+  const { channels } = session;
   const list = channels.list();
   const channel =
     channels.get?.(channelId) ??

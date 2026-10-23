@@ -40,6 +40,12 @@ const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 /** A BuzzClient whose memory writes give back the event they posted. */
 export type NodeClient = Omit<BuzzClient, "remember"> & {
   remember(slug: string, body: string, after: number): Promise<BuzzEvent>;
+  /** POSTs `body` to one of the community's URLs, signed as the agent. */
+  signedRequest(
+    url: string,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<Response>;
 };
 
 export function nodeClient(
@@ -89,7 +95,7 @@ export function nodeClient(
     return JSON.parse(text) as unknown;
   }
 
-  function send(path: string, body: string) {
+  function send(path: string, body: string, signal?: AbortSignal) {
     const url = `${base}${path}`;
     const nip98 = sign({
       kind: 27235,
@@ -109,6 +115,7 @@ export function nodeClient(
         ...(options.auth ? { "x-auth-tag": options.auth } : {}),
       },
       body,
+      signal: signal ?? null,
     });
   }
 
@@ -129,6 +136,11 @@ export function nodeClient(
 
   return {
     pubkey,
+    signedRequest(url, body, signal) {
+      if (!url.startsWith(`${base}/`))
+        throw new Error("Not a URL of the agent's community");
+      return send(url.slice(base.length), body, signal);
+    },
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async searchProfiles(query, limit) {

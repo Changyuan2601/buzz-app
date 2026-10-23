@@ -8,6 +8,7 @@ import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
+import { rosterDm, rosterMember } from "./roster";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -1235,8 +1236,10 @@ export class AgentsService extends Service implements Agents {
       ownershipChanged: () => this.notify(),
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
-      member: (agent, event) => this.member(agent, event),
-      dm: (agent, event) => this.dm(agent, event),
+      member: (agent, event) =>
+        rosterMember(this.bindingOf(agent)?.session, agent.pubkey, event),
+      dm: (agent, event) =>
+        rosterDm(this.bindingOf(agent)?.session, agent.pubkey, event),
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
@@ -3300,37 +3303,6 @@ export class AgentsService extends Service implements Agents {
   }
   private notify() {
     for (const listener of this.listeners) listener();
-  }
-  /** The event's channel as the agent's community knows it, if at all. */
-  private channelOf(agent: Agent, event: RelayEvent) {
-    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.bindingOf(agent)?.session.channels;
-    if (!channel || !channels) return undefined;
-    return (
-      channels.list().channels.find((item) => item.id === channel) ??
-      channels.get?.(channel)
-    );
-  }
-  /** Whether the agent is in the event's channel, by its relay-signed roster.
-   * The stream is the owner's, so a watch, even of "all", sees only what the
-   * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. A roster only loaded from disk decides nothing
-   * (undefined): the agent may have been removed or added since it was saved,
-   * so the event waits until the relay confirms it. */
-  private member(agent: Agent, event: RelayEvent): boolean | undefined {
-    const summary = this.channelOf(agent, event);
-    if (summary?.cached) return undefined;
-    return !!summary?.members?.includes(agent.pubkey);
-  }
-  /** Whether the event's channel is a DM of exactly the agent and one other,
-   * by the same roster. A group DM, or one whose roster is unknown, is not. */
-  private dm(agent: Agent, event: RelayEvent) {
-    const summary = this.channelOf(agent, event);
-    return (
-      summary?.channelType === "dm" &&
-      summary.members?.length === 2 &&
-      summary.members.includes(agent.pubkey)
-    );
   }
 }
 

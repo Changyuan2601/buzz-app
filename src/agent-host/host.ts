@@ -26,7 +26,9 @@ import { CodexRuntime } from "../bundled/codex/runtime";
 import { nodeClient } from "../buzz-mcp/node";
 import { CoreMemoryCache } from "../features/agents/core-memory-cache";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
-import type { AgentReads } from "../features/agents/reads";
+import { type AgentReads, ownerReads } from "../features/agents/reads";
+import { rosterDm, rosterMember } from "../features/agents/roster";
+import { soloChannel } from "../features/agents/solo-chat";
 import { communityDestination } from "../features/communities/destination";
 import type { Checkpoint } from "../features/agents/catch-up";
 import type { Interrupted } from "../features/agents/interrupted";
@@ -51,8 +53,7 @@ import { eventsDto, type RelayEvent } from "../features/relay/events";
 import { relayPartition } from "../features/relay/partition";
 import { Claims } from "./claim";
 import { checkSaved, type Identity, readNames } from "./identity";
-import { listen } from "./listen";
-import { agentReads } from "./reads";
+import { type AgentSession, connectAgentSession } from "./session";
 import { type Declared, processHost } from "./spawn";
 import { stateStorage } from "./storage";
 
@@ -100,8 +101,8 @@ export type HostOptions = Readonly<{
   onGone(reason: string): void;
 }>;
 
-/** Runs the agent until the returned stop is called. */
-export function host(options: HostOptions): () => Promise<void> {
+/** Connects as the agent, then runs it until the returned stop is called. */
+export async function host(options: HostOptions): Promise<() => Promise<void>> {
   const { identity, secret, dir, log, onGone } = options;
   const { pubkey } = identity;
   if (getPublicKey(secret) !== pubkey)
@@ -117,7 +118,54 @@ export function host(options: HostOptions): () => Promise<void> {
     ...(identity.auth ? { auth: identity.auth } : {}),
     root: home,
   });
-  const reads: AgentReads = agentReads(client, identity.relay);
+  // As the app scopes the agent's community, so saved sessions match.
+  const scope = relayPartition(
+    communityDestination(identity.relay).url,
+    identity.owner,
+  );
+  // The app's own relay session, as the agent: it hears the agent's channels
+  // and answers its reads, as the owner's session does in the app.
+  // Its live connection reconnects by itself; only the first connection,
+  // which reads the community's information, is tried again here.
+  let connected: AgentSession | undefined;
+  for (let attempt = 0; !connected; attempt++)
+    try {
+      connected = await connectAgentSession({
+        relay: identity.relay,
+        secret,
+        pubkey,
+        ...(identity.auth
+          ? { auth: JSON.parse(identity.auth) as string[] }
+          : {}),
+        client,
+        scope,
+      });
+    } catch (error) {
+      const wait = Math.min(30_000, 1_000 * 2 ** attempt);
+      log(
+        `Could not connect (${String(error)}); trying again in ${wait / 1000}s`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  const connection = connected;
+  const { session } = connection;
+  const reads: AgentReads = {
+    ...(ownerReads(connection.relay, pubkey) as AgentReads),
+    // The agent's own client decrypts its memory. It skips entries it cannot
+    // decrypt, so it cannot show that a listing is complete; a turn then
+    // never takes a missing core as none.
+    memoryListing: async (signal, slug) => {
+      signal.throwIfAborted();
+      const { entries } = await client.memories(slug);
+      signal.throwIfAborted();
+      return { entries, partial: true };
+    },
+    // The channel's Solo label decides, as for every member and agent.
+    soloChat: async (_owner, channel, signal) => {
+      signal.throwIfAborted();
+      return soloChannel(session, channel);
+    },
+  };
   let live = false;
   const readsOf = (agent: string) =>
     live && agent === pubkey ? reads : undefined;
@@ -192,25 +240,6 @@ export function host(options: HostOptions): () => Promise<void> {
   // from the record the one before it kept, and its timers wait for them.
   let changes: Promise<unknown> = Promise.resolve();
   let changing = 0;
-  const listener = listen({
-    relay: identity.relay,
-    secret,
-    pubkey,
-    ...(identity.auth ? { auth: JSON.parse(identity.auth) as string[] } : {}),
-    query: async (filters) => verified(await client.query(filters)),
-    // As the app's agents hear its session: a replay (the recent history a
-    // subscription sends again before it goes live) is heard only for what
-    // happened since this host started.
-    onEvents: (batch) => runners.dispatch(batch, () => true, started),
-    onStatus: (now) => {
-      live = now;
-      log(now ? "Listening" : "Not listening");
-      runners.resume(new Set(now ? [pubkey] : []));
-    },
-    // A roster the relay confirms decides the events held for it.
-    onChannels: () => runners.releaseHeld(() => true),
-    log,
-  });
   // Whether the app deleted, erased or changed the agent: then this host
   // stops, and tells its caller why.
   let gone = false;
@@ -231,11 +260,6 @@ export function host(options: HostOptions): () => Promise<void> {
   const mine = (agent: string) => {
     if (agent !== pubkey) throw new Error("Not this host's agent");
   };
-  // As the app scopes the agent's community, so saved sessions match.
-  const scope = relayPartition(
-    communityDestination(identity.relay).url,
-    identity.owner,
-  );
   const started = Math.floor(Date.now() / 1000);
   // Catch-up progress, kept only while this host runs. This host does not
   // catch up yet, so it neither reads nor writes the agent's saved progress
@@ -246,14 +270,8 @@ export function host(options: HostOptions): () => Promise<void> {
   const runners = new AgentRunners({
     ready: (agent) => (live && agent === pubkey ? agentView() : undefined),
     agent: (agent) => (agent === pubkey ? agentView() : undefined),
-    member: (_, event) => {
-      const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-      return channel ? listener.member(channel) : false;
-    },
-    dm: (_, event) => {
-      const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-      return !!channel && listener.dm(channel);
-    },
+    member: (_, event) => rosterMember(session, pubkey, event),
+    dm: (_, event) => rosterDm(session, pubkey, event),
     // No catch-up: see `checkpoints`.
     community: () => undefined,
     records: () => [recordOf()],
@@ -405,6 +423,28 @@ export function host(options: HostOptions): () => Promise<void> {
     new Map([[identity.type, run.type]]),
   );
   run.sync([agentView()]);
+  // As the app's agents hear its session (`AgentsService.listen`): a replay
+  // (the recent history a subscription sends again before it goes live) is
+  // heard only for what happened since this host started.
+  const stopEvents = session.subscribeLive(
+    (batch) => runners.dispatch(batch, () => true, started),
+    { replay: true },
+  );
+  const onStatus = () => {
+    const now = session.live.snapshot().status === "connected";
+    if (now === live) return;
+    live = now;
+    log(now ? "Listening" : "Not listening");
+    // Its core memory may have changed elsewhere while it was not connected.
+    if (now) void coreMemory.refresh(pubkey);
+    runners.resume(new Set(now ? [pubkey] : []));
+  };
+  const stopStatus = session.live.subscribe(onStatus);
+  onStatus();
+  // A roster the relay confirms decides the events held for it.
+  const stopRosters = session.channels.subscribeList?.(() =>
+    runners.releaseHeld(() => true),
+  );
   const tick = setInterval(() => {
     if (gone || isGone()) return;
     try {
@@ -422,7 +462,10 @@ export function host(options: HostOptions): () => Promise<void> {
 
   async function stopHosting() {
     clearInterval(tick);
-    listener.stop();
+    stopEvents();
+    stopStatus();
+    stopRosters?.();
+    connection.relay.disconnect();
     runners.clear();
     // Only once its processes have exited may another copy run the agent.
     await run.dispose();
