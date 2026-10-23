@@ -36,6 +36,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
     repositoriesContext,
+    (event) => agents.toolHook(event),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

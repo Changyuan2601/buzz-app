@@ -7,6 +7,12 @@ import type {
   HostProcessOptions,
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
+import {
+  createAgentToolHooks,
+  type AgentToolHook,
+  type AgentToolHooks,
+  type AgentToolHookEvent,
+} from "./tool-hooks";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -872,7 +878,7 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
-export type Agents = {
+export type Agents = AgentToolHooks & {
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
    * The provider key is pluginId/id. Local agents only. */
@@ -1230,6 +1236,11 @@ export class AgentsService extends Service implements Agents {
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
+  private readonly toolHooks;
+  registerToolHook(hook: AgentToolHook) {
+    this.toolHooks.register(this.ctx, hook);
+  }
+  toolHook = (event: AgentToolHookEvent) => this.toolHooks.run(event);
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1323,6 +1334,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.toolHooks = createAgentToolHooks(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.

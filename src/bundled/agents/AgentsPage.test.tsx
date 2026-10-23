@@ -374,6 +374,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerToolHook: vi.fn(),
+    toolHook: vi.fn(async () => undefined),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

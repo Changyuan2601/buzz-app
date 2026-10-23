@@ -5,6 +5,11 @@
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
+import {
+  ToolHookCallbacks,
+  type AgentHookMessage,
+  type AgentToolHooks,
+} from "../../features/agents/tool-hooks";
 import type { Context } from "../../buzz-mcp/client";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
@@ -123,6 +128,7 @@ type Entry = {
   contexts: Map<string, Context>;
   /** The project folders each Solo chat's latest turn named, for its process. */
   directories: Map<string, readonly string[]>;
+  hookMessages: Map<string, readonly AgentHookMessage[]>;
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
   policies: Map<
@@ -188,6 +194,8 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly toolHook: AgentToolHooks["toolHook"] = async () =>
+      undefined,
   ) {}
 
   private get spawn(): Spawn {
@@ -463,7 +471,7 @@ export class ClaudeRuntime {
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
+    const { key, dm } = await this.key(entry, agent.pubkey, event, channel, topLevel);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -538,6 +546,11 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
+          entry.hookMessages.set(key, [...(entry.hookMessages.get(key) ?? []).slice(-199), {
+            id: event.id, channel,
+            ...(topLevel ? { topLevel } : dm ? {} : { root: threadReference(event)?.rootId ?? event.id }),
+            deliveredAt: Date.now(),
+          }]);
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             current: () => !interrupted && (!current || current()),
             ...(wake
@@ -736,9 +749,13 @@ export class ClaudeRuntime {
     topLevel: boolean,
   ) {
     const summary = await this.reads(self)?.channel(channelId);
-    return topLevel || summary?.dm === true || entry.config.scope === "channel"
-      ? channelId
-      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+    return {
+      dm: summary?.dm === true,
+      key:
+        topLevel || summary?.dm === true || entry.config.scope === "channel"
+          ? channelId
+          : `${channelId}/${threadReference(event)?.rootId ?? event.id}`,
+    };
   }
 
   /** Where the event's turn goes, and what its prompt needs. */
@@ -849,6 +866,7 @@ export class ClaudeRuntime {
       team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      hookMessages: new Map(),
       policies: new Map(),
       directories: new Map(),
     };
@@ -895,6 +913,7 @@ export class ClaudeRuntime {
           addedKey(this.added()),
         ]),
       launch: async (key) => {
+        const callbacks = new ToolHookCallbacks(this.toolHook);
         const { workspace, instructions, scope } = entry.config;
         const memory = await this.core(pubkey);
         const directories = key ? entry.directories.get(key) : undefined;
@@ -902,6 +921,35 @@ export class ClaudeRuntime {
           ...where(entry.config),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
+          hook: async (conversation, input) => {
+            if (!conversation) return {};
+            const callId = String(input.tool_use_id ?? "");
+            if (input.hook_event_name !== "PreToolUse") {
+              await callbacks.after(
+                callId,
+                input.hook_event_name === "PostToolUse",
+              );
+              return {};
+            }
+            const reason = await callbacks.before({
+              agent: pubkey,
+              session: conversation,
+              callId,
+              tool: String(input.tool_name),
+              input: (input.tool_input ?? {}) as Record<string, unknown>,
+              context: entry.contexts.get(conversation) ?? {},
+              messages: entry.hookMessages.get(conversation) ?? [],
+            });
+            return reason
+              ? {
+                  hookSpecificOutput: {
+                    hookEventName: "PreToolUse",
+                    permissionDecision: "deny",
+                    permissionDecisionReason: reason,
+                  },
+                }
+              : {};
+          },
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,

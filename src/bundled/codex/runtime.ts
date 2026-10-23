@@ -1,3 +1,9 @@
+import type { Host } from "../../features/host/service";
+import type {
+  AgentToolHookEvent,
+  AgentToolHooks,
+} from "../../features/agents/tool-hooks";
+import { CodexHooks, HOOK_SERVER, hookToolName } from "./hooks";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -69,6 +75,7 @@ type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
   event: EventData;
+  deliveredAt?: number;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -232,6 +239,7 @@ function textOf(event: EventData, name: string) {
  * calls find their agent by thread and turn. */
 export class CodexRuntime {
   private entries = new Map<string, Entry>();
+  private readonly bridges = new WeakMap<AppServer, CodexHooks>();
   private server: Server | undefined;
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
@@ -252,6 +260,10 @@ export class CodexRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly hooks?: {
+      serve: NonNullable<Host["serveMcp"]>;
+      run: AgentToolHooks["toolHook"];
+    },
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -499,26 +511,64 @@ export class CodexRuntime {
     this.open();
   }
   private close() {
+    if (this.server) void this.bridges.get(this.server.rpc)?.close();
     void this.server?.rpc.close();
     this.server = undefined;
   }
   private open() {
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
+    const bridge =
+      this.hooks &&
+      new CodexHooks(this.hooks.serve, async (input) => {
+        const active = [...this.entries.values()]
+          .flatMap((entry) => [...entry.lanes.values()])
+          .map((lane) => lane.active)
+          .find((turn) => turn?.threadId === input.session_id);
+        if (!active) return undefined; // Standalone turns have no mentions to acknowledge.
+        await active.ready;
+        if (active.turnId !== input.turn_id || active.finished)
+          return "The Codex turn has ended";
+        return this.hooks?.run(
+          this.hookEvent(
+            active,
+            String(input.tool_use_id),
+            hookToolName(String(input.tool_name)),
+            (input.tool_input ?? {}) as Record<string, unknown>,
+          ),
+        );
+      });
+    if (bridge) this.bridges.set(rpc, bridge);
     // Threads set their own cwd; the process just needs a directory that exists.
     const server: Server = {
       rpc,
-      opening: rpc.open(this.spawn, defaults.workspace),
+      opening: bridge
+        ? bridge.open().then((args) =>
+            rpc.open(
+              (id, options) =>
+                this.spawn(id, {
+                  ...options,
+                  ...(args
+                    ? { args: [...(options?.args ?? []), ...args] }
+                    : {}),
+                }),
+              defaults.workspace,
+            ),
+          )
+        : rpc.open(this.spawn, defaults.workspace),
       threads: new Map(),
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
-      if (wire.method === "connection/closed" && this.server === server)
-        this.server = undefined;
+      if (wire.method === "connection/closed") {
+        void bridge?.close();
+        if (this.server === server) this.server = undefined;
+      }
     });
     void server.opening.catch(() => {
       if (this.server === server) this.server = undefined;
       void rpc.close();
+      void bridge?.close();
     });
     this.server = server;
     return server;
@@ -811,6 +861,7 @@ export class CodexRuntime {
                 request.answered();
                 return;
               }
+              request.deliveredAt = Date.now();
               await active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
@@ -1221,13 +1272,27 @@ export class CodexRuntime {
             : {}),
         }
       : {};
-    const reply = await callSessionTool(
-      client,
-      context,
-      call.tool,
-      args,
-      this.added(),
-    );
+    const event =
+      active &&
+      this.hookEvent(active, call.callId, `mcp__buzz__${call.tool}`, args);
+    const denied = event && (await this.hooks?.run(event));
+    if (denied) throw new Error(denied);
+    let reply: Awaited<ReturnType<typeof callSessionTool>>;
+    try {
+      reply = await callSessionTool(
+        client,
+        context,
+        call.tool,
+        args,
+        this.added(),
+      );
+    } catch (error) {
+      if (event)
+        await this.hooks?.run({ ...event, phase: "after", success: false });
+      throw error;
+    }
+    if (event)
+      await this.hooks?.run({ ...event, phase: "after", success: true });
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -1246,6 +1311,37 @@ export class CodexRuntime {
                 ? [{ type: "inputText" as const, text: reply.text }]
                 : []),
             ],
+    };
+  }
+  private hookEvent(
+    active: Active,
+    callId: string,
+    tool: string,
+    input: Record<string, unknown>,
+  ): AgentToolHookEvent {
+    const request = active.reply;
+    return {
+      phase: "before",
+      agent: request.agent.pubkey,
+      session: active.threadId ?? "",
+      callId,
+      tool,
+      input,
+      context: {
+        channel: request.conversation.channelId,
+        ...(request.toolRoot ? { root: request.toolRoot } : {}),
+        ...(request.conversation.topLevel ? { topLevel: true } : {}),
+      },
+      messages: active.requests.map((request) => ({
+        id: request.event.id,
+        channel: request.conversation.channelId,
+        ...(request.conversation.topLevel
+          ? { topLevel: true }
+          : request.toolRoot
+            ? { root: request.toolRoot }
+            : {}),
+        deliveredAt: request.deliveredAt ?? 0,
+      })),
     };
   }
   /** The agent's memory, or only entry `slug`, as its community's reads give
@@ -1427,6 +1523,8 @@ export class CodexRuntime {
         ],
       ),
     );
+    const hookConfig = await this.bridges.get(rpc)?.config(rpc, workspace);
+    if (hookConfig) mcp[HOOK_SERVER] = hookConfig.server;
     const params = {
       model,
       cwd: workspace,
@@ -1436,6 +1534,9 @@ export class CodexRuntime {
       // agent's own watches and timers start work.
       sandbox: "danger-full-access",
       config: {
+        ...(hookConfig
+          ? { "hooks.state": hookConfig.state, "features.hooks": true }
+          : {}),
         web_search: "disabled",
         mcp_servers: mcp,
         "features.plugins": false,
@@ -1573,6 +1674,7 @@ export class CodexRuntime {
         ready();
         return;
       }
+      request.deliveredAt = Date.now();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
