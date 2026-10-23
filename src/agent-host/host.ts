@@ -50,8 +50,8 @@ import {
 import { eventsDto, type RelayEvent } from "../features/relay/events";
 import { relayPartition } from "../features/relay/partition";
 import { Claims } from "./claim";
-import { AgentFeed } from "./feed";
 import { checkSaved, type Identity, readNames } from "./identity";
+import { listen } from "./listen";
 import { agentReads } from "./reads";
 import { type Declared, processHost } from "./spawn";
 import { stateStorage } from "./storage";
@@ -192,21 +192,23 @@ export function host(options: HostOptions): () => Promise<void> {
   // from the record the one before it kept, and its timers wait for them.
   let changes: Promise<unknown> = Promise.resolve();
   let changing = 0;
-  const feed = new AgentFeed({
+  const listener = listen({
     relay: identity.relay,
     secret,
     pubkey,
     ...(identity.auth ? { auth: JSON.parse(identity.auth) as string[] } : {}),
-    // A replay (what the feed heard while not listening, or what a request
-    // sent before its EOSE) waits for the agent's room; of it, only what
-    // happened since this host started is heard.
+    query: async (filters) => verified(await client.query(filters)),
+    // As the app's agents hear its session: a replay (the recent history a
+    // subscription sends again before it goes live) is heard only for what
+    // happened since this host started.
     onEvents: (batch) => runners.dispatch(batch, () => true, started),
     onStatus: (now) => {
-      if (now === live) return;
       live = now;
       log(now ? "Listening" : "Not listening");
       runners.resume(new Set(now ? [pubkey] : []));
     },
+    // A roster the relay confirms decides the events held for it.
+    onChannels: () => runners.releaseHeld(() => true),
     log,
   });
   // Whether the app deleted, erased or changed the agent: then this host
@@ -246,11 +248,11 @@ export function host(options: HostOptions): () => Promise<void> {
     agent: (agent) => (agent === pubkey ? agentView() : undefined),
     member: (_, event) => {
       const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-      return !!channel && feed.channels.has(channel);
+      return channel ? listener.member(channel) : false;
     },
     dm: (_, event) => {
       const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-      return !!channel && feed.dm(channel);
+      return !!channel && listener.dm(channel);
     },
     // No catch-up: see `checkpoints`.
     community: () => undefined,
@@ -403,7 +405,6 @@ export function host(options: HostOptions): () => Promise<void> {
     new Map([[identity.type, run.type]]),
   );
   run.sync([agentView()]);
-  feed.start();
   const tick = setInterval(() => {
     if (gone || isGone()) return;
     try {
@@ -421,7 +422,7 @@ export function host(options: HostOptions): () => Promise<void> {
 
   async function stopHosting() {
     clearInterval(tick);
-    feed.stop();
+    listener.stop();
     runners.clear();
     // Only once its processes have exited may another copy run the agent.
     await run.dispose();

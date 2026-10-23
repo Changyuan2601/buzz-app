@@ -1,53 +1,76 @@
-// A relay connection a test answers by hand, for the agent feed.
-/** A relay connection the test answers by hand. */
-export class FakeSocket {
-  static readonly OPEN = 1;
-  static last: FakeSocket | undefined;
-  readyState = 0;
+// A relay connection a test answers by hand, for the app's live client
+// (`subscribeRelayTraffic`) as the agent host runs it.
+type Filter = Readonly<{ kinds?: number[]; "#h"?: string[] }>;
+
+export class LiveSocket {
+  readyState = 1;
+  onmessage?: (event: { data: string }) => Promise<void>;
+  onclose?: () => void;
+  onerror?: () => void;
   readonly sent: unknown[][] = [];
-  private readonly listeners = new Map<string, ((event: unknown) => void)[]>();
-  constructor(readonly url: string) {
-    FakeSocket.last = this;
-  }
-  addEventListener(type: string, listener: (event: unknown) => void) {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-  }
   send(text: string) {
     this.sent.push(JSON.parse(text) as unknown[]);
   }
-  close() {}
-  emit(type: string, event: unknown = {}) {
-    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  close() {
+    this.readyState = 3;
+    this.onclose?.();
   }
-  opened() {
-    this.readyState = FakeSocket.OPEN;
-    this.emit("open");
+  async receive(message: unknown[]) {
+    await this.onmessage?.({ data: JSON.stringify(message) });
   }
-  receive(message: unknown[]) {
-    this.emit("message", { data: JSON.stringify(message) });
+  /** Asks for the login, accepts it, and gives back the login event. */
+  async auth() {
+    await this.receive(["AUTH", "challenge"]);
+    const login = this.sent.find((message) => message[0] === "AUTH")?.[1] as
+      | { id: string; pubkey: string; tags: string[][] }
+      | undefined;
+    if (!login) throw new Error("No login sent");
+    await this.receive(["OK", login.id, true, ""]);
+    return login;
   }
-  reqs() {
-    return this.sent.filter((message) => message[0] === "REQ");
+  /** The requests still open, by wire id. */
+  private open() {
+    const closed = new Set(
+      this.sent.filter((message) => message[0] === "CLOSE").map((m) => m[1]),
+    );
+    return this.sent.filter(
+      (message) => message[0] === "REQ" && !closed.has(message[1]),
+    ) as [string, string, ...Filter[]][];
+  }
+  /** Ends the stored events of every open request: each is live. */
+  async established() {
+    for (const [, wire] of this.open()) await this.receive(["EOSE", wire]);
+  }
+  /** The wire ids of the open channel requests. */
+  channelWires() {
+    return this.open()
+      .filter((message) =>
+        (message.slice(2) as Filter[]).some((filter) => filter["#h"]),
+      )
+      .map((message) => message[1]);
+  }
+  /** The channels the open requests hear. */
+  channels() {
+    return [
+      ...new Set(
+        this.open().flatMap((message) =>
+          (message.slice(2) as Filter[]).flatMap(
+            (filter) => filter["#h"] ?? [],
+          ),
+        ),
+      ),
+    ].sort();
+  }
+  /** The wire id of the open global request `name`: `membership` hears the
+   * relay's membership notices. */
+  wire(name: "membership" | "profiles") {
+    const kind = name === "membership" ? 44100 : 0;
+    const found = this.open().find((message) =>
+      (message.slice(2) as Filter[]).some((filter) =>
+        filter.kinds?.includes(kind),
+      ),
+    );
+    if (!found) throw new Error(`No ${name} request`);
+    return found[1];
   }
 }
-
-/** The id of the latest request for subscription `key`. */
-export const latest = (socket: FakeSocket, key: string) => {
-  const id = socket
-    .reqs()
-    .map((message) => String(message[1]))
-    .filter((id) => id === key || id.startsWith(`${key}:`))
-    .at(-1);
-  if (!id) throw new Error(`No ${key} request`);
-  return id;
-};
-/** The subscription keys of the requests sent, in order. */
-export const asked = (socket: FakeSocket) =>
-  socket.reqs().map((message) => String(message[1]).replace(/:\d+$/, ""));
-
-/** The id of the login the feed sent. */
-export const loginId = (socket: FakeSocket) => {
-  const login = socket.sent.find((message) => message[0] === "AUTH");
-  if (!login) throw new Error("No login sent");
-  return (login[1] as { id: string }).id;
-};

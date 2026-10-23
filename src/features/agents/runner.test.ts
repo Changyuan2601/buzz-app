@@ -6,8 +6,8 @@ import {
   getPublicKey,
 } from "nostr-tools/pure";
 import { expect, it, vi } from "vitest";
-import { AgentFeed } from "../../agent-host/feed";
-import { FakeSocket } from "../../agent-host/test-socket";
+import { listen } from "../../agent-host/listen";
+import { LiveSocket } from "../../agent-host/test-socket";
 import type { RelayEvent } from "../relay/events";
 import { createLocalAgentActivity } from "./local-activity";
 import { AgentRunners, type RunnerHost } from "./runner";
@@ -166,29 +166,46 @@ it("releases the agent once its community is no longer live", async () => {
   );
 });
 
-it("runs every mention the standalone feed heard while not listening, past the agent's queue", async () => {
-  vi.useFakeTimers();
-  vi.stubGlobal("WebSocket", FakeSocket);
+it("runs every mention the standalone host's live client hears, through the runner's backlog", async () => {
+  const f = fixture();
+  const secret = generateSecretKey();
+  const viewer = getPublicKey(secret);
+  const sockets: LiveSocket[] = [];
+  const read = vi.fn();
+  const listener = listen({
+    relay: "wss://relay.example.test",
+    secret,
+    pubkey: viewer,
+    query: async () => [
+      finalizeEvent(
+        {
+          kind: 39002,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ["d", "channel"],
+            ["p", viewer],
+          ],
+          content: "",
+        },
+        generateSecretKey(),
+      ) as unknown as RelayEvent,
+    ],
+    onEvents: (batch) => f.runners.dispatch(batch, () => true, 0),
+    onStatus: () => {},
+    onChannels: read,
+    log: () => {},
+    socket: () => {
+      const socket = new LiveSocket();
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    },
+  });
   try {
-    const f = fixture();
-    const secret = generateSecretKey();
-    const feed = new AgentFeed({
-      relay: "wss://relay.example.test",
-      secret,
-      pubkey: getPublicKey(secret),
-      onEvents: (batch) => f.runners.dispatch(batch, () => true, 0),
-      onStatus: () => {},
-    });
-    feed.start();
-    const socket = FakeSocket.last as FakeSocket;
-    socket.opened();
-    // No login asked for: it subscribes as it is, and has heard the past.
-    await vi.advanceTimersByTimeAsync(2_000);
-    socket.receive(["EOSE", "mentions"]);
-    socket.receive(["EOSE", "rosters"]);
-    // One stream is lost; the mentions stream hears a burst meanwhile.
-    socket.receive(["CLOSED", "rosters", "error: busy"]);
-    // Signed, as the feed checks.
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    const socket = sockets.at(-1) as LiveSocket;
+    await socket.auth();
+    const [wire] = socket.channelWires();
+    // Signed, as the client checks.
     const sender = generateSecretKey();
     const burst = Array.from(
       { length: 40 },
@@ -206,10 +223,9 @@ it("runs every mention the standalone feed heard while not listening, past the a
           sender,
         ) as unknown as RelayEvent,
     );
-    for (const event of burst) socket.receive(["EVENT", "mentions", event]);
-    expect(f.ran).toHaveLength(0);
-    // Listening again: the burst waits for room rather than overflow.
-    await vi.advanceTimersByTimeAsync(1_000);
+    // What the subscription sends before it is live: a replay.
+    for (const event of burst) await socket.receive(["EVENT", wire, event]);
+    await socket.receive(["EOSE", wire]);
     await vi.waitFor(() => {
       f.runners.tick();
       expect(f.ran).toHaveLength(burst.length);
@@ -221,9 +237,7 @@ it("runs every mention the standalone feed heard while not listening, past the a
         ),
       ),
     ).toEqual(new Set(burst.map((event) => event.id)));
-    feed.stop();
   } finally {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
+    listener.stop();
   }
 });
