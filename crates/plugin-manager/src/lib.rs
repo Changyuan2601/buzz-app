@@ -308,6 +308,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-notes/manifest.json"
         ))
         .expect("relay notes manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/messages-nav/manifest.json"
+        ))
+        .expect("messages navigation manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -315,6 +319,7 @@ fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
         "buzz.channels"
+            | "buzz.messages-nav"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.mermaid"
@@ -710,6 +715,7 @@ impl Manager {
             .map(|manifest| {
                 // Required even when an older profile saved a disabled override.
                 let enabled = manifest.id == "buzz.channels"
+                    || manifest.id == "buzz.messages-nav"
                     || registry
                         .bundled_overrides
                         .get(&manifest.id)
@@ -858,6 +864,11 @@ impl Manager {
                     "disable" => {
                         if id == "buzz.channels" {
                             return Err("Channels is required and cannot be disabled".into());
+                        }
+                        if id == "buzz.messages-nav" {
+                            return Err(
+                                "Messages navigation is required and cannot be disabled".into()
+                            );
                         }
                         registry.bundled_overrides.insert(id.into(), false);
                     }

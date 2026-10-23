@@ -1123,7 +1123,7 @@ fn channels_is_required_even_with_saved_disabled_settings() {
 }
 
 #[test]
-fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
+fn bundled_defaults_preserve_saved_choices_and_only_channels_and_messages_nav_are_required() {
     let (_root, manager, _source) = fixture();
     let catalog = manager.catalog().unwrap();
     assert!(catalog
@@ -1137,7 +1137,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             "buzz.bestie" | "buzz.pi" | "buzz.todos" | "buzz.usage" | "buzz.relay-notes"
         );
         assert_eq!(plugin.enabled, default, "{id}");
-        if id == "buzz.channels" {
+        if id == "buzz.channels" || id == "buzz.messages-nav" {
             assert!(manager.change("disable", id).is_err());
         } else {
             for enabled in [true, false] {

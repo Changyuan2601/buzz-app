@@ -1,0 +1,10 @@
+{
+  "id": "buzz.messages-nav",
+  "name": "Messages navigation",
+  "apiVersion": 1,
+  "description": "List your channels, chats and DMs in the sidebar.",
+  "discovery": {
+    "category": "communication",
+    "tags": ["Core", "Essentials", "messaging"]
+  }
+}

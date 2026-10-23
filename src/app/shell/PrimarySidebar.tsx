@@ -1,271 +1,210 @@
 import {
-  useEffect,
+  Component,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
-import { soloDraft } from "../../features/channel-navigation/routes";
-import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
-import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
-import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
-import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { ChatsCircleIcon } from "../../shared/design-system/icons";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
-import styles from "./PrimarySidebar.module.css";
-
-import { useRelayConnection } from "../../features/relay/react";
-import { relayPartition } from "../../features/relay/partition";
-import { targetKey } from "../../features/navigation/targets";
-import { readView, writeView } from "../../shared/view-state";
-import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon } from "../../features/conversation/service";
-
-const noSubscription = () => () => {};
-
-type Filter = "all" | "solo" | "team";
-const filters = [
-  { value: "all", label: "All", panelId: "sidebar-all" },
-  { value: "solo", label: "Solo", panelId: "sidebar-solo" },
-  { value: "team", label: "Team", panelId: "sidebar-team" },
-] as const;
+import type {
+  MessagesNavReader,
+  RegisteredMessagesNavView,
+} from "../../features/messages-nav/service";
+import { useRelayConnection } from "../../features/relay/react";
+import { readView, writeView } from "../../shared/view-state";
+import { MessagesInventory } from "../../bundled/messages-nav/MessagesInventory";
+import channelStyles from "../../bundled/channels/Channels.module.css";
+import styles from "./PrimarySidebar.module.css";
 
 type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
+  /** Messages navigation views; while none is registered, the built-in Messages view. */
+  views?: MessagesNavReader | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
 
-/** Filters the navigation inventory without replacing the current conversation. */
+const VIEW = "messages-nav";
+
+/**
+ * The shell's primary sidebar: page navigation and the messages navigation
+ * views listed with it, above the selected view. Selecting a view changes only
+ * this pane; the current conversation stays open beside it.
+ */
 export function PrimarySidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const scope = connection.scope ?? "disconnected";
+  const latest = useRef(props);
+  latest.current = props;
+  const [fallback] = useState(() => builtIn(latest));
+  const reader = props.views ?? fallback;
+  const registered = useSyncExternalStore(reader.subscribe, reader.snapshot);
+  // Messages stays usable while its bundle is missing or not yet active.
+  const views = registered.length ? registered : fallback.snapshot();
   return (
     <ScopedSidebar
-      {...props}
       key={scope}
       scope={scope}
-      connection={connection}
-    />
+      views={views}
+      target={props.target}
+    >
+      {props.children}
+    </ScopedSidebar>
   );
 }
 
 function ScopedSidebar({
   scope,
-  connection,
-  ...props
-}: Props & {
+  views,
+  target,
+  children,
+}: {
   scope: string;
-  connection: ReturnType<typeof useRelayConnection>;
+  views: readonly RegisteredMessagesNavView[];
+  target: OpenTarget;
+  children: ReactNode;
 }) {
-  const attempt = useSyncExternalStore(
-    props.navigator.subscribe,
-    () => props.navigator.snapshot().attempt.id,
-  );
-  const [observedAttempt, setObservedAttempt] = useState(attempt);
-  const [view, setView] = useState(() => {
-    const saved = readView<{ filter?: unknown; location?: unknown } | null>(
-      scope,
-      "navigation-scope",
-      null,
-    );
-    return {
-      filter:
-        saved?.filter === "solo"
-          ? "solo"
-          : saved?.filter === "team"
-            ? "team"
-            : ("all" as Filter),
-      location:
-        typeof saved?.location === "string" ? saved.location : undefined,
-    };
+  const [chosen, setChosen] = useState(() => {
+    const saved = readView<{ view?: unknown } | null>(scope, VIEW, null);
+    return typeof saved?.view === "string" ? saved.view : undefined;
   });
-  const target = props.target;
-  const local =
-    "scope" in target &&
-    target.scope &&
-    relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope;
-  // The conversation's own Solo label, not the opening page, says which
-  // inventory owns it; an unlisted conversation waits until it is known.
-  const channels = connection.session?.channels;
-  const channelList = useSyncExternalStore(
-    channels?.subscribeList ?? noSubscription,
-    () => channels?.list(),
+  const active = views.find((view) => view.key === chosen) ?? views[0];
+  // Views stay mounted once shown, so switching back keeps their state.
+  const [visited, setVisited] = useState<ReadonlySet<string>>(
+    () => new Set(active ? [active.key] : []),
   );
-  const preferences = connection.session?.soloPreferences;
-  const soloPreferences = useSyncExternalStore(
-    preferences?.subscribe ?? noSubscription,
-    () => preferences?.snapshot(),
-  );
-  // A cached startup session has no Solo capabilities yet; its unavailable
-  // placeholders still change height when the live inventories arrive.
-  const soloReady =
-    (connection.status === "ready" || connection.status === "error") &&
-    soloPreferences?.status !== "idle" &&
-    soloPreferences?.status !== "loading";
-  const destination = local
-    ? target.kind === "conversation"
-      ? conversationDestination(channelList, target.channelId)
-      : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? soloDraft(target.route?.params)
-          ? "solo"
-          : "team"
-        : undefined
-    : undefined;
-  const location = destination ? targetKey(target) : undefined;
-  // A deliberate filter change leaves the pane alone; only a new destination reveals its inventory.
-  if (attempt !== observedAttempt) setObservedAttempt(attempt);
-  if (
-    destination &&
-    location &&
-    (view.location !== location || attempt !== observedAttempt)
-  ) {
-    setView({ filter: view.filter === "all" ? "all" : destination, location });
-  }
-  useEffect(() => {
-    writeView(scope, "navigation-scope", view);
-  }, [scope, view]);
-  const filter = view.filter;
-  const setFilter = (filter: Filter) => setView({ filter, location });
-  const panelId = `sidebar-${filter}`;
+  if (active && !visited.has(active.key))
+    setVisited(new Set([...visited, active.key]));
+  const choose = (key: string) => {
+    setChosen(key);
+    writeView(scope, VIEW, { view: key });
+  };
+  // A page in the page navigation shows its own selection instead.
+  const reading =
+    target.kind === "conversation" ||
+    (target.kind === "page" && target.pluginId === "buzz.channels");
   const header = (
-    <>
-      <div className={styles.sidebarControls}>
-        <div className={styles.sidebarScope}>
-          <Tabs
-            label="Navigation scope"
-            variant="segmented"
-            value={filter}
-            items={filters}
-            onValueChange={setFilter}
-          />
-        </div>
-      </div>
-      {props.children && (
-        <div className={styles.destinations}>{props.children}</div>
-      )}
-    </>
-  );
-  const label = (title: string) =>
-    filter === "all" && (
-      <div className={styles.sidebarScopeLabel}>
-        <InlineHeader title={<span className="text-standard">{title}</span>} />
-      </div>
-    );
-  return (
-    <SidebarBoundary
-      key={`${scope}:${connection.generation}`}
-      header={header}
-      panelId={panelId}
-    >
-      {connection.session &&
-      (connection.status === "ready" || connection.cached) ? (
-        <ChannelInventory
-          relay={props.relay}
-          navigator={props.navigator}
-          agents={props.agents}
-          target={props.target}
-          queries={connection.session}
-          scope={scope}
-          viewer={connection.viewer}
-          cached={!!connection.cached}
-          layoutReady={filter === "team" || soloReady}
-          connectionError={connection.error}
-          render={({
-            sidebar,
-            dmPreviews,
-            frame,
-            before,
-            content,
-            after,
-            dialogs,
-          }) => (
-            <ResizableSidebar scope={scope} className="shell-sidebar">
-              <SidebarFrame
-                label="Sidebar"
-                header={header}
-                panelId={panelId}
-                {...frame}
-              >
-                {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
-                {!connection.cached && (
-                  <RecoveryNotice recovery={connection.session.recovery} />
-                )}
-                {before}
-                <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
-                  <section
-                    aria-label="Solo"
-                    className={styles.sidebarGroup}
-                    hidden={filter === "team"}
-                  >
-                    <SoloInventory
-                      key={`${scope}:${connection.generation}`}
-                      session={connection.session}
-                      scope={scope}
-                      navigator={props.navigator}
-                      target={props.target}
-                      chatIcons={props.chatIcons}
-                    />
-                  </section>
-                  <div
-                    className={styles.sidebarGroup}
-                    hidden={filter === "solo"}
-                  >
-                    {filter === "all" && (
-                      <div className={styles.teamHeading}>{label("Team")}</div>
-                    )}
-                    {content}
-                  </div>
-                </SidebarUnread>
-                {after}
-              </SidebarFrame>
-              {dialogs}
-            </ResizableSidebar>
-          )}
-        />
-      ) : (
-        <div className="shell-sidebar-default">
-          <SidebarFrame
-            label="Sidebar"
-            header={header}
-            panelId={panelId}
-            launchPending={
-              connection.status === "connecting" ? "required" : undefined
+    <div className={channelStyles.destinations}>
+      <nav aria-label="Messages views" className={styles.views}>
+        {views.map((view) => (
+          <NavigationItem
+            key={view.key}
+            variant="row"
+            label={view.title}
+            title={view.title}
+            selected={view.key === active?.key && reading}
+            aria-pressed={view.key === active?.key}
+            onClick={() => choose(view.key)}
+            icon={
+              <span className="shell-page-icon">
+                {view.icon ?? <ChatsCircleIcon size={16} strokeWidth={2.5} />}
+              </span>
             }
-          >
-            <SidebarList>
-              <p className={styles.connectionMessage}>
-                {connection.status === "connecting"
-                  ? "Connecting to your relay…"
-                  : (connection.error ?? "Choose a community to see channels.")}
-              </p>
-              {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
-              )}
-            </SidebarList>
-          </SidebarFrame>
-        </div>
-      )}
-    </SidebarBoundary>
+          />
+        ))}
+      </nav>
+      {children}
+    </div>
+  );
+  return (
+    <ResizableSidebar scope={scope} className="shell-sidebar">
+      <SidebarFrame label="Sidebar" header={header}>
+        {views
+          .filter((view) => visited.has(view.key))
+          .map((view) => {
+            const View = view.component;
+            return (
+              <div
+                key={view.key}
+                className={styles.view}
+                hidden={view.key !== active?.key}
+                data-messages-nav={view.key}
+              >
+                <ViewBoundary
+                  fallback={
+                    view.key === views[0]?.key
+                      ? undefined
+                      : () => choose(views[0]?.key ?? "")
+                  }
+                  fallbackTitle={views[0]?.title}
+                >
+                  <View target={target} />
+                </ViewBoundary>
+              </div>
+            );
+          })}
+      </SidebarFrame>
+    </ResizableSidebar>
   );
 }
 
-/** Unknown until the channel list can say; a channel outside it is Team's. */
-function conversationDestination(list: ChannelList | undefined, id: string) {
-  const channel = list?.channels.find((item) => item.id === id);
-  if (!channel && list?.status !== "ready") return undefined;
-  return channel?.channelType === "solo" ? "solo" : "team";
+/** One view's failure leaves the shell and other views usable. */
+class ViewBoundary extends Component<
+  {
+    /** Shows the first view, Messages, instead. */
+    fallback?: (() => void) | undefined;
+    fallbackTitle?: string | undefined;
+    children: ReactNode;
+  },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? (
+      <SidebarList>
+        <p role="alert">Conversations couldn’t open.</p>
+        <Button onClick={() => this.setState({ failed: false })}>
+          Retry sidebar
+        </Button>
+        {this.props.fallback && (
+          <Button variant="ghost" onClick={this.props.fallback}>
+            Show {this.props.fallbackTitle}
+          </Button>
+        )}
+      </SidebarList>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+/** The bundled Messages view, for shells mounted without the plugin runtime. */
+function builtIn(latest: { readonly current: Props }): MessagesNavReader {
+  const views: readonly RegisteredMessagesNavView[] = [
+    {
+      id: "messages",
+      key: "buzz.messages-nav/messages",
+      pluginId: "buzz.messages-nav",
+      revision: "built-in",
+      title: "Messages",
+      order: -100,
+      component: ({ target }) => (
+        <MessagesInventory
+          relay={latest.current.relay}
+          navigator={latest.current.navigator}
+          agents={latest.current.agents}
+          chatIcons={latest.current.chatIcons}
+          target={target}
+        />
+      ),
+    },
+  ];
+  return { snapshot: () => views, subscribe: () => () => {} };
 }

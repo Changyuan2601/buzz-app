@@ -35,6 +35,7 @@ import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
+import { MessagesNavService } from "../features/messages-nav/service";
 import { bundledPlugins } from "../bundled";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
@@ -56,6 +57,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
+  const messagesNav = new MessagesNavService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -140,6 +142,7 @@ export function createServices() {
     settingsCards,
     adminAccess,
     pages,
+    messagesNav,
     panels,
     plugins,
     relay,

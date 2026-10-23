@@ -54,9 +54,13 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     } catch (error) {
       return { status: "recovery", reason: String(error), canReset: true };
     }
-    // Channels is required even when an older installation saved it disabled.
+    // Channels and Messages navigation are required even when an older installation saved it disabled.
     for (const plugin of catalog.plugins)
-      if (plugin.manifest.id === "buzz.channels") plugin.enabled = true;
+      if (
+        plugin.manifest.id === "buzz.channels" ||
+        plugin.manifest.id === "buzz.messages-nav"
+      )
+        plugin.enabled = true;
     return { status: "ready", catalog, externalPluginsPaused: false };
   }
   async function getCatalog(): Promise<StorageResult> {
@@ -78,6 +82,8 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
       throw new Error("Bundled plugins can only be enabled or disabled");
     if (id === "buzz.channels" && action === "disable")
       throw new Error("Channels is required and cannot be disabled");
+    if (id === "buzz.messages-nav" && action === "disable")
+      throw new Error("Messages navigation is required and cannot be disabled");
     localStorage.setItem(
       storageKey,
       JSON.stringify({
