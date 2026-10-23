@@ -1963,6 +1963,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && !submission && !editing.target && primarySettings.view}
 
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
@@ -1973,7 +1974,6 @@ function Composer({
         />
       )}
 
-      {active && !submission && !editing.target && primarySettings.view}
       <form
         ref={form}
         className={styles.composer}
