@@ -75,7 +75,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { separateSessionCards } from "./session-cards";
+import { separateChatCards } from "./chat-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import {
@@ -316,12 +316,12 @@ function MessageRowContent({
   const sourceRow = timeReply
     ? { ...shown, content: timeReply.content }
     : shown;
-  const { caption: displayRow, cards: sessionCards } = useMemo(
-    () => separateSessionCards(sourceRow, directory.channels),
+  const { caption: displayRow, cards: chatCards } = useMemo(
+    () => separateChatCards(sourceRow, directory.channels),
     [sourceRow, directory.channels],
   );
   const cardsOnly =
-    sessionCards.length > 0 && !displayRow.content.trim() && !timeReply;
+    chatCards.length > 0 && !displayRow.content.trim() && !timeReply;
   const attachmentOnly =
     !row.content.trim() &&
     !row.diff &&
@@ -935,13 +935,13 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {sessionCards.length > 0 && (
+              {chatCards.length > 0 && (
                 <div
                   className={styles.messageAttachments}
                   data-solo-cards
                   data-message-action-anchor
                 >
-                  {sessionCards.map((card) => (
+                  {chatCards.map((card) => (
                     <MessageMarkdown
                       key={card.start}
                       directory={directory}

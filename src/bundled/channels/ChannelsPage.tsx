@@ -17,7 +17,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { sharedSessionsTarget } from "./shared-sessions-panel";
+import { sharedChatsTarget } from "./shared-chats-panel";
 import { UsersIcon } from "../../shared/design-system/icons";
 import {
   soloDraft,
@@ -938,7 +938,7 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
-  const sharedSessionsVisit = useRef<string>(undefined);
+  const sharedChatsVisit = useRef<string>(undefined);
   useLayoutEffect(() => {
     if (
       !navigation ||
@@ -948,16 +948,16 @@ function ChannelWorkspace({
       currentId !== navigation.target.channelId ||
       !drawerContext ||
       cached ||
-      sharedSessionsVisit.current === navigation.entryId
+      sharedChatsVisit.current === navigation.entryId
     )
       return;
-    const target = sharedSessionsTarget(currentId);
+    const target = sharedChatsTarget(currentId);
     // This route names our contribution, just like a contribution-bound launcher.
     const panel = panels
       .snapshot()
       .find((entry) => entry.id === "shared-sessions" && entry.matches(target));
     if (!panel) return;
-    sharedSessionsVisit.current = navigation.entryId;
+    sharedChatsVisit.current = navigation.entryId;
     open(
       { panel, target, channelId: currentId, channelContext: drawerContext },
       true,

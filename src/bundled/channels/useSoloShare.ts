@@ -8,8 +8,8 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
-import { sharedSessionNavigationTarget } from "../../features/sessions/shared-session-target";
-import { sharedSessionIds } from "../../features/sessions/shared-session-marker";
+import { sharedChatNavigationTarget } from "../../features/shared-chats/shared-chat-target";
+import { sharedChatIds } from "../../features/shared-chats/shared-chat-marker";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   beginSoloShare,
@@ -447,9 +447,9 @@ export function useSoloShare({
         );
         if (
           visible() &&
-          confirmed.some((event) => sharedSessionIds(event).includes(channelId))
+          confirmed.some((event) => sharedChatIds(event).includes(channelId))
         ) {
-          const destination = sharedSessionNavigationTarget(
+          const destination = sharedChatNavigationTarget(
             target,
             session.scope,
             session.viewer,
@@ -459,8 +459,8 @@ export function useSoloShare({
             .channels.find((item) => item.id === target)?.name;
           notify(
             destinationName
-              ? `Added to #${destinationName}’s Shared sessions`
-              : "Added to Shared sessions",
+              ? `Added to #${destinationName}’s Shared chats`
+              : "Added to Shared chats",
             "success",
             destination && navigationController
               ? {

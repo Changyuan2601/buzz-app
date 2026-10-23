@@ -3,7 +3,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const unavailable = () =>
   new Error(
-    "Current shared-session audience authority is unavailable or mismatched.",
+    "Current shared-chat audience authority is unavailable or mismatched.",
   );
 
 /** Capability identity comes from this connection's NIP-11, never an event author. */

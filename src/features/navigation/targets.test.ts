@@ -38,7 +38,7 @@ describe("open target boundary", () => {
     expect(Object.isFrozen(target)).toBe(true);
     expect(() => parseOpenTarget({ ...target, scope: undefined })).toThrow();
   });
-  it("preserves a scoped Shared sessions opening", () => {
+  it("preserves a scoped Shared chats opening", () => {
     const target = parseOpenTarget({
       ...conversation,
       panel: "shared-sessions",

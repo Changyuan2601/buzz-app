@@ -5,7 +5,7 @@ import { messageLinkParts } from "./message-link-parts";
 import type { ReferenceChannel } from "./ReferenceText";
 
 /** One durable representation for cards admitted by staging or draft restoration. */
-export function canonicalSessionCard(value: unknown): string | undefined {
+export function canonicalChatCard(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 16000) return;
   const scan = scanMarkdown(value);
   const paragraph = scan.tree.children?.[0];
@@ -32,7 +32,7 @@ export function canonicalSessionCard(value: unknown): string | undefined {
 }
 
 /** Project presentation only. Actions, copy and replies keep the original row. */
-export function separateSessionCards(
+export function separateChatCards(
   row: ChannelMessage,
   channels: readonly ReferenceChannel[],
 ) {

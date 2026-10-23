@@ -2537,7 +2537,7 @@ it.each([true, false])(
 );
 
 it.each(["", "Please review this.\n\n"])(
-  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+  "places chat cards outside the caption bubble and keeps message interactions (caption=%s)",
   async (caption) => {
     const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
     const reply = vi.fn(),
@@ -2604,7 +2604,7 @@ it.each(["", "Please review this.\n\n"])(
   },
 );
 
-it("keeps the timestamp seek action beside a detached session card", () => {
+it("keeps the timestamp seek action beside a detached chat card", () => {
   const seek = vi.fn();
   try {
     renderDom(

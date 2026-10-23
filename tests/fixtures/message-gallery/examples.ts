@@ -117,10 +117,10 @@ export const groups: Group[] = [
     ],
   },
   {
-    id: "session-links",
-    title: "Session links",
+    id: "chat-links",
+    title: "Chat links",
     description:
-      "Session cards rendered through the real message UI, with fixed labels and document icons.",
+      "Chat cards rendered through the real message UI, with fixed labels and document icons.",
     examples: [
       {
         id: "session-id",
@@ -158,7 +158,7 @@ export const groups: Group[] = [
         id: "session-caption",
         title: "Session with a caption",
         description:
-          "The caption keeps its bubble; the session card sits below it, within the same message.",
+          "The caption keeps its bubble; the chat card sits below it, within the same message.",
         rows: [
           message(
             "session-caption",

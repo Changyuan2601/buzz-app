@@ -319,14 +319,14 @@ it.each(["history", "details"])(
 );
 
 it.each([false, true])(
-  "staged session cards keep caption-first naming and protect chosen names (chosen=%s)",
+  "staged chat cards keep caption-first naming and protect chosen names (chosen=%s)",
   async (chosen) => {
     const { startingChatTitle } = await import("../solo/chat-title");
     const { composerMarkdown } = await import("../messages/composer-markdown");
     const draft = {
       text: "@Agent Review this",
       recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
-      sessionCards: ["[Session: Fix](buzz://channel/session-id)"],
+      chatCards: ["[Session: Fix](buzz://channel/session-id)"],
     };
     const name = startingChatTitle(draft);
     expect(name).toBe("Review this");
@@ -356,13 +356,13 @@ it.each([false, true])(
   },
 );
 
-it("an agent tag without a caption retains the session-card starting title", async () => {
+it("an agent tag without a caption retains the chat-card starting title", async () => {
   const { startingChatTitle } = await import("../solo/chat-title");
   expect(
     startingChatTitle({
       text: "@Agent ",
       recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
-      sessionCards: ["[Session: Fix](buzz://channel/session-id)"],
+      chatCards: ["[Session: Fix](buzz://channel/session-id)"],
     }),
   ).toBe("[Session: Fix](buzz://channel/session-id)");
 });

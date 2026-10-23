@@ -2,13 +2,13 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { BuzzClient } from "./client";
 import { callTool, TOOLS } from "./tools";
 import {
-  listSharedSessions,
-  readSharedSession,
-} from "../features/sessions/shared-sessions";
+  listSharedChats,
+  readSharedChat,
+} from "../features/shared-chats/shared-chats";
 
-vi.mock("../features/sessions/shared-sessions", () => ({
-  listSharedSessions: vi.fn(),
-  readSharedSession: vi.fn(),
+vi.mock("../features/shared-chats/shared-chats", () => ({
+  listSharedChats: vi.fn(),
+  readSharedChat: vi.fn(),
 }));
 const client = { pubkey: "a".repeat(64) } as BuzzClient;
 const cursor = { until: 100, before_id: "b".repeat(64) };
@@ -16,7 +16,7 @@ beforeEach(() => vi.clearAllMocks());
 
 it("lists the current channel and binds its audience even from a thread", async () => {
   const result = { entries: [], cursor, complete: false, errors: [] };
-  vi.mocked(listSharedSessions).mockResolvedValue(result);
+  vi.mocked(listSharedChats).mockResolvedValue(result);
   expect(
     await callTool(
       client,
@@ -29,7 +29,7 @@ it("lists the current channel and binds its audience even from a thread", async 
       },
     ),
   ).toBe(JSON.stringify(result));
-  expect(listSharedSessions).toHaveBeenCalledWith(client, "destination", {
+  expect(listSharedChats).toHaveBeenCalledWith(client, "destination", {
     query: "notifications",
     cursor,
     limit: 20,
@@ -44,7 +44,7 @@ it("reads for the current audience and preserves the source citation", async () 
     citation: "buzz://session/source",
     complete: true,
   };
-  vi.mocked(readSharedSession).mockResolvedValue(result);
+  vi.mocked(readSharedChat).mockResolvedValue(result);
   expect(
     await callTool(client, { channel: "destination" }, "shared_sessions", {
       action: "read",
@@ -53,12 +53,10 @@ it("reads for the current audience and preserves the source citation", async () 
       limit: 10,
     }),
   ).toBe(JSON.stringify(result));
-  expect(readSharedSession).toHaveBeenCalledWith(
-    client,
-    "destination",
-    "source",
-    { cursor, limit: 10 },
-  );
+  expect(readSharedChat).toHaveBeenCalledWith(client, "destination", "source", {
+    cursor,
+    limit: 10,
+  });
 });
 
 it.each([
@@ -82,8 +80,8 @@ it.each([
     await expect(
       callTool(client, { channel: "destination" }, "shared_sessions", args),
     ).rejects.toThrow();
-    expect(listSharedSessions).not.toHaveBeenCalled();
-    expect(readSharedSession).not.toHaveBeenCalled();
+    expect(listSharedChats).not.toHaveBeenCalled();
+    expect(readSharedChat).not.toHaveBeenCalled();
   },
 );
 
@@ -91,13 +89,11 @@ it("cannot read without a turn destination", async () => {
   await expect(callTool(client, {}, "shared_sessions", {})).rejects.toThrow(
     "current channel",
   );
-  expect(listSharedSessions).not.toHaveBeenCalled();
+  expect(listSharedChats).not.toHaveBeenCalled();
 });
 
 it("propagates access failure without returning source data", async () => {
-  vi.mocked(readSharedSession).mockRejectedValue(
-    new Error("Source unavailable"),
-  );
+  vi.mocked(readSharedChat).mockRejectedValue(new Error("Source unavailable"));
   await expect(
     callTool(client, { channel: "destination" }, "shared_sessions", {
       action: "read",
@@ -117,7 +113,7 @@ it("exposes the tool through the shared catalog without an audience override", (
 });
 
 it("passes contributing share receipts without changing the answering audience", async () => {
-  vi.mocked(readSharedSession).mockResolvedValue({
+  vi.mocked(readSharedChat).mockResolvedValue({
     id: "source",
     messages: [],
     citation: "link",
@@ -129,12 +125,9 @@ it("passes contributing share receipts without changing the answering audience",
     source: "source",
     share_ids: shareIds,
   });
-  expect(readSharedSession).toHaveBeenCalledWith(
-    client,
-    "destination",
-    "source",
-    { shareIds },
-  );
+  expect(readSharedChat).toHaveBeenCalledWith(client, "destination", "source", {
+    shareIds,
+  });
 });
 
 it.each(
@@ -157,7 +150,7 @@ it.each(
       share_ids: shareIds,
     }),
   ).rejects.toThrow("share_ids");
-  expect(readSharedSession).not.toHaveBeenCalled();
+  expect(readSharedChat).not.toHaveBeenCalled();
 });
 
 it("rejects share receipts on list", async () => {
@@ -166,5 +159,5 @@ it("rejects share receipts on list", async () => {
       share_ids: ["a".repeat(64)],
     }),
   ).rejects.toThrow("only supported by read");
-  expect(listSharedSessions).not.toHaveBeenCalled();
+  expect(listSharedChats).not.toHaveBeenCalled();
 });

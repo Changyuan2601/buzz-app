@@ -1,7 +1,7 @@
 import { accentButtonStyle } from "../../shared/theme/accent";
-import { stageSessionCards } from "./composer-session-cards";
-import { sessionReferenceIds } from "../sessions/shared-session-marker";
-import { ComposerSessionCards } from "./ComposerSessionCards";
+import { stageChatCards } from "./composer-chat-cards";
+import { chatReferenceIds } from "../shared-chats/shared-chat-marker";
+import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
@@ -462,7 +462,7 @@ function Composer({
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
   const [value, updateDraft] = useState(() =>
-    stageSessionCards(
+    stageChatCards(
       mentionDraft(
         accepted?.next ??
           submission?.recoveredDraft ??
@@ -471,10 +471,10 @@ function Composer({
       list.channels,
     ),
   );
-  const sessionCards = value.sessionCards;
+  const chatCards = value.chatCards;
   const editorDraft = useMemo(() => {
-    if (!value.sessionCards) return value;
-    const { sessionCards: _cards, ...caption } = value;
+    if (!value.chatCards) return value;
+    const { chatCards: _cards, ...caption } = value;
     return caption;
   }, [value]);
   const draft = value.text;
@@ -619,13 +619,12 @@ function Composer({
     [],
   );
   const saveDraft = (next: MentionDraft) => {
-    next = stageSessionCards(
+    next = stageChatCards(
       {
         ...next,
-        ...((next.sessionCards ?? valueRef.current.sessionCards)
+        ...((next.chatCards ?? valueRef.current.chatCards)
           ? {
-              sessionCards:
-                next.sessionCards ?? valueRef.current.sessionCards ?? [],
+              chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
             }
           : {}),
       },
@@ -776,7 +775,7 @@ function Composer({
   function loadSaved(raw: string | null) {
     let next: MentionDraft;
     try {
-      next = stageSessionCards(
+      next = stageChatCards(
         mentionDraft(JSON.parse(raw ?? "null")),
         list.channels,
       );
@@ -963,12 +962,10 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = stageSessionCards(
+    const next = stageChatCards(
       mentionDraft(
         editing.start(current, (body) =>
-          composerMarkdown(
-            stageSessionCards(mentionDraft(body), list.channels),
-          ),
+          composerMarkdown(stageChatCards(mentionDraft(body), list.channels)),
         ),
       ),
       list.channels,
@@ -1365,7 +1362,7 @@ function Composer({
       if (editDisabled || editing.locked) return;
       if (
         !valueRef.current.text.trim() &&
-        !valueRef.current.sessionCards?.length
+        !valueRef.current.chatCards?.length
       ) {
         if (editing.target.attachments.length) {
           setError(
@@ -1410,7 +1407,7 @@ function Composer({
     // A new conversation is named from its message, so files alone cannot start it.
     if (
       !draft.trim() &&
-      !sessionCards?.length &&
+      !chatCards?.length &&
       (!!submission || !attachments.items.length)
     )
       return;
@@ -1543,9 +1540,9 @@ function Composer({
       );
       const tuned = Object.keys(sentPicks).length > 0;
       const stagedSessions = new Set(
-        sessionReferenceIds((captured.sessionCards ?? []).join("\n\n")),
+        chatReferenceIds((captured.chatCards ?? []).join("\n\n")),
       );
-      const sharedSessions = sessionReferenceIds(content).filter((id) =>
+      const sharedChats = chatReferenceIds(content).filter((id) =>
         stagedSessions.has(id),
       );
       // Destination and content are fixed here; a background send never retargets.
@@ -1595,16 +1592,16 @@ function Composer({
               ...(replyParentId ||
               references.length ||
               tuned ||
-              sharedSessions.length
+              sharedChats.length
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || sharedSessions.length
+              ...(references.length || tuned || sharedChats.length
                 ? [references]
                 : []),
-              ...(tuned || sharedSessions.length ? [sentPicks] : []),
-              ...(sharedSessions.length ? [sharedSessions] : []),
+              ...(tuned || sharedChats.length ? [sentPicks] : []),
+              ...(sharedChats.length ? [sharedChats] : []),
             )
-          : references.length || tuned || sharedSessions.length
+          : references.length || tuned || sharedChats.length
             ? sender.messages.send(
                 channelId,
                 content,
@@ -1612,8 +1609,8 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned || sharedSessions.length ? [sentPicks] : []),
-                ...(sharedSessions.length ? [sharedSessions] : []),
+                ...(tuned || sharedChats.length ? [sentPicks] : []),
+                ...(sharedChats.length ? [sharedChats] : []),
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
@@ -1687,8 +1684,8 @@ function Composer({
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients) ||
-                JSON.stringify(valueRef.current.sessionCards ?? []) !==
-                  JSON.stringify(next.sessionCards ?? [])) &&
+                JSON.stringify(valueRef.current.chatCards ?? []) !==
+                  JSON.stringify(next.chatCards ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1706,8 +1703,8 @@ function Composer({
                 valueRef.current.text === next.text &&
                 JSON.stringify(valueRef.current.recipients) ===
                   JSON.stringify(next.recipients) &&
-                JSON.stringify(valueRef.current.sessionCards ?? []) ===
-                  JSON.stringify(next.sessionCards ?? [])
+                JSON.stringify(valueRef.current.chatCards ?? []) ===
+                  JSON.stringify(next.chatCards ?? [])
               )
             )
               return "conflict";
@@ -1994,8 +1991,8 @@ function Composer({
               }}
             />
           )}
-          <ComposerSessionCards
-            cards={sessionCards ?? []}
+          <ComposerChatCards
+            cards={chatCards ?? []}
             session={session}
             scope={scope}
             channelId={channelId}
@@ -2004,10 +2001,9 @@ function Composer({
             remove={(index) => {
               saveDraft({
                 ...valueRef.current,
-                sessionCards:
-                  valueRef.current.sessionCards?.filter(
-                    (_, i) => i !== index,
-                  ) ?? [],
+                chatCards:
+                  valueRef.current.chatCards?.filter((_, i) => i !== index) ??
+                  [],
               });
               input.current?.focus();
             }}
@@ -2058,7 +2054,7 @@ function Composer({
               maxLength={Math.max(
                 0,
                 16000 -
-                  (sessionCards?.reduce(
+                  (chatCards?.reduce(
                     (size, card) => size + card.length + 2,
                     0,
                   ) ?? 0),
@@ -2110,7 +2106,7 @@ function Composer({
                     !valueRef.current.recipients.length) ||
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
-                  !valueRef.current.sessionCards?.length &&
+                  !valueRef.current.chatCards?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -2221,7 +2217,7 @@ function Composer({
               )}
             <IconButton
               variant={
-                draft.trim() || sessionCards?.length || attachments.items.length
+                draft.trim() || chatCards?.length || attachments.items.length
                   ? "primary"
                   : "ghost"
               }
@@ -2252,7 +2248,7 @@ function Composer({
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
-                  !sessionCards?.length &&
+                  !chatCards?.length &&
                   (!!submission || !attachments.items.length) &&
                   !(
                     editing.target &&

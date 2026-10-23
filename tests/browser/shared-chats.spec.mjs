@@ -36,7 +36,7 @@ test("a confirmed share opens the durable title-first channel index", async ({
     scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
   });
   const historical = page.getByRole("region", {
-    name: "Shared sessions",
+    name: "Shared chats",
     exact: true,
   });
   await expect(historical.getByRole("listitem")).toHaveCount(1);
@@ -60,7 +60,7 @@ test("a confirmed share opens the durable title-first channel index", async ({
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "View", exact: true }).click();
   const region = page.getByRole("region", {
-    name: "Shared sessions",
+    name: "Shared chats",
     exact: true,
   });
   await expect(region).toBeVisible();
@@ -69,7 +69,7 @@ test("a confirmed share opens the durable title-first channel index", async ({
   await expect(row).toHaveCount(1);
   await expect(row).toContainText("Beta");
   const search = region.getByRole("searchbox", {
-    name: "Search shared sessions",
+    name: "Search shared chats",
   });
   await search.fill("missing topic");
   await expect(region.getByText(/No titles or sharers match/)).toBeVisible();

@@ -1,7 +1,7 @@
 import { buzzLinkTarget } from "../navigation/buzz-links";
 
 /** A scoped presentation request, never an access grant. */
-export function sharedSessionNavigationTarget(
+export function sharedChatNavigationTarget(
   channelId: string,
   scope: string,
   viewer: string | undefined,

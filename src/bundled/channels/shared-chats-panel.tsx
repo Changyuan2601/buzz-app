@@ -10,10 +10,10 @@ import { useListedChannel } from "../../features/relay/listed-channel";
 import { FileTextIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { conversationTarget } from "../../features/channel-navigation/routes";
-import { SharedSessions } from "./SharedSessions";
+import { SharedChats } from "./SharedChats";
 
 const targetPrefix = "buzz:shared-sessions:";
-export const sharedSessionsTarget = (channelId: string) =>
+export const sharedChatsTarget = (channelId: string) =>
   `${targetPrefix}${channelId}`;
 const targetChannel = (target: string) => {
   const id = target.startsWith(targetPrefix)
@@ -24,7 +24,7 @@ const targetChannel = (target: string) => {
 const icon = <FileTextIcon size="1rem" aria-hidden="true" />;
 
 /** Contribute to the existing tab owner; no new panel or navigation contract. */
-export function registerSharedSessions(ctx: Context) {
+export function registerSharedChats(ctx: Context) {
   const relay = ctx.relay;
   function Launcher({
     context,
@@ -50,17 +50,17 @@ export function registerSharedSessions(ctx: Context) {
         size="sm"
         variant="ghost"
         icon={icon}
-        aria-label="Toggle shared sessions"
-        title="Shared sessions"
+        aria-label="Toggle shared chats"
+        title="Shared chats"
         aria-expanded={pressed}
         onClick={() => {
-          if (available()) toggle(sharedSessionsTarget(context.channelId));
+          if (available()) toggle(sharedChatsTarget(context.channelId));
         }}
       />
     );
   }
   function Content({ target, channelContext }: PanelProps) {
-    usePanelTabTitle("Shared sessions", icon);
+    usePanelTabTitle("Shared chats", icon);
     const connection = useRelayConnection(relay);
     const channelId = targetChannel(target);
     const view = useRef<{
@@ -87,11 +87,9 @@ export function registerSharedSessions(ctx: Context) {
       connection.scope !== channelContext.scope ||
       connection.viewer !== channelContext.viewer
     )
-      return (
-        <p role="status">Connect to this channel to view shared sessions.</p>
-      );
+      return <p role="status">Connect to this channel to view shared chats.</p>;
     return (
-      <SharedSessions
+      <SharedChats
         key={`${connection.scope}:${connection.viewer}:${channelId}`}
         view={view.current}
         focusRequest={focusRequest}
@@ -112,7 +110,7 @@ export function registerSharedSessions(ctx: Context) {
   }
   ctx.panels.register({
     id: "shared-sessions",
-    title: "Shared sessions",
+    title: "Shared chats",
     channelPlacement: "tab",
     matches: (target) => !!targetChannel(target),
     channelLauncher: Launcher,

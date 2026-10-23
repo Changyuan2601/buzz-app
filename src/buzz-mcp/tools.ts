@@ -15,9 +15,9 @@ import {
   PROFILE_SEARCH_QUERY_MAX,
 } from "../features/relay/profile-search";
 import {
-  listSharedSessions,
-  readSharedSession,
-} from "../features/sessions/shared-sessions";
+  listSharedChats,
+  readSharedChat,
+} from "../features/shared-chats/shared-chats";
 import {
   attachmentMarkdown,
   attachmentName,
@@ -413,7 +413,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
           "share_ids must contain 1 to 32 unique lowercase 64-character event IDs.",
         );
       return JSON.stringify(
-        await readSharedSession(client, context.channel, args.source, {
+        await readSharedChat(client, context.channel, args.source, {
           ...(shareIds !== undefined ? { shareIds } : {}),
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined ? { limit } : {}),
@@ -425,7 +425,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (args.query !== undefined && typeof args.query !== "string")
       throw new Error("query must be text.");
     return JSON.stringify(
-      await listSharedSessions(client, context.channel, {
+      await listSharedChats(client, context.channel, {
         ...(cursor ? { cursor } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(args.query !== undefined ? { query: args.query } : {}),

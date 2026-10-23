@@ -11,21 +11,21 @@ import { foldMessages } from "../relay/fold";
 import type { RelaySession } from "../relay/session";
 import { soloChatLinkMessage } from "../solo/share";
 import { SOLO_NAMED_LABEL } from "../solo/labels";
-import { sharedSessionIds } from "./shared-session-marker";
+import { sharedChatIds } from "./shared-chat-marker";
 
-export type SharedSessionCursor = Readonly<{
+export type SharedChatCursor = Readonly<{
   until: number;
   before_id: string;
 }>;
-export type SharedSessionEntry = Readonly<{
+export type SharedChatEntry = Readonly<{
   id: string;
   title: string;
   shares: readonly { id: string; pubkey: string; createdAt: number }[];
   sharedAt: number;
 }>;
-export type SharedSessionPage = Readonly<{
-  entries: readonly SharedSessionEntry[];
-  cursor?: SharedSessionCursor;
+export type SharedChatPage = Readonly<{
+  entries: readonly SharedChatEntry[];
+  cursor?: SharedChatCursor;
   complete: boolean;
   errors: readonly string[];
   scanned?: number;
@@ -41,7 +41,7 @@ type Reader = {
   ): Promise<ReadonlySet<string>>;
 };
 type Options = {
-  cursor?: SharedSessionCursor | undefined;
+  cursor?: SharedChatCursor | undefined;
   limit?: number | undefined;
   query?: string | undefined;
   signal?: AbortSignal | undefined;
@@ -56,7 +56,7 @@ const compare = (
 const channelId = (value: string) =>
   /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value);
 const unavailable = () =>
-  new Error("Shared session access could not be confirmed. Retry.");
+  new Error("Shared chat access could not be confirmed. Retry.");
 
 function readerFor(value: Reader | RelaySession, signal?: AbortSignal): Reader {
   if ("query" in value) return value;
@@ -86,7 +86,7 @@ function accessReader(value: Reader | RelaySession, options: Options) {
       options.signal?.throwIfAborted();
       throw new ReadError(
         readErrorKind(error),
-        "Shared session data could not be loaded. Retry.",
+        "Shared chat data could not be loaded. Retry.",
       );
     }
     options.signal?.throwIfAborted();
@@ -167,7 +167,7 @@ async function authorizeAudience(
 ) {
   if (!io.reader.authorizeAudience)
     throw new Error(
-      "This community cannot confirm the current answer audience. Shared-session agent retrieval requires updated server support.",
+      "This community cannot confirm the current answer audience. Shared-chat agent retrieval requires updated server support.",
     );
   signal?.throwIfAborted();
   const allowed = await io.reader.authorizeAudience(destination, sources);
@@ -178,7 +178,7 @@ async function authorizeAudience(
 async function page(
   io: AccessReader,
   filter: ReadFilter,
-  cursor?: SharedSessionCursor,
+  cursor?: SharedChatCursor,
 ) {
   const events = await io.query({ ...filter, ...cursor });
   // Never quietly accept an ignored topic filter/cursor or auxiliary rows as base rows.
@@ -203,7 +203,7 @@ async function page(
     )
   )
     throw new Error(
-      "Shared session paging is unsupported or inconsistent. Retry.",
+      "Shared chat paging is unsupported or inconsistent. Retry.",
     );
   events.sort(compare);
   const last = events.at(-1);
@@ -225,13 +225,13 @@ async function currentMessages(
   const overlays: RelayEvent[] = [];
   const collect = async (ids: string[], kinds: number[]) => {
     if (!ids.length) return;
-    let cursor: SharedSessionCursor | undefined;
+    let cursor: SharedChatCursor | undefined;
     do {
       const next = await page(io, { kinds, "#e": ids, limit: 500 }, cursor);
       overlays.push(...next.events);
       if (overlays.length > 2000)
         throw new Error(
-          "Shared session edits exceed the read budget. Retry with a smaller page.",
+          "Shared chat edits exceed the read budget. Retry with a smaller page.",
         );
       cursor = next.cursor;
     } while (cursor);
@@ -251,17 +251,17 @@ async function currentMessages(
 }
 
 /** One page of confirmed share messages. Merge pages by source ID and share event ID. */
-export async function listSharedSessions(
+export async function listSharedChats(
   value: Reader | RelaySession,
   destination: string,
   options: Options = {},
-): Promise<SharedSessionPage> {
+): Promise<SharedChatPage> {
   const io = accessReader(value, options);
   const initialDestination = await access(io, destination);
   if (!initialDestination) throw unavailable();
   if (options.audience && options.audience !== destination) throw unavailable();
   const limit = Math.max(1, Math.min(50, options.limit ?? 20));
-  const groups = new Map<string, SharedSessionEntry["shares"][number][]>();
+  const groups = new Map<string, SharedChatEntry["shares"][number][]>();
   let cursor = options.cursor;
   let scanned = 0;
   do {
@@ -275,7 +275,7 @@ export async function listSharedSessions(
     for (const original of result.events) {
       const row = rows.find((item) => item.id === original.id);
       if (row)
-        for (const id of sharedSessionIds(original, row.content)) {
+        for (const id of sharedChatIds(original, row.content)) {
           const shares = groups.get(id) ?? [];
           shares.push({
             id: row.id,
@@ -305,12 +305,12 @@ export async function listSharedSessions(
       entries: [],
       ...(cursor ? { cursor } : {}),
       complete: false,
-      errors: ["Some shared sessions could not be loaded. Retry."],
+      errors: ["Some shared chats could not be loaded. Retry."],
     };
   }
   const finalDestination = accessRecord(io, destination, records);
   if (!finalDestination) throw unavailable();
-  const checked: SharedSessionEntry[] = [];
+  const checked: SharedChatEntry[] = [];
   for (const [id, shares] of groups) {
     try {
       const source = accessRecord(io, id, records);
@@ -328,7 +328,7 @@ export async function listSharedSessions(
       if (latest)
         checked.push({ id, title, shares, sharedAt: latest.createdAt });
     } catch {
-      errors.add("Some shared sessions could not be loaded. Retry.");
+      errors.add("Some shared chats could not be loaded. Retry.");
     }
   }
   // Ineligible historical links must not poison the strict authority request.
@@ -354,7 +354,7 @@ export async function listSharedSessions(
 }
 
 /** Read only a surviving shared association, for the host-bound answer audience. */
-export async function readSharedSession(
+export async function readSharedChat(
   value: Reader,
   destination: string,
   sourceId: string,
@@ -364,7 +364,7 @@ export async function readSharedSession(
   if (!channelId(sourceId)) throw unavailable();
   const dest = await access(io, destination);
   if (!dest) throw unavailable();
-  let cursor: SharedSessionCursor | undefined;
+  let cursor: SharedChatCursor | undefined;
   let found: RelayEvent | undefined;
   if (options.shareIds) {
     if (
@@ -389,8 +389,7 @@ export async function readSharedSession(
     found = exact.find((e) =>
       rows.some(
         (row) =>
-          row.id === e.id &&
-          sharedSessionIds(e, row.content).includes(sourceId),
+          row.id === e.id && sharedChatIds(e, row.content).includes(sourceId),
       ),
     );
   }
@@ -411,10 +410,7 @@ export async function readSharedSession(
     const rows = await currentMessages(io, destination, result.events);
     for (const row of rows) {
       const original = result.events.find((event) => event.id === row.id);
-      if (
-        original &&
-        sharedSessionIds(original, row.content).includes(sourceId)
-      ) {
+      if (original && sharedChatIds(original, row.content).includes(sourceId)) {
         found = original;
         break;
       }
@@ -424,7 +420,7 @@ export async function readSharedSession(
   }
   if (!found)
     throw new Error(
-      "No current shared session association was confirmed within the read budget.",
+      "No current shared chat association was confirmed within the read budget.",
     );
   const source = await access(io, sourceId);
   if (!source || !soloChannelMetadata(source.metadata)) throw unavailable();
@@ -442,11 +438,11 @@ export async function readSharedSession(
   const currentShares = await currentMessages(io, destination, surviving);
   if (
     !currentShares.some((row) =>
-      sharedSessionIds(found, row.content).includes(sourceId),
+      sharedChatIds(found, row.content).includes(sourceId),
     )
   )
     throw new Error(
-      "The shared session association changed during retrieval. Retry.",
+      "The shared chat association changed during retrieval. Retry.",
     );
   const records = await accessSnapshot(io, [destination, sourceId]);
   const afterSource = accessRecord(io, sourceId, records);
@@ -465,7 +461,7 @@ export async function readSharedSession(
   );
   if (!allowed.has(sourceId))
     throw new Error(
-      "Shared session access could not be confirmed for the current answer audience.",
+      "Shared chat access could not be confirmed for the current answer audience.",
     );
   const name = channelIdentity(afterSource.metadata).labels.includes(
     SOLO_NAMED_LABEL,

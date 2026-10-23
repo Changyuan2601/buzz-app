@@ -1,4 +1,4 @@
-import { audienceAuthorityFilter } from "../sessions/audience-authority";
+import { audienceAuthorityFilter } from "../shared-chats/audience-authority";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
 

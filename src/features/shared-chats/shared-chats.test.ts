@@ -6,12 +6,12 @@ import { finalizeEvent } from "nostr-tools";
 import { matchesEvent } from "../relay/projection";
 import { createRelaySession } from "../relay/session";
 import type { ReadFilter, RelayEvent } from "../relay/events";
-import { listSharedSessions, readSharedSession } from "./shared-sessions";
+import { listSharedChats, readSharedChat } from "./shared-chats";
 import {
-  sharedSessionIds,
-  sharedSessionTags,
-  sessionReferenceIds,
-} from "./shared-session-marker";
+  sharedChatIds,
+  sharedChatTags,
+  chatReferenceIds,
+} from "./shared-chat-marker";
 import { soloChatLinkMessage } from "../solo/share";
 import { SOLO_LABEL } from "../solo/labels";
 
@@ -25,7 +25,7 @@ const link = soloChatLinkMessage("source");
 const share = (time = 10, extra: string[][] = []) =>
   event(
     9,
-    [["h", "destination"], ...sharedSessionTags(link, ["source"]), ...extra],
+    [["h", "destination"], ...sharedChatTags(link, ["source"]), ...extra],
     link,
     time,
   );
@@ -100,17 +100,17 @@ function fixture() {
   };
 }
 
-describe("explicit shared session markers", () => {
+describe("explicit shared chat markers", () => {
   it("requires matching signed intent and current visible card text", () => {
-    expect(sharedSessionIds(share())).toEqual(["source"]);
-    expect(sharedSessionIds(event(9, [["h", "destination"]], link))).toEqual([
+    expect(sharedChatIds(share())).toEqual(["source"]);
+    expect(sharedChatIds(event(9, [["h", "destination"]], link))).toEqual([
       "source",
     ]);
-    expect(sharedSessionIds(share(), "removed")).toEqual([]);
-    expect(sharedSessionIds(share(), soloChatLinkMessage("different"))).toEqual(
+    expect(sharedChatIds(share(), "removed")).toEqual([]);
+    expect(sharedChatIds(share(), soloChatLinkMessage("different"))).toEqual(
       [],
     );
-    expect(() => sharedSessionTags(link, ["different"])).toThrow(/match/);
+    expect(() => sharedChatTags(link, ["different"])).toThrow(/match/);
   });
   it.each([
     `> ${link}`,
@@ -119,30 +119,30 @@ describe("explicit shared session markers", () => {
     `- ${link}`,
     `||${link}||`,
   ])("ignores quoted or hidden references: %s", (text) => {
-    expect(sessionReferenceIds(text)).toEqual([]);
+    expect(chatReferenceIds(text)).toEqual([]);
   });
 });
 
-describe("historical session cards", () => {
+describe("historical chat cards", () => {
   const legacy = () => event(9, [["h", "destination"]], `${link}\nA caption`);
   it("lists and reads older cards through the existing access checks and receipts", async () => {
     const f = fixture();
     const original = legacy();
-    f.add(original, event(9, [["h", "source"]], "Earlier session work"));
-    const result = await listSharedSessions(f.reader, "destination");
+    f.add(original, event(9, [["h", "source"]], "Earlier chat work"));
+    const result = await listSharedChats(f.reader, "destination");
     expect(result.entries).toMatchObject([
       { id: "source", title: "Opening topic" },
     ]);
-    const read = await readSharedSession(f.reader, "destination", "source", {
+    const read = await readSharedChat(f.reader, "destination", "source", {
       shareIds: [original.id],
     });
-    expect(JSON.stringify(read)).toContain("Earlier session work");
+    expect(JSON.stringify(read)).toContain("Earlier chat work");
     f.setAccess("source", [other]);
-    expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
+    expect((await listSharedChats(f.reader, "destination")).entries).toEqual(
       [],
     );
     await expect(
-      readSharedSession(f.reader, "destination", "source", {
+      readSharedChat(f.reader, "destination", "source", {
         shareIds: [original.id],
       }),
     ).rejects.toThrow();
@@ -154,14 +154,14 @@ describe("historical session cards", () => {
       `> ${link}`,
       `\`${link}\``,
     ])
-      expect(
-        sharedSessionIds(event(9, [["h", "destination"]], content)),
-      ).toEqual([]);
+      expect(sharedChatIds(event(9, [["h", "destination"]], content))).toEqual(
+        [],
+      );
+    expect(sharedChatIds(legacy(), soloChatLinkMessage("different"))).toEqual(
+      [],
+    );
     expect(
-      sharedSessionIds(legacy(), soloChatLinkMessage("different")),
-    ).toEqual([]);
-    expect(
-      sharedSessionIds(event(9, [["h", "destination"]], "No card"), link),
+      sharedChatIds(event(9, [["h", "destination"]], "No card"), link),
     ).toEqual([]);
   });
   it("folds edits, deleted edits and deletions for historical cards", async () => {
@@ -169,15 +169,15 @@ describe("historical session cards", () => {
     const original = legacy();
     const edit = event(40003, [["e", original.id]], "removed", 11);
     f.add(original, edit);
-    expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
+    expect((await listSharedChats(f.reader, "destination")).entries).toEqual(
       [],
     );
     f.add(event(5, [["e", edit.id]], "", 12));
     expect(
-      (await listSharedSessions(f.reader, "destination")).entries,
+      (await listSharedChats(f.reader, "destination")).entries,
     ).toHaveLength(1);
     f.add(event(5, [["e", original.id]], "", 13));
-    expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
+    expect((await listSharedChats(f.reader, "destination")).entries).toEqual(
       [],
     );
   });
@@ -187,7 +187,7 @@ it("lists current titles from metadata without reading source messages; includes
   const f = fixture();
   f.add(share(10, [["e", "a".repeat(64), "", "reply"]]));
   f.setAccess("source", undefined, false, "Renamed now");
-  const result = await listSharedSessions(f.reader, "destination");
+  const result = await listSharedChats(f.reader, "destination");
   expect(result).toMatchObject({
     entries: [{ id: "source", title: "Renamed now" }],
     complete: true,
@@ -205,9 +205,9 @@ it("pages equal timestamps by ascending IDs and merges duplicate source shares w
   const a = share(10, [["nonce", "a"]]),
     b = share(10, [["nonce", "b"]]);
   f.add(a, b);
-  const first = await listSharedSessions(f.reader, "destination", { limit: 1 });
+  const first = await listSharedChats(f.reader, "destination", { limit: 1 });
   expect(first.complete).toBe(false);
-  const second = await listSharedSessions(f.reader, "destination", {
+  const second = await listSharedChats(f.reader, "destination", {
     limit: 1,
     cursor: first.cursor,
   });
@@ -215,7 +215,7 @@ it("pages equal timestamps by ascending IDs and merges duplicate source shares w
     second.entries[0]?.shares[0]?.id,
   );
   expect(second.complete).toBe(true);
-  const all = await listSharedSessions(f.reader, "destination");
+  const all = await listSharedChats(f.reader, "destination");
   expect(all.entries).toHaveLength(1);
   expect(all.entries[0]?.shares).toHaveLength(2);
 });
@@ -234,24 +234,20 @@ it("folds edits, deleted edits and final share deletion using the canonical owne
     11,
   );
   f.add(edit);
-  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
-    [],
-  );
+  expect((await listSharedChats(f.reader, "destination")).entries).toEqual([]);
   f.add(event(5, [["e", edit.id]], "", 12));
-  expect(
-    (await listSharedSessions(f.reader, "destination")).entries,
-  ).toHaveLength(1);
-  f.add(event(5, [["e", original.id]], "", 13));
-  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
-    [],
+  expect((await listSharedChats(f.reader, "destination")).entries).toHaveLength(
+    1,
   );
+  f.add(event(5, [["e", original.id]], "", 13));
+  expect((await listSharedChats(f.reader, "destination")).entries).toEqual([]);
 });
 
 it("hides inaccessible source titles and does not report their count", async () => {
   const f = fixture();
   f.add(share());
   f.setAccess("source", [other], false, "secret");
-  const result = await listSharedSessions(f.reader, "destination", {
+  const result = await listSharedChats(f.reader, "destination", {
     query: "secret",
   });
   expect(result).toMatchObject({ entries: [], complete: true, errors: [] });
@@ -267,7 +263,7 @@ it("missing rosters and network failures are incomplete, generic errors", async 
       throw new Error("secret title and source ID");
     return query(filters);
   });
-  const result = await listSharedSessions(f.reader, "destination");
+  const result = await listSharedChats(f.reader, "destination");
   expect(result.entries).toEqual([]);
   expect(result.complete).toBe(false);
   expect(JSON.stringify(result)).not.toContain("secret");
@@ -277,7 +273,7 @@ it("missing rosters and network failures are incomplete, generic errors", async 
 it("requires trusted relay authority before making a read", async () => {
   const f = fixture();
   await expect(
-    listSharedSessions({ ...f.reader, relayAuthor: undefined }, "destination"),
+    listSharedChats({ ...f.reader, relayAuthor: undefined }, "destination"),
   ).rejects.toThrow(/access/);
   expect(f.query).not.toHaveBeenCalled();
 });
@@ -288,29 +284,27 @@ it("withholds private-source discovery and retrieval for a public answer destina
   f.setAccess("destination", undefined, true);
   expect(
     (
-      await listSharedSessions(f.reader, "destination", {
+      await listSharedChats(f.reader, "destination", {
         audience: "destination",
       })
     ).entries,
   ).toEqual([]);
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/access/);
   // Personal UI still shows a source the person can read.
-  expect(
-    (await listSharedSessions(f.reader, "destination")).entries,
-  ).toHaveLength(1);
+  expect((await listSharedChats(f.reader, "destination")).entries).toHaveLength(
+    1,
+  );
 });
 
-it("rejects public streams even when a copied card labels them as sessions", async () => {
+it("rejects public streams even when a copied card labels them as chats", async () => {
   const f = fixture();
   f.add(share(), event(9, [["h", "source"]], "ordinary public channel"));
   f.setAccess("source", [other], true);
-  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
-    [],
-  );
+  expect((await listSharedChats(f.reader, "destination")).entries).toEqual([]);
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/access/);
 });
 
@@ -319,7 +313,7 @@ it("requires complete audience coverage even if agent personally has access", as
   f.add(share());
   f.setAccess("destination", [viewer, authority, other]);
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/audience/);
 });
 
@@ -339,7 +333,7 @@ it("returns canonical edited evidence and citations following chosen-name policy
       11,
     ),
   );
-  const result = await readSharedSession(f.reader, "destination", "source");
+  const result = await readSharedChat(f.reader, "destination", "source");
   expect(result.messages).toEqual([
     { id: message.id, author: authority, createdAt: 10, content: "new" },
   ]);
@@ -367,7 +361,7 @@ it("rechecks audience after a deferred content read", async () => {
     }
     return result;
   });
-  const result = readSharedSession(f.reader, "destination", "source");
+  const result = readSharedChat(f.reader, "destination", "source");
   await reading;
   f.setAccess("destination", [viewer, authority, other]);
   release();
@@ -392,7 +386,7 @@ it("rejects an ignored composite cursor instead of claiming complete coverage", 
     ),
   );
   await expect(
-    listSharedSessions(f.reader, "destination", {
+    listSharedChats(f.reader, "destination", {
       limit: 1,
       cursor: { until: share().created_at, before_id: share().id },
     }),
@@ -402,7 +396,7 @@ it("rejects an ignored composite cursor instead of claiming complete coverage", 
 it("does not retrieve unshared sources even when the agent has access", async () => {
   const f = fixture();
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/association/);
 });
 
@@ -416,7 +410,7 @@ it("uses the real read-only RelaySession adapter without a membership writer", a
     media: () => undefined,
   });
   try {
-    const result = await listSharedSessions(owner.session, "destination");
+    const result = await listSharedChats(owner.session, "destination");
     expect(result.entries[0]?.title).toBe("Opening topic");
     expect(result.complete).toBe(true);
   } finally {
@@ -439,19 +433,19 @@ it("fails closed for an absent source roster", async () => {
         )
       : result;
   });
-  expect(await listSharedSessions(f.reader, "destination")).toMatchObject({
+  expect(await listSharedChats(f.reader, "destination")).toMatchObject({
     entries: [],
     complete: false,
   });
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/access/);
 });
 
 it("bounds large evidence and explicitly marks excerpts as truncated", async () => {
   const f = fixture();
   f.add(share(), event(9, [["h", "source"]], "x".repeat(10000)));
-  const result = await readSharedSession(f.reader, "destination", "source");
+  const result = await readSharedChat(f.reader, "destination", "source");
   expect(result.messages[0]?.content.length).toBe(8192);
   expect(result.messages[0]?.truncated).toBe(true);
   expect(result.complete).toBe(false);
@@ -470,7 +464,7 @@ it("rejects a share deleted during source retrieval", async () => {
     return result;
   });
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/association changed/);
 });
 
@@ -499,17 +493,17 @@ it.each(["list", "read"])(
     });
     const operation =
       mode === "list"
-        ? listSharedSessions(f.reader, "destination", {
+        ? listSharedChats(f.reader, "destination", {
             audience: "destination",
           })
-        : readSharedSession(f.reader, "destination", "source");
+        : readSharedChat(f.reader, "destination", "source");
     await entered;
     if (mode === "list") f.setAccess("destination", [viewer, authority, other]);
     else f.setAccess("source", [authority]);
     release();
     if (mode === "list")
       expect(
-        ((await operation) as Awaited<ReturnType<typeof listSharedSessions>>)
+        ((await operation) as Awaited<ReturnType<typeof listSharedChats>>)
           .entries,
       ).toEqual([]);
     else await expect(operation).rejects.toThrow(/access/);
@@ -523,7 +517,7 @@ it.each(["list", "read"])(
 it("pages past ordinary messages without post-LIMIT topic filtering", async () => {
   const f = fixture();
   f.add(share(1), event(9, [["h", "destination"]], "ordinary", 20));
-  const first = await listSharedSessions(f.reader, "destination", { limit: 1 });
+  const first = await listSharedChats(f.reader, "destination", { limit: 1 });
   expect(first.entries).toHaveLength(1);
   expect(first.scanned).toBe(2);
   expect(
@@ -538,7 +532,7 @@ it("reads a contributing receipt directly and rejects removed or wrong-channel r
   const f = fixture();
   const receipt = share(1);
   f.add(receipt, event(9, [["h", "source"]], "evidence"));
-  const result = await readSharedSession(f.reader, "destination", "source", {
+  const result = await readSharedChat(f.reader, "destination", "source", {
     shareIds: [receipt.id],
   });
   expect(result.messages[0]?.content).toBe("evidence");
@@ -550,18 +544,18 @@ it("reads a contributing receipt directly and rejects removed or wrong-channel r
   ).toBe(true);
   f.add(event(5, [["e", receipt.id]]));
   await expect(
-    readSharedSession(f.reader, "destination", "source", {
+    readSharedChat(f.reader, "destination", "source", {
       shareIds: [receipt.id],
     }),
   ).rejects.toThrow(/association/);
   const wrong = event(
     9,
-    [["h", "elsewhere"], ...sharedSessionTags(link, ["source"])],
+    [["h", "elsewhere"], ...sharedChatTags(link, ["source"])],
     link,
   );
   f.add(wrong);
   await expect(
-    readSharedSession(f.reader, "destination", "source", {
+    readSharedChat(f.reader, "destination", "source", {
       shareIds: [wrong.id],
     }),
   ).rejects.toThrow(/association/);
@@ -577,17 +571,17 @@ it("bounds automatic scanning and resumes beyond the budget", async () => {
     })),
     share(1),
   );
-  const first = await listSharedSessions(f.reader, "destination");
+  const first = await listSharedChats(f.reader, "destination");
   expect(first).toMatchObject({ entries: [], scanned: 1000, complete: false });
   expect(first.cursor).toBeDefined();
-  const next = await listSharedSessions(f.reader, "destination", {
+  const next = await listSharedChats(f.reader, "destination", {
     cursor: first.cursor,
   });
   expect(next.entries).toHaveLength(1);
   expect(next.complete).toBe(true);
 });
 
-it("stops between multi-session share messages before the authority row cap", async () => {
+it("stops between multi-chat share messages before the authority row cap", async () => {
   const f = fixture();
   for (let n = 0; n < 20; n++) {
     const ids = Array.from({ length: 32 }, (_, i) => `source-${n}-${i}`);
@@ -595,13 +589,13 @@ it("stops between multi-session share messages before the authority row cap", as
     f.add(
       event(
         9,
-        [["h", "destination"], ...sharedSessionTags(content, ids)],
+        [["h", "destination"], ...sharedChatTags(content, ids)],
         content,
         100 - n,
       ),
     );
   }
-  const result = await listSharedSessions(f.reader, "destination");
+  const result = await listSharedChats(f.reader, "destination");
   expect(result.scanned).toBe(1);
   expect(result.cursor).toBeDefined();
   expect(result.complete).toBe(false);
@@ -618,13 +612,13 @@ it("bounds historical card associations without trapping older valid shares", as
     soloChatLinkMessage(`old-${i}`),
   ).join("\n\n");
   f.add(event(9, [["h", "destination"]], oversized, 20), share(10));
-  const first = await listSharedSessions(f.reader, "destination");
+  const first = await listSharedChats(f.reader, "destination");
   expect(first.errors).toEqual([]);
   expect(
-    sharedSessionIds(event(9, [["h", "destination"]], oversized)),
+    sharedChatIds(event(9, [["h", "destination"]], oversized)),
   ).toHaveLength(32);
   expect(first.cursor).toBeDefined();
-  const older = await listSharedSessions(f.reader, "destination", {
+  const older = await listSharedChats(f.reader, "destination", {
     cursor: first.cursor,
   });
   expect(older.entries.map(({ id }) => id)).toEqual(["source"]);
@@ -643,13 +637,13 @@ it.each(["destination addition", "source removal", "visibility change"])(
     else f.setCurrentAccess("destination", [viewer, authority], true);
     expect(
       (
-        await listSharedSessions(f.reader, "destination", {
+        await listSharedChats(f.reader, "destination", {
           audience: "destination",
         })
       ).entries,
     ).toEqual([]);
     await expect(
-      readSharedSession(f.reader, "destination", "source"),
+      readSharedChat(f.reader, "destination", "source"),
     ).rejects.toThrow(/access/);
   },
 );
@@ -659,11 +653,11 @@ it("withholds agent output without current server audience support", async () =>
   f.add(share(), event(9, [["h", "source"]], "protected content"));
   const { authorizeAudience: _unsupported, ...reader } = f.reader;
   await expect(
-    listSharedSessions(reader, "destination", { audience: "destination" }),
+    listSharedChats(reader, "destination", { audience: "destination" }),
   ).rejects.toThrow(/updated server support/);
-  await expect(
-    readSharedSession(reader, "destination", "source"),
-  ).rejects.toThrow(/updated server support/);
+  await expect(readSharedChat(reader, "destination", "source")).rejects.toThrow(
+    /updated server support/,
+  );
 });
 
 it("requires the Solo label for a private stream source", async () => {
@@ -683,11 +677,9 @@ it("requires the Solo label for a private stream source", async () => {
     ),
   );
   f.add(share(), event(9, [["h", "source"]], "ordinary private channel"));
-  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
-    [],
-  );
+  expect((await listSharedChats(f.reader, "destination")).entries).toEqual([]);
   await expect(
-    readSharedSession(f.reader, "destination", "source"),
+    readSharedChat(f.reader, "destination", "source"),
   ).rejects.toThrow(/access/);
 });
 
@@ -714,8 +706,8 @@ it("uses remote page evidence rather than the projected local outbox adapter", a
       relayAuthor: authority,
       readRemote: owner.session.readRemote,
       read: projected,
-    } as unknown as Parameters<typeof listSharedSessions>[0];
-    const result = await listSharedSessions(adapter, "destination");
+    } as unknown as Parameters<typeof listSharedChats>[0];
+    const result = await listSharedChats(adapter, "destination");
     expect(result.entries.map(({ id }) => id)).toEqual(["source"]);
     expect(result.complete).toBe(true);
     expect(projected).not.toHaveBeenCalled();
@@ -774,7 +766,7 @@ it.each([false, true])(
         audienceAuthorityCommunity: community,
       },
     );
-    let result = await listSharedSessions(client, destination, {
+    let result = await listSharedChats(client, destination, {
       audience: destination,
       limit: paged ? 1 : 20,
     });
@@ -784,7 +776,7 @@ it.each([false, true])(
       expect(result.complete).toBe(false);
       expect(result.cursor).toBeDefined();
       expect(audienceAuthority).not.toHaveBeenCalled();
-      result = await listSharedSessions(client, destination, {
+      result = await listSharedChats(client, destination, {
         audience: destination,
         cursor: result.cursor,
       });

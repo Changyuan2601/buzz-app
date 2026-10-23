@@ -1,4 +1,4 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import { audienceAuthorityCommunity } from "../shared-chats/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";

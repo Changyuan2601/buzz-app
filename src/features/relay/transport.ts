@@ -1,4 +1,4 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import { audienceAuthorityCommunity } from "../shared-chats/audience-authority";
 import type { ReminderHost } from "./reminders";
 import {
   memoryResponseText,

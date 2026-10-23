@@ -6,15 +6,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import {
-  listSharedSessions,
-  type SharedSessionPage,
-} from "../../features/sessions/shared-sessions";
-import { SharedSessions } from "./SharedSessions";
+  listSharedChats,
+  type SharedChatPage,
+} from "../../features/shared-chats/shared-chats";
+import { SharedChats } from "./SharedChats";
 
-vi.mock("../../features/sessions/shared-sessions", () => ({
-  listSharedSessions: vi.fn(),
+vi.mock("../../features/shared-chats/shared-chats", () => ({
+  listSharedChats: vi.fn(),
 }));
-const list = vi.mocked(listSharedSessions);
+const list = vi.mocked(listSharedChats);
 const viewer = "a".repeat(64);
 const sender = "b".repeat(64);
 const entry = {
@@ -23,7 +23,7 @@ const entry = {
   sharedAt: 100,
   shares: [{ id: "share", pubkey: sender, createdAt: 100 }],
 };
-const page: SharedSessionPage = {
+const page: SharedChatPage = {
   entries: [entry],
   complete: true,
   errors: [],
@@ -133,17 +133,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("refreshes an open list when an unmarked session card arrives", async () => {
+it("refreshes an open list when an unmarked chat card arrives", async () => {
   const f = fixture();
   list.mockResolvedValueOnce({ entries: [], complete: true, errors: [] });
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
-  await screen.findByText("No shared sessions to show");
+  await screen.findByText("No shared chats to show");
   list.mockResolvedValue(page);
   act(() => f.legacyShare());
   await screen.findByRole("button", {
@@ -152,17 +148,17 @@ it("refreshes an open list when an unmarked session card arrives", async () => {
 });
 
 it("loads, searches, clears and opens a title-first accessible row", async () => {
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list.mockReturnValue(gate.promise);
   const open = vi.fn();
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={open}
     />,
   );
-  expect(screen.getByText("Loading shared sessions…")).toHaveAttribute(
+  expect(screen.getByText("Loading shared chats…")).toHaveAttribute(
     "role",
     "status",
   );
@@ -172,9 +168,9 @@ it("loads, searches, clears and opens a title-first accessible row", async () =>
     name: /Investigate duplicate notifications, shared by Tulsi/,
   });
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
-  expect(row).toHaveAccessibleDescription("Session ID source");
+  expect(row).toHaveAccessibleDescription("Chat ID source");
   await userEvent.type(
-    screen.getByRole("searchbox", { name: "Search shared sessions" }),
+    screen.getByRole("searchbox", { name: "Search shared chats" }),
     "another topic",
   );
   expect(screen.queryByRole("listitem")).toBeNull();
@@ -188,9 +184,10 @@ it("loads, searches, clears and opens a title-first accessible row", async () =>
     }),
   );
   expect(open).toHaveBeenCalledWith("source");
-  expect(
-    screen.getByRole("region", { name: "Shared sessions" }),
-  ).toHaveAttribute("tabindex", "-1");
+  expect(screen.getByRole("region", { name: "Shared chats" })).toHaveAttribute(
+    "tabindex",
+    "-1",
+  );
 });
 
 it("searches every contributing sharer by name, including an earlier sharer", async () => {
@@ -207,7 +204,7 @@ it("searches every contributing sharer by name, including an earlier sharer", as
     ],
   });
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={() => {}}
@@ -215,7 +212,7 @@ it("searches every contributing sharer by name, including an earlier sharer", as
   );
   await screen.findByRole("listitem");
   const search = screen.getByRole("searchbox", {
-    name: "Search shared sessions",
+    name: "Search shared chats",
   });
   expect(search).toHaveAttribute("placeholder", "Search titles or people");
   await userEvent.type(search, "  aVeRy  ");
@@ -235,16 +232,16 @@ it("keeps read failures distinct from an empty collection and retries", async ()
     .mockRejectedValueOnce(new Error("private internal failure"))
     .mockResolvedValueOnce(page);
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={() => {}}
     />,
   );
   expect(
-    await screen.findByText("Some shared sessions couldn’t be loaded."),
+    await screen.findByText("Some shared chats couldn’t be loaded."),
   ).toBeVisible();
-  expect(screen.queryByText("No shared sessions to show")).toBeNull();
+  expect(screen.queryByText("No shared chats to show")).toBeNull();
   expect(screen.queryByText(/private internal/)).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("listitem")).toBeVisible();
@@ -270,7 +267,7 @@ it("deduplicates the same source and sharer across catalog pages", async () => {
       ],
     });
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={() => {}}
@@ -279,21 +276,17 @@ it("deduplicates the same source and sharer across catalog pages", async () => {
   await userEvent.click(
     await screen.findByRole("button", { name: "Load more" }),
   );
-  await screen.findByText("1 session");
+  await screen.findByText("1 chat");
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(screen.queryByText(/and 1 other/)).toBeNull();
 });
 
 it("retires a protected title immediately on access changes and aborts on unmount", async () => {
   const f = fixture();
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list.mockResolvedValueOnce(page).mockReturnValueOnce(gate.promise);
   const result = render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={() => {}}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={() => {}} />,
   );
   await screen.findByRole("listitem");
   act(() => f.revoke());
@@ -312,27 +305,19 @@ it("discovers a formerly hidden source when access is granted without a new shar
     .mockResolvedValueOnce({ entries: [], complete: true, errors: [] })
     .mockResolvedValueOnce(page);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={() => {}}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={() => {}} />,
   );
-  await screen.findByText("No shared sessions to show");
+  await screen.findByText("No shared chats to show");
   act(() => f.grant());
   expect(await screen.findByRole("listitem")).toBeVisible();
 });
 
 it("retains a focused row while refreshing and recovers focus after a reference-only deletion", async () => {
   const f = fixture();
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list.mockResolvedValueOnce(page).mockReturnValueOnce(gate.promise);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={() => {}}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={() => {}} />,
   );
   const row = await screen.findByRole("button", {
     name: /Investigate duplicate/,
@@ -345,23 +330,19 @@ it("retains a focused row while refreshing and recovers focus after a reference-
     gate.resolve({ entries: [], complete: true, errors: [] }),
   );
   expect(screen.queryByRole("listitem")).toBeNull();
-  expect(screen.getByRole("region", { name: "Shared sessions" })).toHaveFocus();
+  expect(screen.getByRole("region", { name: "Shared chats" })).toHaveFocus();
 });
 
 it("preserves the first page and retry focus while a failed next page is retried", async () => {
   const f = fixture();
   const cursor = { until: 100, before_id: "share" };
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list
     .mockResolvedValueOnce({ ...page, complete: false, cursor })
     .mockRejectedValueOnce(new Error("offline"))
     .mockReturnValueOnce(gate.promise);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={() => {}}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={() => {}} />,
   );
   await userEvent.click(
     await screen.findByRole("button", { name: "Load more" }),
@@ -372,7 +353,7 @@ it("preserves the first page and retry focus while a failed next page is retried
   expect(screen.getByRole("listitem")).toBeVisible();
   expect(list.mock.calls.at(-1)?.[2]?.cursor).toEqual(cursor);
   await act(async () => gate.resolve(page));
-  expect(screen.getByRole("region", { name: "Shared sessions" })).toHaveFocus();
+  expect(screen.getByRole("region", { name: "Shared chats" })).toHaveFocus();
 });
 
 it("restores a hidden reference after an unattributed deletion of its edit", async () => {
@@ -381,13 +362,9 @@ it("restores a hidden reference after an unattributed deletion of its edit", asy
     .mockResolvedValueOnce({ entries: [], complete: true, errors: [] })
     .mockResolvedValueOnce(page);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={() => {}}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={() => {}} />,
   );
-  await screen.findByText("No shared sessions to show");
+  await screen.findByText("No shared chats to show");
   act(() => f.mutation());
   expect(await screen.findByRole("listitem")).toBeVisible();
 });
@@ -419,7 +396,7 @@ it.each(["Retry", "Load more"])(
         errors: [],
       });
     render(
-      <SharedSessions
+      <SharedChats
         session={fixture().session}
         channelId="destination"
         open={() => {}}
@@ -451,7 +428,7 @@ it("retries the beginning after a partial-error first page", async () => {
     })
     .mockResolvedValueOnce(page);
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={() => {}}
@@ -467,18 +444,14 @@ it("retries the beginning after a partial-error first page", async () => {
 it("retains a readable public nonmember source through an unrelated refresh failure", async () => {
   const f = fixture();
   f.publicNonmemberSource();
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list.mockResolvedValueOnce(page).mockReturnValueOnce(
     gate.promise.then(() => {
       throw new Error("Unavailable");
     }),
   );
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
   const row = await screen.findByRole("button", {
     name: /Investigate duplicate notifications/,
@@ -495,7 +468,7 @@ it("retains a readable public nonmember source through an unrelated refresh fail
 it("finishes Load more and coalesces live traffic into one trailing refresh", async () => {
   const f = fixture();
   const cursor = { until: 100, before_id: "share" };
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   const older = { ...entry, id: "older", title: "Older work" };
   const olderPage = { entries: [older], complete: true, errors: [] };
   list
@@ -504,11 +477,7 @@ it("finishes Load more and coalesces live traffic into one trailing refresh", as
     .mockResolvedValueOnce({ ...page, cursor, complete: false })
     .mockResolvedValueOnce(olderPage);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
   await userEvent.click(
     await screen.findByRole("button", { name: "Load more" }),
@@ -533,7 +502,7 @@ it("finishes Load more and coalesces live traffic into one trailing refresh", as
 });
 
 it.each([
-  { query: "   ", cursor: undefined, text: "No shared sessions to show" },
+  { query: "   ", cursor: undefined, text: "No shared chats to show" },
   { query: "missing", cursor: undefined, text: /No titles or sharers match/ },
   {
     query: "",
@@ -550,10 +519,10 @@ it.each([
       complete: !cursor,
       ...(cursor ? { cursor } : {}),
     };
-    const gate = deferred<SharedSessionPage>();
+    const gate = deferred<SharedChatPage>();
     list.mockResolvedValueOnce(empty).mockReturnValueOnce(gate.promise);
     render(
-      <SharedSessions
+      <SharedChats
         session={f.session}
         channelId="destination"
         view={{ query, scrollTop: 0 }}
@@ -572,7 +541,7 @@ it.each([
         );
         expect(clear).toHaveFocus();
       }
-      expect(screen.queryByText("Loading shared sessions…")).toBeNull();
+      expect(screen.queryByText("Loading shared chats…")).toBeNull();
       expect(
         screen.queryByText(/unavailable|not available|aren’t available/),
       ).toBeNull();
@@ -584,18 +553,14 @@ it.each([
 
 it("ignores unrelated channel renames and never restores a revoked row from a held refresh", async () => {
   const f = fixture();
-  const gate = deferred<SharedSessionPage>();
-  const trailing = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
+  const trailing = deferred<SharedChatPage>();
   list
     .mockResolvedValueOnce(page)
     .mockReturnValueOnce(gate.promise)
     .mockReturnValueOnce(trailing.promise);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
   await screen.findByText(entry.title);
   act(() => f.renameUnrelated());
@@ -623,9 +588,9 @@ it("prioritizes Load more over repeated trailing refreshes without aborting eith
     ...page,
     entries: [{ ...entry, id: "older", title: "Older work" }],
   };
-  const refresh = deferred<SharedSessionPage>();
-  const trailing = deferred<SharedSessionPage>();
-  const more = deferred<SharedSessionPage>();
+  const refresh = deferred<SharedChatPage>();
+  const trailing = deferred<SharedChatPage>();
+  const more = deferred<SharedChatPage>();
   list
     .mockResolvedValueOnce(first)
     .mockReturnValueOnce(refresh.promise)
@@ -634,11 +599,7 @@ it("prioritizes Load more over repeated trailing refreshes without aborting eith
     .mockResolvedValueOnce(first)
     .mockResolvedValueOnce(olderPage);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
   const button = await screen.findByRole("button", { name: "Load more" });
   try {
@@ -675,19 +636,15 @@ it("prioritizes Load more over repeated trailing refreshes without aborting eith
 it("prioritizes Retry over a queued background refresh", async () => {
   const f = fixture();
   const failed = { entries: [], complete: false, errors: ["Unavailable"] };
-  const refresh = deferred<SharedSessionPage>();
-  const retry = deferred<SharedSessionPage>();
+  const refresh = deferred<SharedChatPage>();
+  const retry = deferred<SharedChatPage>();
   list
     .mockResolvedValueOnce(failed)
     .mockReturnValueOnce(refresh.promise)
     .mockReturnValueOnce(retry.promise)
     .mockResolvedValueOnce(page);
   render(
-    <SharedSessions
-      session={f.session}
-      channelId="destination"
-      open={vi.fn()}
-    />,
+    <SharedChats session={f.session} channelId="destination" open={vi.fn()} />,
   );
   const button = await screen.findByRole("button", { name: "Retry" });
   try {
@@ -712,12 +669,12 @@ it("prioritizes Retry over a queued background refresh", async () => {
 
 it("ignores repeated Load more activation while that explicit read is held", async () => {
   const cursor = { until: 100, before_id: "share" };
-  const gate = deferred<SharedSessionPage>();
+  const gate = deferred<SharedChatPage>();
   list
     .mockResolvedValueOnce({ ...page, complete: false, cursor })
     .mockReturnValueOnce(gate.promise);
   render(
-    <SharedSessions
+    <SharedChats
       session={fixture().session}
       channelId="destination"
       open={vi.fn()}

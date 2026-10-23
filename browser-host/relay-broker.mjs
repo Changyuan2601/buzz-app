@@ -1,4 +1,4 @@
-import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
+import { audienceAuthorityCommunity } from "../src/features/shared-chats/audience-authority.ts";
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,

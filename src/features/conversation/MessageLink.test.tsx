@@ -340,7 +340,7 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
 });
 
-it("a signed chosen rename repaints the session card without changing authored link bytes or focus", async () => {
+it("a signed chosen rename repaints the chat card without changing authored link bytes or focus", async () => {
   const id = "11111111-1111-4111-8111-111111111111",
     viewer = keypair(),
     relay = keypair();

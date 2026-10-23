@@ -78,7 +78,7 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
     only &&
     !more.length &&
     only.pubkey !== agent &&
-    !saved.sessionCards?.length &&
+    !saved.chatCards?.length &&
     saved.text.trim() === `@${only.name}`
   )
     writeView(scope, key, null);

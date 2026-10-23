@@ -1149,7 +1149,7 @@ it.each([false, true])(
   },
 );
 
-it("starts a new chat with a session card and no caption", async () => {
+it("starts a new chat with a chat card and no caption", async () => {
   const h = setup(),
     started = vi.fn(),
     user = userEvent.setup();

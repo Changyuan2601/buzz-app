@@ -1061,7 +1061,7 @@ it("keeps the delete description stable while announcing the resolved share note
     await act(async () => gate.resolve([h.original]));
   }
   await waitFor(() =>
-    expect(dialog).toHaveTextContent("This share will leave Shared sessions"),
+    expect(dialog).toHaveTextContent("This share will leave Shared chats"),
   );
   expect(document.getElementById(description ?? "")?.textContent).toBe(text);
   expect(screen.getByText(/This share will leave/)).toHaveAttribute(

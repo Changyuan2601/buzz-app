@@ -8,11 +8,11 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import {
-  listSharedSessions,
-  type SharedSessionEntry,
-  type SharedSessionPage,
-} from "../../features/sessions/shared-sessions";
-import { sharedSessionIds } from "../../features/sessions/shared-session-marker";
+  listSharedChats,
+  type SharedChatEntry,
+  type SharedChatPage,
+} from "../../features/shared-chats/shared-chats";
+import { sharedChatIds } from "../../features/shared-chats/shared-chat-marker";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { FileTextIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -23,10 +23,10 @@ import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { avatarMedia } from "../../shared/avatar-source";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
-import styles from "./SharedSessions.module.css";
+import styles from "./SharedChats.module.css";
 
 /** One destination's presentation. Verified reads and permissions stay feature-owned. */
-export function SharedSessions({
+export function SharedChats({
   session,
   channelId,
   open,
@@ -40,12 +40,12 @@ export function SharedSessions({
   focusRequest?: string | undefined;
 }) {
   const [query, setQuery] = useState(view?.query ?? "");
-  const [page, setPage] = useState<SharedSessionPage>();
+  const [page, setPage] = useState<SharedChatPage>();
   const [pending, setPending] = useState(true);
   const [error, setError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const request = useRef<AbortController>(undefined);
-  const retained = useRef<SharedSessionPage>(undefined);
+  const retained = useRef<SharedChatPage>(undefined);
   const loader = useRef<(more?: boolean) => void>(() => {});
   const region = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -136,14 +136,14 @@ export function SharedSessions({
           ]),
         );
         let cursor = more ? retained.current?.cursor : undefined;
-        let result: SharedSessionPage = {
+        let result: SharedChatPage = {
           entries: [],
           complete: false,
           errors: [],
         };
         const errors: string[] = [];
         for (let index = 0; index < (more ? 1 : depth); index++) {
-          result = await listSharedSessions(session, channelId, {
+          result = await listSharedChats(session, channelId, {
             ...(cursor ? { cursor } : {}),
             signal: controller.signal,
           });
@@ -173,7 +173,7 @@ export function SharedSessions({
         }
         const { cursor: continuation, ...details } = result;
         const nextCursor = errors.length ? cursor : continuation;
-        const next: SharedSessionPage = {
+        const next: SharedChatPage = {
           ...details,
           ...(nextCursor ? { cursor: nextCursor } : {}),
           complete: !errors.length && result.complete,
@@ -287,8 +287,7 @@ export function SharedSessions({
             const mutation = [5, 9005, 40003].includes(event.kind);
             return (
               (mutation && !attributedChannel) ||
-              (destination &&
-                (mutation || sharedSessionIds(event).length > 0)) ||
+              (destination && (mutation || sharedChatIds(event).length > 0)) ||
               (mutation &&
                 event.tags.some(
                   ([key, value]) =>
@@ -336,12 +335,12 @@ export function SharedSessions({
       }}
       tabIndex={-1}
       data-tab-focus=""
-      aria-label="Shared sessions"
+      aria-label="Shared chats"
       className={styles.root}
     >
       <div className={styles.search}>
         <SearchField
-          label="Search shared sessions"
+          label="Search shared chats"
           placeholder="Search titles or people"
           value={query}
           onValueChange={(value) => {
@@ -360,7 +359,7 @@ export function SharedSessions({
       >
         {error && (
           <div className={styles.feedback}>
-            <p role="status">Some shared sessions couldn’t be loaded.</p>
+            <p role="status">Some shared chats couldn’t be loaded.</p>
             <Button
               size="compact"
               aria-disabled={pending && (!page || loadingMore)}
@@ -372,14 +371,14 @@ export function SharedSessions({
         )}
         {page && (
           <p role="status" aria-live="polite" className="sr-only">
-            {entries.length} {entries.length === 1 ? "session" : "sessions"}
+            {entries.length} {entries.length === 1 ? "chat" : "chats"}
             {page.cursor ? " shown, more available" : ""}
           </p>
         )}
         {entries.length > 0 && (
-          <ul className={styles.list} aria-label="Shared session list">
+          <ul className={styles.list} aria-label="Shared chat list">
             {entries.map((entry) => (
-              <SessionRow
+              <ChatRow
                 key={entry.id}
                 entry={entry}
                 session={session}
@@ -392,23 +391,23 @@ export function SharedSessions({
         )}
         {pending && (!page || loadingMore) && (
           <p role="status" className={styles.status}>
-            Loading shared sessions…
+            Loading shared chats…
           </p>
         )}
         {page && !error && !entries.length && !search && !page.cursor && (
           <EmptyState
             icon={<FileTextIcon size={24} aria-hidden="true" />}
-            title="No shared sessions to show"
-            description="Sessions shared in this channel appear here. Agents here can use them to answer questions."
+            title="No shared chats to show"
+            description="Chats shared in this channel appear here. Agents here can use them to answer questions."
           />
         )}
         {page && !entries.length && search && (
           <div className={styles.feedback}>
             <p>
               No titles or sharers match “{query}”
-              {page.cursor ? " in loaded sessions" : ""}.
+              {page.cursor ? " in loaded chats" : ""}.
             </p>
-            {page.cursor && <p>Load more to search older sessions.</p>}
+            {page.cursor && <p>Load more to search older chats.</p>}
             <Button
               size="compact"
               onClick={() => {
@@ -422,7 +421,7 @@ export function SharedSessions({
         )}
         {page?.cursor && !entries.length && !search && !error && (
           <p className={styles.status}>
-            No shared sessions to show in the messages checked. Older messages
+            No shared chats to show in the messages checked. Older messages
             remain.
           </p>
         )}
@@ -442,14 +441,14 @@ export function SharedSessions({
   );
 }
 
-function SessionRow({
+function ChatRow({
   entry,
   session,
   profiles,
   personName,
   open,
 }: {
-  entry: SharedSessionEntry;
+  entry: SharedChatEntry;
   session: RelaySession;
   profiles: ReturnType<RelaySession["profiles"]["snapshot"]>;
   personName(id: string): string;
@@ -501,7 +500,7 @@ function SessionRow({
               )}
             </span>
             <span className="sr-only" id={description}>
-              Session ID {entry.id.slice(0, 8)}
+              Chat ID {entry.id.slice(0, 8)}
             </span>
           </span>
         }

@@ -22,7 +22,7 @@ import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
-import { sharedSessionIds } from "../sessions/shared-session-marker";
+import { sharedChatIds } from "../shared-chats/shared-chat-marker";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { AgentOwnerAuthorization } from "../relay/messages";
@@ -456,8 +456,8 @@ function DeleteMessageDialog({
             events.some(
               (event) =>
                 event.id === row.id &&
-                sharedSessionIds(event, row.sourceContent ?? row.content)
-                  .length > 0,
+                sharedChatIds(event, row.sourceContent ?? row.content).length >
+                  0,
             ),
           );
       })
@@ -544,8 +544,8 @@ function DeleteMessageDialog({
     >
       {indexedShare && (
         <p role="status">
-          This share will leave Shared sessions; other shares and existing
-          access remain.
+          This share will leave Shared chats; other shares and existing access
+          remain.
         </p>
       )}
       {(error || retryable) && (
