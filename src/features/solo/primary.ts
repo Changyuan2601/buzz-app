@@ -612,6 +612,8 @@ export function createSoloPrimary({
               notice: reason instanceof Error ? reason.message : String(reason),
             };
           }
+          if (!explicitPrimary && recipients.length >= 32)
+            throw new Error("All 32 mention slots are already in use.");
           return {
             recipients: explicitPrimary
               ? recipients

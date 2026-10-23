@@ -884,6 +884,79 @@ describe("queued implicit admission", () => {
 });
 
 describe("signed message integration", () => {
+  it.each([
+    { count: 31, explicitPrimary: false },
+    { count: 32, explicitPrimary: false },
+    { count: 31, explicitPrimary: true },
+  ])(
+    "sends $count authored human recipients (explicit primary: $explicitPrimary)",
+    async ({ count, explicitPrimary }) => {
+      const f = await adopted();
+      const people = Array.from({ length: count }, (_, index) =>
+        (index + 1).toString(16).padStart(64, "0"),
+      );
+      f.setRoster({ members: [owner, primary, secondary, ...people] });
+      for (const key of people)
+        f.deps.profiles.snapshot().set(key, { name: "Person" });
+      const authored = explicitPrimary ? [...people, primary] : people;
+      const resolved = await f.cap.resolve(channel, authored, human);
+      const writer = {
+        sign: async (template: EventTemplate) => sign({ ...template }),
+        publish: vi.fn(async (_event: RelayEvent) => {}),
+      };
+      const { outbox, dispose } = createOutbox(owner, writer, {
+        load: () => [],
+        save: () => {},
+      });
+      try {
+        await outbox.ready();
+        const messages = createMessages(
+          outbox,
+          owner,
+          () => undefined,
+          () => [],
+          () => {},
+        );
+        messages.send(
+          channel,
+          "Keep every authored recipient",
+          resolved.recipients,
+          [],
+          undefined,
+          [],
+          {},
+          [],
+          { primary: resolved.primary, authored },
+        );
+        await vi.waitFor(() => expect(writer.publish).toHaveBeenCalledOnce());
+        const event = writer.publish.mock.calls[0]?.[0];
+        if (!event) throw new Error("Message was not published");
+        expect(event.tags.filter(([name]) => name === "p")).toHaveLength(32);
+        for (const key of authored)
+          expect(event.tags).toContainEqual(["p", key, "", "mention"]);
+        if (count === 32) {
+          expect(resolved.recipients).toEqual(authored);
+          expect(resolved.primary).toBeUndefined();
+          expect(resolved.notice).toMatch(/32 mention slots/);
+          expect(event.tags.some(([name]) => name === "primary")).toBe(false);
+        } else {
+          expect(resolved.primary?.targeting).toBe(
+            explicitPrimary ? "explicit" : "implicit",
+          );
+          expect(resolved.notice).toBeUndefined();
+          expect(event.tags).toContainEqual([
+            "primary",
+            primary,
+            f.event.id,
+            explicitPrimary ? "explicit" : "implicit",
+          ]);
+        }
+      } finally {
+        dispose();
+      }
+    },
+  );
+
   it("posts the human message with a visible notice when an adopted binding is unknown", async () => {
     const f = await adopted();
     f.setEvents([]);
