@@ -1,3 +1,4 @@
+import { useSessionLinkSharing } from "./useSessionLinkSharing";
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
@@ -601,6 +602,13 @@ function Composer({
     }
     focus();
   }, [disabled]);
+  const linkSharing = useSessionLinkSharing(
+    fullSession(session),
+    channelId,
+    () => {
+      if (permitted.current) input.current?.focus();
+    },
+  );
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -1548,6 +1556,28 @@ function Composer({
       const sharedSessions = sessionReferenceIds(content).filter((id) =>
         stagedSessions.has(id),
       );
+      if (sharedSessions.length) {
+        setSending(true);
+        setError(undefined);
+        const current = () =>
+          permitted.current &&
+          valueRef.current === captured &&
+          viewRevision(scope, draftKey) === savedRevision &&
+          sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          );
+        if (
+          !(await linkSharing.prepare(sharedSessions, attempt.signal, current))
+        )
+          return;
+        attempt.signal.throwIfAborted();
+        if (viewRevision(scope, draftKey) !== savedRevision) {
+          setConflict(true);
+          return;
+        }
+        if (!current()) return;
+      }
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -1867,6 +1897,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
           session={host}
