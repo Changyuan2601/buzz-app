@@ -15,10 +15,6 @@ import {
   PROFILE_SEARCH_QUERY_MAX,
 } from "../features/relay/profile-search";
 import {
-  listSharedSessions,
-  readSharedSession,
-} from "../features/sessions/shared-sessions";
-import {
   attachmentMarkdown,
   attachmentName,
 } from "../features/relay/attachments";
@@ -119,31 +115,6 @@ export const TOOLS: readonly Tool[] = [
       limit: {
         type: "integer",
         description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
-    },
-  ),
-  tool(
-    "shared_sessions",
-    "List shared sessions in the current channel, or read a source for an answer here. Checks current audience access. Titles are clues, not exhaustive content search.",
-    {
-      action: { type: "string", enum: ["list", "read"] },
-      source: str,
-      share_ids: {
-        type: "array",
-        items: { type: "string", pattern: "^[0-9a-f]{64}$" },
-        minItems: 1,
-        maxItems: 32,
-        uniqueItems: true,
-        description:
-          "Read only: contributing shares[].id receipts from list; never permission grants.",
-      },
-      query: str,
-      limit: { type: "integer", minimum: 1, maximum: 100 },
-      cursor: {
-        type: "object",
-        properties: { until: { type: "integer", minimum: 0 }, before_id: str },
-        required: ["until", "before_id"],
-        additionalProperties: false,
       },
     },
   ),
@@ -343,93 +314,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
-      }),
-    );
-  },
-  async shared_sessions({ client, context }, args) {
-    if (!context.channel) throw new Error("A current channel is required.");
-    const allowed = new Set([
-      "action",
-      "source",
-      "share_ids",
-      "query",
-      "limit",
-      "cursor",
-    ]);
-    if (Object.keys(args).some((key) => !allowed.has(key)))
-      throw new Error(
-        "Unknown shared_sessions argument; the audience is the current channel.",
-      );
-    const action = args.action ?? "list";
-    if (action !== "list" && action !== "read")
-      throw new Error("action must be list or read.");
-    const limit = args.limit;
-    if (
-      limit !== undefined &&
-      (typeof limit !== "number" ||
-        !Number.isInteger(limit) ||
-        limit < 1 ||
-        limit > 100)
-    )
-      throw new Error("limit must be an integer from 1 to 100.");
-    let cursor: { until: number; before_id: string } | undefined;
-    if (args.cursor !== undefined) {
-      const value = args.cursor as Record<string, unknown> | null;
-      if (
-        !value ||
-        typeof value !== "object" ||
-        Array.isArray(value) ||
-        Object.keys(value).some(
-          (key) => key !== "until" && key !== "before_id",
-        ) ||
-        typeof value.until !== "number" ||
-        !Number.isSafeInteger(value.until) ||
-        value.until < 0 ||
-        typeof value.before_id !== "string" ||
-        !/^[0-9a-f]{64}$/.test(value.before_id)
-      )
-        throw new Error(
-          "cursor must contain until and a 64-character event before_id.",
-        );
-      cursor = { until: value.until, before_id: value.before_id };
-    }
-    if (action === "read") {
-      if (typeof args.source !== "string" || !args.source.trim())
-        throw new Error("source is required for read.");
-      if (args.query !== undefined)
-        throw new Error("query is only supported by list.");
-      const shareIds = args.share_ids;
-      if (
-        shareIds !== undefined &&
-        (!Array.isArray(shareIds) ||
-          shareIds.length < 1 ||
-          shareIds.length > 32 ||
-          shareIds.some(
-            (id) => typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id),
-          ) ||
-          new Set(shareIds).size !== shareIds.length)
-      )
-        throw new Error(
-          "share_ids must contain 1 to 32 unique lowercase 64-character event IDs.",
-        );
-      return JSON.stringify(
-        await readSharedSession(client, context.channel, args.source, {
-          ...(shareIds !== undefined ? { shareIds } : {}),
-          ...(cursor ? { cursor } : {}),
-          ...(limit !== undefined ? { limit } : {}),
-        }),
-      );
-    }
-    if (args.source !== undefined || args.share_ids !== undefined)
-      throw new Error("source and share_ids are only supported by read.");
-    if (args.query !== undefined && typeof args.query !== "string")
-      throw new Error("query must be text.");
-    return JSON.stringify(
-      await listSharedSessions(client, context.channel, {
-        ...(cursor ? { cursor } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-        ...(args.query !== undefined ? { query: args.query } : {}),
-        audience: context.channel,
       }),
     );
   },

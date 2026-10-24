@@ -1638,13 +1638,13 @@ it.each([false, true])(
     writeView(h.owner.session.scope, key, {
       text: "",
       recipients: [],
-      sessionCards: [link],
+      chatCards: [link],
     });
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Drafts");
     const list = screen.getByRole("list", { name: "Drafts" });
-    expect(list).toHaveTextContent("Session attachment");
+    expect(list).toHaveTextContent("Chat attachment");
     await userEvent
       .setup()
       .click(
@@ -1654,13 +1654,13 @@ it.each([false, true])(
     await waitFor(() =>
       expect(
         within(detail).getByRole("button", {
-          name: "Remove session attachment 1",
+          name: "Remove chat attachment 1",
         }),
       ).toBeVisible(),
     );
     expect(within(detail).getByRole("textbox")).toHaveValue("");
     expect(readView(h.owner.session.scope, key, null)).toMatchObject({
-      sessionCards: [link],
+      chatCards: [link],
     });
   },
 );

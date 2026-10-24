@@ -6,7 +6,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { useReferenceDirectory } from "./ReferenceText";
 import styles from "./Messages.module.css";
 
-export function ComposerSessionCards({
+export function ComposerChatCards({
   cards,
   session,
   scope,
@@ -26,16 +26,13 @@ export function ComposerSessionCards({
   const directory = useReferenceDirectory(session);
   if (!cards.length) return null;
   return (
-    <section
-      aria-label="Session attachments"
-      className={styles.composerSoloCards}
-    >
+    <section aria-label="Chat attachments" className={styles.composerSoloCards}>
       {cards.map((content, index) => (
         <div className={styles.composerSoloCard} key={content}>
           <div className={styles.composerSoloCardContent}>
             <MessageMarkdown
               row={{
-                id: "composer-session",
+                id: "composer-chat-card",
                 authorId: "",
                 createdAt: 0,
                 channelId,
@@ -60,7 +57,7 @@ export function ComposerSessionCards({
             size="xs"
             shape="round"
             disabled={disabled}
-            aria-label={`Remove session attachment ${index + 1}`}
+            aria-label={`Remove chat attachment ${index + 1}`}
             icon={<XIcon size={16} />}
             onClick={() => remove(index)}
           />

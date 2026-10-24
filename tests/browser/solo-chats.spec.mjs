@@ -531,12 +531,10 @@ test("Share grants access and posts a link without promoting or moving the Solo 
     releaseReadback();
     await page.clock.resume();
     await expect(dialog).not.toBeVisible();
-    expect(evidence).toEqual([
-      "grant",
-      "readback-requested",
-      "readback-released",
-      "link",
-    ]);
+    // The dialog closes once the link is queued; the Outbox then posts it.
+    await expect
+      .poll(() => evidence)
+      .toEqual(["grant", "readback-requested", "readback-released", "link"]);
   } finally {
     releaseReadback();
     await page.clock.resume();

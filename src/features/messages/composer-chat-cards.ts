@@ -8,12 +8,12 @@ import {
   readComposerDocument,
 } from "./composer-document";
 import type { MentionDraft } from "./mention-draft";
-import { canonicalSessionCard, separateSessionCards } from "./session-cards";
+import { canonicalChatCard, separateChatCards } from "./chat-cards";
 import type { ReferenceChannel } from "./ReferenceText";
 import type { ChannelMessage } from "../relay/contracts";
 
 /** Move references out of editable prose without changing recipient identity or marks. */
-export function stageSessionCards(
+export function stageChatCards(
   draft: MentionDraft,
   channels: readonly ReferenceChannel[],
 ): MentionDraft {
@@ -54,11 +54,11 @@ export function stageSessionCards(
     )
       mask(start, end);
   }
-  const { cards, ranges } = separateSessionCards(
+  const { cards, ranges } = separateChatCards(
     { content: text } as ChannelMessage,
     channels,
   );
-  if (!cards.length || cards.length + (draft.sessionCards?.length ?? 0) > 32)
+  if (!cards.length || cards.length + (draft.chatCards?.length ?? 0) > 32)
     return draft;
   const tr = EditorState.create({ doc }).tr;
   for (const range of [...ranges].reverse()) {
@@ -73,17 +73,17 @@ export function stageSessionCards(
   }
   return {
     ...projectComposerDocument(tr.doc).draft,
-    sessionCards: [
+    chatCards: [
       ...new Set([
-        ...(draft.sessionCards ?? []),
+        ...(draft.chatCards ?? []),
         ...cards.flatMap((card) => {
-          const canonical = canonicalSessionCard(card.content);
+          const canonical = canonicalChatCard(card.content);
           if (canonical) return canonical;
           const url = scanMarkdown(card.content).links[0]?.url ?? card.content;
           const target = parseBuzzLink(url);
           return (
-            canonicalSessionCard(
-              `[Chat: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "session"}](${url})`,
+            canonicalChatCard(
+              `[Chat: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "chat"}](${url})`,
             ) ?? []
           );
         }),

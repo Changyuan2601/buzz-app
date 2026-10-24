@@ -6,10 +6,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { conversionLabel } from "../../features/solo/conversion";
-import {
-  soloShareAttempt,
-  useSoloShareAttempts,
-} from "../../features/solo/share-attempt";
 import { canConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { canShareConversation } from "../../features/solo/share";
 import { canEditLifetime } from "../../features/solo/Lifetime";
@@ -66,7 +62,6 @@ export function SoloChatMenuItems({
   onReadResult(error?: string): void;
 }) {
   const handoff = useChannelNavigation();
-  const shareAttempts = useSoloShareAttempts(session);
   const preferences = session.soloPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
@@ -172,12 +167,7 @@ export function SoloChatMenuItems({
             Share…
           </MenuItem>
           {canConvertToChannel(session, channel) && (
-            <MenuItem
-              disabled={shareAttempts.has(channel.id)}
-              onClick={() => {
-                if (!soloShareAttempt(session, channel.id)) onConvert();
-              }}
-            >
+            <MenuItem onClick={onConvert}>
               <MenuIcon>
                 <HashArrowInIcon size={14} />
               </MenuIcon>

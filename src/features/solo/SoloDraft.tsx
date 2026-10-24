@@ -78,7 +78,7 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
     only &&
     !more.length &&
     only.pubkey !== agent &&
-    !saved.sessionCards?.length &&
+    !saved.chatCards?.length &&
     saved.text.trim() === `@${only.name}`
   )
     writeView(scope, key, null);
@@ -338,7 +338,7 @@ export function SoloDraft({
     }
   }
   const composer = (
-    <div id="new-session-prompt" ref={prompt}>
+    <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
         chatPresentation
         ownSoloConversation

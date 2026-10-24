@@ -10,10 +10,7 @@ import {
 import { archiveHides } from "../relay/identity-archives";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { OutgoingEvent } from "../relay/outbox";
 import type { MemberAdditionIntent } from "../channel-members/members";
-import { messageLinkParts } from "../messages/message-link-parts";
-import { soloChatLinkName } from "./labels";
 
 /** Sharing changes access, never presentation or Solo placement. */
 export function canShareConversation(
@@ -39,31 +36,6 @@ export const soloChatLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
   `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
-
-/** A saved share keeps its original label even when the chat is renamed. */
-function matchesSoloChatLink(content: string, id: string) {
-  const parts = messageLinkParts(content).filter((part) => part.text !== "");
-  return (
-    parts.length === 1 &&
-    parts[0]?.url === soloChatLink(id) &&
-    /^(?:Session|Chat)(?:: | · )/.test(parts[0]?.label ?? "")
-  );
-}
-
-/** Outbox can finish a delivered link even after its in-process share was reset. */
-export function isSoloChatLinkReceipt(item: OutgoingEvent) {
-  const match = /^solo-share-link:([^:]+):([^:]+)$/.exec(
-    item.recovery?.key ?? "",
-  );
-  return !!(
-    match?.[1] &&
-    match[2] &&
-    item.recovery?.value === "1" &&
-    item.event.kind === 9 &&
-    matchesSoloChatLink(item.event.content, match[1]) &&
-    item.event.tags.some(([name, value]) => name === "h" && value === match[2])
-  );
-}
 
 /** Exact selected people are grants to the chat, not the destination or its parent. */
 export async function grantSoloChatAccess(
@@ -102,9 +74,8 @@ export async function grantSoloChatAccess(
   }
 }
 
-/** Capture validated destination keys, including oversized rosters. The share
- * attempt freezes them before its combined 100-recipient admission check, so a
- * retry cannot adopt a smaller or changed audience without explicit Start over. */
+/** The destination's current members other than the viewer, without archived
+ * identities, including oversized rosters so the 100-recipient check sees them. */
 export async function destinationShareAudience(
   session: RelaySession,
   destinationId: string,
@@ -143,169 +114,95 @@ export async function destinationShareAudience(
   );
 }
 
-/** Recheck the exact destination after grants: confirmed additions do not imply
- * the viewer can still post to another channel. The Outbox owns actual delivery. */
-export async function publishSoloChatLink(
-  session: RelaySession,
-  sourceId: string,
-  destinationId: string,
-  previousId: string | undefined,
-  signal: AbortSignal,
-  onQueued: (id: string) => void,
+/** Captured members a share grants: those missing from at least one chat. */
+export function missingAccess(
+  sources: readonly ChannelSummary[],
+  audience: readonly string[],
 ) {
-  const source = await session.channelWrites.refreshMembership(sourceId);
-  const destination =
-    await session.channelWrites.refreshMembership(destinationId);
-  const eligible = (channel: ChannelSummary, soloChat: boolean) =>
-    !!session.viewer &&
-    !channel.huddle &&
-    !channel.metadataPending &&
-    !channel.cached &&
-    !channel.readOnly &&
-    !channel.archived &&
-    !!channel.members?.includes(session.viewer) &&
-    (soloChat
-      ? canShareConversation(session, channel)
-      : channel.channelType === "stream" || channel.channelType === "forum");
-  if (!eligible(source, true) || !eligible(destination, false))
-    throw new Error("Chat or destination access changed. Refresh and retry.");
-  signal.throwIfAborted();
-  const outbox = session.outbox;
-  if (!outbox?.supports(9)) throw new Error("Message posting is unavailable.");
-  await outbox.ready();
-  signal.throwIfAborted();
-  if (
-    !eligible(
-      session.channels.list().channels.find((item) => item.id === sourceId) ??
-        source,
+  return audience.filter((key) =>
+    sources.some((source) => !source.members?.includes(key)),
+  );
+}
+
+/** Why sharing these chats with this audience can't succeed, if it can't. */
+export function shareBlocker(
+  session: RelaySession,
+  sources: readonly ChannelSummary[],
+  audience: readonly string[],
+) {
+  if (sources.some((source) => !canShareConversation(session, source)))
+    return "You can’t share access to this chat, so some people may not be able to open it. Send the link only, or ask its owner to share it.";
+  if (missingAccess(sources, audience).length > 100)
+    return "This channel has too many members to share with at once. Send the link only, or share with people directly.";
+  return undefined;
+}
+
+/** A reason that retrying the same share can't change. */
+export class Unshareable extends Error {}
+
+/** The one way to share chats with a channel: give its current members who
+ * lack access a membership in each chat. The caller posts the link. Grants
+ * already confirmed are skipped, so a retry only adds who is still missing. */
+export async function shareChatsWithChannel(
+  session: RelaySession,
+  sourceIds: readonly string[],
+  channelId: string,
+  {
+    signal,
+    check = () => signal.throwIfAborted(),
+    audience,
+    grants = new Map(),
+    onStarted,
+  }: {
+    signal: AbortSignal;
+    /** Throws to stop before the next grant, e.g. when a draft changed. */
+    check?: () => void;
+    /** A previously captured audience; read fresh when absent. */
+    audience?: readonly string[];
+    grants?: Map<string, Map<string, MemberAdditionIntent>>;
+    onStarted?: () => void;
+  },
+) {
+  check();
+  const members =
+    audience ?? (await destinationShareAudience(session, channelId, signal));
+  check();
+  // Check every source before starting any grant. A copied link is not authority.
+  const sources: ChannelSummary[] = [];
+  for (const id of sourceIds) {
+    sources.push(await session.channelWrites.refreshMembership(id));
+    check();
+  }
+  const blocked = shareBlocker(session, sources, members);
+  if (blocked) throw new Unshareable(blocked);
+  onStarted?.();
+  for (const source of sources) {
+    check();
+    let intents = grants.get(source.id);
+    if (!intents) {
+      intents = new Map();
+      grants.set(source.id, intents);
+    }
+    const confirmed = intents;
+    await grantSoloChatAccess(
+      session,
+      source.id,
+      members.filter(
+        (key) =>
+          !confirmed.get(key)?.confirmed && !source.members?.includes(key),
+      ),
+      confirmed,
+      signal,
+      () => {},
       true,
-    ) ||
-    !eligible(
-      session.channels
-        .list()
-        .channels.find((item) => item.id === destinationId) ?? destination,
-      false,
-    )
-  )
-    throw new Error("Chat or destination access changed. Refresh and retry.");
-  const existing = previousId
-    ? outbox.snapshot().find((item) => item.event.id === previousId)
-    : undefined;
-  if (previousId && !existing) {
-    const found = await session.read(
-      [{ ids: [previousId], limit: 1, consistency: "strong" }],
-      { signal, fresh: true },
-    );
-    if (
-      found.some(
-        (event) =>
-          event.id === previousId &&
-          event.kind === 9 &&
-          event.pubkey === session.viewer &&
-          matchesSoloChatLink(event.content, sourceId) &&
-          event.tags.some(
-            ([name, value]) => name === "h" && value === destinationId,
-          ),
-      )
-    )
-      return previousId;
-    throw new Error(
-      "Link delivery is unconfirmed. Check Outbox and the channel before posting again.",
+      source.channelType === "solo",
+      true,
+      // A dispatched addition may finish; a failed check stops the next one.
+      check,
     );
   }
-  if (
-    existing &&
-    (existing.event.kind !== 9 ||
-      existing.event.pubkey !== session.viewer ||
-      !matchesSoloChatLink(existing.event.content, sourceId) ||
-      !existing.event.tags.some(
-        ([name, value]) => name === "h" && value === destinationId,
-      ))
-  )
-    throw new Error(
-      "Saved link does not match this share. Check Outbox before retrying.",
-    );
-  if (existing?.delivery === "accepted" || existing?.delivery === "seen") {
-    await outbox.acknowledge(existing.event.id);
-    return existing.event.id;
-  }
-  const recovery = {
-    key: `solo-share-link:${sourceId}:${destinationId}`,
-    value: "1",
-  };
-  // A submitted operation saved before this caller owned recovery can still be
-  // in flight. Protect its exact ID before an echo moves it out of snapshot().
-  if (existing && !existing.recovery)
-    await outbox.recover(existing.event.id, recovery);
-  // Keep this one link operation visible when a relay echo precedes its HTTP
-  // receipt. Ordinary messages leave Outbox.snapshot() on echo; this caller
-  // needs terminal evidence before releasing its submitted share attempt.
-  const id =
-    existing?.event.id ??
-    session.messages.send(
-      destinationId,
-      soloChatLinkMessage(sourceId, soloChatLinkName(source)),
-      [],
-      [],
-      recovery,
-      [],
-      {},
-      [sourceId],
-    );
-  onQueued(id);
-  if (existing?.delivery === "failed" || existing?.delivery === "unknown")
-    outbox.retry(id);
-  await new Promise<void>((resolve, reject) => {
-    let stop = () => {};
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      stop();
-      clearTimeout(timer);
-      signal.removeEventListener("abort", cancelled);
-      error ? reject(error) : resolve();
-    };
-    const cancelled = () =>
-      finish(
-        new Error(
-          "Sharing interrupted. Check Outbox and the channel before retrying.",
-        ),
-      );
-    const timer = setTimeout(
-      () =>
-        finish(
-          new Error(
-            "Link delivery is unconfirmed. Check Outbox before retrying.",
-          ),
-        ),
-      15_000,
-    );
-    const inspect = () => {
-      const item = outbox.snapshot().find((entry) => entry.event.id === id);
-      if (!item)
-        finish(
-          new Error(
-            "Link delivery is unconfirmed. Check the channel before retrying.",
-          ),
-        );
-      else if (item.delivery === "accepted" || item.delivery === "seen")
-        finish();
-      else if (item.delivery === "failed" || item.delivery === "unknown")
-        finish(
-          new Error(
-            item.error ??
-              "Link delivery is unconfirmed. Retry the saved message.",
-          ),
-        );
-    };
-    stop = outbox.subscribe(inspect);
-    signal.addEventListener("abort", cancelled, { once: true });
-    if (signal.aborted) cancelled();
-    else inspect();
-  });
-  await outbox.acknowledge(id);
-  return id;
+  check();
+  return members;
 }
 
 /** Promote in place through the existing signed details owner. A retry checks an

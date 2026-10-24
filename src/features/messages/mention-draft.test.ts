@@ -147,3 +147,14 @@ it("followup drafts deduplicate exact keys, preserve namesakes, and enforce draf
   });
   expect(followupDraft([])).toEqual({ text: "", recipients: [] });
 });
+
+it("restores chat cards from drafts saved under the old sessionCards field", () => {
+  const link = "[Chat: Fix](buzz://channel/chat-id)";
+  expect(mentionDraft({ text: "hi", sessionCards: [link] }).chatCards).toEqual([
+    link,
+  ]);
+  expect(
+    mentionDraft({ text: "hi", chatCards: [link], sessionCards: ["x"] })
+      .chatCards,
+  ).toEqual([link]);
+});

@@ -77,14 +77,14 @@ behavior on the label, so a rename touches copy only.
   chat's actions menu and opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
 - **Chat access** adds a person immediately, without a DM or link delivery;
-  the owner can also add agents there (below). Choosing one existing channel and Share grants its
-  current roster and posts a link without notifications. Current access is grouped
-  into **People** and **Agents** like a channel, with Owner and Admin tags. Recorded channel shares show **#channel** and
-  **N members** in default-closed disclosures. Display history is account/community-scoped on this device,
-  survives reload, and does not sync across devices or control access. Future joins/departures are not synchronized. Copy
-  link grants no access; Done with no audience closes without writes. Shared uses
-  verified membership and cached human evidence, not privacy inference or a required
-  role refresh. See [sharing](sharing.md) for retries and evidence limits.
+  the owner can also add agents there (below). Choosing one existing channel and Share gives its
+  current members access and posts a link without notifications, the same share as
+  sending a chat link in that channel. Current access is grouped
+  into **People** and **Agents** like a channel, with Owner and Admin tags. Future
+  joins/departures are not synchronized. Copy link grants no access; Done with no
+  channel closes without writes. Shared uses verified membership and cached human
+  evidence, not privacy inference or a required role refresh. See
+  [sharing](sharing.md).
 - Naming and lifetime belong to [Chat settings](#chat-lifetime),
   not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
@@ -311,7 +311,7 @@ Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `S
 in `src/features/solo`; Solo workspaces use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
+`soloLabels`, `ownSolo`). Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;

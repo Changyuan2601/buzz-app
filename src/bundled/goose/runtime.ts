@@ -653,8 +653,6 @@ export class GooseRuntime {
         handle &&
         appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
-          audienceAuthorityCommunity:
-            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           read: async (path) =>

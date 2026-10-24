@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -8,24 +7,9 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
-import { sharedSessionNavigationTarget } from "../../features/sessions/shared-session-target";
-import { sharedSessionIds } from "../../features/sessions/shared-session-marker";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import {
-  beginSoloShare,
-  finishSoloShare,
-  soloShareAttempt,
-  useSoloShareAttempts,
-  type ShareAttempt,
-} from "../../features/solo/share-attempt";
 import { useChatConversions } from "../../features/solo/conversion";
-import { subscribeView, viewRevision } from "../../shared/view-state";
-import {
-  readShareHistory,
-  saveShareHistory,
-  shareHistoryKey,
-  type ShareHistory,
-} from "../../features/solo/share-history";
 import {
   formatPublicKey,
   publicKeyLabels,
@@ -33,17 +17,17 @@ import {
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
   canShareConversation,
-  destinationShareAudience,
-  grantSoloChatAccess,
-  publishSoloChatLink,
+  shareChatsWithChannel,
+  soloChatLinkMessage,
 } from "../../features/solo/share";
+import { soloChatLinkName } from "../../features/solo/labels";
 
 export type ShareChannel = { id: string; name: string };
 
 /** Sharing a Solo chat to a channel, inside the access dialog. People are added
- * one at a time like any member; a channel share freezes its audience, grants
- * each member and posts a link. Submitted work belongs to the relay session;
- * this view does not own persistence, grant retries or link delivery. */
+ * one at a time like any member. A channel share gives the channel's members
+ * access, as sending a chat link there does, then posts the link; the Outbox
+ * owns its delivery. */
 export function useSoloShare({
   session,
   navigator: navigationController,
@@ -86,25 +70,6 @@ export function useSoloShare({
   );
   const [destination, setDestination] = useState("");
   const [expandedChannel, setExpandedChannel] = useState("");
-  const [expandedShares, setExpandedShares] = useState<string[]>([]);
-  const [historyError, setHistoryError] = useState("");
-  const historyRevision = useSyncExternalStore(
-    useCallback(
-      (notify) => subscribeView(session.scope, notify),
-      [session.scope],
-    ),
-    () => viewRevision(session.scope, shareHistoryKey(channelId)),
-  );
-  let history: ShareHistory = { version: 1, channels: [], people: [] };
-  let historyReadError = "";
-  try {
-    history = readShareHistory(historyRevision);
-  } catch (reason) {
-    historyReadError =
-      reason instanceof Error
-        ? reason.message
-        : "Sharing history is unavailable on this device.";
-  }
   const [destinationRoster, setDestinationRoster] = useState<{
     id: string;
     status: "loading" | "ready" | "error";
@@ -117,31 +82,20 @@ export function useSoloShare({
   const [rosterReload, setRosterReload] = useState(0);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const [pendingAction, setPendingAction] = useState<"share" | "retry">();
-  const busy = pendingAction !== undefined;
-  const [frozen, setFrozen] = useState<ShareAttempt | undefined>(() =>
-    soloShareAttempt(session, channelId),
-  );
-  const attempts = useSoloShareAttempts(session);
-  const saved = frozen ?? attempts.get(channelId);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const source = list.channels.find((item) => item.id === channelId);
   const eligible = canShareConversation(session, source);
-  const chosenId = saved ? saved.intent.destination : destination;
-  const liveChosen = list.channels.find(
-    (item) => item.id === chosenId && item.id !== channelId,
+  const chosen = list.channels.find(
+    (item) => item.id === destination && item.id !== channelId,
   );
-  const submittedAudience = saved?.audienceKeys !== undefined;
-  const chosen = submittedAudience
-    ? (saved.channelSnapshot ?? liveChosen ?? { id: chosenId, name: chosenId })
-    : liveChosen;
-  const destinationMembers = submittedAudience
-    ? (saved.channelSnapshot?.members ?? saved.audienceKeys)
-    : liveChosen &&
-        destinationRoster?.id === liveChosen.id &&
-        destinationRoster.status === "ready" &&
-        !liveChosen.cached &&
-        liveChosen.members
-      ? [...new Set(liveChosen.members)]
+  const destinationMembers =
+    chosen &&
+    destinationRoster?.id === chosen.id &&
+    destinationRoster.status === "ready" &&
+    !chosen.cached &&
+    chosen.members
+      ? [...new Set(chosen.members)]
       : undefined;
   useEffect(() => {
     void rosterReload;
@@ -189,7 +143,7 @@ export function useSoloShare({
   const chosenChannelId = chosen?.id;
   useEffect(() => {
     void destinationReload;
-    if (!enabled || !chosenChannelId || submittedAudience) return;
+    if (!enabled || !chosenChannelId) return;
     const controller = new AbortController();
     const active = AbortSignal.any([
       controller.signal,
@@ -215,14 +169,7 @@ export function useSoloShare({
       }
     })();
     return () => controller.abort();
-  }, [
-    enabled,
-    chosenChannelId,
-    submittedAudience,
-    session,
-    signal,
-    destinationReload,
-  ]);
+  }, [enabled, chosenChannelId, session, signal, destinationReload]);
   const memberKeys =
     enabled && rosterState === "ready" && !source?.cached
       ? source?.members?.join(":")
@@ -290,40 +237,17 @@ export function useSoloShare({
               .includes(query.trim().toLowerCase().replace(/^#/, "")),
         )
         .map((item) => ({ id: item.id, name: item.name }));
-  const reset = () => {
-    setDestination("");
-    setExpandedChannel("");
-    setExpandedShares([]);
-    setHistoryError("");
-    setQuery("");
-    setError("");
-    setProgress("");
-    setFrozen(soloShareAttempt(session, channelId));
-  };
-  const startOver = () => {
-    if (!visible() || busy || !saved) return;
-    if (saved.running) {
-      setError("This share is already in progress in another view.");
-      return;
-    }
-    if (soloShareAttempt(session, channelId) !== saved) {
-      setError(
-        "This share finished or changed. Close and reopen to start a new share.",
-      );
-      return;
-    }
-    finishSoloShare(session, channelId);
-    reset();
-  };
   const choose = (channel: ShareChannel) => {
-    if (busy || saved || !eligible || destination) return;
+    if (busy || !eligible || destination) return;
     setDestination(channel.id);
     setQuery("");
+    setError("");
+    setFailed(false);
     input.current?.focus();
   };
   const submit = async () => {
     if (!visible() || busy) return;
-    if (!saved && !destination) {
+    if (!destination) {
       close();
       return;
     }
@@ -333,194 +257,80 @@ export function useSoloShare({
       );
       return;
     }
-    if (saved && soloShareAttempt(session, channelId) !== saved) {
-      setError(
-        "This share finished or changed. Close and reopen to start a new share.",
-      );
-      return;
-    }
-    const exact = beginSoloShare(session, channelId, {
-      destination,
-      chatPeople: [],
-    });
-    setFrozen(exact);
-    if (exact.running) {
-      setError("This share is already in progress in another view.");
-      return;
-    }
-    exact.running = true;
-    setPendingAction(saved ? "retry" : "share");
+    setBusy(true);
     setError("");
+    setProgress("Giving channel members access…");
     const controller = new AbortController();
-    const remember = () => {
-      const snapshot = exact.channelSnapshot;
-      const recipients =
-        snapshot?.members.filter(
-          (key) => key !== session.viewer && !!exact.grants.get(key)?.confirmed,
-        ) ?? [];
-      if (!snapshot || !recipients.length || !session.viewer) return true;
-      try {
-        saveShareHistory(session.scope, channelId, [], {
-          ...snapshot,
-          members: [session.viewer, ...recipients],
-        });
-        if (visible()) setHistoryError("");
-        return true;
-      } catch (reason) {
-        if (visible())
-          setHistoryError(
-            reason instanceof Error
-              ? reason.message
-              : "Sharing history couldn’t be saved on this device. Access is unchanged.",
-          );
-        return false;
-      }
-    };
-    const progress = (text: string) => {
-      if (visible()) setProgress(text);
-    };
+    const cancelled = () => controller.abort();
+    signal?.addEventListener("abort", cancelled, { once: true });
+    const target = destination;
     try {
-      const target = exact.intent.destination;
-      if (!exact.audienceKeys) {
-        progress("Checking current channel members…");
-        const audience = await destinationShareAudience(
-          session,
-          target,
-          controller.signal,
-        );
-        const selected = session.channels
-          .list()
-          .channels.find((item) => item.id === target);
-        if (selected && session.viewer)
-          exact.channelSnapshot = {
-            id: target,
-            name: selected.name,
-            members: [session.viewer, ...audience],
-          };
-        exact.audienceKeys = [...new Set(audience)];
-      }
-      const keys = exact.audienceKeys;
-      if (!keys.length && !exact.messageId)
-        throw new Error(
-          "This channel has no other current members to share with.",
-        );
-      if (keys.length > 100 || new Set(keys).size !== keys.length)
-        throw new Error("Choose at most 100 distinct recipients.");
-      progress("Confirming chat access…");
-      // A confirmed grant is never replayed, even if its recipient later leaves.
-      await grantSoloChatAccess(
-        session,
-        channelId,
-        keys.filter((key) => !exact.grants.get(key)?.confirmed),
-        exact.grants,
-        controller.signal,
-        () => {},
-        true,
-        source?.channelType === "solo",
-        true,
-      );
-      const historySaved = remember();
-      progress("Posting chat link…");
-      const messageId = await publishSoloChatLink(
-        session,
-        channelId,
+      await shareChatsWithChannel(session, [channelId], target, {
+        signal: controller.signal,
+      });
+      const current = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      const messageId = session.messages.send(
         target,
-        exact.messageId,
-        controller.signal,
-        (id) => {
-          exact.messageId = id;
-        },
+        soloChatLinkMessage(
+          channelId,
+          current ? soloChatLinkName(current) : undefined,
+        ),
       );
-      // Optional discovery feedback must not turn a confirmed share into a failed operation.
-      try {
-        const confirmed = await session.read(
-          [
-            {
-              kinds: [9],
-              ids: [messageId],
-              "#h": [target],
-              limit: 1,
-              consistency: "strong",
-            },
-          ],
-          { signal: controller.signal, fresh: true },
-        );
-        if (
-          visible() &&
-          confirmed.some((event) => sharedSessionIds(event).includes(channelId))
-        ) {
-          const destination = sharedSessionNavigationTarget(
-            target,
-            session.scope,
-            session.viewer,
-          );
-          const destinationName = session.channels
-            .list()
-            .channels.find((item) => item.id === target)?.name;
-          notify(
-            destinationName
-              ? `Added to #${destinationName}’s Shared sessions`
-              : "Added to Shared sessions",
-            "success",
-            destination && navigationController
-              ? {
-                  label: "View",
-                  onClick: () => {
-                    void navigationController.open(destination);
-                  },
-                }
-              : undefined,
-          );
-        }
-      } catch {
-        /* Sharing is already confirmed; the tab can be opened from its launcher. */
-      }
-      finishSoloShare(session, channelId);
-      if (visible()) {
-        if (historySaved) close();
-        else {
-          // Completed access/link work must not be retried for a display-save failure.
-          setFrozen(undefined);
-          setDestination("");
-          setExpandedChannel("");
-          setProgress("");
-        }
-      }
-    } catch (reason) {
-      remember();
       if (!visible()) return;
-      const count = [...exact.grants.values()].filter(
-        (intent) => intent.confirmed,
-      ).length;
-      setProgress("");
+      const view =
+        session.viewer &&
+        buzzLinkTarget(`buzz://channel/${target}/${messageId}`, {
+          viewer: session.viewer,
+          communityOrigin: session.scope.slice(0, -(session.viewer.length + 1)),
+        });
+      const name = session.channels
+        .list()
+        .channels.find((item) => item.id === target)?.name;
+      notify(
+        name ? `Shared in #${name}` : "Shared",
+        "success",
+        view && navigationController
+          ? {
+              label: "View",
+              onClick: () => {
+                void navigationController.open(view);
+              },
+            }
+          : undefined,
+      );
+      close();
+    } catch (reason) {
+      if (!visible()) return;
+      setFailed(true);
       setError(
-        `${reason instanceof Error ? reason.message : "Couldn’t share this chat."}${count ? ` Access confirmed for ${count} recipient${count === 1 ? "" : "s"}; it is not revoked.` : ""}${exact.messageId ? " Link posting is not confirmed; retry keeps the same message." : ""}`,
+        `${reason instanceof Error ? reason.message : "Couldn’t share this chat."} Anyone already given access keeps it. Retry adds whoever is still missing, then posts the link.`,
       );
     } finally {
-      delete exact.running;
-      if (visible()) setPendingAction(undefined);
+      signal?.removeEventListener("abort", cancelled);
+      if (visible()) {
+        setBusy(false);
+        setProgress("");
+      }
     }
   };
   return {
     eligible,
-    saved,
     busy,
-    pendingAction,
+    failed,
     destination,
     chosen,
     destinationMembers,
     destinationRoster,
     retryDestination: () => setDestinationReload((value) => value + 1),
-    submittedAudience,
     removeDestination: () => {
       setDestination("");
       setExpandedChannel("");
+      setError("");
+      setFailed(false);
     },
     setExpandedChannel,
-    expandedShares,
-    setExpandedShares,
-    history,
-    historyError: historyError || historyReadError,
     source,
     rosterState,
     rosterError,
@@ -529,7 +339,6 @@ export function useSoloShare({
     channels,
     choose,
     submit,
-    startOver,
     error,
     progress,
   };

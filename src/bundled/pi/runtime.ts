@@ -653,9 +653,6 @@ export class PiRuntime {
       entry?.handle &&
       appClient(entry.handle, {
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
-        audienceAuthorityCommunity: this.reads(
-          call.agent,
-        )?.audienceAuthorityCommunity?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) => this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),

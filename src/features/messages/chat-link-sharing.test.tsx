@@ -8,7 +8,6 @@ import { keypair, metadata, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
-import { beginSoloShare, finishSoloShare } from "../solo/share-attempt";
 import * as share from "../solo/share";
 import { MessageComposer } from "./MessageComposer";
 import { composerDOMFixture } from "./composer-testing";
@@ -167,7 +166,7 @@ it.each([false, true])(
     expect(f.published.map((event) => event.kind)).toEqual([9000, 9]);
     const message = f.published.find((event) => event.kind === 9);
     expect(message?.content).toContain("Please look at this");
-    expect(message?.tags).toContainEqual(["s", source]);
+    expect(message?.tags.some(([key]) => key === "s")).toBe(false);
     if (thread) expect(message?.tags).toContainEqual(["e", root, "", "reply"]);
     else expect(message?.tags.some((tag) => tag[0] === "e")).toBe(false);
   },
@@ -210,23 +209,6 @@ it("retains the captured audience on grant failure and retries the existing rece
   expect(f.published[0]?.id).toBe(first);
   expect(f.members.get(source)).toContain(f.person.pubkey);
   expect(f.members.get(source)).not.toContain(f.late.pubkey);
-});
-
-it("blocks competing Share intent but still permits link-only sending", async () => {
-  const f = await fixture();
-  beginSoloShare(f.session, source, { destination, chatPeople: [] });
-  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Share and send" }),
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Finish the existing Share operation",
-  );
-  expect(f.publish).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Send link only" }));
-  await waitFor(() => expect(f.published).toHaveLength(1));
-  expect(f.published[0]?.kind).toBe(9);
-  finishSoloShare(f.session, source);
 });
 
 it("does not send the link after leaving while an already-dispatched grant finishes", async () => {
@@ -287,7 +269,10 @@ it("counts and grants only members who don't already have access", async () => {
 
 it("offers only link-only when the viewer can't share the chat", async () => {
   const f = await fixture();
-  vi.spyOn(share, "canShareConversation").mockReturnValue(false);
+  // Sharing's own rule is covered in share.test.ts; here only the dialog's response.
+  vi.spyOn(share, "shareBlocker").mockReturnValue(
+    "You can’t share access to this chat, so some people may not be able to open it. Send the link only, or ask its owner to share it.",
+  );
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   const dialog = await screen.findByRole("dialog");
   expect(dialog).toHaveTextContent("You can’t share access to this chat");

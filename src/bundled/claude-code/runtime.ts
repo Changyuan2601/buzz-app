@@ -829,8 +829,6 @@ export class ClaudeRuntime {
           handle &&
           appClient(handle, {
             relayAuthor: this.reads(pubkey)?.relayAuthor?.(),
-            audienceAuthorityCommunity:
-              this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
             read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),

@@ -4,11 +4,12 @@ import type { ChannelSummary } from "../relay/contracts";
 import type { MemberAdditionIntent } from "../channel-members/members";
 import { trackMemberAdditionReceipts } from "../channel-members/operations";
 import {
-  canShareConversation,
   destinationShareAudience,
-  grantSoloChatAccess,
+  missingAccess,
+  shareBlocker,
+  shareChatsWithChannel,
+  Unshareable,
 } from "../solo/share";
-import { soloShareAttempt } from "../solo/share-attempt";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 
@@ -30,11 +31,8 @@ type Pending = {
   started?: boolean;
 };
 
-/** A reason that retrying this consent can't change. */
-class Unshareable extends Error {}
-
 /** Consent only. Existing membership receipts own grants; the composer owns the one message/reply. */
-export function useSessionLinkSharing(
+export function useChatLinkSharing(
   session: RelaySession | undefined,
   channelId: string,
   restoreFocus: () => void,
@@ -61,43 +59,15 @@ export function useSessionLinkSharing(
         channelId,
         request.signal,
       );
-      check();
-      // Check every source before starting any grant. A copied card is not authority.
-      const sources: ChannelSummary[] = [];
-      for (const id of request.sources) {
-        sources.push(await session.channelWrites.refreshMembership(id));
-        check();
-      }
-      const blocked = shareBlocker(session, sources, request.audience);
-      if (blocked) throw new Unshareable(blocked);
-      for (const source of sources) {
-        if (soloShareAttempt(session, source.id)) throw new Error(competing);
-      }
-      request.started = true;
-      for (const source of sources) {
-        check();
-        const grants = request.grants.get(source.id);
-        if (!grants)
-          throw new Error(
-            "Sharing intent is unavailable. Close and send again.",
-          );
-        await grantSoloChatAccess(
-          session,
-          source.id,
-          request.audience.filter(
-            (key) =>
-              !grants.get(key)?.confirmed && !source.members?.includes(key),
-          ),
-          grants,
-          request.signal,
-          check,
-          true,
-          source.channelType === "solo",
-          true,
-          // A dispatched addition may finish; a changed draft stops the next one.
-          check,
-        );
-      }
+      await shareChatsWithChannel(session, request.sources, channelId, {
+        signal: request.signal,
+        check,
+        audience: request.audience,
+        grants: request.grants,
+        onStarted: () => {
+          request.started = true;
+        },
+      });
       check();
       request.finish(true);
     } catch (reason) {
@@ -152,9 +122,6 @@ export function useSessionLinkSharing(
       // Surface known failures before consent instead of after Share.
       const blocked =
         audience && known && shareBlocker(session, known, audience);
-      const busy = known?.some((source) =>
-        soloShareAttempt(session, source.id),
-      );
       return new Promise((resolve) => {
         const grants = new Map(
           sources.map((id) => [id, new Map<string, MemberAdditionIntent>()]),
@@ -182,7 +149,7 @@ export function useSessionLinkSharing(
           channelName: destination?.name ?? "",
           ...(audience ? { audience } : {}),
           ...(missing === undefined ? {} : { count: missing }),
-          ...(blocked ? { blocked } : busy ? { error: competing } : {}),
+          ...(blocked ? { blocked } : {}),
           busy: false,
         });
       });
@@ -255,9 +222,6 @@ function consentDescription(pending: Pending | undefined) {
   return `Share gives ${audience}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`;
 }
 
-const competing =
-  "Finish the existing Share operation for this chat, then retry.";
-
 /** Fresh source rosters, or undefined when any can't be read. */
 async function readSources(session: RelaySession, sources: readonly string[]) {
   try {
@@ -268,27 +232,4 @@ async function readSources(session: RelaySession, sources: readonly string[]) {
   } catch {
     return undefined;
   }
-}
-
-/** Captured members Share would grant: those missing from at least one chat. */
-function missingAccess(
-  sources: readonly ChannelSummary[],
-  audience: readonly string[],
-) {
-  return audience.filter((key) =>
-    sources.some((source) => !source.members?.includes(key)),
-  );
-}
-
-/** Failures no retry of this consent can fix. */
-function shareBlocker(
-  session: RelaySession,
-  sources: readonly ChannelSummary[],
-  audience: readonly string[],
-) {
-  if (sources.some((source) => !canShareConversation(session, source)))
-    return "You can’t share access to this chat, so some people may not be able to open it. Send the link only, or ask its owner to share it.";
-  if (missingAccess(sources, audience).length > 100)
-    return "This channel has too many members to share with at once. Send the link only, or share with people directly.";
-  return undefined;
 }

@@ -1170,9 +1170,6 @@ export class CodexRuntime {
     const { agent } = owner;
     const client = appClient(agent, {
       relayAuthor: this.reads(agent.pubkey)?.relayAuthor?.(),
-      audienceAuthorityCommunity: this.reads(
-        agent.pubkey,
-      )?.audienceAuthorityCommunity?.(),
       signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
       read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
       check,
