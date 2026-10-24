@@ -265,21 +265,26 @@ it("keeps Public workspace authorization failures visible and performs no mutati
   expect(respond).toHaveBeenCalledTimes(1);
 });
 
-it("opens an app beside the conversation the agent works in", async () => {
-  const { call, ctx } = await setup();
-  await expect(
-    call("apps_open", { url: APP }, { channel: "c1", root: "r1" }),
-  ).resolves.toBe("Opened beside the conversation.");
-  expect(ctx.panels.requestOpen).toHaveBeenCalledWith({
-    target: APP,
-    channelId: "c1",
-    rootId: "r1",
-  });
-  ctx.panels.requestOpen.mockReturnValue(false);
-  await expect(
-    call("apps_open", { url: APP }, { channel: "c1" }),
-  ).resolves.toMatch(/^Not opened/);
-  await expect(
-    call("apps_open", { url: "https://example.org/" }, { channel: "c1" }),
-  ).rejects.toThrow(/not a Builderlab app URL/);
-});
+it.each([APP, "https://tiny-counter--bpsites.apps.builderlab.xyz/"])(
+  "opens %s beside the conversation the agent works in",
+  async (url) => {
+    const { call, ctx } = await setup();
+    const panel = ctx.panels.register.mock.calls[0]?.[0];
+    expect(panel.matches(url)).toBe(true);
+    await expect(
+      call("apps_open", { url }, { channel: "c1", root: "r1" }),
+    ).resolves.toBe("Opened beside the conversation.");
+    expect(ctx.panels.requestOpen).toHaveBeenCalledWith({
+      target: url,
+      channelId: "c1",
+      rootId: "r1",
+    });
+    ctx.panels.requestOpen.mockReturnValue(false);
+    await expect(
+      call("apps_open", { url }, { channel: "c1" }),
+    ).resolves.toMatch(/^Not opened/);
+    await expect(
+      call("apps_open", { url: "https://example.org/" }, { channel: "c1" }),
+    ).rejects.toThrow(/not a Builderlab app URL/);
+  },
+);

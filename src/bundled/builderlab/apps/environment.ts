@@ -22,6 +22,7 @@ export function controlPlane(
 
 /** Hosts that serve deployed apps, a subdomain each, per tenant. */
 const APP_DOMAINS = [
+  "apps.builderlab.xyz",
   "apps.public.builderlab.xyz",
   "apps.builderlabstaging.xyz",
   "apps.block.builderlab.xyz",
