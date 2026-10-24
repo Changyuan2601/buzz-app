@@ -311,7 +311,7 @@ Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `S
 in `src/features/solo`; Solo workspaces use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
+`soloLabels`, `ownSolo`); `src/features/sessions` reads the Solo chat links shared into a channel (its Shared sessions tab and the agents' `shared_sessions` tool). Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;
