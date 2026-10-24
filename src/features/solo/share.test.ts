@@ -21,7 +21,9 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function setup() {
+/** `batch`: the relay adds every `p` it names, as batch-capable relays do;
+ * otherwise only the first, as older relays do. */
+function setup({ batch = false } = {}) {
   const viewer = keypair(),
     relay = keypair(),
     human = keypair(),
@@ -36,29 +38,43 @@ function setup() {
   let failLink = false;
   let chosenName: string | undefined;
   let rejectGrant: boolean | string = false;
+  let batchGate: Promise<void> | undefined;
+  let failNextRoster = false;
+  let failRoster = false;
   let records: readonly import("../relay/outbox").OutgoingEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
-    if (
-      event.kind === 9000 &&
-      (rejectGrant === true ||
-        event.tags.some(([tag, key]) => tag === "p" && key === rejectGrant))
-    )
+    if (event.tags.filter(([tag]) => tag === "p").length > 1) await batchGate;
+    const people = event.tags
+      .filter(([tag]) => tag === "p")
+      .map(([, key]) => key ?? "")
+      .slice(0, batch ? undefined : 1);
+    const allowed = people.filter((key) => key !== rejectGrant);
+    if (event.kind === 9000 && (rejectGrant === true || !allowed.length))
       throw new PublishRejected("Invite denied");
     if (event.kind === 9 && failLink) throw new PublishRejected("Post denied");
     if (event.kind === 9000) {
       const id = event.tags.find(([tag]) => tag === "h")?.[1] ?? "";
-      members.set(id, [
-        ...new Set([
-          ...(members.get(id) ?? []),
-          event.tags.find(([tag]) => tag === "p")?.[1] ?? "",
-        ]),
-      ]);
+      members.set(id, [...new Set([...(members.get(id) ?? []), ...allowed])]);
     }
     published.push(event);
     clock++;
+    if (event.kind === 9000 && failNextRoster) {
+      failNextRoster = false;
+      failRoster = true;
+    }
   });
   const query = vi.fn(
     async (filters: readonly import("../relay/events").ReadFilter[]) => {
+      if (
+        failRoster &&
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(39002) && filter["#d"]?.includes(chatId),
+        )
+      ) {
+        failRoster = false;
+        throw new Error("Relay unavailable");
+      }
       const events = [
         metadata(relay, chatId, chosenName ?? "Work", clock, [
           ["t", "stream"],
@@ -82,6 +98,7 @@ function setup() {
     },
   );
   let knownAgent = false;
+  let moreAgents: string[] = [];
   const owner = createRelaySession(
     {
       channelIdentity: true,
@@ -91,7 +108,12 @@ function setup() {
       archiveAuthority: relay.pubkey,
       readAgentLibrary: async () => ({
         definitions: [],
-        identities: knownAgent ? [{ pubkey: bot.pubkey, name: "Agent" }] : [],
+        identities: knownAgent
+          ? [bot.pubkey, ...moreAgents].map((pubkey) => ({
+              pubkey,
+              name: "Agent",
+            }))
+          : [],
       }),
       media: () => undefined,
       query,
@@ -150,8 +172,9 @@ function setup() {
     failLink: (value: boolean) => {
       failLink = value;
     },
-    setAgent: async () => {
+    setAgent: async (more: string[] = []) => {
       knownAgent = true;
+      moreAgents = more;
       await owner.session.agentChoices.refresh();
     },
     async archive(key: string) {
@@ -162,6 +185,12 @@ function setup() {
       });
       query.mockImplementationOnce(async () => [archive]);
       await owner.session.archives.refresh();
+    },
+    holdBatch(gate: Promise<void>) {
+      batchGate = gate;
+    },
+    failRosterAfterAdd() {
+      failNextRoster = true;
     },
     rejectGrant: (value: boolean | string) => {
       rejectGrant = value;
@@ -241,27 +270,26 @@ it("Everyone snapshots the destination's signed roster including agents, freezes
     (key) => confirmed.push(key),
     true,
   );
-  expect(confirmed).toEqual(frozen);
+  expect([...confirmed].sort()).toEqual(frozen);
   expect(t.members.get(chatId)).toEqual(
     expect.arrayContaining([t.viewer.pubkey, t.human.pubkey, t.bot.pubkey]),
   );
   expect(t.members.get(chatId)).not.toContain(t.late.pubkey);
+  // This relay adds only the batch's first person; the agent falls back to a single add.
   expect(t.published).toHaveLength(2);
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9000]);
   expect(
-    t.published.find((event) =>
-      event.tags.some(([name, key]) => name === "p" && key === t.bot.pubkey),
-    )?.tags,
-  ).toContainEqual(["role", "bot"]);
+    t.published[0]?.tags.filter(([name]) => name === "p" || name === "role"),
+  ).toEqual([
+    ["p", t.human.pubkey],
+    ["p", t.bot.pubkey, "bot"],
+  ]);
   expect(
-    t.published
-      .find((event) =>
-        event.tags.some(
-          ([name, key]) => name === "p" && key === t.human.pubkey,
-        ),
-      )
-      ?.tags.some(([name]) => name === "role"),
-  ).toBe(false);
+    t.published[1]?.tags.filter(([name]) => name === "p" || name === "role"),
+  ).toEqual([
+    ["p", t.bot.pubkey],
+    ["role", "bot"],
+  ]);
   expect(
     t.published.every((event) =>
       event.tags.some(([name, id]) => name === "h" && id === chatId),
@@ -494,7 +522,7 @@ it("stops instead of trying the rest once the viewer can no longer add anyone", 
       new AbortController().signal,
       () => {},
     ),
-  ).rejects.toThrow("Could not refresh channel membership");
+  ).rejects.toThrow("This channel cannot add members");
   expect(t.publish).not.toHaveBeenCalled();
 });
 
@@ -660,3 +688,144 @@ it.each(["huddle", "metadataPending"] as const)(
     ).rejects.toThrow("Destination membership");
   },
 );
+
+it("adds everyone in one event when the relay takes several people", async () => {
+  const t = setup({ batch: true });
+  await t.ready();
+  await t.setAgent();
+  const confirmed: string[] = [];
+  expect(
+    await grantSoloChatAccess(
+      t.session,
+      chatId,
+      [t.bot.pubkey, t.human.pubkey, t.late.pubkey],
+      new Map(),
+      new AbortController().signal,
+      (key) => confirmed.push(key),
+      true,
+    ),
+  ).toEqual([]);
+  expect(confirmed).toEqual([t.human.pubkey, t.late.pubkey, t.bot.pubkey]);
+  expect(t.published).toHaveLength(1);
+  // Humans first and no event-wide role, so an older relay adds a human as a member.
+  expect(
+    t.published[0]?.tags.filter(([name]) => name === "p" || name === "role"),
+  ).toEqual([
+    ["p", t.human.pubkey],
+    ["p", t.late.pubkey],
+    ["p", t.bot.pubkey, "bot"],
+  ]);
+  // Settled additions leave nothing pending in Outbox.
+  expect(t.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("gives a batch of only agents the event-wide bot role", async () => {
+  const t = setup({ batch: true });
+  await t.ready();
+  await t.setAgent([t.late.pubkey]);
+  await grantSoloChatAccess(
+    t.session,
+    chatId,
+    [t.bot.pubkey, t.late.pubkey],
+    new Map(),
+    new AbortController().signal,
+    () => {},
+    true,
+  );
+  // An older relay reads only this, and adds only the first agent.
+  expect(
+    t.published[0]?.tags.filter(([name]) => name === "p" || name === "role"),
+  ).toEqual([
+    ["p", t.bot.pubkey, "bot"],
+    ["p", t.late.pubkey, "bot"],
+    ["role", "bot"],
+  ]);
+});
+
+it("retries only the people a batch missed, one at a time, and reports why", async () => {
+  const t = setup({ batch: true });
+  await t.ready();
+  t.rejectGrant(t.human.pubkey);
+  const confirmed: string[] = [];
+  expect(
+    await grantSoloChatAccess(
+      t.session,
+      chatId,
+      [t.human.pubkey, t.late.pubkey],
+      new Map(),
+      new AbortController().signal,
+      (key) => confirmed.push(key),
+    ),
+  ).toEqual([{ key: t.human.pubkey, error: expect.any(String) }]);
+  expect(confirmed).toEqual([t.late.pubkey]);
+  expect(
+    t.published.map((event) =>
+      event.tags.filter(([name]) => name === "p").map(([, key]) => key),
+    ),
+  ).toEqual([[t.human.pubkey, t.late.pubkey]]);
+  expect(t.publish).toHaveBeenCalledTimes(2);
+  expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+    "p",
+    t.human.pubkey,
+  ]);
+});
+
+it("a failed roster read after a batch leaves the rest to single adds instead of failing the share", async () => {
+  const t = setup({ batch: true });
+  await t.ready();
+  t.failRosterAfterAdd();
+  const confirmed: string[] = [];
+  expect(
+    await grantSoloChatAccess(
+      t.session,
+      chatId,
+      [t.human.pubkey, t.late.pubkey],
+      new Map(),
+      new AbortController().signal,
+      (key) => confirmed.push(key),
+    ),
+  ).toEqual([]);
+  expect(confirmed).toEqual([t.human.pubkey, t.late.pubkey]);
+  // The batch added both; the single path found them on the roster without sending again.
+  expect(t.published).toHaveLength(1);
+});
+
+it("a single add never resumes another share's batch still in flight", async () => {
+  const t = setup({ batch: true });
+  await t.ready();
+  let release = () => {};
+  t.holdBatch(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const batch = grantSoloChatAccess(
+    t.session,
+    chatId,
+    [t.human.pubkey, t.late.pubkey],
+    new Map(),
+    new AbortController().signal,
+    () => {},
+  );
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledTimes(1));
+  try {
+    expect(
+      await grantSoloChatAccess(
+        t.session,
+        chatId,
+        [t.human.pubkey],
+        new Map(),
+        new AbortController().signal,
+        () => {},
+      ),
+    ).toEqual([]);
+    expect(t.published.at(-1)?.tags).toContainEqual(["p", t.human.pubkey]);
+  } finally {
+    release();
+  }
+  expect(await batch).toEqual([]);
+  expect(t.members.get(chatId)).toEqual(
+    expect.arrayContaining([t.human.pubkey, t.late.pubkey]),
+  );
+  expect(t.session.outbox?.snapshot()).toEqual([]);
+});

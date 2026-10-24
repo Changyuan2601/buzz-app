@@ -5,7 +5,11 @@ import {
 import {
   addChannelMember,
   canAddMembers,
+  batchAdditionKey,
   canShareSoloChat,
+  isBatchAddition,
+  knownAgent,
+  waitForAddition,
 } from "../channel-members/members";
 import { archiveHides } from "../relay/identity-archives";
 import type { ChannelSummary } from "../relay/contracts";
@@ -68,7 +72,8 @@ export function isSoloChatLinkReceipt(item: OutgoingEvent) {
 /** Exact selected people are grants to the chat, not the destination or its parent.
  * Opportunistic: everyone is tried and per-person failures are returned, not
  * thrown. Abort, lost add rights and a throwing `beforeDispatch` or
- * `onConfirmed` stop the rest. */
+ * `onConfirmed` stop the rest. Fresh people go in one batch first; anyone it
+ * didn't add gets a single addition, which also names why they failed. */
 export async function grantSoloChatAccess(
   session: RelaySession,
   channelId: string,
@@ -83,6 +88,17 @@ export async function grantSoloChatAccess(
 ): Promise<{ key: string; error: string }[]> {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
+  const added = await addAtOnce(
+    session,
+    channelId,
+    people,
+    intents,
+    signal,
+    includeAgents,
+    soloParticipant,
+    beforeDispatch,
+  );
+  for (const key of added) onConfirmed(key);
   const failed: { key: string; error: string }[] = [];
   let stopped = false;
   const dispatch = () => {
@@ -95,6 +111,7 @@ export async function grantSoloChatAccess(
   };
   for (const key of people) {
     signal.throwIfAborted();
+    if (added.includes(key)) continue;
     // Channel audiences omit archived identities; direct selections still fail explicitly.
     if (skipArchived && archiveHides(session.archives, key, session.viewer))
       continue;
@@ -136,6 +153,117 @@ export async function grantSoloChatAccess(
     onConfirmed(key);
   }
   return failed;
+}
+
+/** One kind 9000 naming every fresh person, when there are several. A relay
+ * without batch support adds only the first `p` and reads only the event's
+ * `role`, so humans go first and the roster decides who was added. */
+async function addAtOnce(
+  session: RelaySession,
+  channelId: string,
+  people: readonly string[],
+  intents: Map<string, MemberAdditionIntent>,
+  signal: AbortSignal,
+  includeAgents: boolean,
+  soloParticipant: boolean,
+  beforeDispatch?: () => void,
+) {
+  const outbox = session.outbox;
+  const allowed = () => {
+    const chat =
+      session.channels.list().channels.find((item) => item.id === channelId) ??
+      session.channels.get?.(channelId);
+    return soloParticipant
+      ? canShareSoloChat(session, chat)
+      : canAddMembers(session, chat);
+  };
+  if (people.length < 2 || !outbox || !allowed()) return [];
+  // Best effort: anything short of an abort or a stop leaves the rest to single adds.
+  const attempt = async <T>(work: () => Promise<T>) => {
+    try {
+      return await work();
+    } catch {
+      signal.throwIfAborted();
+      return undefined;
+    }
+  };
+  const before = await attempt(async () => {
+    await outbox.ready();
+    return session.channelWrites.refreshMembership(channelId);
+  });
+  signal.throwIfAborted();
+  if (!before) return [];
+  // People with an addition already under way keep it. A batch left by a
+  // reload is settled here; the roster decides who it added.
+  const pending = new Set<string>();
+  for (const { event, acknowledged, recovery } of outbox.snapshot()) {
+    if (
+      acknowledged ||
+      event.kind !== 9000 ||
+      !event.tags.some(([tag, value]) => tag === "h" && value === channelId)
+    )
+      continue;
+    if (isBatchAddition(recovery))
+      await attempt(() => outbox.acknowledge(event.id));
+    else
+      for (const [tag, key] of event.tags)
+        if (tag === "p" && key) pending.add(key);
+  }
+  // Anyone a single addition would refuse stays out, so it reports why.
+  const fresh = people.filter((key) => {
+    const intent = intents.get(key);
+    return (
+      /^[0-9a-f]{64}$/.test(key) &&
+      !intent?.id &&
+      !intent?.confirmed &&
+      !intent?.dismissed &&
+      !before.members?.includes(key) &&
+      !pending.has(key) &&
+      !archiveHides(session.archives, key, session.viewer) &&
+      (includeAgents || !soloParticipant || !knownAgent(session, key))
+    );
+  });
+  if (fresh.length < 2 || !allowed()) return [];
+  const agents = new Set(fresh.filter((key) => knownAgent(session, key)));
+  const ordered = [
+    ...fresh.filter((key) => !agents.has(key)),
+    ...fresh.filter((key) => agents.has(key)),
+  ];
+  beforeDispatch?.();
+  const id = await attempt(async () =>
+    outbox.send(
+      {
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", channelId],
+          ...ordered.map((key) =>
+            agents.has(key) ? ["p", key, "bot"] : ["p", key],
+          ),
+          ...(agents.size === ordered.length ? [["role", "bot"]] : []),
+        ],
+      },
+      { key: batchAdditionKey(), value: "1" },
+    ),
+  );
+  if (!id) return [];
+  try {
+    // A refusal or unknown result still leaves the roster to decide.
+    await attempt(() => waitForAddition(outbox, id, signal));
+    const after = await attempt(() =>
+      session.channelWrites.refreshMembership(channelId),
+    );
+    return ordered.filter((key) => {
+      if (!after?.members?.includes(key)) return false;
+      const intent = intents.get(key) ?? {};
+      intent.confirmed = true;
+      intents.set(key, intent);
+      return true;
+    });
+  } finally {
+    // Settled: a single addition for anyone missing must not resume this event.
+    await outbox.acknowledge(id).catch(() => {});
+  }
 }
 
 /** One line naming who a partial share missed; access for the rest stands. */

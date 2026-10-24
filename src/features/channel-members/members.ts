@@ -47,7 +47,11 @@ export function canShareSoloChat(
 }
 
 /** Reuse the outbox's durable operation on retry, including an unknown result. */
-function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
+export function waitForAddition(
+  outbox: LocalEvents,
+  id: string,
+  signal: AbortSignal,
+) {
   return new Promise<void>((resolve, reject) => {
     let stop = () => {};
     const finish = (error?: Error) => {
@@ -79,6 +83,23 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
     else inspect();
   });
 }
+
+/** Agents join a channel with the `bot` role. */
+export function knownAgent(session: RelaySession, pubkey: string) {
+  return !!(
+    session.agentChoices
+      .snapshot()
+      .identities.some((agent) => agent.pubkey === pubkey) ||
+    session.profiles.snapshot().get(pubkey)?.isAgent
+  );
+}
+
+const batchPrefix = "member-add:batch:";
+/** One receipt per batch, so concurrent batches never share a key. */
+export const batchAdditionKey = () => `${batchPrefix}${crypto.randomUUID()}`;
+/** A batch addition's receipt, which a single addition never resumes. */
+export const isBatchAddition = (recovery?: { key: string }) =>
+  !!recovery?.key.startsWith(batchPrefix);
 
 export type MemberAdditionIntent = {
   id?: string;
@@ -118,14 +139,7 @@ export async function addChannelMember(
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
       );
-    if (
-      soloParticipant &&
-      !allowSoloAgents &&
-      (session.agentChoices
-        .snapshot()
-        .identities.some((agent) => agent.pubkey === pubkey) ||
-        session.profiles.snapshot().get(pubkey)?.isAgent)
-    )
+    if (soloParticipant && !allowSoloAgents && knownAgent(session, pubkey))
       throw new Error(
         "Add agents by tagging them in the chat composer instead.",
       );
@@ -147,10 +161,11 @@ export async function addChannelMember(
     ? undefined
     : journal
         .snapshot()
-        .find(({ event, acknowledged }) =>
+        .find(({ event, acknowledged, recovery }) =>
           intent.id
             ? event.id === intent.id
             : !acknowledged &&
+              !isBatchAddition(recovery) &&
               event.kind === 9000 &&
               event.tags.some(
                 ([tag, value]) => tag === "h" && value === channelId,
@@ -188,11 +203,7 @@ export async function addChannelMember(
     throw new Error(
       "This addition expired. Remove its Not sent item in Outbox, then try again.",
     );
-  const isAgent =
-    session.agentChoices
-      .snapshot()
-      .identities.some((agent) => agent.pubkey === pubkey) ||
-    session.profiles.snapshot().get(pubkey)?.isAgent;
+  const isAgent = knownAgent(session, pubkey);
   beforeDispatch?.();
   const id =
     pending?.event.id ??
