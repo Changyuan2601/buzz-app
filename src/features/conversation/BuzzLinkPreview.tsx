@@ -17,6 +17,7 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
 import { messagePreviewText } from "./message-preview-text";
 import { avatarMedia } from "../../shared/avatar-source";
+import { sortParticipantNames } from "../identity-names/participant-order";
 
 /** Mounted only while a preview is open. The session owns access, edits and deletion. */
 export function BuzzLinkPreview({
@@ -118,15 +119,15 @@ function PreviewContent({
   );
   const channelName =
     channel?.channelType === "dm" && channel.participants
-      ? channel.participants
-          .map((id) =>
+      ? sortParticipantNames(
+          channel.participants.map((id) =>
             identityName(
               id,
               profiles.get(id)?.name ?? id.slice(0, 10),
               channel.participants,
             ),
-          )
-          .join(", ") || "Notes to self"
+          ),
+        ).join(", ") || "Notes to self"
       : (channel?.name ?? "Channel unavailable");
   const ChannelIcon =
     channel?.hidden || channel?.channelType === "dm"
