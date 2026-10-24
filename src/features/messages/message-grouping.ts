@@ -15,7 +15,8 @@ export function continuesMessageGroup(
     !previous.sentFromThread &&
     previous.channelId === current.channelId &&
     previous.authorId === current.authorId &&
-    previous.audience === current.audience &&
+    // Details are for people too, so they stack with the author's messages.
+    (previous.audience === "agents") === (current.audience === "agents") &&
     current.createdAt >= previous.createdAt &&
     current.createdAt - previous.createdAt <= 5 * 60 &&
     new Date(previous.createdAt * 1000).toDateString() ===
