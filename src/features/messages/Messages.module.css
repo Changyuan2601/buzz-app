@@ -2291,7 +2291,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
-  width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
+  /* Every layer inside is absolute, so the width must not depend on 100%:
+     a fit-content own-message body would size the video to its other
+     contents, which a stacked row without a byline has none of. The
+     inherited max-width still fits it to narrow rows. */
+  width: min(24rem, calc(var(--media-ratio, 16 / 9) * 11.25rem));
   max-height: 16rem;
 }
 .mediaPreview[data-video-preview] .mediaExpand {
