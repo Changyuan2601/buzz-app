@@ -7,6 +7,11 @@ import { createOAuthSession } from "../../src/bundled/builderlab/oauth/session";
 import { BrowserService } from "../../src/features/browser/service";
 import type { BrowserPlatform } from "../../src/features/browser/platform";
 import { PanelsService } from "../../src/features/panels/service";
+import { PanelWorkspace } from "../../src/features/panels/PanelWorkspace";
+import { IconButton } from "../../src/shared/design-system/ui/IconButton";
+import { ArrowUpIcon, GaugeIcon } from "../../src/shared/design-system/icons";
+import { Avatar } from "../../src/shared/design-system/ui/Avatar";
+import { ProfilePeek } from "../../src/features/profiles/ProfilePeek";
 
 // The native adapter is substituted; Cordis, plugin registration, React view
 // identity and the four-guest pool are the production collaborators.
@@ -14,6 +19,8 @@ const calls = {
   attached: [] as { id: string; url: string }[],
   detached: [] as string[],
   statuses: [] as { id: string; url: string }[],
+  presentations: [] as { id: string; visible: boolean }[],
+  profilesOpened: [] as string[],
 };
 Object.assign(window, { appsPanelCalls: calls });
 const pages = new Map<string, string>();
@@ -25,7 +32,9 @@ const platform: BrowserPlatform = {
     pages.set(id, url);
     return id;
   },
-  async setBounds() {},
+  async setBounds(id, _bounds, visible) {
+    calls.presentations.push({ id, visible });
+  },
   async navigate(id, url) {
     pages.set(id, url);
   },
@@ -91,4 +100,89 @@ function Apps() {
 }
 const root = document.getElementById("root");
 if (!root) throw new Error("Fixture root unavailable");
-createRoot(root).render(<Apps />);
+function HoverHints() {
+  const width = Number(new URLSearchParams(location.search).get("pane-width"));
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `${width}px 500px`,
+        height: 400,
+      }}
+    >
+      <PanelWorkspace
+        main
+        items={[
+          {
+            id: "conversation",
+            label: "Conversation",
+            content: (
+              <div
+                style={{
+                  display: "flex",
+                  flex: 1,
+                  flexDirection: "column",
+                  alignItems: "end",
+                  justifyContent: "space-between",
+                  padding: 16,
+                }}
+              >
+                <ProfilePeek
+                  trigger={
+                    <button type="button" aria-label="nthilly avatar">
+                      <Avatar alt="" fallback="nthilly" />
+                    </button>
+                  }
+                  name="nthilly"
+                  picture={undefined}
+                  pubkey={"1".repeat(64)}
+                  agent={false}
+                  session={undefined}
+                  channelId="conversation"
+                  viewer={"1".repeat(64)}
+                  target="buzz://profile/nthilly"
+                  onOpen={(target) => {
+                    calls.profilesOpened.push(target);
+                    return true;
+                  }}
+                />
+                <div style={{ display: "flex" }}>
+                  <IconButton
+                    aria-label="Model and effort"
+                    title="Model, effort, and session controls"
+                    icon={<GaugeIcon />}
+                  />
+                  <IconButton
+                    aria-label="Send message"
+                    title="Send message"
+                    icon={<ArrowUpIcon />}
+                  />
+                </div>
+              </div>
+            ),
+          },
+        ]}
+        value="conversation"
+        select={() => {}}
+      />
+      <PanelWorkspace
+        items={[
+          {
+            id: "app",
+            label: "App",
+            content: <AppView target={urls[0] ?? ""} close={() => {}} />,
+          },
+        ]}
+        value="app"
+        select={() => {}}
+      />
+    </div>
+  );
+}
+createRoot(root).render(
+  new URLSearchParams(location.search).has("pane-width") ? (
+    <HoverHints />
+  ) : (
+    <Apps />
+  ),
+);

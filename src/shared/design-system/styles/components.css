@@ -574,7 +574,9 @@
   .buzz-preview-card {
     display: grid;
     width: max-content;
-    max-width: min(18rem, 75vw);
+    max-width: min(18rem, 75vw, var(--available-width, 100vw));
+    max-height: var(--available-height);
+    overflow-y: auto;
     gap: var(--space-1);
     @apply floating-surface;
     padding: var(--space-4);

@@ -1534,6 +1534,7 @@ function ChannelWorkspace({
       <Panel
         as="article"
         aria-label="Conversation"
+        data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}
       >
         <div

@@ -347,6 +347,7 @@ export function PanelWorkspace({
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
       data-active-tab-closable={!!active?.close || undefined}
+      data-overlay-boundary=""
       className={styles.workspace}
       ref={(element) => {
         root.current = element;

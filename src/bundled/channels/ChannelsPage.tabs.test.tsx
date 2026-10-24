@@ -385,6 +385,13 @@ const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   return handled;
 };
 
+it("solo conversation bounds its hover surfaces inside its pane", async () => {
+  const h = await page("solo");
+  expect(h.composer.closest("[data-overlay-boundary]")).toBe(
+    screen.getByRole("article", { name: "Conversation" }),
+  );
+});
+
 it("solo composer retains side-tab cycling and close focus", async () => {
   const h = await page("solo");
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));

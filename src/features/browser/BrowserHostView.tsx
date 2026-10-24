@@ -60,13 +60,19 @@ function covered(element: HTMLElement): boolean {
   );
 }
 
-/** The website draws above every page element, so it hides for a modal and
- * for a floating popup, such as a menu or tooltip, that reaches over it. */
+/** The website yields to modal and interactive popups. Passive hover hints
+ * must not blank a neighboring page just because they reach over its edge. */
 function hostOverlayOpen(viewport: BrowserBounds): boolean {
   if (document.querySelector('dialog[open], [aria-modal="true"]')) return true;
   for (const popup of document.querySelectorAll<HTMLElement>(
     '[data-open][data-side], [role="menu"], [role="listbox"]',
   )) {
+    if (
+      popup.matches('[role="tooltip"]') ||
+      (popup.matches('[role="presentation"]') &&
+        popup.querySelector(':scope > [role="tooltip"]'))
+    )
+      continue;
     const box = popup.getBoundingClientRect();
     if (
       box.width > 0 &&
