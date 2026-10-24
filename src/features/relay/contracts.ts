@@ -119,8 +119,9 @@ export type ChannelMessage = Readonly<{
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
   /** Signed `audience` tag of the original event: `agents` is coordination
-   * between agents, shown quietly. Absent means everyone; unknown values too. */
-  audience?: "agents";
+   * between agents, shown quietly; `details` is fuller material for people,
+   * read in its own viewer. Absent means everyone; unknown values too. */
+  audience?: "agents" | "details";
   /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
   diff?: Readonly<{
     filePath?: string | undefined;

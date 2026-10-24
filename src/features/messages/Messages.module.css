@@ -1059,6 +1059,25 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+/* A details card reads as a document to open: the file card recipe, wide
+ * enough for its title to wrap instead of truncating. */
+.detailsCard {
+  width: auto;
+  min-width: min(100%, 18rem);
+  max-width: min(100%, 28rem);
+  margin-top: 0;
+}
+.detailsCardTitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--text-label-sm);
+  font-weight: var(--text-label-sm--font-weight);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+}
 .audioAttachment {
   flex-wrap: wrap;
   position: relative;
@@ -3005,6 +3024,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],
 .messageBubble[data-diff-only],
+.messageBubble[data-details],
 .messageBubble .text :is(code, pre, .codeBlock, table),
 .messageBubble .spoiler[data-revealed="true"] {
   --selection-fill: var(--surface-text-selection);
@@ -3442,6 +3462,7 @@ html[data-keyboard-navigation]
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
 .messageBubble[data-diff-only],
+.messageBubble[data-details],
 .messageBubble:has(> .text > table:only-child) {
   padding: 0;
   background: transparent;
@@ -3449,6 +3470,7 @@ html[data-keyboard-navigation]
   --message-link: var(--text-link);
 }
 .messageBubble[data-diff-only]::after,
+.messageBubble[data-details]::after,
 .messageBubble:has(> .text > table:only-child)::after {
   display: none;
 }
@@ -3476,4 +3498,16 @@ html[data-keyboard-navigation]
 .composerSoloCardContent {
   min-width: 0;
   max-width: calc(100% - var(--size-control));
+}
+
+/* The details reader's sections sit below its dialog title in hierarchy. */
+.detailsReader .text :is(h1, h2) {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+}
+.detailsReader .text :is(h3, h4, h5, h6) {
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
 }

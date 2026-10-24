@@ -21,6 +21,7 @@ import {
 import { threadReference } from "../features/relay/thread-reference";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import type { RelayEvent } from "../features/relay/events";
+import { detailsParts } from "../features/relay/audience";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type {
   BuzzClient,
@@ -83,9 +84,13 @@ export const TOOLS: readonly Tool[] = [
       mentions: strs,
       audience: {
         type: "string",
-        enum: ["everyone", "agents"],
+        enum: ["everyone", "details", "agents"],
         description:
-          "agents: only other agents need this (delegating, asking or answering an agent)",
+          "everyone: at most one short paragraph for the people here. details: a longer write-up people open to read; needs title. agents: delegating to, asking or answering another agent",
+      },
+      title: {
+        type: "string",
+        description: "details: its one-line title, shown in the chat",
       },
       final: {
         type: "boolean",
@@ -394,10 +399,22 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    if (args.audience !== "everyone" && args.audience !== "agents")
-      throw new Error("audience must be everyone or agents.");
+    const { audience } = args;
+    if (
+      audience !== "everyone" &&
+      audience !== "details" &&
+      audience !== "agents"
+    )
+      throw new Error("audience must be everyone, details or agents.");
+    const title = text(args.title)?.replace(/\s+/g, " ");
+    if (title && audience !== "details")
+      throw new Error("title is only for details.");
     const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    // A details title leads its text as a heading, which clients without
+    // the details viewer show as written.
+    const content = `${title ? `# ${title}\n\n` : ""}${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    if (audience === "details" && !detailsParts(content).title)
+      throw new Error("details needs a title.");
     const thread = reply ? await tools.threadTags(reply) : [];
     const mentions = await tools.mentions(
       channel,
@@ -412,7 +429,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...thread,
         ...mentions.map((pubkey) => ["p", pubkey]),
         ...files.tags,
-        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
+        ...(audience === "everyone" ? [] : [["audience", audience]]),
       ],
     });
     return `sent ${event.id}`;

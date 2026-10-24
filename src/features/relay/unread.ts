@@ -986,7 +986,7 @@ export function createUnread({
               return event &&
                 !row.threadRootId &&
                 !row.membership &&
-                !row.audience &&
+                row.audience !== "agents" &&
                 row.authorId !== viewer &&
                 !elsewhere.has(row.id) &&
                 (!best || order(event, best) > 0)

@@ -2841,6 +2841,52 @@ it.each([false, true])(
   },
 );
 
+it("shows details as a titled card that opens them in a dialog", async () => {
+  const agent = keypair();
+  const [details] = foldMessages("channel", keypair().pubkey, [
+    signed(agent, {
+      kind: 9,
+      content: "# Release notes\n\nThe **sidebar** is fixed.",
+      created_at: 5,
+      tags: [
+        ["h", "channel"],
+        ["audience", "details"],
+      ],
+    }),
+  ]) as ChannelMessage[];
+  expect(details?.audience).toBe("details");
+  try {
+    renderDom(
+      <MessageRow
+        row={details as ChannelMessage}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const card = screen.getByRole("button", {
+      name: "Open details: Release notes",
+    });
+    expect(card).toHaveAttribute("aria-haspopup", "dialog");
+    expect(within(card).getByText("Details · 1 min read")).toBeVisible();
+    expect(screen.queryByText("sidebar")).toBeNull();
+    fireEvent.click(card);
+    const dialog = await screen.findByRole("dialog", { name: "Release notes" });
+    expect(within(dialog).getByText(/^Morgarita · /)).toBeVisible();
+    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
+    // The title heads the dialog, not its body as well.
+    expect(within(dialog).queryByRole("heading", { level: 1 })).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close details" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    cleanup();
+  }
+});
+
 it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
   const rivet = "b".repeat(64);
   const line = (content: string) => {
