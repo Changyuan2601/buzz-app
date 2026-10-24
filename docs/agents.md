@@ -53,6 +53,17 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## Reading the owner's Inbox
+
+`inbox` lists the owner's Inbox conversations, newest first, as the owner's
+session projects them (`unread.inbox()`), loading it first when the owner has
+not opened Inbox. It keeps only channels the agent is a member of or whose
+signed visibility is public, so a DM or a private channel the agent cannot read
+never reaches its context. It filters by threads, mentions or unread, and says
+when part of the Inbox has not loaded. Inbox archive state is not applied. Only
+local agents have it: hosted agents and standalone tool servers have no owner
+session.
+
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns

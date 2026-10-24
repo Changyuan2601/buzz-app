@@ -2,7 +2,14 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
-import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
+import type {
+  BuzzClient,
+  BuzzEvent,
+  Filter,
+  Memory,
+  OwnerInbox,
+  Template,
+} from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { callTool, TOOLS } from "./tools";
@@ -2582,4 +2589,67 @@ it("validates change drafts and passes only the proposed fields", async () => {
     agent: "Child",
     instructions: "",
   });
+});
+
+it("lists the owner's Inbox, filtered, with names and a partial note", async () => {
+  const { client } = fake([profile(alice, "Alice Smith")]);
+  await expect(callTool(client, {}, "inbox", {})).rejects.toThrow(
+    "Your owner's Inbox is kept in Buzz Desktop and is unavailable here.",
+  );
+  const item = {
+    channel: "chan",
+    channelName: "general",
+    message: root,
+    author: alice,
+    preview: "hello\n  there",
+    createdAt: 100,
+    mentioned: true,
+    thread: false,
+    unread: 2,
+  };
+  const inbox = vi.fn(
+    async (): Promise<OwnerInbox> => ({
+      partial: true,
+      error: "offline",
+      items: [
+        item,
+        {
+          ...item,
+          channel: "dev",
+          channelName: "dev",
+          root: alice,
+          message: nested,
+          author: bob,
+          preview: "x".repeat(250),
+          mentioned: false,
+          thread: true,
+          unread: 0,
+        },
+      ],
+    }),
+  );
+  client.inbox = inbox;
+  expect(await callTool(client, {}, "inbox", {})).toBe(
+    [
+      `${root} in chan "#general" from ${alice} "Alice Smith" mentions owner 2 unread at 1970-01-01T00:01Z: hello there`,
+      `${nested} in dev "#dev" re ${alice} from ${bob} at 1970-01-01T00:01Z: ${"x".repeat(200)}…`,
+      "Partial: some of your owner's Inbox has not loaded (offline).",
+    ].join("\n"),
+  );
+  expect(
+    await callTool(client, {}, "inbox", { only: "threads", limit: 5 }),
+  ).toMatch(new RegExp(`^${nested} `));
+  expect(
+    await callTool(client, {}, "inbox", { only: "mentions", unread: true }),
+  ).toMatch(new RegExp(`^${root} [^\\n]*\\nPartial`));
+  expect(await callTool(client, {}, "inbox", { limit: 1 })).not.toContain(
+    nested,
+  );
+  await expect(callTool(client, {}, "inbox", { only: "dms" })).rejects.toThrow(
+    "only must be threads or mentions.",
+  );
+  inbox.mockResolvedValueOnce({ partial: false, items: [] });
+  expect(await callTool(client, {}, "inbox", {})).toBe(
+    "Nothing in your owner's Inbox here.",
+  );
 });

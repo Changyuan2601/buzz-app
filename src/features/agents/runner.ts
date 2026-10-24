@@ -382,6 +382,8 @@ export type RunnerHost = {
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** The owner's Inbox as the agent's handle offers it. */
+  inbox(agent: Agent): ReturnType<AgentHandle["inbox"]>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2144,6 +2146,7 @@ export class AgentRunners {
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
+      inbox: () => this.host.inbox(agent),
       notes: (channelId: string, root?: string) => {
         const pending = runner.notes.get(channelId) ?? [];
         const matches = (note: { root: string | undefined }) =>

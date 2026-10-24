@@ -68,6 +68,26 @@ export type ThreadTabs = Readonly<{
   /** An empty name restores the automatic title; false when it has no tab. */
   rename(channel: string, root: string, name: string): boolean;
 }>;
+/** The owner's Inbox, newest first, in channels the agent is in or that are
+ * public; never DMs. `partial` when some of it may not have loaded. */
+export type OwnerInbox = Readonly<{
+  partial: boolean;
+  error?: string;
+  items: readonly Readonly<{
+    channel: string;
+    channelName: string;
+    /** The thread it is in; absent for top-level messages. */
+    root?: string;
+    /** The message it shows, as Inbox does. */
+    message: string;
+    author: string;
+    preview: string;
+    createdAt: number;
+    mentioned: boolean;
+    thread: boolean;
+    unread: number;
+  }>[];
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -132,6 +152,8 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** The owner's Inbox, where the host has the owner's session. */
+  inbox?(): Promise<OwnerInbox>;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

@@ -54,6 +54,7 @@ import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
+import { ownerInbox } from "./owner-inbox";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import {
@@ -339,6 +340,9 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** The owner's Inbox as the agent may see it; undefined while it is not
+   * connected. */
+  inbox(): ReturnType<typeof ownerInbox> | undefined;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -1477,6 +1481,10 @@ export class AgentsService extends Service implements Agents {
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session);
+      },
+      inbox: (agent) => {
+        const session = this.bindingOf(agent)?.session;
+        return session && ownerInbox(session, agent.pubkey);
       },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

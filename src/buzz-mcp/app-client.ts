@@ -128,6 +128,14 @@ export function appClient(
       check();
       return agent.templates();
     },
+    inbox: async () => {
+      check();
+      const found = agent.inbox();
+      if (!found) throw new Error("Your community is not connected.");
+      const inbox = await found;
+      check();
+      return inbox;
+    },
     tabs: {
       list: (channel) => tabs().list(channel),
       open: (channel, root) => tabs().open(channel, root),

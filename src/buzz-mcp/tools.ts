@@ -259,6 +259,15 @@ export const TOOLS: readonly Tool[] = [
       name: str,
     },
   ),
+  tool(
+    "inbox",
+    "Your owner's Inbox, newest first: threads they follow and messages that mention them, in channels you are in or that are public. Never DMs.",
+    {
+      only: { type: "string", enum: ["threads", "mentions"] },
+      unread: { type: "boolean", description: "Only unread conversations." },
+      limit: { type: "integer", description: "20 (max 100)." },
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -1212,6 +1221,54 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (closed === "shown")
       throw new Error("Your owner is looking at that tab, so it stays open.");
     return closed === "closed" ? "closed" : "not open";
+  },
+
+  async inbox(tools, args) {
+    const { client } = tools;
+    if (!client.inbox)
+      throw new Error(
+        "Your owner's Inbox is kept in Buzz Desktop and is unavailable here.",
+      );
+    if (
+      args.only !== undefined &&
+      args.only !== "threads" &&
+      args.only !== "mentions"
+    )
+      throw new Error("only must be threads or mentions.");
+    const inbox = await client.inbox();
+    const items = inbox.items
+      .filter(
+        (item) =>
+          (args.only !== "threads" || item.thread) &&
+          (args.only !== "mentions" || item.mentioned) &&
+          (args.unread !== true || item.unread > 0),
+      )
+      .slice(
+        0,
+        bound(typeof args.limit === "number" ? args.limit : undefined, 20, 100),
+      );
+    const names = await tools.names(items.map((item) => item.author));
+    const lines = items.map((item) => {
+      const name = names.get(item.author);
+      const preview = item.preview.replace(/\s+/g, " ").trim();
+      return [
+        item.message,
+        `in ${item.channel} ${JSON.stringify(`#${item.channelName}`)}`,
+        item.root && `re ${item.root}`,
+        `from ${item.author}`,
+        name && JSON.stringify(name),
+        item.mentioned && "mentions owner",
+        item.unread && `${item.unread} unread`,
+        `at ${time(item.createdAt)}: ${preview.length > 200 ? `${preview.slice(0, 200)}…` : preview}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    });
+    if (inbox.partial)
+      lines.push(
+        `Partial: some of your owner's Inbox has not loaded${inbox.error ? ` (${inbox.error})` : ""}.`,
+      );
+    return lines.join("\n") || "Nothing in your owner's Inbox here.";
   },
 };
 
