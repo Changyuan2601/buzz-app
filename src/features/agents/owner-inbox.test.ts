@@ -19,6 +19,7 @@ const item = (channelId: string, fields: Partial<InboxItem> = {}) =>
     mentioned: false,
     thread: false,
     unreadCount: 0,
+    manual: false,
     ...fields,
   }) as InboxItem;
 
@@ -43,6 +44,14 @@ function session({
       mentioned: true,
       thread: true,
       unreadCount: 3,
+      manual: true,
+      mention: item("public", {
+        rootId: "r".repeat(64),
+        latestMessageId: "q".repeat(64),
+        authorId: "c".repeat(64),
+        preview: "the mention",
+        createdAt: 90,
+      }),
     }),
   ];
   const ensure = vi.fn(async () => {
@@ -85,16 +94,23 @@ it("keeps the owner's Inbox to channels the agent is in or that are public", asy
     author: "b".repeat(64),
     preview: "in joined",
     createdAt: 100,
-    mentioned: false,
     thread: false,
     unread: 0,
+    manual: false,
   });
   expect(inbox.items[2]).toMatchObject({
     root: "r".repeat(64),
     message: "p".repeat(64),
-    mentioned: true,
     thread: true,
     unread: 3,
+    manual: true,
+    mention: {
+      root: "r".repeat(64),
+      message: "q".repeat(64),
+      author: "c".repeat(64),
+      preview: "the mention",
+      createdAt: 90,
+    },
   });
 });
 

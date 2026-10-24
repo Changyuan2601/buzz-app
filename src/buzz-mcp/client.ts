@@ -68,25 +68,31 @@ export type ThreadTabs = Readonly<{
   /** An empty name restores the automatic title; false when it has no tab. */
   rename(channel: string, root: string, name: string): boolean;
 }>;
+/** A message an Inbox row shows. */
+export type InboxMessage = Readonly<{
+  /** The thread it is in; absent for top-level messages. */
+  root?: string;
+  message: string;
+  author: string;
+  preview: string;
+  createdAt: number;
+}>;
 /** The owner's Inbox, newest first, in channels the agent is in or that are
  * public; never DMs. `partial` when some of it may not have loaded. */
 export type OwnerInbox = Readonly<{
   partial: boolean;
   error?: string;
-  items: readonly Readonly<{
-    channel: string;
-    channelName: string;
-    /** The thread it is in; absent for top-level messages. */
-    root?: string;
-    /** The message it shows, as Inbox does. */
-    message: string;
-    author: string;
-    preview: string;
-    createdAt: number;
-    mentioned: boolean;
-    thread: boolean;
-    unread: number;
-  }>[];
+  items: readonly (InboxMessage &
+    Readonly<{
+      channel: string;
+      channelName: string;
+      thread: boolean;
+      unread: number;
+      /** The owner marked it unread. */
+      manual: boolean;
+      /** The conversation as its mentions of the owner alone show it. */
+      mention?: InboxMessage;
+    }>)[];
 }>;
 export type Memory = Readonly<{
   slug: string;

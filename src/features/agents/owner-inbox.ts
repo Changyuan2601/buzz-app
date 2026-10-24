@@ -3,6 +3,7 @@
 // are public. DMs never leave the owner's device this way, and neither does a
 // private channel the agent cannot read itself.
 import type { OwnerInbox } from "../../buzz-mcp/client";
+import type { InboxItem } from "../relay/inbox";
 import type { RelaySession } from "../relay/session";
 
 export async function ownerInbox(
@@ -48,22 +49,26 @@ export async function ownerInbox(
     ...(error ? { error } : {}),
     items: inbox.items.flatMap((item) => {
       const channel = channels.get(item.channelId);
-      return channel
-        ? [
-            {
-              channel: channel.id,
-              channelName: channel.name,
-              ...(item.rootId ? { root: item.rootId } : {}),
-              message: item.previewMessageId ?? item.latestMessageId,
-              author: item.authorId,
-              preview: item.preview,
-              createdAt: item.createdAt,
-              mentioned: item.mentioned,
-              thread: item.thread,
-              unread: item.unreadCount,
-            },
-          ]
-        : [];
+      if (!channel) return [];
+      // The message a projection shows, as its Inbox row does.
+      const shown = (row: InboxItem) => ({
+        ...(row.rootId ? { root: row.rootId } : {}),
+        message: row.previewMessageId ?? row.latestMessageId,
+        author: row.authorId,
+        preview: row.preview,
+        createdAt: row.createdAt,
+      });
+      return [
+        {
+          channel: channel.id,
+          channelName: channel.name,
+          ...shown(item),
+          thread: item.thread,
+          unread: item.unreadCount,
+          manual: item.manual,
+          ...(item.mention ? { mention: shown(item.mention) } : {}),
+        },
+      ];
     }),
   };
 }

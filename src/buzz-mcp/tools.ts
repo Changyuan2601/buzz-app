@@ -1236,13 +1236,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     )
       throw new Error("only must be threads or mentions.");
     const inbox = await client.inbox();
-    const items = inbox.items
-      .filter(
-        (item) =>
-          (args.only !== "threads" || item.thread) &&
-          (args.only !== "mentions" || item.mentioned) &&
-          (args.unread !== true || item.unread > 0),
-      )
+    // Mentions show each conversation as its mentions alone do, as Inbox's
+    // Mentions filter does, so a newer reply is never labeled a mention.
+    const rows =
+      args.only === "mentions"
+        ? inbox.items
+            .flatMap((item) =>
+              item.mention ? [{ ...item, ...item.mention }] : [],
+            )
+            .sort((a, b) => b.createdAt - a.createdAt)
+        : inbox.items.filter((item) => args.only !== "threads" || item.thread);
+    const items = rows
+      .filter((item) => args.unread !== true || item.unread > 0 || item.manual)
       .slice(
         0,
         bound(typeof args.limit === "number" ? args.limit : undefined, 20, 100),
@@ -1251,14 +1256,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const lines = items.map((item) => {
       const name = names.get(item.author);
       const preview = item.preview.replace(/\s+/g, " ").trim();
+      const mention = item.mention?.message;
       return [
         item.message,
         `in ${item.channel} ${JSON.stringify(`#${item.channelName}`)}`,
         item.root && `re ${item.root}`,
         `from ${item.author}`,
         name && JSON.stringify(name),
-        item.mentioned && "mentions owner",
-        item.unread && `${item.unread} unread`,
+        mention &&
+          (mention === item.message
+            ? "mentions owner"
+            : `owner mentioned in ${mention}`),
+        item.unread ? `${item.unread} unread` : item.manual && "marked unread",
         `at ${time(item.createdAt)}: ${preview.length > 200 ? `${preview.slice(0, 200)}…` : preview}`,
       ]
         .filter(Boolean)

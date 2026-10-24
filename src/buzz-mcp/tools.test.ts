@@ -2596,55 +2596,96 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
   await expect(callTool(client, {}, "inbox", {})).rejects.toThrow(
     "Your owner's Inbox is kept in Buzz Desktop and is unavailable here.",
   );
-  const item = {
-    channel: "chan",
-    channelName: "general",
+  const earlier = "3".repeat(64);
+  const quiet = "4".repeat(64);
+  const mentioned = {
     message: root,
     author: alice,
     preview: "hello\n  there",
     createdAt: 100,
-    mentioned: true,
-    thread: false,
-    unread: 2,
   };
   const inbox = vi.fn(
     async (): Promise<OwnerInbox> => ({
       partial: true,
       error: "offline",
       items: [
-        item,
         {
-          ...item,
+          ...mentioned,
+          channel: "chan",
+          channelName: "general",
+          thread: false,
+          unread: 2,
+          manual: false,
+          mention: mentioned,
+        },
+        // A newer reply after a mention is not itself a mention.
+        {
           channel: "dev",
           channelName: "dev",
           root: alice,
           message: nested,
           author: bob,
           preview: "x".repeat(250),
-          mentioned: false,
+          createdAt: 100,
           thread: true,
           unread: 0,
+          manual: true,
+          mention: {
+            root: alice,
+            message: earlier,
+            author: alice,
+            preview: "hi owner",
+            createdAt: 90,
+          },
+        },
+        {
+          channel: "dev",
+          channelName: "dev",
+          root: bob,
+          message: quiet,
+          author: bob,
+          preview: "quiet",
+          createdAt: 80,
+          thread: true,
+          unread: 0,
+          manual: false,
         },
       ],
     }),
   );
   client.inbox = inbox;
+  const first = (text: unknown) =>
+    String(text)
+      .split("\n")
+      .map((line) => line.split(" ")[0]);
   expect(await callTool(client, {}, "inbox", {})).toBe(
     [
       `${root} in chan "#general" from ${alice} "Alice Smith" mentions owner 2 unread at 1970-01-01T00:01Z: hello there`,
-      `${nested} in dev "#dev" re ${alice} from ${bob} at 1970-01-01T00:01Z: ${"x".repeat(200)}…`,
+      `${nested} in dev "#dev" re ${alice} from ${bob} owner mentioned in ${earlier} marked unread at 1970-01-01T00:01Z: ${"x".repeat(200)}…`,
+      `${quiet} in dev "#dev" re ${bob} from ${bob} at 1970-01-01T00:01Z: quiet`,
       "Partial: some of your owner's Inbox has not loaded (offline).",
     ].join("\n"),
   );
-  expect(
-    await callTool(client, {}, "inbox", { only: "threads", limit: 5 }),
-  ).toMatch(new RegExp(`^${nested} `));
-  expect(
-    await callTool(client, {}, "inbox", { only: "mentions", unread: true }),
-  ).toMatch(new RegExp(`^${root} [^\\n]*\\nPartial`));
-  expect(await callTool(client, {}, "inbox", { limit: 1 })).not.toContain(
-    nested,
+  // Mentions show the mention itself, newest first.
+  expect(await callTool(client, {}, "inbox", { only: "mentions" })).toContain(
+    `${earlier} in dev "#dev" re ${alice} from ${alice} "Alice Smith" mentions owner marked unread at 1970-01-01T00:01Z: hi owner`,
   );
+  expect(
+    first(await callTool(client, {}, "inbox", { only: "mentions" })),
+  ).toEqual([root, earlier, "Partial:"]);
+  expect(
+    first(await callTool(client, {}, "inbox", { only: "threads" })),
+  ).toEqual([nested, quiet, "Partial:"]);
+  // Marked unread counts as unread.
+  expect(first(await callTool(client, {}, "inbox", { unread: true }))).toEqual([
+    root,
+    nested,
+    "Partial:",
+  ]);
+  expect(first(await callTool(client, {}, "inbox", { limit: 1 }))).toEqual([
+    root,
+    "Partial:",
+  ]);
   await expect(callTool(client, {}, "inbox", { only: "dms" })).rejects.toThrow(
     "only must be threads or mentions.",
   );
