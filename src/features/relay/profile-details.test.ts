@@ -284,3 +284,27 @@ it("retires pending profile reads before reconnect and fences cache clear/dispos
     directory.dispose();
   }
 });
+
+it("promotes a queued background profile read when foreground demand joins it", async () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  try {
+    // Unrelated background work holds the reader's only background slot.
+    const held = reader.reader.read([{ kinds: [3], limit: 1 }], {
+      priority: "background",
+    });
+    const enrichment = directory.ensure([user.pubkey], "background");
+    expect(wire.pending).toHaveLength(1);
+    const demanded = directory.ensure([user.pubkey], "foreground");
+    expect(wire.pending).toHaveLength(2);
+    wire.pending[1]?.respond([profile(user, { name: "Mic" })]);
+    await Promise.all([enrichment, demanded]);
+    expect(directory.queries.snapshot().get(user.pubkey)?.name).toBe("Mic");
+    wire.next().respond([]);
+    await held;
+  } finally {
+    directory.dispose();
+    reader.dispose();
+  }
+});

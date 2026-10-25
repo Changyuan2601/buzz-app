@@ -17,7 +17,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { UsersIcon } from "../../shared/design-system/icons";
+import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
 import {
   soloDraft,
   soloDraftTarget,
@@ -1650,6 +1650,12 @@ function ChannelWorkspace({
                         {current && (
                           <IconButton
                             size="sm"
+                            variant="avatar"
+                            style={{
+                              width: "auto",
+                              minWidth: "var(--size-control-sm)",
+                              paddingInline: "var(--space-1)",
+                            }}
                             aria-label="Access"
                             title="Access"
                             aria-haspopup="dialog"
@@ -1658,7 +1664,12 @@ function ChannelWorkspace({
                             onClick={(event) =>
                               openMembers(event.currentTarget)
                             }
-                            icon={<UsersIcon size="1rem" aria-hidden="true" />}
+                            icon={
+                              <ChannelMemberAvatars
+                                session={queries}
+                                channelId={current.id}
+                              />
+                            }
                           />
                         )}
                         {drawer.launchers}
