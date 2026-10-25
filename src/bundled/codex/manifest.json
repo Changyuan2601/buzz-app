@@ -9,6 +9,7 @@
   },
   "host": {
     "networkOrigins": ["https://releases.openai.com"],
+    "files": true,
     "processes": [
       {
         "id": "workspace",

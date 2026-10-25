@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -147,7 +148,7 @@ afterEach(() => {
   home = undefined;
 });
 
-it("finds the agent's threads by name and reads their rollouts with the manifest's processes", async () => {
+it("finds the agent's threads by name, reads their rollouts, and later only those Codex updated", async () => {
   home = mkdtempSync(join(tmpdir(), "codex-usage-"));
   const rollout = (
     name: string,
@@ -232,12 +233,22 @@ it("finds the agent's threads by name and reads their rollouts with the manifest
       nextCursor: start + 1 < found.length ? String(start + 1) : null,
     };
   });
-  const sessions = await readUsage(
+  const reads: string[] = [];
+  const host = {
     spawn,
-    { pubkey: agent, name: "Sol" },
-    hour - HOUR,
-    new AbortController().signal,
-  );
+    readFile: async (path: string) => {
+      reads.push(path.slice(path.lastIndexOf("/") + 1));
+      return new Uint8Array(await readFile(path));
+    },
+  };
+  const read = () =>
+    readUsage(
+      host,
+      { pubkey: agent, name: "Sol" },
+      hour - HOUR,
+      new AbortController().signal,
+    );
+  const sessions = await read();
   expect(sessions.map((session) => session.id)).toEqual(["mine"]);
   // The thread's own response, and one from each of its subagents.
   expect(
@@ -261,6 +272,88 @@ it("finds the agent's threads by name and reads their rollouts with the manifest
       "theirs",
     ].sort(),
   );
+  expect(reads.sort()).toEqual(
+    ["gone", "mine", "nested", "review", "theirs"].map(
+      (name) => `${name}.jsonl`,
+    ),
+  );
+
+  // Again: only the thread whose subagent Codex updated is read, and the one
+  // whose rollout was gone.
+  reads.length = 0;
+  const review = threads.find((thread) => thread.id === "review");
+  if (review) review.updatedAt += 60;
+  expect((await read()).map((session) => session.id)).toEqual(["mine"]);
+  expect(reads.sort()).toEqual(
+    ["gone", "mine", "nested", "review"].map((name) => `${name}.jsonl`),
+  );
+  reads.length = 0;
+  await read();
+  expect(reads).toEqual(["gone.jsonl"]);
+});
+
+it("reads at most four rollouts at once, across agents and their subagents", async () => {
+  const updatedAt = (hour + 1000) / 1000;
+  const threads = [
+    { who: agent, name: "Sol" },
+    { who: other, name: "Ra" },
+  ].flatMap(({ who, name }) => [
+    {
+      id: name,
+      parentThreadId: undefined as string | undefined,
+      name: `Buzz #dev · ${name}`,
+      who,
+      updatedAt,
+    },
+    ...[1, 2, 3].map((index) => ({
+      id: `${name}-${index}`,
+      parentThreadId: name,
+      name: "",
+      who,
+      updatedAt,
+    })),
+  ]);
+  const spawn = processes((params) => ({
+    data: threads
+      .filter((thread) =>
+        params.parentThreadId
+          ? thread.parentThreadId === params.parentThreadId
+          : thread.name.includes(String(params.searchTerm)),
+      )
+      .map((thread) => ({ ...thread, path: `/${thread.id}.jsonl` })),
+    nextCursor: null,
+  }));
+  let open = 0;
+  let most = 0;
+  const readFile = async (path: string) => {
+    const thread = threads.find(({ id }) => path === `/${id}.jsonl`);
+    open += 1;
+    most = Math.max(most, open);
+    await new Promise((resolve) => setTimeout(resolve));
+    open -= 1;
+    return new TextEncoder().encode(
+      thread?.parentThreadId
+        ? subagent
+        : [instructions(thread?.who), prompt, record(1000, 4, 0, 2)].join("\n"),
+    );
+  };
+  const found = await Promise.all(
+    [
+      { pubkey: agent, name: "Sol" },
+      { pubkey: other, name: "Ra" },
+    ].map((who) =>
+      readUsage(
+        { spawn, readFile },
+        who,
+        hour - HOUR,
+        new AbortController().signal,
+      ),
+    ),
+  );
+  expect(
+    found.map((sessions) => sessions.map((session) => session.id)),
+  ).toEqual([["Sol"], ["Ra"]]);
+  expect(most).toBe(4);
 });
 
 /** `thread/list` as `list` answers it, from a fake app-server, and the
