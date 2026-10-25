@@ -6,6 +6,7 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
+import { lengthRefusals } from "../features/developer/length-refusals";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -85,7 +86,7 @@ export const TOOLS: readonly Tool[] = [
         type: "string",
         enum: ["everyone", "details", "agents"],
         description:
-          "everyone: for the people here, at most 50 words. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
+          "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
       },
       final: {
         type: "boolean",
@@ -2040,20 +2041,27 @@ function unixTime(args: Args, key: string) {
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */
-/** The words people see before opening a message: all of an `everyone`
- * message, and a details message's brief, its first paragraph. */
-export const SHOWN_WORDS = 50;
+/** The words people see before opening a message: a details message's brief,
+ * its first paragraph, and an `everyone` message, which the prompt asks to
+ * keep to a few sentences and this holds to a looser limit. */
+export const SHOWN_WORDS = { details: 50, everyone: 128 } as const;
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
-function checkLength(audience: string, body: string) {
+function checkLength(
+  audience: "everyone" | "details" | "agents",
+  body: string,
+) {
   if (audience === "agents") return;
-  const shown = audience === "details" ? body.trim().split(/\n\s*\n/)[0] : body;
-  const count = words(shown ?? "");
-  if (count <= SHOWN_WORDS) return;
+  const shown =
+    audience === "details" ? (body.trim().split(/\n\s*\n/)[0] ?? "") : body;
+  const count = words(shown);
+  const limit = SHOWN_WORDS[audience];
+  if (count <= limit) return;
+  lengthRefusals.record({ audience, words: count, text: shown });
   throw new Error(
     audience === "details"
-      ? `The brief, the first paragraph, is ${count} words: keep it to ${SHOWN_WORDS} and move the rest into later paragraphs.`
-      : `This is ${count} words: keep everyone to ${SHOWN_WORDS}, or send it as details with a brief of ${SHOWN_WORDS} words at most.`,
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${limit} and move the rest into later paragraphs.`
+      : `This is ${count} words, too long for everyone: say it in a few sentences, or send it as details with a short brief.`,
   );
 }
 

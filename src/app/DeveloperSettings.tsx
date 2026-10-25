@@ -15,6 +15,7 @@ import {
 import type { RelayData } from "../features/relay/service";
 import { clientMetrics } from "../features/developer/client-metrics";
 import { ClientMetricsPanel } from "./ClientMetricsPanel";
+import { LengthRefusalsPanel } from "./LengthRefusalsPanel";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
   importScenario,
@@ -164,6 +165,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
             </SettingsGroup>
           </section>
         )}
+        <LengthRefusalsPanel />
         {clientMetrics.enabled && <ClientMetricsPanel />}
         <div className="space-y-2">
           <InlineHeader title="Runtime settings" />

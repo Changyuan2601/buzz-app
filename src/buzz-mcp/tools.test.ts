@@ -198,13 +198,18 @@ it("tags details for people to open, as written", async () => {
   expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
 });
 
-it("refuses what people see before opening it over 50 words", async () => {
+it("refuses an everyone message over 128 words, or a brief over 50", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   const long = Array.from({ length: 51 }, () => "word").join(" ");
+  await callTool(client, context, "send", { text: long, audience: "everyone" });
+  published.length = 0;
   await expect(
-    callTool(client, context, "send", { text: long, audience: "everyone" }),
-  ).rejects.toThrow("This is 51 words: keep everyone to 50");
+    callTool(client, context, "send", {
+      text: Array.from({ length: 129 }, () => "word").join(" "),
+      audience: "everyone",
+    }),
+  ).rejects.toThrow("This is 129 words, too long for everyone");
   await expect(
     callTool(client, context, "send", {
       text: `${long}\n\nThe rest.`,
