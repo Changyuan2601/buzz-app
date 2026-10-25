@@ -2577,12 +2577,86 @@ it("refreshes unavailable session buttons when runner ownership changes without 
   expect(compact).not.toHaveAttribute("aria-disabled", "true");
   expect(fresh).not.toHaveAttribute("aria-disabled", "true");
   expect(interrupt).toHaveAttribute("aria-disabled", "true");
-  await h.user.click(fresh);
-  expect(agents.session).toHaveBeenCalledWith(
-    first.pubkey,
-    { channelId: "channel" },
-    "new",
-  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => fireEvent.click(fresh));
+    expect(agents.session).toHaveBeenCalledWith(
+      first.pubkey,
+      { channelId: "channel" },
+      "new",
+    );
+    expect(
+      within(screen.getByRole("group", { name: "Honey's session" })).getByRole(
+        "status",
+      ),
+    ).toHaveTextContent("New session started");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "New session started",
+    );
+    act(() => vi.advanceTimersByTime(2999));
+    expect(
+      within(screen.getByRole("group", { name: "Honey's session" })).getByRole(
+        "status",
+      ),
+    ).toHaveTextContent("New session started");
+    // A repeated attempt clears the live announcement, then announces its
+    // own success and restarts the full feedback interval.
+    const announcement = within(
+      screen.getByRole("group", { name: "Honey's session" }),
+    ).getByRole("status");
+    const pending = deferred<void>();
+    agents.session.mockImplementationOnce(() => pending.promise);
+    try {
+      await act(async () => fireEvent.click(fresh));
+      expect(agents.session).toHaveBeenCalledTimes(2);
+      expect(announcement).toBeInTheDocument();
+      expect(announcement).toBeEmptyDOMElement();
+    } finally {
+      await act(async () => pending.resolve());
+    }
+    expect(announcement).toHaveTextContent("New session started");
+    act(() => fresh.focus());
+    await act(async () => fireEvent.keyDown(fresh, { key: "Escape" }));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(fresh).toHaveFocus();
+    expect(announcement).toHaveTextContent("New session started");
+    act(() => vi.advanceTimersByTime(2999));
+    expect(
+      within(screen.getByRole("group", { name: "Honey's session" })).getByRole(
+        "status",
+      ),
+    ).toHaveTextContent("New session started");
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("New session started")).not.toBeInTheDocument();
+    expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+
+    // A failed retry inside the success interval must replace the prior
+    // success feedback rather than show success alongside the error.
+    await act(async () => fireEvent.click(fresh));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "New session started",
+    );
+    const retry = deferred<void>();
+    agents.session.mockImplementationOnce(() => retry.promise);
+    try {
+      await act(async () => fireEvent.click(fresh));
+      expect(agents.session).toHaveBeenCalledTimes(4);
+      expect(announcement).toBeEmptyDOMElement();
+    } finally {
+      await act(async () => retry.reject(new Error("Disk is full")));
+    }
+    expect(screen.getByText("Disk is full")).toBeInTheDocument();
+    expect(announcement).toBeEmptyDOMElement();
+    await act(async () => fireEvent.mouseLeave(fresh));
+    await act(async () => fireEvent.mouseEnter(fresh));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Start a new session",
+    );
+    expect(screen.queryByText("New session started")).not.toBeInTheDocument();
+    expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("acts on the idle session immediately and keeps Send independent while active", async () => {
@@ -2831,9 +2905,9 @@ it("shows action failures and lets an idle session retry", async () => {
   await h.user.click(
     screen.getByRole("button", { name: "Start a new session" }),
   );
-  expect(await screen.findByText("New session started")).toHaveTextContent(
-    "New session started",
-  );
+  expect(
+    await screen.findByRole("tooltip", { name: "New session started" }),
+  ).toHaveTextContent("New session started");
 });
 
 it("offers a thread-scoped agent session actions in a thread, not on a message that starts one", async () => {

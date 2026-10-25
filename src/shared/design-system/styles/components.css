@@ -1085,6 +1085,21 @@
     margin-inline-start: auto;
   }
 
+  /* Floating agent cards keep actions beside a truncating title. */
+  .panel-header[data-variant="card"] {
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+  .panel-header[data-variant="card"]::after {
+    display: none;
+  }
+  .panel-header[data-variant="card"] .panel-header-title {
+    flex: 1 1 0;
+  }
+  .panel-header[data-variant="card"] .panel-header-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
   .panel-header-title > h2 {
     overflow: hidden;
     text-overflow: ellipsis;

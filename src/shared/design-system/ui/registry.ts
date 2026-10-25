@@ -680,7 +680,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Give a panel a consistent header with optional navigation, icon, title, and actions. The row has a 2.5rem minimum height; the panel and its content stay with the caller.",
     behavior: "Semantic native header.",
-    variants: ["default", "compact"],
+    variants: ["default", "compact", "card"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

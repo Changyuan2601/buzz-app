@@ -550,8 +550,10 @@ Use the surface that matches the content and its position in the interface.
 ### Floating surfaces
 
 Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
-mode-aware fill, 8px backdrop blur, standard border, 24px `radius-container` corners,
-and shared lift. `popover-surface` composes this same recipe for feature-owned
+mode-aware fill, 8px backdrop blur, 24px `radius-container` corners,
+and shared lift. The elevation recipe supplies a crisp contour, contact shadow,
+and ambient shadow in light mode, and a quiet white contour in dark mode. A
+transparent 1px border preserves inset geometry without doubling the contour. `popover-surface` composes this same recipe for feature-owned
 anchored content. Reduced transparency, forced colors, and browsers without blur
 support use the opaque fill.
 
@@ -1021,6 +1023,10 @@ show these contracts and their compositions.
 
 ### Panel headers
 
+Composer model cards explicitly use `PanelHeader variant="card"`: one line with
+a truncating agent name and fixed trailing icon actions, without a divider.
+This does not change workspace headers or authorize adding chrome to other content cards.
+
 Every workspace pane and full-page destination has one shared `PanelHeader` at
 its top, outside the scrolling body. If the containing workspace already supplies
 that header, reuse it rather than adding a second one. Keep the frame present
@@ -1255,7 +1261,7 @@ keeps only the fade.
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
 in the host, portaled outside the app layout to the bottom right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
-Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
 Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
 headless content inherits the host theme and text size without an OS-theme override.
