@@ -58,13 +58,15 @@ indicator opens the same dialog.
 
 ## Sending a chat link in a channel
 
-Pasting a recognized Solo chat link into a stream/forum composer stages it as a
-chat card. Sending that card, at channel level or in a thread, asks **Share and
-send** or **Send link only**. Closing keeps the draft and sends nothing.
+Pasting a recognized Solo chat link into a composer stages it as a chat card.
+Sending that card into a channel (at channel level or in a thread) or a DM asks
+**Share and send** or **Send link only**. Closing keeps the draft and sends nothing.
 
-The channel's members are read before asking, so the dialog names the channel and
-how many members don't yet have access. When everyone already has access, or no
-one else is in the channel, the message sends without asking. If Share can't
+The conversation's members are read before asking. In a channel, the dialog names
+the channel and how many members don't yet have access. In a DM, it names the
+people who don't (or counts them while a name is still unknown). When everyone
+already has access, or no one else is in the conversation, the message sends
+without asking. If Share can't
 succeed (the viewer can't share the chat, or more than 100 members need access),
 the dialog explains why and offers only link-only.
 
@@ -73,8 +75,8 @@ original message. It keeps the members it read for the prompt, so a retry after 
 failed grant never widens who gets access. A failed grant leaves the message
 unsent with Retry in the dialog; grants that succeeded remain. A changed draft or
 leaving the composer stops further grants and sending, not already dispatched
-writes. **Send link only** leaves access unchanged. DMs and Solo destinations
-keep their ordinary behavior and don't ask.
+writes. **Send link only** leaves access unchanged. Solo destinations keep their
+ordinary behavior and don't ask.
 
 Consent covers the full chat history and future messages. Sharing never
 unarchives anyone or removes them from a channel, and future joins or departures

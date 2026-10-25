@@ -8,6 +8,7 @@ import {
   missingAccess,
   shareBlocker,
   shareChatsWithChannel,
+  sharesWithMembers,
   Unshareable,
 } from "../solo/share";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -20,6 +21,10 @@ type Pending = {
   finish(send: boolean): void;
   grants: Map<string, Map<string, MemberAdditionIntent>>;
   channelName: string;
+  /** Sending into a DM, which names who gets access instead of a channel. */
+  dm: boolean;
+  /** Everyone a DM share would add, when all their names are known. */
+  names?: readonly string[];
   audience?: readonly string[];
   /** Captured members missing from at least one chat; unknown when a read failed. */
   count?: number;
@@ -99,12 +104,8 @@ export function useChatLinkSharing(
       const destination = session.channels
         .list()
         .channels.find((channel) => channel.id === channelId);
-      // This slice covers channel/thread sharing. DMs, Solo sends and new-chat creation keep their current behavior.
-      if (
-        !sources.length ||
-        !["stream", "forum"].includes(destination?.channelType ?? "")
-      )
-        return true;
+      // Channels, their threads and DMs ask. Solo sends and new-chat creation keep their current behavior.
+      if (!sources.length || !sharesWithMembers(destination)) return true;
       // Capture the audience before asking so consent names who gets access,
       // and skip asking when everyone already has access. Share grants exactly
       // this audience; a failed read falls back to Share's own capture.
@@ -116,9 +117,24 @@ export function useChatLinkSharing(
       signal.throwIfAborted();
       const known = audience && (await readSources(session, sources));
       signal.throwIfAborted();
-      const missing =
-        audience && known && missingAccess(known, audience).length;
+      const recipients = audience && known && missingAccess(known, audience);
+      const missing = recipients?.length;
       if (missing === 0) return true;
+      const dm = destination?.channelType === "dm";
+      // Names follow the identity policy across the whole DM, so namesakes
+      // who already have access still keep each recipient distinguishable.
+      const participants = session.channels
+        .list()
+        .channels.find((channel) => channel.id === channelId)?.members;
+      const profiles = session.profiles.snapshot();
+      const names = recipients?.flatMap((key) => {
+        const profile = profiles.get(key);
+        const name =
+          profile &&
+          !profile.nameIsFallback &&
+          session.names.resolve(key, undefined, participants);
+        return name ? [name] : [];
+      });
       // Surface known failures before consent instead of after Share.
       const blocked =
         audience && known && shareBlocker(session, known, audience);
@@ -147,6 +163,8 @@ export function useChatLinkSharing(
           finish,
           grants,
           channelName: destination?.name ?? "",
+          dm,
+          ...(dm && names && names.length === missing ? { names } : {}),
           ...(audience ? { audience } : {}),
           ...(missing === undefined ? {} : { count: missing }),
           ...(blocked ? { blocked } : {}),
@@ -211,15 +229,27 @@ export function useChatLinkSharing(
 }
 
 function consentDescription(pending: Pending | undefined) {
+  const consent =
+    "access to the full chat history and future messages. Sending only the link leaves access unchanged.";
+  const count = pending?.count;
+  if (pending?.dm) {
+    const names = pending.names;
+    const audience =
+      names?.length && names.length <= 3
+        ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(names)
+        : count === undefined
+          ? "the other people in this DM"
+          : `the ${count} other ${count === 1 ? "person" : "people"} in this DM`;
+    return `Share gives ${audience} ${consent}`;
+  }
   const channel = pending?.channelName
     ? `#${pending.channelName}`
     : "this channel";
-  const count = pending?.count;
   const audience =
     count === undefined
       ? `the current members of ${channel}`
       : `the ${count} other ${count === 1 ? "member" : "members"} of ${channel}`;
-  return `Share gives ${audience}, including agents, access to the full chat history and future messages. Sending only the link leaves access unchanged.`;
+  return `Share gives ${audience}, including agents, ${consent}`;
 }
 
 /** Fresh source rosters, or undefined when any can't be read. */
