@@ -3338,8 +3338,9 @@ html[data-keyboard-navigation]
   letter-spacing: var(--text-label-sm--letter-spacing);
 }
 
-/* A details message reads in the chat as its opening brief, at full contrast.
-   Later blocks wait for the reader; a long brief ends in an ellipsis. */
+/* A details message reads in the chat as its opening brief, at full contrast,
+   then the first line of what follows fading out. The rest waits for the
+   reader; a long brief ends in an ellipsis. */
 .detailsPreview {
   --details-lines: 4;
   display: flex;
@@ -3383,7 +3384,19 @@ html[data-keyboard-navigation]
 }
 .detailsClip
   .text
-  > :not(:first-child):not(:is(h1, h2, h3, h4, h5, h6):first-child + *) {
+  > :is(
+    :first-child:not(:is(h1, h2, h3, h4, h5, h6)) + *,
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
+  max-height: calc(var(--text-message) * var(--text-message--line-height));
+  margin-block: var(--space-2) 0;
+  mask-image: linear-gradient(to bottom, black, transparent);
+}
+.detailsClip
+  .text
+  > :not(:first-child):not(:first-child + *):not(
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
   display: none;
 }
 .detailsMore {
