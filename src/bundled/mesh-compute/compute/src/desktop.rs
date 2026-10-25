@@ -10,6 +10,7 @@ mod inference;
 mod preferences;
 mod publisher;
 pub mod sharing;
+pub mod usb_display;
 pub mod widget;
 
 type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);

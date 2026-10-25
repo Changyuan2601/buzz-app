@@ -20,6 +20,9 @@ const widget = JSON.parse(read("src-tauri/capabilities/compute-widget.json"));
 const huddle = JSON.parse(read("src-tauri/capabilities/huddle.json"));
 const windowScoped = new Map([
   ["mesh_compute_widget_status", widget],
+  ["mesh_compute_widget_usb_connect", widget],
+  ["mesh_compute_widget_usb_frame", widget],
+  ["mesh_compute_widget_usb_disconnect", widget],
   ["huddle_window_watch", huddle],
   ["huddle_window_action", huddle],
 ]);

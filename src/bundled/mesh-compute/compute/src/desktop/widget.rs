@@ -19,7 +19,7 @@ pub async fn mesh_compute_widget_open<R: tauri::Runtime>(
         window.show().map_err(|e| e.to_string())?;
         return window.set_focus().map_err(|e| e.to_string());
     }
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         &app,
         "compute-widget",
         WebviewUrl::App("compute-widget.html".into()),
@@ -35,6 +35,14 @@ pub async fn mesh_compute_widget_open<R: tauri::Runtime>(
     .always_on_top(true)
     .build()
     .map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            handle
+                .state::<super::usb_display::UsbDisplay>()
+                .disconnect();
+        }
+    });
     Ok(())
 }
 

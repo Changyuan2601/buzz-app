@@ -235,6 +235,22 @@ it("keeps four designs tied to fresh native usage and resets totals on replaceme
     expect(commands()).toContain("plugin:window|close");
     expect(commands()).not.toContain("mesh_compute_stop");
     calls.length = 0;
+    const settings = win.document.getElementById("widget-settings");
+    const menu = win.document.getElementById("settings-toggle");
+    expect(settings.hidden).toBe(true);
+    menu.click();
+    expect(settings.hidden).toBe(false);
+    expect(menu.getAttribute("aria-expanded")).toBe("true");
+    const beforeSettings = run("variation");
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(run("variation")).toBe(beforeSettings);
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape" }));
+    expect(settings.hidden).toBe(true);
+    expect(win.document.activeElement).toBe(menu);
+    win.dispatchEvent(
+      new win.KeyboardEvent("keydown", { key: ",", metaKey: true }),
+    );
+    expect(settings.hidden).toBe(false);
     win.document.getElementById("close").click();
     expect(commands()).toContain("plugin:window|close");
     expect(commands()).not.toContain("mesh_compute_stop");
@@ -306,6 +322,11 @@ it("embedded activity consumes only its parent feed and never invokes native win
     expect(run("model.phase")).toBe("offline");
     expect(calls).toEqual([]);
     expect(win.document.getElementById("close").hidden).toBe(true);
+    expect(win.document.getElementById("settings-toggle").hidden).toBe(true);
+    win.dispatchEvent(
+      new win.KeyboardEvent("keydown", { key: ",", metaKey: true }),
+    );
+    expect(win.document.getElementById("widget-settings").hidden).toBe(true);
   } finally {
     dom.window.close();
   }
@@ -351,6 +372,31 @@ it("repaints the widget with the current theme surface and ink", () => {
     expect(paints[0]).toBe("rgb(245, 245, 245)");
     expect(paints.some((color) => color.includes("rgb(20, 20, 20)"))).toBe(
       true,
+    );
+    // The same animation can paint for hardware with an independent dark
+    // palette while the visible desktop widget remains in light mode.
+    let hardwareFrame;
+    win.document.getElementById("display").addEventListener(
+      "compute-frame",
+      (event) => {
+        hardwareFrame = event.detail;
+      },
+      { once: true },
+    );
+    run("render(150, false)");
+    const device = win.document.createElement("canvas");
+    device.style.setProperty("--surface-inset", "rgb(16, 16, 16)");
+    device.style.setProperty("--text-standard", "rgb(240, 240, 240)");
+    device.style.setProperty("--text-danger", "rgb(255, 100, 100)");
+    win.document.body.append(device);
+    paints.length = 0;
+    hardwareFrame.paint(drawing, 128, 128, win.getComputedStyle(device));
+    expect(paints[0]).toBe("rgb(16, 16, 16)");
+    expect(paints.some((color) => color.includes("rgb(240, 240, 240)"))).toBe(
+      true,
+    );
+    expect(root.style.getPropertyValue("--surface-inset")).toBe(
+      "rgb(245, 245, 245)",
     );
     paints.length = 0;
     root.style.setProperty("--surface-inset", "rgb(16, 16, 16)");

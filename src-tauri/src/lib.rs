@@ -38,6 +38,7 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod mesh_compute;
+use buzz_mesh_compute::desktop::usb_display::{self, UsbDisplay};
 use buzz_mesh_compute::desktop::{self as mesh, agent, sharing, widget};
 use mesh_compute::MeshHost;
 mod identity;
@@ -831,6 +832,7 @@ pub fn run() {
         .manage(mesh_compute::identity(identity.clone()))
         .manage(identity)
         .manage(MeshHost::default())
+        .manage(UsbDisplay::default())
 
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
@@ -871,6 +873,9 @@ pub fn run() {
                     widget::mesh_compute_widget_open,
                     widget::mesh_compute_widget_close,
                     widget::mesh_compute_widget_status,
+                    usb_display::mesh_compute_widget_usb_connect,
+                    usb_display::mesh_compute_widget_usb_frame,
+                    usb_display::mesh_compute_widget_usb_disconnect,
                     sharing::mesh_compute_share,
                     agent::mesh_compute_prepare_inference,
                     agent::mesh_compute_inference_current,

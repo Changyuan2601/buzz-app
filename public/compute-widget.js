@@ -1009,6 +1009,7 @@ function changeVariation(offset) {
   } catch {}
 }
 window.addEventListener("keydown", (event) => {
+  if (!document.getElementById("widget-settings").hidden) return;
   if (
     event.altKey ||
     event.metaKey ||
@@ -1528,7 +1529,32 @@ function render(now, schedule = true) {
     canvas.width = width;
     canvas.height = height;
   }
-  const context = canvas.getContext("2d");
+  paintFrame(
+    frame,
+    canvas.getContext("2d"),
+    width,
+    height,
+    getComputedStyle(document.documentElement),
+  );
+  canvas.dispatchEvent(
+    new CustomEvent("compute-frame", {
+      detail: {
+        paint: (context, width, height, palette) =>
+          paintFrame(frame, context, width, height, palette),
+      },
+    }),
+  );
+  canvas.dataset.phase = model.phase;
+  canvas.dataset.total = String(model.total ?? "");
+  canvas.dataset.batch = String(model.batch ?? "");
+  canvas.setAttribute(
+    "aria-label",
+    `${inspectedState ? "Visual state preview, Escape returns to live. " : ""}Compute: ${phases[index].label}. Sound ${sound ? "on" : "off"}. ${model.valid ? "" : "Status unavailable. "}${showTotal ? "Runtime session total " + formatCount(model.total) + " tokens. " : ""}${model.phase === "active" ? "Per-request token count unavailable. " : ""}`,
+  );
+  if (schedule) requestAnimationFrame(render);
+}
+
+function paintFrame(frame, context, width, height, palette) {
   const scale = Math.min(width, height) / 512;
   if (embedded)
     context.setTransform(
@@ -1540,7 +1566,6 @@ function render(now, schedule = true) {
       (height - scale * 512) / 2,
     );
   else context.setTransform(width / 512, 0, 0, height / 512, 0, 0);
-  const palette = getComputedStyle(document.documentElement);
   const foreground =
     palette.getPropertyValue("--text-standard").trim() || "white";
   const accent = palette.getPropertyValue("--text-danger").trim() || "red";
@@ -1583,17 +1608,10 @@ function render(now, schedule = true) {
     context.stroke();
   }
   context.globalAlpha = 1;
-  canvas.dataset.phase = model.phase;
-  canvas.dataset.total = String(model.total ?? "");
-  canvas.dataset.batch = String(model.batch ?? "");
-  canvas.setAttribute(
-    "aria-label",
-    `${inspectedState ? "Visual state preview, Escape returns to live. " : ""}Compute: ${phases[index].label}. Sound ${sound ? "on" : "off"}. ${model.valid ? "" : "Status unavailable. "}${showTotal ? "Runtime session total " + formatCount(model.total) + " tokens. " : ""}${model.phase === "active" ? "Per-request token count unavailable. " : ""}`,
-  );
-  if (schedule) requestAnimationFrame(render);
 }
 if (embedded) {
   document.body.classList.add("embedded");
+  document.getElementById("settings-toggle").hidden = true;
   document.getElementById("close").hidden = true;
   sound = false;
   window.addEventListener("message", (event) => {
@@ -1612,6 +1630,25 @@ if (embedded) {
   });
 } else poll();
 requestAnimationFrame(render);
+const settings = document.getElementById("widget-settings");
+const settingsToggle = document.getElementById("settings-toggle");
+function showSettings(open) {
+  settings.hidden = !open;
+  settingsToggle.setAttribute("aria-expanded", String(open));
+  if (open) document.getElementById("usb-connect").focus();
+  else settingsToggle.focus();
+}
+settingsToggle.addEventListener("click", () => showSettings(settings.hidden));
+window.addEventListener("keydown", (event) => {
+  if (embedded || event.repeat) return;
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === ",") {
+    event.preventDefault();
+    showSettings(true);
+  } else if (event.key === "Escape" && !settings.hidden) {
+    event.preventDefault();
+    showSettings(false);
+  }
+});
 document.getElementById("close").addEventListener("click", () => {
   if (invoke) invoke("plugin:window|close").catch(() => {});
 });
