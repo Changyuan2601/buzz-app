@@ -20,7 +20,15 @@ import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, message, signed, summary } from "../relay/testing";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import {
+  keypair,
+  message,
+  profile as profileEvent,
+  signed,
+  summary,
+} from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
@@ -3659,36 +3667,30 @@ it.each([
         signer.secret,
       ),
     );
-    const head = signed(agent, {
-      kind: 0,
-      content: JSON.stringify({ name: "Quinn" }),
-      tags: [["auth", owner.pubkey, conditions, sig]],
-    });
+    // Relay-read events carry signature proof; only those get an owner check.
+    const head = eventDto(
+      signed(agent, {
+        kind: 0,
+        content: JSON.stringify({ name: "Quinn" }),
+        tags: [["auth", owner.pubkey, conditions, sig]],
+      }),
+    );
     const quinn: Profile = { name: "Quinn", isAgent: true };
-    let profiles = new Map<string, Profile>([[agent.pubkey, quinn]]);
-    const listeners = new Set<() => void>();
-    // The owner's name arrives after verification, as a background load.
-    const ensure = vi.fn(async () => {
-      // Later than the render that requested it, so only a subscription shows it.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      profiles = new Map(profiles).set(owner.pubkey, { name: "Logan" });
-      for (const listener of listeners) listener();
-    });
-    const subscribe = () => () => {};
     const verifications = vi.mocked(attestedOwner);
     verifications.mockClear();
+    // The owner's name arrives after verification, as a background load.
+    const read = vi.fn(async () => {
+      // Later than the render that requested it, so only a subscription shows it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return [profileEvent(owner, { name: "Logan" })];
+    });
+    const directory = createProfileDirectory({ read });
+    directory.accept([head]);
+    const subscribe = () => () => {};
     const session = {
       channels: { list: () => listed, subscribeList: subscribe },
       messages: {},
-      profiles: {
-        snapshot: () => profiles,
-        subscribe: (listener: () => void) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        ensure,
-        event: (key: string) => (key === agent.pubkey ? head : undefined),
-      },
+      profiles: directory.queries,
     } as unknown as RelaySession;
     const view = renderMessage({
       row: { ...row, authorId: agent.pubkey },
@@ -3707,27 +3709,34 @@ it.each([
       await act(async () => {
         await verifications.mock.results[0]?.value;
       });
+      const ownerRead = [
+        [{ kinds: [0], authors: [owner.pubkey], limit: 500 }],
+        expect.objectContaining({ priority: "background" }),
+      ];
       if (label) {
         await waitFor(() =>
           expect(view.container).toHaveTextContent(`Quinn· ${label}`),
         );
-        expect(ensure).toHaveBeenCalledWith([owner.pubkey], "background");
+        expect(read).toHaveBeenCalledWith(...ownerRead);
       } else if (viewer === "owner") {
         await expect(verifications.mock.results[0]?.value).resolves.toBe(
           owner.pubkey,
         );
         // Barrier: the owner's name has loaded, so a label would show now.
-        await waitFor(() => expect(profiles.has(owner.pubkey)).toBe(true));
+        await waitFor(() =>
+          expect(directory.queries.snapshot().has(owner.pubkey)).toBe(true),
+        );
         expect(view.container).not.toHaveTextContent("agent");
       } else {
         await expect(verifications.mock.results[0]?.value).resolves.toBe(
           undefined,
         );
         expect(view.container).not.toHaveTextContent("agent");
-        expect(ensure).not.toHaveBeenCalled();
+        expect(read).not.toHaveBeenCalled();
       }
     } finally {
       view.unmount();
+      directory.dispose();
     }
   },
 );
